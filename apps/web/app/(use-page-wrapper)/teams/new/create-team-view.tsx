@@ -135,7 +135,7 @@ export function CreateTeamView() {
             <TextField
               name="team_name"
               label={t("team_name")}
-              placeholder="Acme Inc."
+              placeholder={t("team_name_placeholder")}
               value={name}
               onChange={handleNameChange}
             />
@@ -145,7 +145,7 @@ export function CreateTeamView() {
             <TextField
               name="team_url"
               label={t("team_url")}
-              placeholder="acme"
+              placeholder={t("team_url_placeholder")}
               value={slug}
               onChange={handleSlugChange}
               addOnLeading={<span className="text-subtle">cal.eu/team/</span>}

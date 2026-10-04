@@ -4480,6 +4480,8 @@
   "create_team_preview_15_mins": "15 mins",
   "create_team_preview_30_mins": "30 mins",
   "create_team_preview_120_mins": "120 mins",
+  "team_name_placeholder": "Acme Inc.",
+  "team_url_placeholder": "acme",
   "onboarding_invite_subtitle": "Connect your Google workspace, invite via email, upload a CSV file or copy the invite link and share it with your teammates to add them to your Team.",
   "upload_csv_subtitle": "Upload a CSV file with team member emails to bulk invite",
   "need_template": "Need a template?",

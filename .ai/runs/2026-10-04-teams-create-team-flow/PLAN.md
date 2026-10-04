@@ -17,6 +17,7 @@ https://raw.githubusercontent.com/piotrchabros/cal.diy/qa-evidence-teams/teams-e
 | 2 | 2.3 | TeamPublicPreview panel + live validation wiring (slug check, logo rules) | inline | done | feat(teams): wire live slug and logo validation |
 | 2 | 2.4 | Biome format/autofix pass over new files | inline | done | style(teams): apply Biome autofixes to create-team files |
 | 3 | 3.1 | Gauntlet-loop UI polish vs bar (builder + harsh critic, blind A/B) | inline | done | feat(teams): polish create-team UI to match reference bar |
+| 3 | 3.1-review-fix | Self-review fix: i18n placeholder keys for name/URL fields | inline | done | fix(teams): use i18n placeholders in create-team form |
 | 3 | 3.2 | Final gate (type-check, lint, tests) + review fixes | inline | todo | test(teams): final gate fixes for create-team flow |
 
 ## Goal
