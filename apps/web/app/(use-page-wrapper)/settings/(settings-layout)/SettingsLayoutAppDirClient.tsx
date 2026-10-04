@@ -278,6 +278,7 @@ const useTabs = ({
 }) => {
   const session = useSession();
   const { data: user } = trpc.viewer.me.get.useQuery({ includePasswordAdded: true });
+  const { data: teamsAndProfiles } = trpc.viewer.loggedInViewerRouter.teamsAndUserProfilesQuery.useQuery();
   const orgBranding = null as { id?: number; slug?: string; name?: string; logoUrl?: string | null } | null;
   const isAdmin = session.data?.user.role === UserPermissionRole.ADMIN;
 
@@ -366,14 +367,36 @@ const useTabs = ({
     });
 
     // check if name is in adminRequiredKeys
-    return processedTabs.filter((tab) => {
+    const visibleTabs = processedTabs.filter((tab) => {
       if (organizationRequiredKeys.includes(tab.name)) return !!orgBranding;
       if (tab.name === "other_teams" && !permissions?.canUpdateOrganization) return false;
 
       if (isAdmin) return true;
       return !adminRequiredKeys.includes(tab.name);
     });
-  }, [isAdmin, orgBranding, user, isDelegationCredentialEnabled, isPbacEnabled, permissions]);
+
+    const myTeams = (teamsAndProfiles ?? []).filter((item) => item.teamId !== null);
+    if (myTeams.length > 0) {
+      visibleTabs.push({
+        name: "my_teams",
+        href: "/settings/my-teams",
+        icon: "users",
+        children: myTeams.map((item) => ({
+          name: item.name || "",
+          href: `/settings/my-teams/${item.teamId}/profile`,
+          children: [
+            {
+              name: "team_profile",
+              href: `/settings/my-teams/${item.teamId}/profile`,
+              trackingMetadata: { section: "my_teams", page: "team_profile" },
+            },
+          ],
+        })),
+      });
+    }
+
+    return visibleTabs;
+  }, [isAdmin, user, isDelegationCredentialEnabled, isPbacEnabled, permissions, teamsAndProfiles]);
 
   return processTabsMemod;
 };
