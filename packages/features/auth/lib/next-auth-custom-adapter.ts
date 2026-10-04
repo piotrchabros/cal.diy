@@ -1,8 +1,9 @@
-import type { Adapter, AdapterUser, AdapterAccount } from "next-auth/adapters";
-
+import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
+import logger from "@calcom/lib/logger";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Account, IdentityProvider, User } from "@calcom/prisma/client";
 import { Prisma } from "@calcom/prisma/client";
+import type { Adapter, AdapterAccount, AdapterUser } from "next-auth/adapters";
 
 const parseIntSafe = (id: string | number): number => {
   if (typeof id === "number") return id;
@@ -64,6 +65,18 @@ export default function CalComAdapter(prismaClient: PrismaClient): Adapter {
   return {
     createUser: async (data: Omit<AdapterUser, "id">) => {
       const user = await prismaClient.user.create({ data: createUserData(data) });
+      if (user.email) {
+        try {
+          await new TeamMembersService().acceptPendingInvitesOnSignup({
+            userId: user.id,
+            email: user.email,
+          });
+        } catch {
+          logger.error("Failed to materialize pending team invites on OAuth signup", {
+            userId: user.id,
+          });
+        }
+      }
       return toAdapterUser(user);
     },
 
