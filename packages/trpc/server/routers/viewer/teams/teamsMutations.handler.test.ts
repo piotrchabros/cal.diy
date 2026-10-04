@@ -6,10 +6,9 @@ import { MembershipRole } from "@calcom/prisma/enums";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 
 import { acceptInviteHandler } from "./acceptInvite.handler";
-import { getHandler } from "./get.handler";
+import { getTeamHandler } from "./getTeam.handler";
 import { inviteMemberHandler } from "./inviteMember.handler";
 import { listMembersHandler } from "./listMembers.handler";
-import { myTeamsHandler } from "./myTeams.handler";
 import { removeMemberHandler } from "./removeMember.handler";
 import { resendInviteHandler } from "./resendInvite.handler";
 import { updateRoleHandler } from "./updateRole.handler";
@@ -30,7 +29,6 @@ describe("viewer.teams mutation handlers", () => {
   const serviceMock = {
     getTeam: vi.fn(),
     listMembers: vi.fn(),
-    listMyTeams: vi.fn(),
     inviteMember: vi.fn(),
     acceptInvite: vi.fn(),
     updateMemberRole: vi.fn(),
@@ -108,19 +106,10 @@ describe("viewer.teams mutation handlers", () => {
     });
   });
 
-  it("myTeams lists the session user's teams", async () => {
-    serviceMock.listMyTeams.mockResolvedValue([{ id: 7, name: "BlueBee" }]);
-
-    const result = await myTeamsHandler({ ctx: mockCtx });
-
-    expect(result).toEqual([{ id: 7, name: "BlueBee" }]);
-    expect(serviceMock.listMyTeams).toHaveBeenCalledWith({ userId: 9 });
-  });
-
   it("getTeam forwards team and viewer", async () => {
     serviceMock.getTeam.mockResolvedValue({ id: 7, name: "BlueBee" });
 
-    const result = await getHandler({ ctx: mockCtx, input: { teamId: 7 } });
+    const result = await getTeamHandler({ ctx: mockCtx, input: { teamId: 7 } });
 
     expect(result).toEqual({ id: 7, name: "BlueBee" });
     expect(serviceMock.getTeam).toHaveBeenCalledWith({ teamId: 7, viewerId: 9 });

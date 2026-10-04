@@ -2,16 +2,16 @@ import { TeamProfileService } from "@calcom/features/teams/services/TeamProfileS
 import { prisma } from "@calcom/prisma";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
-import type { TGetTeamProfileInput } from "./teamProfile.schema";
+import type { TDisbandTeamInput } from "./teamProfile.schema";
 
-type GetTeamProfileOptions = {
+type DisbandTeamOptions = {
   ctx: {
     user: NonNullable<TrpcSessionUser>;
   };
-  input: TGetTeamProfileInput;
+  input: TDisbandTeamInput;
 };
 
-export const getTeamProfileHandler = async ({ ctx, input }: GetTeamProfileOptions) => {
+export const disbandTeamHandler = async ({ ctx, input }: DisbandTeamOptions) => {
   const service = new TeamProfileService(prisma);
-  return service.getTeamProfile({ teamId: input.teamId, userId: ctx.user.id });
+  return service.disbandTeam({ teamId: input.teamId, userId: ctx.user.id });
 };

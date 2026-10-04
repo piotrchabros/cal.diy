@@ -8,6 +8,11 @@ import { ZIsSlugAvailableInputSchema } from "./isSlugAvailable.schema";
 import { ZTeamListMembersSchema } from "./listMembers.schema";
 import { ZTeamRemoveMemberSchema } from "./removeMember.schema";
 import { ZTeamResendInviteSchema } from "./resendInvite.schema";
+import {
+  ZDisbandTeamInputSchema,
+  ZGetTeamProfileInputSchema,
+  ZUpdateTeamProfileInputSchema,
+} from "./teamProfile.schema";
 import { ZTeamUpdateRoleSchema } from "./updateRole.schema";
 
 export const teamsRouter = router({
@@ -28,17 +33,25 @@ export const teamsRouter = router({
     });
   }),
 
+  getProfile: authedProcedure.input(ZGetTeamProfileInputSchema).query(async ({ ctx, input }) => {
+    const handler = (await import("./get.handler")).getTeamProfileHandler;
+    return handler({ ctx, input });
+  }),
+  updateProfile: authedProcedure.input(ZUpdateTeamProfileInputSchema).mutation(async ({ ctx, input }) => {
+    const handler = (await import("./update.handler")).updateTeamProfileHandler;
+    return handler({ ctx, input });
+  }),
+  disband: authedProcedure.input(ZDisbandTeamInputSchema).mutation(async ({ ctx, input }) => {
+    const handler = (await import("./disband.handler")).disbandTeamHandler;
+    return handler({ ctx, input });
+  }),
   get: authedProcedure.input(ZTeamGetSchema).query(async ({ ctx, input }) => {
-    const handler = (await import("./get.handler")).getHandler;
+    const handler = (await import("./getTeam.handler")).getTeamHandler;
     return handler({ ctx, input });
   }),
   listMembers: authedProcedure.input(ZTeamListMembersSchema).query(async ({ ctx, input }) => {
     const handler = (await import("./listMembers.handler")).listMembersHandler;
     return handler({ ctx, input });
-  }),
-  myTeams: authedProcedure.query(async ({ ctx }) => {
-    const handler = (await import("./myTeams.handler")).myTeamsHandler;
-    return handler({ ctx });
   }),
   inviteMember: authedProcedure.input(ZTeamInviteMemberSchema).mutation(async ({ ctx, input }) => {
     const handler = (await import("./inviteMember.handler")).inviteMemberHandler;

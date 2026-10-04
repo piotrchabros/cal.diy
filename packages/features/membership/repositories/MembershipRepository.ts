@@ -532,29 +532,6 @@ export class MembershipRepository {
     });
   }
 
-  async findAcceptedTeamsByUserId({ userId }: { userId: number }) {
-    return await this.prismaClient.membership.findMany({
-      where: {
-        userId,
-        accepted: true,
-      },
-      orderBy: {
-        team: { name: "asc" },
-      },
-      select: {
-        role: true,
-        team: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            logoUrl: true,
-          },
-        },
-      },
-    });
-  }
-
   async findMembershipsWithUserByTeamId({ teamId }: { teamId: number }) {
     return this.prismaClient.membership.findMany({
       where: { teamId },

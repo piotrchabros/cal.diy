@@ -92,14 +92,6 @@ export class TeamMembersService {
     return team;
   }
 
-  async listMyTeams({ userId }: { userId: number }) {
-    const memberships = await this.membershipRepository.findAcceptedTeamsByUserId({ userId });
-    return memberships.map((membership) => ({
-      role: membership.role,
-      ...membership.team,
-    }));
-  }
-
   async listMembers({
     teamId,
     viewerId,
@@ -168,7 +160,7 @@ export class TeamMembersService {
       if (existing?.accepted) {
         throw ErrorWithCode.Factory.BadRequest(`${normalizedEmail} is already a member of ${team.name}`);
       }
-      const joinLink = `${WEBAPP_URL}/settings/teams/${teamId}/members`;
+      const joinLink = `${WEBAPP_URL}/settings/my-teams/${teamId}/members`;
       if (existing && !existing.accepted) {
         await this.sendInviteEmail({
           to: normalizedEmail,
@@ -204,7 +196,7 @@ export class TeamMembersService {
       to: normalizedEmail,
       teamName: team.name,
       joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
-        `/settings/teams/${teamId}/members`
+        `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,
       inviterName: requesterName,
@@ -292,7 +284,7 @@ export class TeamMembersService {
     }
     const normalizedEmail = email.trim().toLowerCase();
     const invitee = await this.userRepository.findInviteeByEmail({ email: normalizedEmail });
-    const joinLink = `${WEBAPP_URL}/settings/teams/${teamId}/members`;
+    const joinLink = `${WEBAPP_URL}/settings/my-teams/${teamId}/members`;
     if (invitee) {
       const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({
         teamId,
@@ -319,7 +311,7 @@ export class TeamMembersService {
       to: normalizedEmail,
       teamName: team.name,
       joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
-        `/settings/teams/${teamId}/members`
+        `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,
       inviterName: requesterName,

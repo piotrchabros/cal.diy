@@ -17,7 +17,7 @@ export const generateMetadata = async ({ params }: { params: Promise<{ id: strin
     (t) => t("members_team_description"),
     undefined,
     undefined,
-    `/settings/teams/${(await params).id}/members`
+    `/settings/my-teams/${(await params).id}/members`
   );
 
 const Page = async ({ params: _params }: PageProps) => {

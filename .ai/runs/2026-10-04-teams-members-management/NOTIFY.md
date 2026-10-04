@@ -31,3 +31,10 @@
 ## 2026-10-04T18:15:00Z — Step 3.3 (review hardening)
 - `viewer.teams.get` returned basic team info to any authenticated user; scoped to accepted members via new `TeamMembersService.getTeam` (service unit tests + handler forwarding test)
 - All PLAN Tasks rows now done
+
+## 2026-10-04T18:40:00Z — merged origin/develop 7917a14 (team profile settings #7)
+- 3 content conflicts, all resolved without duplicating sibling scope:
+  - `viewer/teams/_router.tsx`: union of #7 procedures (getProfile/updateProfile/disband) + #4 procedures; my `get` handler renamed to `getTeam.handler.ts` (`get.handler.ts` is #7's profile handler on develop)
+  - Sidebar: adopted #7's `teamsAndUserProfilesQuery` my_teams section, added Members child per team; dropped my `viewer.teams.myTeams` procedure/handler/service-method/repo-method/tests (zero consumers left, avoids duplicate my-teams queries)
+  - Members route moved `settings/teams/[id]/members` → `settings/my-teams/[id]/members` to match #7 IA; invite/resend joinLinks + page metadata updated
+- Gate on merged tree: type-check 9/9, lint 11/11, teams suites 32/32, full suite clean except the 2 known env-flaky calendar-subscription files (pass in isolation)
