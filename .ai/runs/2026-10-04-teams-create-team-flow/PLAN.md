@@ -10,7 +10,7 @@ https://raw.githubusercontent.com/piotrchabros/cal.diy/qa-evidence-teams/teams-e
 | Phase | Step | Title | Exec | Status | Commit |
 |-------|------|-------|------|--------|--------|
 | 0 | 0.1 | Run folder + plan, draft PR early with Fixes #3 | inline | done | docs(runs): add execution plan for teams-create-team-flow |
-| 1 | 1.1 | TeamCreationService (service-layer logic, ErrorWithCode, select) + unit tests | inline | todo | feat(teams): add TeamCreationService with slug validation |
+| 1 | 1.1 | TeamCreationService (service-layer logic, ErrorWithCode, select) + unit tests | inline | done | feat(teams): add TeamCreationService with slug validation |
 | 1 | 1.2 | tRPC viewer.teams router (create + isSlugAvailable) + register in viewer/_router | inline | todo | feat(teams): add viewer.teams create/isSlugAvailable endpoints |
 | 2 | 2.1 | i18n strings for create-team flow | inline | todo | feat(teams): add create-team i18n strings |
 | 2 | 2.2 | teams/new page.tsx (permission check) + CreateTeamForm client component | inline | todo | feat(teams): add teams/new create-team form page |
