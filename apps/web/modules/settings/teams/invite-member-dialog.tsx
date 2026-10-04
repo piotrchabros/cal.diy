@@ -8,8 +8,7 @@ import { MembershipRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
 import { DialogContent, DialogFooter, DialogHeader } from "@calcom/ui/components/dialog";
-import { TextField } from "@calcom/ui/components/form";
-import { Select } from "@calcom/ui/components/form/select";
+import { Select, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 
 const roleOptions = (t: (key: string) => string) => [

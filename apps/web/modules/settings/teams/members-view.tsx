@@ -20,8 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@calcom/ui/components/dropdown";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
-import { Checkbox } from "@calcom/ui/components/form/checkbox";
-import { TextField } from "@calcom/ui/components/form";
+import { Checkbox, TextField } from "@calcom/ui/components/form";
 import { Icon } from "@calcom/ui/components/icon";
 import { Pagination } from "@calcom/ui/components/pagination";
 import { SkeletonText } from "@calcom/ui/components/skeleton";
