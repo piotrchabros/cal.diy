@@ -354,6 +354,184 @@ export class MembershipRepository {
     });
   }
 
+  private buildTeamMembersWhere({
+    teamId,
+    search,
+    roles,
+    accepted,
+  }: {
+    teamId: number;
+    search?: string;
+    roles?: MembershipRole[];
+    accepted?: boolean;
+  }): Prisma.MembershipWhereInput {
+    const trimmedSearch = search?.trim();
+    return {
+      teamId,
+      ...(accepted !== undefined && { accepted }),
+      ...(roles?.length && { role: { in: roles } }),
+      ...(trimmedSearch && {
+        user: {
+          OR: [
+            { name: { contains: trimmedSearch, mode: "insensitive" } },
+            { email: { contains: trimmedSearch, mode: "insensitive" } },
+          ],
+        },
+      }),
+    };
+  }
+
+  async findTeamMembers({
+    teamId,
+    search,
+    roles,
+    accepted,
+    skip,
+    take,
+  }: {
+    teamId: number;
+    search?: string;
+    roles?: MembershipRole[];
+    accepted?: boolean;
+    skip: number;
+    take: number;
+  }) {
+    return await this.prismaClient.membership.findMany({
+      where: this.buildTeamMembersWhere({ teamId, search, roles, accepted }),
+      orderBy: [{ accepted: "desc" }, { user: { name: "asc" } }],
+      skip,
+      take,
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+        createdAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true,
+            username: true,
+            lastActiveAt: true,
+          },
+        },
+      },
+    });
+  }
+
+  async countTeamMembers({
+    teamId,
+    search,
+    roles,
+    accepted,
+  }: {
+    teamId: number;
+    search?: string;
+    roles?: MembershipRole[];
+    accepted?: boolean;
+  }) {
+    return await this.prismaClient.membership.count({
+      where: this.buildTeamMembersWhere({ teamId, search, roles, accepted }),
+    });
+  }
+
+  async createTeamMembership({
+    teamId,
+    userId,
+    role,
+    accepted,
+  }: {
+    teamId: number;
+    userId: number;
+    role: MembershipRole;
+    accepted: boolean;
+  }) {
+    return await this.prismaClient.membership.create({
+      data: {
+        teamId,
+        userId,
+        role,
+        accepted,
+      },
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+      },
+    });
+  }
+
+  async acceptTeamMembership({ teamId, userId }: { teamId: number; userId: number }) {
+    return await this.prismaClient.membership.update({
+      where: {
+        userId_teamId: {
+          userId,
+          teamId,
+        },
+      },
+      data: {
+        accepted: true,
+      },
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+      },
+    });
+  }
+
+  async updateTeamMembershipRole({
+    teamId,
+    userId,
+    role,
+  }: {
+    teamId: number;
+    userId: number;
+    role: MembershipRole;
+  }) {
+    return await this.prismaClient.membership.update({
+      where: {
+        userId_teamId: {
+          userId,
+          teamId,
+        },
+      },
+      data: {
+        role,
+      },
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+      },
+    });
+  }
+
+  async deleteTeamMembership({ teamId, userId }: { teamId: number; userId: number }) {
+    return await this.prismaClient.membership.delete({
+      where: {
+        userId_teamId: {
+          userId,
+          teamId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
+  async countAcceptedOwnersByTeamId({ teamId }: { teamId: number }) {
+    return await this.prismaClient.membership.count({
+      where: {
+        teamId,
+        accepted: true,
+        role: MembershipRole.OWNER,
+      },
+    });
+  }
+
   async findMembershipsWithUserByTeamId({ teamId }: { teamId: number }) {
     return this.prismaClient.membership.findMany({
       where: { teamId },

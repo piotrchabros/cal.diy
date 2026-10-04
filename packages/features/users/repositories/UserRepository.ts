@@ -277,6 +277,20 @@ export class UserRepository {
     return user;
   }
 
+  async findInviteeByEmail({ email }: { email: string }) {
+    return await this.prismaClient.user.findUnique({
+      where: {
+        email: email.toLowerCase(),
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        locale: true,
+      },
+    });
+  }
+
   async findManyByEmailsWithEmailVerificationSettings({ emails }: { emails: string[] }) {
     const normalizedEmails = emails.map((e) => e.toLowerCase());
 
