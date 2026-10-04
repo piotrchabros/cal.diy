@@ -1,14 +1,33 @@
 import authedProcedure from "../../../procedures/authedProcedure";
 import { router } from "../../../trpc";
 import { ZTeamAcceptInviteSchema } from "./acceptInvite.schema";
+import { ZCreateInputSchema } from "./create.schema";
 import { ZTeamGetSchema } from "./get.schema";
 import { ZTeamInviteMemberSchema } from "./inviteMember.schema";
+import { ZIsSlugAvailableInputSchema } from "./isSlugAvailable.schema";
 import { ZTeamListMembersSchema } from "./listMembers.schema";
 import { ZTeamRemoveMemberSchema } from "./removeMember.schema";
 import { ZTeamResendInviteSchema } from "./resendInvite.schema";
 import { ZTeamUpdateRoleSchema } from "./updateRole.schema";
 
 export const teamsRouter = router({
+  create: authedProcedure.input(ZCreateInputSchema).mutation(async ({ ctx, input }) => {
+    const { createHandler } = await import("./create.handler");
+
+    return createHandler({
+      ctx,
+      input,
+    });
+  }),
+
+  isSlugAvailable: authedProcedure.input(ZIsSlugAvailableInputSchema).query(async ({ input }) => {
+    const { isSlugAvailableHandler } = await import("./isSlugAvailable.handler");
+
+    return isSlugAvailableHandler({
+      input,
+    });
+  }),
+
   get: authedProcedure.input(ZTeamGetSchema).query(async ({ ctx, input }) => {
     const handler = (await import("./get.handler")).getHandler;
     return handler({ ctx, input });
