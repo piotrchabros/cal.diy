@@ -29,6 +29,9 @@ import { showToast } from "@calcom/ui/components/toast";
 import { Table } from "@calcom/ui/components/table";
 import { Skeleton } from "@coss/ui/components/skeleton";
 
+import InviteMemberDialog from "./invite-member-dialog";
+import MemberRowActions from "./member-row-actions";
+
 type ListMembersOutput = RouterOutputs["viewer"]["teams"]["listMembers"];
 type MemberItem = ListMembersOutput["items"][number];
 
@@ -62,17 +65,23 @@ function RoleBadges({ item }: { item: MemberItem }) {
 }
 
 function MemberRow({
+  teamId,
   item,
   selected,
   onToggle,
   showRole,
   showLastActive,
+  canManage,
+  onChanged,
 }: {
+  teamId: number;
   item: MemberItem;
   selected: boolean;
   onToggle: () => void;
   showRole: boolean;
   showLastActive: boolean;
+  canManage: boolean;
+  onChanged: () => void;
 }) {
   const { t } = useLocale();
   const displayName = item.user.name || item.user.email;
@@ -111,7 +120,7 @@ function MemberRow({
         </Table.Cell>
       )}
       <Table.Cell>
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-1">
           {item.user.username ? (
             <Button
               variant="icon"
@@ -124,6 +133,7 @@ function MemberRow({
               <span className="sr-only">{t("open_member_profile")}</span>
             </Button>
           ) : null}
+          {canManage && <MemberRowActions teamId={teamId} item={item} onChanged={onChanged} />}
         </div>
       </Table.Cell>
     </Table.Row>
@@ -283,7 +293,7 @@ function MembersToolbar({
   );
 }
 
-function MembersView({ teamId, viewerId: _viewerId, canManage: _canManage, isPendingInvite }: MembersViewProps) {
+function MembersView({ teamId, viewerId: _viewerId, canManage, isPendingInvite }: MembersViewProps) {
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -295,6 +305,7 @@ function MembersView({ teamId, viewerId: _viewerId, canManage: _canManage, isPen
   const [pageSize, setPageSize] = useState(10);
   const [showRole, setShowRole] = useState(true);
   const [showLastActive, setShowLastActive] = useState(true);
+  const [inviteOpen, setInviteOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -353,9 +364,19 @@ function MembersView({ teamId, viewerId: _viewerId, canManage: _canManage, isPen
   };
 
   const hasActiveFilters = roleFilter.length > 0 || statusFilter !== "all" || search !== "";
+  const invalidateList = () => utils.viewer.teams.listMembers.invalidate({ teamId });
 
   return (
-    <SettingsHeader title={t("team_members")} description={t("members_team_description")}>
+    <SettingsHeader
+      title={t("team_members")}
+      description={t("members_team_description")}
+      CTA={
+        canManage ? (
+          <Button StartIcon="plus" onClick={() => setInviteOpen(true)}>
+            {t("add")}
+          </Button>
+        ) : undefined
+      }>
       <div className="space-y-4">
         {isPendingInvite && (
           <PendingInviteBanner
@@ -414,28 +435,39 @@ function MembersView({ teamId, viewerId: _viewerId, canManage: _canManage, isPen
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {data.items.map((item) => (
-                  <MemberRow
-                    key={item.id}
-                    item={item}
-                    selected={selectedIds.has(item.user.id)}
-                    onToggle={() => toggleMember(item.user.id)}
-                    showRole={showRole}
-                    showLastActive={showLastActive}
-                  />
-                ))}
-              </Table.Body>
-            </Table>
-            <Pagination
-              currentPage={page}
-              pageSize={pageSize}
-              totalItems={data.total}
-              onPageChange={setPage}
-              onPageSizeChange={changePageSize}
-            />
-          </div>
+              {data.items.map((item) => (
+                <MemberRow
+                  key={item.id}
+                  teamId={teamId}
+                  item={item}
+                  selected={selectedIds.has(item.user.id)}
+                  onToggle={() => toggleMember(item.user.id)}
+                  showRole={showRole}
+                  showLastActive={showLastActive}
+                  canManage={canManage}
+                  onChanged={invalidateList}
+                />
+              ))}
+            </Table.Body>
+          </Table>
+          <Pagination
+            currentPage={page}
+            pageSize={pageSize}
+            totalItems={data.total}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
+          />
+        </div>
         )}
       </div>
+      {canManage && (
+        <InviteMemberDialog
+          teamId={teamId}
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          onInvited={invalidateList}
+        />
+      )}
     </SettingsHeader>
   );
 }
