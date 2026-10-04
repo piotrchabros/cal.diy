@@ -13,8 +13,8 @@ Base: `develop` → branch `feat/teams-members-management`
 | 1 | 1.1 | TeamMembers service + repository methods + unit tests | inline | done | b3843d2 |
 | 1 | 1.2 | tRPC teams router: get + listMembers, wired into viewer router | inline | done | d37b3aa |
 | 1 | 1.3 | tRPC mutations: invite, updateRole, remove, resendInvite + tests | inline | done | c965816 |
-| 2 | 2.1 | Members page.tsx (server, permission-gated) + client shell states | inline | done | — |
-| 2 | 2.2 | Toolbar (search/filter/display) + table + badges + pagination | inline | todo | — |
+| 2 | 2.1 | Members page.tsx (server, permission-gated) + client shell states | inline | done | 2e2e7d6 |
+| 2 | 2.2 | Toolbar (search/filter/display) + table + badges + pagination | inline | done | — |
 | 2 | 2.3 | Invite dialog + row actions (role change/remove/resend) | inline | todo | — |
 | 2 | 2.4 | Sidebar My-teams nav + i18n strings | inline | todo | — |
 | 3 | 3.1 | Gauntlet UI pass vs reference bar (harsh critic + fixes) | inline | todo | — |
