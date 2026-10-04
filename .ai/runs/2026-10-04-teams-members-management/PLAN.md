@@ -17,8 +17,8 @@ Base: `develop` → branch `feat/teams-members-management`
 | 2 | 2.2 | Toolbar (search/filter/display) + table + badges + pagination | inline | done | 57d69f9 |
 | 2 | 2.3 | Invite dialog + row actions (role change/remove/resend) | inline | done | 4dad70a |
 | 2 | 2.4 | Sidebar My-teams nav + i18n strings | inline | done | 9f024e2 |
-| 3 | 3.1 | Gauntlet UI pass vs reference bar (harsh critic + fixes) | inline | done | — |
-| 3 | 3.2 | Final gate + review fixes | inline | todo | — |
+| 3 | 3.1 | Gauntlet UI pass vs reference bar (harsh critic + fixes) | inline | done | b5e2339 |
+| 3 | 3.2 | Final gate + review fixes | inline | done | 6d40831 |
 
 ## Goal
 

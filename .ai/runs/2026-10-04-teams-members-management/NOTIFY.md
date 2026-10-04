@@ -16,3 +16,10 @@
 - Steps 2.1–2.4 landed (2e2e7d6, 57d69f9, 4dad70a, 9f024e2); tsc clean, 18/18 unit tests pass
 - apps/web typecheck needed regenerating gitignored trpc declaration types first (env-only issue)
 - No live screenshots possible (no browser harness); static A/B in Step 3.1
+
+## 2026-10-04T17:05:00Z — resume (om-auto-continue-pr-loop) + Step 3.2 review fix
+- Resumed PR #9 from first non-done row (3.2); prior session left a stale review lock, taken over as same user
+- Worktree already merged with origin/develop (0014ffa, includes create-team flow #6); develop has not moved since
+- Code-review pass found one major: listMembers handler dropped the `accepted` status filter the UI sends (status active/pending filter dead); repository already supported it
+- Fix: `accepted?: boolean` added to ListTeamMembersInput, forwarded in service + handler; regression tests in service + handler suites; reverted viewer/_router.tsx reorder noise (file now identical to develop)
+- Validation on fix: targeted suites 19/19 pass; full gate re-run follows on the final commit

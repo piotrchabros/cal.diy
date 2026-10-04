@@ -18,6 +18,7 @@ export type ListTeamMembersInput = {
   viewerId: number;
   search?: string;
   roles?: MembershipRole[];
+  accepted?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -90,7 +91,16 @@ export class TeamMembersService {
     }));
   }
 
-  async listMembers({ teamId, viewerId, search, roles, page = 1, pageSize = 10 }: ListTeamMembersInput) {    await this.requireTeamMembership(teamId, viewerId);
+  async listMembers({
+    teamId,
+    viewerId,
+    search,
+    roles,
+    accepted,
+    page = 1,
+    pageSize = 10,
+  }: ListTeamMembersInput) {
+    await this.requireTeamMembership(teamId, viewerId);
     const team = await this.teamRepository.findBasicById({ teamId });
     if (!team) {
       throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
@@ -102,10 +112,11 @@ export class TeamMembersService {
         teamId,
         search,
         roles,
+        accepted,
         skip: (safePage - 1) * safePageSize,
         take: safePageSize,
       }),
-      this.membershipRepository.countTeamMembers({ teamId, search, roles }),
+      this.membershipRepository.countTeamMembers({ teamId, search, roles, accepted }),
     ]);
     return {
       team,

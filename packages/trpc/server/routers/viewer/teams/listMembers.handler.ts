@@ -17,6 +17,7 @@ export const listMembersHandler = async ({ ctx, input }: ListMembersOptions) => 
     viewerId: ctx.user.id,
     search: input.search,
     roles: input.roles,
+    accepted: input.accepted,
     page: input.page,
     pageSize: input.pageSize,
   });

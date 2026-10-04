@@ -61,6 +61,30 @@ describe("TeamMembersService", () => {
       );
     });
 
+    it("forwards the accepted status filter to the repository", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+        findTeamMembers: vi.fn().mockResolvedValue([]),
+        countTeamMembers: vi.fn().mockResolvedValue(0),
+      });
+      const teamRepo = makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) });
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+
+      await service.listMembers({ teamId: 7, viewerId: 9, accepted: false, page: 1 });
+
+      expect(membershipRepo.findTeamMembers).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 7, accepted: false, skip: 0, take: 10 })
+      );
+      expect(membershipRepo.countTeamMembers).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 7, accepted: false })
+      );
+    });
+
     it("rejects viewers without an accepted membership", async () => {
       const membershipRepo = makeMembershipRepo({
         findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(null),

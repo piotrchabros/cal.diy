@@ -120,11 +120,11 @@ describe("viewer.teams mutation handlers", () => {
 
     await listMembersHandler({
       ctx: mockCtx,
-      input: { teamId: 7, search: "ada", page: 1, pageSize: 10 },
+      input: { teamId: 7, search: "ada", accepted: false, page: 1, pageSize: 10 },
     });
 
     expect(serviceMock.listMembers).toHaveBeenCalledWith(
-      expect.objectContaining({ teamId: 7, viewerId: 9, search: "ada" })
+      expect.objectContaining({ teamId: 7, viewerId: 9, search: "ada", accepted: false })
     );
   });
 });
