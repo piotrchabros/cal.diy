@@ -117,3 +117,8 @@ agents/devin-knowledge.json
 
 # pagefind
 _pagefind/
+
+# agent pipeline QA artifacts (generated per run, not source)
+.ai/qa/artifacts_*/
+.ai/qa/test-env.json
+.ai/qa/test-env.env
