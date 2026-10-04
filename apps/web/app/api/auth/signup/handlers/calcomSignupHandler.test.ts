@@ -13,6 +13,7 @@ import { vi } from "vitest";
 
 const mockFindTokenByToken: Mock = vi.fn();
 const mockValidateAndGetCorrectedUsernameForTeam: Mock = vi.fn();
+const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
 
 type UsernameStatus = {
   statusCode: 200 | 402 | 418;
@@ -102,8 +103,17 @@ vi.mock("@calcom/lib/server/username", () => ({
     return handler;
   },
 }));
+vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
+  TeamMembersService: class {
+    acceptPendingInvitesOnSignup(...args: unknown[]) {
+      return mockAcceptPendingInvitesOnSignup(...args);
+    }
+  },
+}));
 
 // Import after mocks
+import { describe, expect, it } from "vitest";
+
 import "./calcomSignupHandler";
 import { runP2002TestSuite } from "@calcom/features/auth/signup/handlers/__tests__/p2002.test-suite";
 
@@ -121,6 +131,45 @@ runP2002TestSuite("calcomHandler", callHandler, () => {
   resetPrismaMock();
   mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
   mockValidateAndGetCorrectedUsernameForTeam.mockResolvedValue("testuser");
+  mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
   prismaMock.team.findUnique.mockResolvedValue(createMockTeam() as never);
   prismaMock.verificationToken.delete.mockResolvedValue({} as never);
+});
+
+describe("calcomHandler – team invite materialization", () => {
+  it("accepts pending team invites after a plain signup", async () => {
+    vi.clearAllMocks();
+    resetPrismaMock();
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
+    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
+
+    const response = await callHandler({
+      email: "invited@example.com",
+      password: "ValidPassword123!",
+      username: "invited",
+      language: "en",
+    });
+
+    expect(response.status).toBe(201);
+    expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+      userId: 42,
+      email: "invited@example.com",
+    });
+  });
+
+  it("still signs up when invite materialization fails", async () => {
+    vi.clearAllMocks();
+    resetPrismaMock();
+    mockAcceptPendingInvitesOnSignup.mockRejectedValue(new Error("db down"));
+    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
+
+    const response = await callHandler({
+      email: "invited@example.com",
+      password: "ValidPassword123!",
+      username: "invited",
+      language: "en",
+    });
+
+    expect(response.status).toBe(201);
+  });
 });

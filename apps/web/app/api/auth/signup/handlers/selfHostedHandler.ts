@@ -10,6 +10,7 @@ import {
   validateAndGetCorrectedUsernameForTeam,
 } from "@calcom/features/auth/signup/utils/token";
 import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
+import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 
 import logger from "@calcom/lib/logger";
@@ -159,8 +160,9 @@ export default async function handler(body: Record<string, string>) {
     if (!isUsernameAvailable) {
       return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
     }
+    let createdUser: { id: number };
     try {
-      await userRepository.create({
+      createdUser = await userRepository.create({
         username: correctedUsername,
         email: userEmail,
         hashedPassword,
@@ -178,6 +180,14 @@ export default async function handler(body: Record<string, string>) {
         }
       }
       throw error;
+    }
+    try {
+      await new TeamMembersService().acceptPendingInvitesOnSignup({
+        userId: createdUser.id,
+        email: userEmail,
+      });
+    } catch {
+      logger.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });
     }
 
     if (process.env.AVATARAPI_USERNAME && process.env.AVATARAPI_PASSWORD) {

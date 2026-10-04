@@ -11,6 +11,7 @@ const makeMembershipRepo = (overrides: Record<string, unknown> = {}) => ({
   countTeamMembers: vi.fn(),
   createTeamMembership: vi.fn(),
   acceptTeamMembership: vi.fn(),
+  upsertAcceptedTeamMembership: vi.fn(),
   updateTeamMembershipRole: vi.fn(),
   deleteTeamMembership: vi.fn(),
   countAcceptedOwnersByTeamId: vi.fn(),
@@ -21,6 +22,8 @@ const makeTeamRepo = (overrides: Record<string, unknown> = {}) => ({
   findBasicById: vi.fn(),
   createTeamInviteToken: vi.fn(),
   findTeamInviteTokenByEmail: vi.fn(),
+  findTeamInviteTokensByEmail: vi.fn(),
+  deleteTeamInviteTokens: vi.fn(),
   ...overrides,
 });
 
@@ -322,6 +325,309 @@ describe("TeamMembersService", () => {
 
       await expect(service.removeMember({ teamId: 7, requesterId: 9, userId: 5 })).rejects.toBeInstanceOf(
         ErrorWithCode
+      );
+    });
+  });
+
+  describe("acceptPendingInvitesOnSignup", () => {
+    const futureDate = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const pastDate = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const buildService = ({
+      invites,
+    }: {
+      invites: { id: number; teamId: number | null; token: string; expires: Date }[];
+    }) => {
+      const membershipRepo = makeMembershipRepo({
+        upsertAcceptedTeamMembership: vi.fn().mockResolvedValue({ id: 9, accepted: true }),
+      });
+      const teamRepo = makeTeamRepo({
+        findTeamInviteTokensByEmail: vi.fn().mockResolvedValue(invites),
+        deleteTeamInviteTokens: vi.fn().mockResolvedValue({ count: 1 }),
+      });
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+      return { service, membershipRepo, teamRepo };
+    };
+
+    it("accepts a valid invite and consumes the token", async () => {
+      const { service, membershipRepo, teamRepo } = buildService({
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result).toEqual({ status: "accepted", teamIds: [7] });
+      expect(membershipRepo.upsertAcceptedTeamMembership).toHaveBeenCalledWith({
+        teamId: 7,
+        userId: 12,
+      });
+      expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({
+        teamId: 7,
+        email: "ada@example.com",
+      });
+    });
+
+    it("normalizes the email before lookup and cleanup", async () => {
+      const { service, teamRepo } = buildService({
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+      });
+
+      await service.acceptPendingInvitesOnSignup({ userId: 12, email: "  Ada@Example.com " });
+
+      expect(teamRepo.findTeamInviteTokensByEmail).toHaveBeenCalledWith({
+        email: "ada@example.com",
+      });
+      expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({
+        teamId: 7,
+        email: "ada@example.com",
+      });
+    });
+
+    it("skips expired tokens without touching memberships", async () => {
+      const { service, membershipRepo, teamRepo } = buildService({
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: pastDate() }],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result).toEqual({ status: "no-invites", teamIds: [] });
+      expect(membershipRepo.upsertAcceptedTeamMembership).not.toHaveBeenCalled();
+      expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+    });
+
+    it("skips tokens whose team no longer exists", async () => {
+      const { service, membershipRepo, teamRepo } = buildService({
+        invites: [{ id: 1, teamId: null, token: "t1", expires: futureDate() }],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result).toEqual({ status: "no-invites", teamIds: [] });
+      expect(membershipRepo.upsertAcceptedTeamMembership).not.toHaveBeenCalled();
+      expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+    });
+
+    it("dedupes duplicate tokens for the same team (invite races)", async () => {
+      const { service, membershipRepo, teamRepo } = buildService({
+        invites: [
+          { id: 1, teamId: 7, token: "t1", expires: futureDate() },
+          { id: 2, teamId: 7, token: "t2", expires: futureDate() },
+        ],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result).toEqual({ status: "accepted", teamIds: [7] });
+      expect(membershipRepo.upsertAcceptedTeamMembership).toHaveBeenCalledTimes(2);
+      expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledTimes(2);
+    });
+
+    it("accepts invites across multiple teams", async () => {
+      const { service } = buildService({
+        invites: [
+          { id: 1, teamId: 7, token: "t1", expires: futureDate() },
+          { id: 2, teamId: 8, token: "t2", expires: futureDate() },
+        ],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result).toEqual({ status: "accepted", teamIds: [7, 8] });
+    });
+
+    it("accepts idempotently when the membership already exists", async () => {
+      const { service, membershipRepo } = buildService({
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+      });
+
+      const result = await service.acceptPendingInvitesOnSignup({
+        userId: 12,
+        email: "ada@example.com",
+      });
+
+      expect(result.status).toBe("accepted");
+      expect(membershipRepo.upsertAcceptedTeamMembership).toHaveBeenCalledWith({
+        teamId: 7,
+        userId: 12,
+      });
+    });
+
+    it("returns no-invites for a blank email without querying", async () => {
+      const { service, teamRepo } = buildService({ invites: [] });
+
+      const result = await service.acceptPendingInvitesOnSignup({ userId: 12, email: "  " });
+
+      expect(result).toEqual({ status: "no-invites", teamIds: [] });
+      expect(teamRepo.findTeamInviteTokensByEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("invite signup links", () => {
+    it("embeds the token in the signup link for a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        createTeamInviteToken: vi.fn().mockResolvedValue({ id: 1, token: "t", expires: new Date() }),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.inviteMember({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+        role: MembershipRole.MEMBER,
+      });
+
+      expect(sendInviteEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          joinLink: expect.stringContaining("/signup?token="),
+        })
+      );
+    });
+
+    it("embeds the existing token when resending to a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "pending-token",
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.resendInvite({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+      });
+
+      expect(sendInviteEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          joinLink: expect.stringContaining("/signup?token=pending-token"),
+        })
+      );
+    });
+
+    it("rotates an expired token when resending to a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "stale-token",
+          expires: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        }),
+        deleteTeamInviteTokens: vi.fn().mockResolvedValue({ count: 1 }),
+        createTeamInviteToken: vi.fn().mockResolvedValue({ id: 2, token: "fresh", expires: new Date() }),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.resendInvite({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+      });
+
+      expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({
+        teamId: 7,
+        email: "new@example.com",
+      });
+      expect(teamRepo.createTeamInviteToken).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 7, email: "new@example.com" })
+      );
+      const joinLink: string = sendInviteEmail.mock.calls[0][0].joinLink;
+      expect(joinLink).toContain("/signup?token=");
+      expect(joinLink).not.toContain("stale-token");
+    });
+
+    it("reuses a still-valid token when resending to a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "pending-token",
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+        deleteTeamInviteTokens: vi.fn(),
+        createTeamInviteToken: vi.fn(),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.resendInvite({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+      });
+
+      expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+      expect(teamRepo.createTeamInviteToken).not.toHaveBeenCalled();
+      expect(sendInviteEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          joinLink: expect.stringContaining("/signup?token=pending-token"),
+        })
       );
     });
   });

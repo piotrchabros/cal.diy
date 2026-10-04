@@ -195,7 +195,7 @@ export class TeamMembersService {
     await this.sendInviteEmail({
       to: normalizedEmail,
       teamName: team.name,
-      joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
+      joinLink: `${WEBAPP_URL}/signup?token=${token}&callbackUrl=${encodeURIComponent(
         `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,
@@ -203,6 +203,30 @@ export class TeamMembersService {
       locale: "en",
     });
     return { status: "invited-new" as const, email: normalizedEmail };
+  }
+
+  async acceptPendingInvitesOnSignup({ userId, email }: { userId: number; email: string }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes("@")) {
+      return { status: "no-invites" as const, teamIds: [] as number[] };
+    }
+    const invites = await this.teamRepository.findTeamInviteTokensByEmail({ email: normalizedEmail });
+    const now = new Date();
+    const acceptedTeamIds: number[] = [];
+    for (const invite of invites) {
+      if (invite.teamId === null || invite.expires <= now) {
+        continue;
+      }
+      await this.membershipRepository.upsertAcceptedTeamMembership({ teamId: invite.teamId, userId });
+      await this.teamRepository.deleteTeamInviteTokens({ teamId: invite.teamId, email: normalizedEmail });
+      if (!acceptedTeamIds.includes(invite.teamId)) {
+        acceptedTeamIds.push(invite.teamId);
+      }
+    }
+    return {
+      status: (acceptedTeamIds.length > 0 ? "accepted" : "no-invites") as "accepted" | "no-invites",
+      teamIds: acceptedTeamIds,
+    };
   }
 
   async acceptInvite({ teamId, userId }: { teamId: number; userId: number }) {
@@ -303,14 +327,29 @@ export class TeamMembersService {
       });
       return { status: "resent" as const, email: normalizedEmail };
     }
-    const token = await this.teamRepository.findTeamInviteTokenByEmail({ teamId, email: normalizedEmail });
-    if (!token) {
+    const existing = await this.teamRepository.findTeamInviteTokenByEmail({
+      teamId,
+      email: normalizedEmail,
+    });
+    if (!existing) {
       throw ErrorWithCode.Factory.BadRequest(`No pending invitation for ${normalizedEmail}`);
+    }
+    let tokenValue = existing.token;
+    if (existing.expires <= new Date()) {
+      tokenValue = randomBytes(32).toString("hex");
+      const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await this.teamRepository.deleteTeamInviteTokens({ teamId, email: normalizedEmail });
+      await this.teamRepository.createTeamInviteToken({
+        teamId,
+        email: normalizedEmail,
+        token: tokenValue,
+        expires,
+      });
     }
     await this.sendInviteEmail({
       to: normalizedEmail,
       teamName: team.name,
-      joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
+      joinLink: `${WEBAPP_URL}/signup?token=${tokenValue}&callbackUrl=${encodeURIComponent(
         `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,

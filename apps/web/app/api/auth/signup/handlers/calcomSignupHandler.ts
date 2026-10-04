@@ -5,6 +5,7 @@ import { sendEmailVerification } from "@calcom/features/auth/lib/verifyEmail";
 import { SIGNUP_ERROR_CODES } from "@calcom/features/auth/signup/constants";
 import { createOrUpdateMemberships } from "@calcom/features/auth/signup/utils/createOrUpdateMemberships";
 import { joinAnyChildTeamOnOrgInvite } from "@calcom/features/auth/signup/utils/organization";
+import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { prefillAvatar } from "@calcom/features/auth/signup/utils/prefillAvatar";
 import {
   findTokenByToken,
@@ -249,8 +250,9 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
     });
   } else {
     // Create the user
+    let createdUser: { id: number };
     try {
-      await userRepository.create({
+      createdUser = await userRepository.create({
         username,
         email,
         hashedPassword,
@@ -272,6 +274,11 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
         }
       }
       throw error;
+    }
+    try {
+      await new TeamMembersService().acceptPendingInvitesOnSignup({ userId: createdUser.id, email });
+    } catch {
+      log.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });
     }
     if (process.env.AVATARAPI_USERNAME && process.env.AVATARAPI_PASSWORD) {
       await prefillAvatar({ email });
