@@ -1,4 +1,4 @@
-import type { MembershipRole } from "@prisma/client";
+import type { MembershipRole } from "@calcom/prisma/enums";
 
 export type TeamsListTeam = {
   id: number;
