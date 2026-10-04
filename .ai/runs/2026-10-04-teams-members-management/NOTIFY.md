@@ -11,3 +11,8 @@
 ## 2026-10-04T16:00:00Z — checkpoint 1 (Phase 1 complete)
 - Steps 1.1–1.3 landed (b3843d2, d37b3aa, c965816); tsc clean, 16/16 unit tests pass
 - No UI touched: screenshots skipped with reason (nothing renderable yet)
+
+## 2026-10-04T16:45:00Z — checkpoint 2 (Phase 2 complete)
+- Steps 2.1–2.4 landed (2e2e7d6, 57d69f9, 4dad70a, 9f024e2); tsc clean, 18/18 unit tests pass
+- apps/web typecheck needed regenerating gitignored trpc declaration types first (env-only issue)
+- No live screenshots possible (no browser harness); static A/B in Step 3.1

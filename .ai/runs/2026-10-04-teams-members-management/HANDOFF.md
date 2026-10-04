@@ -1,18 +1,19 @@
 # Handoff — 2026-10-04-teams-members-management
 
-**Last updated:** 2026-10-04T16:00:00Z
+**Last updated:** 2026-10-04T16:45:00Z
 **Branch:** feat/teams-members-management
 **PR:** https://github.com/piotrchabros/cal.diy/pull/9 (draft, lock held)
-**Current phase/step:** Phase 2 Step 2.1
-**Last commit:** c965816 — feat(teams): add viewer.teams invite, role, remove and resend mutations
+**Current phase/step:** Phase 3 Step 3.1
+**Last commit:** 9f024e2 — feat(teams): add myTeams query and My-teams sidebar nav
 
 ## What just happened
-- Phase 1 complete: TeamMembersService + Membership/Team/User repository methods (b3843d2),
-  viewer.teams get/listMembers router (d37b3aa), invite/accept/updateRole/remove/resendInvite
-  mutations + tests (c965816). Checkpoint-1 verification green (tsc 0 errors, 16/16 tests).
+- Phase 2 complete: members page + shell (2e2e7d6), toolbar/filters/pagination (57d69f9),
+  invite dialog + row actions (4dad70a), myTeams + sidebar nav (9f024e2).
+  Checkpoint-2 verification green (tsc clean, 18/18 tests).
 
 ## Next concrete action
-- Step 2.1: members page.tsx (server, permission-gated) + client shell with loading/empty/error states.
+- Step 3.1: gauntlet UI pass — harsh-critic blind A/B of our page structure vs
+  `teams/team members.png`, fix gaps.
 
 ## Blockers / open questions
 - none
