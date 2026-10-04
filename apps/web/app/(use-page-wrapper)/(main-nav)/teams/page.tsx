@@ -6,7 +6,6 @@ import { _generateMetadata } from "app/_utils";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactElement } from "react";
-
 import type { TeamsListTeam } from "~/teams/lib/teamsListUtils";
 import { getTeamPublicUrl } from "~/teams/lib/teamsListUtils";
 import { TeamsListingView } from "~/teams/views/teams-listing-view";

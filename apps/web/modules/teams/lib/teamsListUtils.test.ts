@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { getTeamInitials, getTeamPublicUrl } from "./teamsListUtils";
 
 describe("getTeamInitials", () => {

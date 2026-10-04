@@ -14,7 +14,6 @@ import { showToast } from "@calcom/ui/components/toast";
 import { ShellMainAppDir } from "app/(use-page-wrapper)/(main-nav)/ShellMainAppDir";
 import Link from "next/link";
 import type { ReactElement } from "react";
-
 import type { TeamsListTeam } from "~/teams/lib/teamsListUtils";
 import { getTeamInitials } from "~/teams/lib/teamsListUtils";
 
@@ -36,11 +35,7 @@ function TeamAvatar({ team }: { team: TeamsListTeam }): ReactElement {
   if (team.logoUrl) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={team.logoUrl}
-        alt={team.name}
-        className="h-10 w-10 shrink-0 rounded-full object-cover"
-      />
+      <img src={team.logoUrl} alt={team.name} className="h-10 w-10 shrink-0 rounded-full object-cover" />
     );
   }
   return (
@@ -75,10 +70,7 @@ function TeamCard({ team }: { team: TeamsListTeam }): ReactElement {
           <p className="text-subtle truncate text-sm">{team.slug ?? team.bio ?? ""}</p>
         )}
       </div>
-      <span
-        className={
-          isOwner ? "text-info text-sm font-medium" : "text-subtle hidden text-sm sm:block"
-        }>
+      <span className={isOwner ? "text-info text-sm font-medium" : "text-subtle hidden text-sm sm:block"}>
         {roleLabel(team.role, t)}
       </span>
       <div className="border-subtle flex shrink-0 items-center rounded-lg border">
@@ -112,9 +104,7 @@ function TeamCard({ team }: { team: TeamsListTeam }): ReactElement {
                 </Link>
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              onClick={() => copyTeamLink(team.publicUrl, t)}
-              disabled={!team.publicUrl}>
+            <DropdownMenuItem onClick={() => copyTeamLink(team.publicUrl, t)} disabled={!team.publicUrl}>
               <span className="flex items-center gap-2 px-2 py-1.5">
                 <Icon name="clipboard" className="h-4 w-4" />
                 {t("copy_team_link")}
