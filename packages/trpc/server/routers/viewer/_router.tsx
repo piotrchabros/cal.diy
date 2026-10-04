@@ -45,6 +45,7 @@ export const viewerRouter = router({
   timezones: timezonesRouter,
   webhook: webhookRouter,
   slots: slotsRouter,
+  teams: teamsRouter,
   i18n: i18nRouter,
   features: featureFlagRouter,
   feedback: feedbackRouter,
@@ -56,5 +57,4 @@ export const viewerRouter = router({
   ooo: oooRouter,
   holidays: holidaysRouter,
   travelSchedules: travelSchedulesRouter,
-  teams: teamsRouter,
 });
