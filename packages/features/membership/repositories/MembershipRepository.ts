@@ -462,6 +462,31 @@ export class MembershipRepository {
     });
   }
 
+  async upsertAcceptedTeamMembership({ teamId, userId }: { teamId: number; userId: number }) {
+    return await this.prismaClient.membership.upsert({
+      where: {
+        userId_teamId: {
+          userId,
+          teamId,
+        },
+      },
+      update: {
+        accepted: true,
+      },
+      create: {
+        teamId,
+        userId,
+        role: MembershipRole.MEMBER,
+        accepted: true,
+      },
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+      },
+    });
+  }
+
   async acceptTeamMembership({ teamId, userId }: { teamId: number; userId: number }) {
     return await this.prismaClient.membership.update({
       where: {

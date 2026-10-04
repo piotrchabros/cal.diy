@@ -58,4 +58,27 @@ export class TeamRepository {
       },
     });
   }
+
+  async findTeamInviteTokensByEmail({ email }: { email: string }) {
+    return await this.prismaClient.verificationToken.findMany({
+      where: {
+        identifier: email.toLowerCase(),
+      },
+      select: {
+        id: true,
+        teamId: true,
+        token: true,
+        expires: true,
+      },
+    });
+  }
+
+  async deleteTeamInviteTokens({ teamId, email }: { teamId: number; email: string }) {
+    return await this.prismaClient.verificationToken.deleteMany({
+      where: {
+        teamId,
+        identifier: email.toLowerCase(),
+      },
+    });
+  }
 }

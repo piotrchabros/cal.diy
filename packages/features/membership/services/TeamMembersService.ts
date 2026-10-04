@@ -195,7 +195,7 @@ export class TeamMembersService {
     await this.sendInviteEmail({
       to: normalizedEmail,
       teamName: team.name,
-      joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
+      joinLink: `${WEBAPP_URL}/signup?token=${token}&callbackUrl=${encodeURIComponent(
         `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,
@@ -203,6 +203,28 @@ export class TeamMembersService {
       locale: "en",
     });
     return { status: "invited-new" as const, email: normalizedEmail };
+  }
+
+  async acceptPendingInvitesOnSignup({ userId, email }: { userId: number; email: string }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes("@")) {
+      return { status: "no-invites" as const, teamIds: [] as number[] };
+    }
+    const invites = await this.teamRepository.findTeamInviteTokensByEmail({ email: normalizedEmail });
+    const now = new Date();
+    const acceptedTeamIds = new Set<number>();
+    for (const invite of invites) {
+      if (invite.teamId === null || invite.expires <= now) {
+        continue;
+      }
+      await this.membershipRepository.upsertAcceptedTeamMembership({ teamId: invite.teamId, userId });
+      await this.teamRepository.deleteTeamInviteTokens({ teamId: invite.teamId, email: normalizedEmail });
+      acceptedTeamIds.add(invite.teamId);
+    }
+    return {
+      status: (acceptedTeamIds.size > 0 ? "accepted" : "no-invites") as "accepted" | "no-invites",
+      teamIds: [...acceptedTeamIds],
+    };
   }
 
   async acceptInvite({ teamId, userId }: { teamId: number; userId: number }) {
@@ -310,7 +332,7 @@ export class TeamMembersService {
     await this.sendInviteEmail({
       to: normalizedEmail,
       teamName: team.name,
-      joinLink: `${WEBAPP_URL}/signup?callbackUrl=${encodeURIComponent(
+      joinLink: `${WEBAPP_URL}/signup?token=${token.token}&callbackUrl=${encodeURIComponent(
         `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,
