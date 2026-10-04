@@ -212,18 +212,20 @@ export class TeamMembersService {
     }
     const invites = await this.teamRepository.findTeamInviteTokensByEmail({ email: normalizedEmail });
     const now = new Date();
-    const acceptedTeamIds = new Set<number>();
+    const acceptedTeamIds: number[] = [];
     for (const invite of invites) {
       if (invite.teamId === null || invite.expires <= now) {
         continue;
       }
       await this.membershipRepository.upsertAcceptedTeamMembership({ teamId: invite.teamId, userId });
       await this.teamRepository.deleteTeamInviteTokens({ teamId: invite.teamId, email: normalizedEmail });
-      acceptedTeamIds.add(invite.teamId);
+      if (!acceptedTeamIds.includes(invite.teamId)) {
+        acceptedTeamIds.push(invite.teamId);
+      }
     }
     return {
-      status: (acceptedTeamIds.size > 0 ? "accepted" : "no-invites") as "accepted" | "no-invites",
-      teamIds: [...acceptedTeamIds],
+      status: (acceptedTeamIds.length > 0 ? "accepted" : "no-invites") as "accepted" | "no-invites",
+      teamIds: acceptedTeamIds,
     };
   }
 
