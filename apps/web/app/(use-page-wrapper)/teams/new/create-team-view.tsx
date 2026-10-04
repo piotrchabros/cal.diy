@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import slugify from "@calcom/lib/slugify";
+import {
+  TEAM_LOGO_ACCEPTED_TYPES,
+  validateTeamLogoFile,
+} from "@calcom/features/teams/lib/validateTeamLogoFile";
 import { trpc } from "@calcom/trpc/react";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
@@ -14,9 +18,8 @@ import { TextField } from "@calcom/ui/components/form/inputs/TextField";
 import { showToast } from "@calcom/ui/components/toast";
 
 import { TeamPublicPreview } from "./team-public-preview";
+import { useTeamSlugAvailability } from "./use-team-slug-availability";
 
-const ACCEPTED_LOGO_TYPES = ["image/png", "image/jpeg", "image/gif"];
-const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 const URL_SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 export function CreateTeamView() {
@@ -33,8 +36,11 @@ export function CreateTeamView() {
 
   const normalizedSlug = slugify(slug);
   const isSlugValid = normalizedSlug.length > 0 && URL_SAFE_SLUG_PATTERN.test(normalizedSlug);
+  const { isAvailable: isSlugAvailable } = useTeamSlugAvailability(slug);
+  const slugFieldErrors =
+    isSlugValid && isSlugAvailable === false ? [t("url_taken")] : undefined;
   const canContinue =
-    name.trim().length > 0 && isSlugValid && !logoError;
+    name.trim().length > 0 && isSlugValid && isSlugAvailable !== false && !logoError;
 
   const createTeam = trpc.viewer.teams.create.useMutation({
     onSuccess: (team) => {
@@ -64,11 +70,12 @@ export function CreateTeamView() {
     if (!file) {
       return;
     }
-    if (!ACCEPTED_LOGO_TYPES.includes(file.type)) {
+    const logoError = validateTeamLogoFile(file);
+    if (logoError === "invalid-type") {
       setLogoError(t("team_logo_invalid_type"));
       return;
     }
-    if (file.size > MAX_LOGO_BYTES) {
+    if (logoError === "too-large") {
       setLogoError(t("team_logo_too_large"));
       return;
     }
@@ -118,7 +125,7 @@ export function CreateTeamView() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept={ACCEPTED_LOGO_TYPES.join(",")}
+                accept={TEAM_LOGO_ACCEPTED_TYPES.join(",")}
                 className="hidden"
                 onChange={handleLogoSelect}
                 aria-label={t("team_logo")}
@@ -146,6 +153,7 @@ export function CreateTeamView() {
               value={slug}
               onChange={handleSlugChange}
               addOnLeading={<span className="text-subtle">cal.eu/team/</span>}
+              hintErrors={slugFieldErrors}
             />
           </div>
 
