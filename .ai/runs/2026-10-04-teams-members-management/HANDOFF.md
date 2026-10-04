@@ -1,25 +1,26 @@
 # Handoff — 2026-10-04-teams-members-management
 
-**Last updated:** 2026-10-04T15:35:00Z
+**Last updated:** 2026-10-04T16:00:00Z
 **Branch:** feat/teams-members-management
-**PR:** not yet opened
-**Current phase/step:** Phase 1 Step 1.1
-**Last commit:** — (plan only)
+**PR:** https://github.com/piotrchabros/cal.diy/pull/9 (draft, lock held)
+**Current phase/step:** Phase 2 Step 2.1
+**Last commit:** c965816 — feat(teams): add viewer.teams invite, role, remove and resend mutations
 
 ## What just happened
-- Claimed issue #4 (assignee + in-progress + claim comment).
-- Created isolated worktree + branch from origin/develop; wrote PLAN.md.
+- Phase 1 complete: TeamMembersService + Membership/Team/User repository methods (b3843d2),
+  viewer.teams get/listMembers router (d37b3aa), invite/accept/updateRole/remove/resendInvite
+  mutations + tests (c965816). Checkpoint-1 verification green (tsc 0 errors, 16/16 tests).
 
 ## Next concrete action
-- Commit run folder, push, open draft PR with `Fixes #4`, claim PR lock; then Step 1.1.
+- Step 2.1: members page.tsx (server, permission-gated) + client shell with loading/empty/error states.
 
 ## Blockers / open questions
 - none
 
 ## Environment caveats
-- Dev runtime runnable: unknown (deps install pending in worktree)
-- Browser / UI checks: skipped — no browser harness in this environment (reason logged)
-- Database/migration state: clean — no schema changes planned
+- Dev runtime runnable: yes (deps installed, vitest + tsc run)
+- Browser / UI checks: skipped — no browser harness in this environment (static blind A/B in 3.1)
+- Database/migration state: clean — no schema changes
 
 ## Worktree
 - Path: /root/cal.diy/.ai/tmp/om-auto-create-pr-loop/teams-members-management-20261004-151307
