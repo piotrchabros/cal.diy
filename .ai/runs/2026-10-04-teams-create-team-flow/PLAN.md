@@ -13,7 +13,7 @@ https://raw.githubusercontent.com/piotrchabros/cal.diy/qa-evidence-teams/teams-e
 | 1 | 1.1 | TeamCreationService (service-layer logic, ErrorWithCode, select) + unit tests | inline | done | feat(teams): add TeamCreationService with slug validation |
 | 1 | 1.2 | tRPC viewer.teams router (create + isSlugAvailable) + register in viewer/_router | inline | done | feat(teams): add viewer.teams create/isSlugAvailable endpoints |
 | 2 | 2.1 | i18n strings for create-team flow | inline | done | feat(teams): add create-team i18n strings |
-| 2 | 2.2 | teams/new page.tsx (permission check) + CreateTeamForm client component | inline | todo | feat(teams): add teams/new create-team form page |
+| 2 | 2.2 | teams/new page.tsx (permission check) + CreateTeamForm client component + preview | inline | done | feat(teams): add teams/new create-team form page |
 | 2 | 2.3 | TeamPublicPreview panel + live validation wiring (slug check, logo rules) | inline | todo | feat(teams): add public preview panel and live validation |
 | 3 | 3.1 | Gauntlet-loop UI polish vs bar (builder + harsh critic, blind A/B) | inline | todo | feat(teams): polish create-team UI to match reference bar |
 | 3 | 3.2 | Final gate (type-check, lint, tests) + review fixes | inline | todo | test(teams): final gate fixes for create-team flow |
