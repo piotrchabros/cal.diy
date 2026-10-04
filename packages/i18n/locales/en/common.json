@@ -819,6 +819,8 @@
   "add_social_link": "Add social link",
   "social_platform": "Platform",
   "social_url": "URL",
+  "team_deleted_successfully": "Team deleted successfully",
+  "error_disbanding_team": "Something went wrong when disbanding the team",
   "members": "Members",
   "organization_members": "Organization members",
   "member": "Member",

@@ -21,6 +21,7 @@ import { revalidateSettingsTeamProfile } from "app/cache/path/settings/my-teams"
 import { useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
+import TeamDangerZone from "./team-danger-zone";
 
 type TeamProfile = RouterOutputs["viewer"]["teams"]["getProfile"];
 
@@ -237,6 +238,7 @@ const TeamProfileView = ({ team }: { team: TeamProfile }) => {
           </Button>
         </SectionBottomActions>
       </Form>
+      <TeamDangerZone teamId={team.id} role={team.role} />
     </SettingsHeader>
   );
 };
