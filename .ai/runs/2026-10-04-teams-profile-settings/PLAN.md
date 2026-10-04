@@ -17,10 +17,9 @@ Team owner/admin can edit the team's public profile (logo, name, URL slug, about
 
 | Phase | Step | Title | Exec | Status | Commit |
 |-------|------|-------|------|--------|--------|
-| 1 | 1.1 | tRPC viewer teams router: get team profile (select-only) + schemas | inline | todo | — |
-| 1 | 1.2 | updateTeamProfile mutation (name/slug uniqueness/bio/logo/location/socials) + handler tests | inline | todo | — |
-| 1 | 1.3 | disbandTeam owner-only mutation + tests | inline | todo | — |
-| 1 | 1.4 | Wire teams router into viewer _router | inline | todo | — |
+| 1 | 1.1 | tRPC viewer teams router: schemas + TeamProfileService (get/update/disband) + handlers | inline | done | — |
+| 1 | 1.2 | TeamProfileService unit tests (permissions, slug uniqueness, owner-only disband) | inline | todo | — |
+| 1 | 1.3 | Wire teamsRouter into viewer _router + backend typecheck | inline | todo | — |
 | 2 | 2.1 | page.tsx route settings/my-teams/[id]/profile (permission checks) + skeleton/loading-error states | inline | todo | — |
 | 2 | 2.2 | TeamProfileView form card + i18n strings | inline | todo | — |
 | 2 | 2.3 | Danger zone card + Disband confirm modal (owner-only) | inline | todo | — |
