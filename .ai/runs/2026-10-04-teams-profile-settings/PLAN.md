@@ -24,7 +24,7 @@ Team owner/admin can edit the team's public profile (logo, name, URL slug, about
 | 2 | 2.2 | TeamProfileView form card + i18n strings | inline | done | — |
 | 2 | 2.3 | Danger zone card + Disband confirm modal (owner-only) | inline | done | — |
 | 2 | 2.4 | Sidebar My-teams nav entry | inline | done | — |
-| 3 | 3.1 | Gauntlet-loop UI pass vs reference (builder + harsh critic, blind A/B) | inline | todo | — |
+| 3 | 3.1 | Gauntlet-loop UI pass vs reference (builder + harsh critic, blind A/B) | inline | done | — |
 | 3 | 3.2 | Final gate: type-check + lint + tests, review fixes | inline | todo | — |
 
 ## Design notes

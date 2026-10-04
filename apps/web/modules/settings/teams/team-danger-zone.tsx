@@ -46,11 +46,7 @@ const TeamDangerZone = ({ teamId, role }: TeamDangerZoneProps) => {
       <Dialog open={disbandOpen} onOpenChange={setDisbandOpen}>
         <SectionBottomActions align="end">
           <DialogTrigger asChild>
-            <Button
-              data-testid="disband-team"
-              color="destructive"
-              className="mt-1"
-              StartIcon="trash-2">
+            <Button data-testid="disband-team" color="destructive" className="mt-1" StartIcon="trash-2">
               {t("disband_team")}
             </Button>
           </DialogTrigger>
