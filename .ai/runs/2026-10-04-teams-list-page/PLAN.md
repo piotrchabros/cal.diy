@@ -10,10 +10,13 @@
 | Phase | Step | Title | Exec | Status | Commit |
 |-------|------|-------|------|--------|--------|
 | 1 | 1.1 | Run folder + PLAN/HANDOFF/NOTIFY | inline | done | docs(runs): add execution plan for teams-list-page |
-| 2 | 2.1 | Teams entry in shell navigation | inline | todo | feat(teams): add Teams to shell navigation |
-| 2 | 2.2 | Teams list route (page + loading + error) with Prisma select | inline | todo | feat(teams): add teams list page route with auth guard |
-| 2 | 2.3 | Team cards UI (avatar, badge, copy, menu, tip, empty state) | inline | todo | feat(teams): add team cards listing UI |
-| 3 | 3.1 | Unit tests + type-check/lint gate | inline | todo | test(teams): cover teams list helpers |
+| 2 | 2.1 | Teams entry in shell navigation | inline | done | feat(teams): add Teams to shell navigation |
+| 2 | 2.2 | Teams list route (page + loading + error) with Prisma select | inline | done | feat(teams): add teams list page route with auth guard |
+| 2 | 2.3 | Team cards UI (avatar, badge, copy, menu, tip, empty state) | inline | done | feat(teams): add team cards listing UI |
+| 3 | 3.1 | Unit tests + type-check/lint gate | inline | done | test(teams): cover teams list helpers |
+| 3 | 3.2 | Biome formatting fixes | inline | done | style(teams): apply Biome formatting |
+| 3 | 3.3 | MembershipRole import fix (type-check) | inline | done | fix(teams): import MembershipRole from prisma enums |
+| 3 | 3.4 | Mobile role-label consistency (critic pass) | inline | done | fix(teams): always show member role label on small screens |
 
 ## Goal
 
