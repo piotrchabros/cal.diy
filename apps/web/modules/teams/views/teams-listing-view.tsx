@@ -70,7 +70,7 @@ function TeamCard({ team }: { team: TeamsListTeam }): ReactElement {
           <p className="text-subtle truncate text-sm">{team.slug ?? team.bio ?? ""}</p>
         )}
       </div>
-      <span className={isOwner ? "text-info text-sm font-medium" : "text-subtle hidden text-sm sm:block"}>
+      <span className={isOwner ? "text-info text-sm font-medium" : "text-subtle text-sm"}>
         {roleLabel(team.role, t)}
       </span>
       <div className="border-subtle flex shrink-0 items-center rounded-lg border">
