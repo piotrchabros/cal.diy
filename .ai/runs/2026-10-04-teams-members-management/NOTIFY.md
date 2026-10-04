@@ -27,3 +27,7 @@
 ## 2026-10-04T18:05:00Z — Step 3.2 landed
 - Code fix commit 5cbe7b5 (amended from 6d40831 to record plan SHAs; PLAN Commit column points at the pre-amend object of the same tree — final pushed SHA is 5cbe7b5)
 - Pushing to origin/feat/teams-members-management next; full suite re-run on final tree follows
+
+## 2026-10-04T18:15:00Z — Step 3.3 (review hardening)
+- `viewer.teams.get` returned basic team info to any authenticated user; scoped to accepted members via new `TeamMembersService.getTeam` (service unit tests + handler forwarding test)
+- All PLAN Tasks rows now done
