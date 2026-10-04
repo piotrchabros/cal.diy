@@ -102,6 +102,43 @@ describe("TeamMembersService", () => {
     });
   });
 
+  describe("getTeam", () => {
+    const buildService = (membership: unknown, teamResult: unknown) => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(membership),
+      });
+      const teamRepo = makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(teamResult) });
+      return new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+    };
+
+    it("returns basic team info for an accepted member", async () => {
+      const service = buildService(adminMembership, team);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 9 })).resolves.toEqual(team);
+    });
+
+    it("rejects viewers without an accepted membership", async () => {
+      const service = buildService(null, team);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 42 })).rejects.toBeInstanceOf(
+        ErrorWithCode
+      );
+    });
+
+    it("throws NotFound when the team does not exist", async () => {
+      const service = buildService(adminMembership, null);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 9 })).rejects.toBeInstanceOf(
+        ErrorWithCode
+      );
+    });
+  });
+
   describe("inviteMember", () => {
     it("creates a pending membership and emails an existing user", async () => {
       const membershipRepo = makeMembershipRepo({

@@ -83,6 +83,15 @@ export class TeamMembersService {
     return membership;
   }
 
+  async getTeam({ teamId, viewerId }: { teamId: number; viewerId: number }) {
+    await this.requireTeamMembership(teamId, viewerId);
+    const team = await this.teamRepository.findBasicById({ teamId });
+    if (!team) {
+      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
+    }
+    return team;
+  }
+
   async listMyTeams({ userId }: { userId: number }) {
     const memberships = await this.membershipRepository.findAcceptedTeamsByUserId({ userId });
     return memberships.map((membership) => ({

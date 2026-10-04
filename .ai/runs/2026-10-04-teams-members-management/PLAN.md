@@ -19,6 +19,7 @@ Base: `develop` → branch `feat/teams-members-management`
 | 2 | 2.4 | Sidebar My-teams nav + i18n strings | inline | done | 9f024e2 |
 | 3 | 3.1 | Gauntlet UI pass vs reference bar (harsh critic + fixes) | inline | done | b5e2339 |
 | 3 | 3.2 | Final gate + review fixes | inline | done | 5cbe7b5 |
+| 3 | 3.3 | Review fix: scope viewer.teams.get to team members | inline | todo | — |
 
 ## Goal
 
