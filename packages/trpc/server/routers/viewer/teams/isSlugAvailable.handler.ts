@@ -1,5 +1,4 @@
 import { TeamCreationService } from "@calcom/features/teams/services/TeamCreationService";
-
 import type { TIsSlugAvailableInputSchema } from "./isSlugAvailable.schema";
 
 type IsSlugAvailableHandlerOptions = {

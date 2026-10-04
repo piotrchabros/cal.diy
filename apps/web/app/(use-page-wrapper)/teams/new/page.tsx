@@ -1,10 +1,8 @@
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
+import { _generateMetadata } from "app/_utils";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { _generateMetadata } from "app/_utils";
-
 import { CreateTeamView } from "./create-team-view";
 
 export const generateMetadata = async () => {

@@ -2,7 +2,6 @@ import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { describe, expect, it } from "vitest";
-
 import { TeamCreationService } from "./TeamCreationService";
 
 describe("TeamCreationService", () => {
@@ -58,9 +57,7 @@ describe("TeamCreationService", () => {
       const membership = await prismock.membership.findFirst({
         where: { teamId: team.id, userId: user.id },
       });
-      expect(membership).toEqual(
-        expect.objectContaining({ role: MembershipRole.OWNER, accepted: true })
-      );
+      expect(membership).toEqual(expect.objectContaining({ role: MembershipRole.OWNER, accepted: true }));
     });
 
     it("throws when the slug is already taken", async () => {

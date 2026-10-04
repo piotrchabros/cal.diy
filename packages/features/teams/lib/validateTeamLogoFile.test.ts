@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-
-import {
-  TEAM_LOGO_MAX_BYTES,
-  validateTeamLogoFile,
-} from "./validateTeamLogoFile";
+import { TEAM_LOGO_MAX_BYTES, validateTeamLogoFile } from "./validateTeamLogoFile";
 
 describe("validateTeamLogoFile", () => {
   it("accepts a PNG within the size limit", () => {
@@ -16,9 +12,7 @@ describe("validateTeamLogoFile", () => {
   });
 
   it("rejects files larger than 5MB", () => {
-    expect(validateTeamLogoFile({ type: "image/jpeg", size: TEAM_LOGO_MAX_BYTES + 1 })).toBe(
-      "too-large"
-    );
+    expect(validateTeamLogoFile({ type: "image/jpeg", size: TEAM_LOGO_MAX_BYTES + 1 })).toBe("too-large");
   });
 
   it("accepts a file exactly at the size limit", () => {

@@ -98,9 +98,7 @@ export class TeamCreationService {
     }
 
     if (!(await TeamCreationService.isSlugAvailable(slug))) {
-      throw ErrorWithCode.Factory.BadRequest(
-        `Unable to create team: team URL "${slug}" is already taken`
-      );
+      throw ErrorWithCode.Factory.BadRequest(`Unable to create team: team URL "${slug}" is already taken`);
     }
 
     const team = await prisma.team.create({

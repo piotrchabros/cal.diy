@@ -1,9 +1,7 @@
-import { ArrowLeft, ArrowRight, Lock, MoreVertical, RotateCw } from "lucide-react";
-
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
-
+import { ArrowLeft, ArrowRight, Lock, MoreVertical, RotateCw } from "lucide-react";
 import { CREATE_TEAM_PREVIEW_EVENTS } from "./create-team-preview-events";
 
 type TeamPublicPreviewProps = {

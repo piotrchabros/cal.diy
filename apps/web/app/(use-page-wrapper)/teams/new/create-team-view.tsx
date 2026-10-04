@@ -1,22 +1,20 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-
-import { APP_NAME } from "@calcom/lib/constants";
-import { useLocale } from "@calcom/lib/hooks/useLocale";
-import slugify from "@calcom/lib/slugify";
 import {
   TEAM_LOGO_ACCEPTED_TYPES,
   validateTeamLogoFile,
 } from "@calcom/features/teams/lib/validateTeamLogoFile";
+import { APP_NAME } from "@calcom/lib/constants";
+import { useLocale } from "@calcom/lib/hooks/useLocale";
+import slugify from "@calcom/lib/slugify";
 import { trpc } from "@calcom/trpc/react";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
 import { TextAreaField } from "@calcom/ui/components/form/inputs/Input";
 import { TextField } from "@calcom/ui/components/form/inputs/TextField";
 import { showToast } from "@calcom/ui/components/toast";
-
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 import { TeamPublicPreview } from "./team-public-preview";
 import { useTeamSlugAvailability } from "./use-team-slug-availability";
 
@@ -37,10 +35,8 @@ export function CreateTeamView() {
   const normalizedSlug = slugify(slug);
   const isSlugValid = normalizedSlug.length > 0 && URL_SAFE_SLUG_PATTERN.test(normalizedSlug);
   const { isAvailable: isSlugAvailable } = useTeamSlugAvailability(slug);
-  const slugFieldErrors =
-    isSlugValid && isSlugAvailable === false ? [t("url_taken")] : undefined;
-  const canContinue =
-    name.trim().length > 0 && isSlugValid && isSlugAvailable !== false && !logoError;
+  const slugFieldErrors = isSlugValid && isSlugAvailable === false ? [t("url_taken")] : undefined;
+  const canContinue = name.trim().length > 0 && isSlugValid && isSlugAvailable !== false && !logoError;
 
   const createTeam = trpc.viewer.teams.create.useMutation({
     onSuccess: (team) => {
@@ -158,7 +154,13 @@ export function CreateTeamView() {
           </div>
 
           <div className="mt-4">
-            <TextAreaField name="team_bio" label={t("team_bio")} rows={4} value={bio} onChange={(e) => setBio(e.target.value)} />
+            <TextAreaField
+              name="team_bio"
+              label={t("team_bio")}
+              rows={4}
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+            />
           </div>
 
           <div className="mt-6 flex justify-end gap-2">

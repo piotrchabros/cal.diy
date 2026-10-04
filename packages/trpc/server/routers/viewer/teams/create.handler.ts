@@ -2,9 +2,8 @@ import { TeamCreationService } from "@calcom/features/teams/services/TeamCreatio
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { getHttpStatusCode } from "@calcom/lib/server/getServerErrorFromUnknown";
 import { httpStatusToTrpcCode } from "@calcom/trpc/server/lib/toTRPCError";
-import type { TrpcSessionUser } from "../../../types";
 import { TRPCError } from "@trpc/server";
-
+import type { TrpcSessionUser } from "../../../types";
 import type { TCreateInputSchema } from "./create.schema";
 
 type CreateHandlerOptions = {
