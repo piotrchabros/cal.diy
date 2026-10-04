@@ -10,11 +10,11 @@ import slugify from "@calcom/lib/slugify";
 import { trpc } from "@calcom/trpc/react";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
-import { TextAreaField } from "@calcom/ui/components/form/inputs/Input";
-import { TextField } from "@calcom/ui/components/form/inputs/TextField";
+import { TextAreaField, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { TeamLogoSilhouette } from "./team-logo-silhouette";
 import { TeamPublicPreview } from "./team-public-preview";
 import { useTeamSlugAvailability } from "./use-team-slug-availability";
 
@@ -113,7 +113,7 @@ export function CreateTeamView() {
                 size="lg"
                 alt={name.trim() || t("team_logo")}
                 imageSrc={logoDataUrl ?? undefined}
-                fallback={<span className="text-lg font-semibold">{(name.trim() || "T").charAt(0)}</span>}
+                fallback={<TeamLogoSilhouette className="h-10 w-10" />}
               />
               <Button type="button" color="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
                 {t("upload")}
@@ -157,6 +157,7 @@ export function CreateTeamView() {
             <TextAreaField
               name="team_bio"
               label={t("team_bio")}
+              placeholder={t("team_bio_placeholder")}
               rows={4}
               value={bio}
               onChange={(e) => setBio(e.target.value)}
@@ -173,7 +174,7 @@ export function CreateTeamView() {
           </div>
         </div>
 
-        <TeamPublicPreview name={name} bio={bio} slug={normalizedSlug} logoDataUrl={logoDataUrl} />
+        <TeamPublicPreview name={name} bio={bio} slug={normalizedSlug} />
       </form>
     </div>
   );

@@ -1,5 +1,4 @@
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
 import { ArrowLeft, ArrowRight, Lock, MoreVertical, RotateCw } from "lucide-react";
 import { CREATE_TEAM_PREVIEW_EVENTS } from "./create-team-preview-events";
@@ -8,16 +7,15 @@ type TeamPublicPreviewProps = {
   name: string;
   bio: string;
   slug: string;
-  logoDataUrl: string | null;
 };
 
-export function TeamPublicPreview({ name, bio, slug, logoDataUrl }: TeamPublicPreviewProps) {
+export function TeamPublicPreview({ name, bio, slug }: TeamPublicPreviewProps) {
   const { t } = useLocale();
   const displayName = name.trim() || t("your_name");
   const displayBio = bio.trim() || t("add_your_bio_here");
 
   return (
-    <div className="overflow-hidden rounded-xl border border-subtle bg-default">
+    <div className="flex flex-col overflow-hidden rounded-xl border border-subtle bg-default">
       <div className="flex items-center gap-1.5 border-b border-subtle px-3 py-2">
         <ArrowLeft className="h-3.5 w-3.5 text-subtle" aria-hidden />
         <ArrowRight className="h-3.5 w-3.5 text-subtle" aria-hidden />
@@ -28,19 +26,11 @@ export function TeamPublicPreview({ name, bio, slug, logoDataUrl }: TeamPublicPr
         </div>
         <MoreVertical className="h-3.5 w-3.5 shrink-0 text-subtle" aria-hidden />
       </div>
-      <div className="bg-subtle p-4">
-        <div className="overflow-hidden rounded-xl border border-subtle bg-default">
-          <div className="flex items-center gap-3 border-b border-subtle p-5">
-            <Avatar
-              size="md"
-              alt={displayName}
-              imageSrc={logoDataUrl ?? undefined}
-              fallback={<span className="text-sm font-semibold">{displayName.charAt(0)}</span>}
-            />
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{displayName}</p>
-              <p className="truncate text-sm italic text-subtle">{displayBio}</p>
-            </div>
+      <div className="flex flex-1 flex-col bg-subtle px-4 pb-0 pt-4">
+        <div className="flex-1 overflow-hidden rounded-xl rounded-b-none border border-b-0 border-subtle bg-default">
+          <div className="border-b border-subtle p-5">
+            <p className="truncate font-semibold">{displayName}</p>
+            <p className="truncate text-sm italic text-subtle">{displayBio}</p>
           </div>
           <ul className="divide-y divide-subtle">
             {CREATE_TEAM_PREVIEW_EVENTS.map((event) => {
