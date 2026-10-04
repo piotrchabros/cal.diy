@@ -186,7 +186,7 @@ export default async function handler(body: Record<string, string>) {
         userId: createdUser.id,
         email: userEmail,
       });
-    } catch (error) {
+    } catch {
       logger.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });
     }
 

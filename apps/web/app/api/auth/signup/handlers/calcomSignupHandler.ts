@@ -277,7 +277,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
     }
     try {
       await new TeamMembersService().acceptPendingInvitesOnSignup({ userId: createdUser.id, email });
-    } catch (error) {
+    } catch {
       log.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });
     }
     if (process.env.AVATARAPI_USERNAME && process.env.AVATARAPI_PASSWORD) {
