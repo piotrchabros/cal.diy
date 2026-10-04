@@ -10,8 +10,8 @@ Base: `develop` → branch `feat/teams-members-management`
 
 | Phase | Step | Title | Exec | Status | Commit |
 |-------|------|-------|------|--------|--------|
-| 1 | 1.1 | TeamMembers service + repository methods + unit tests | inline | done | — |
-| 1 | 1.2 | tRPC teams router: get + listMembers, wired into viewer router | inline | todo | — |
+| 1 | 1.1 | TeamMembers service + repository methods + unit tests | inline | done | b3843d2 |
+| 1 | 1.2 | tRPC teams router: get + listMembers, wired into viewer router | inline | done | — |
 | 1 | 1.3 | tRPC mutations: invite, updateRole, remove, resendInvite + tests | inline | todo | — |
 | 2 | 2.1 | Members page.tsx (server, permission-gated) + client shell states | inline | todo | — |
 | 2 | 2.2 | Toolbar (search/filter/display) + table + badges + pagination | inline | todo | — |

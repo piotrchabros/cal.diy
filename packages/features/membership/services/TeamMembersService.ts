@@ -4,6 +4,7 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import { getTranslation } from "@calcom/i18n/server";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { randomBytes } from "node:crypto";
 
@@ -59,7 +60,7 @@ export class TeamMembersService {
   constructor(
     private readonly membershipRepository: MembershipRepository = new MembershipRepository(),
     private readonly teamRepository: TeamRepository = new TeamRepository(),
-    private readonly userRepository: UserRepository = new UserRepository(),
+    private readonly userRepository: UserRepository = new UserRepository(prisma),
     private readonly sendInviteEmail: SendTeamMemberInviteEmail = defaultSendInviteEmail
   ) {}
 
