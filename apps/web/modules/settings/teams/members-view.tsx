@@ -435,20 +435,20 @@ function MembersView({ teamId, viewerId: _viewerId, canManage, isPendingInvite }
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-              {data.items.map((item) => (
-                <MemberRow
-                  key={item.id}
-                  teamId={teamId}
-                  item={item}
-                  selected={selectedIds.has(item.user.id)}
-                  onToggle={() => toggleMember(item.user.id)}
-                  showRole={showRole}
-                  showLastActive={showLastActive}
-                  canManage={canManage}
-                  onChanged={invalidateList}
-                />
-              ))}
-            </Table.Body>
+                {data.items.map((item) => (
+                  <MemberRow
+                    key={item.id}
+                    teamId={teamId}
+                    item={item}
+                    selected={selectedIds.has(item.user.id)}
+                    onToggle={() => toggleMember(item.user.id)}
+                    showRole={showRole}
+                    showLastActive={showLastActive}
+                    canManage={canManage}
+                    onChanged={invalidateList}
+                  />
+                ))}
+              </Table.Body>
           </Table>
           <Pagination
             currentPage={page}

@@ -78,7 +78,6 @@ export default function MemberRowActions({
   });
 
   const displayName = item.user.name || item.user.email;
-  const isPending = updateRoleMutation.isPending || removeMutation.isPending;
 
   return (
     <>
@@ -88,7 +87,7 @@ export default function MemberRowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           {[MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER]
-            .filter((role) => role !== item.role || !item.accepted)
+            .filter((role) => role !== item.role)
             .map((role) => (
               <DropdownMenuItem key={role}>
                 <DropdownItem type="button" onClick={() => setConfirm({ type: "role", role })}>
@@ -152,7 +151,6 @@ export default function MemberRowActions({
           </ConfirmationDialogContent>
         )}
       </Dialog>
-      {isPending && <span className="sr-only">{t("loading")}</span>}
     </>
   );
 }
