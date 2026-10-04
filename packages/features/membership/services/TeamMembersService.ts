@@ -82,8 +82,15 @@ export class TeamMembersService {
     return membership;
   }
 
-  async listMembers({ teamId, viewerId, search, roles, page = 1, pageSize = 10 }: ListTeamMembersInput) {
-    await this.requireTeamMembership(teamId, viewerId);
+  async listMyTeams({ userId }: { userId: number }) {
+    const memberships = await this.membershipRepository.findAcceptedTeamsByUserId({ userId });
+    return memberships.map((membership) => ({
+      role: membership.role,
+      ...membership.team,
+    }));
+  }
+
+  async listMembers({ teamId, viewerId, search, roles, page = 1, pageSize = 10 }: ListTeamMembersInput) {    await this.requireTeamMembership(teamId, viewerId);
     const team = await this.teamRepository.findBasicById({ teamId });
     if (!team) {
       throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);

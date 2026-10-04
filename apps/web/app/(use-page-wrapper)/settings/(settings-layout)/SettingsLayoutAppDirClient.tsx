@@ -278,6 +278,9 @@ const useTabs = ({
 }) => {
   const session = useSession();
   const { data: user } = trpc.viewer.me.get.useQuery({ includePasswordAdded: true });
+  const { data: myTeams } = trpc.viewer.teams.myTeams.useQuery(undefined, {
+    staleTime: 60_000,
+  });
   const orgBranding = null as { id?: number; slug?: string; name?: string; logoUrl?: string | null } | null;
   const isAdmin = session.data?.user.role === UserPermissionRole.ADMIN;
 
@@ -366,6 +369,19 @@ const useTabs = ({
     });
 
     // check if name is in adminRequiredKeys
+    if (myTeams?.length) {
+      processedTabs.push({
+        name: "my_teams",
+        href: "/settings/teams",
+        icon: "users",
+        children: myTeams.map((team) => ({
+          name: team.name,
+          href: `/settings/teams/${team.id}/members`,
+          trackingMetadata: { section: "my_teams", page: "members" },
+        })),
+      });
+    }
+
     return processedTabs.filter((tab) => {
       if (organizationRequiredKeys.includes(tab.name)) return !!orgBranding;
       if (tab.name === "other_teams" && !permissions?.canUpdateOrganization) return false;
@@ -373,7 +389,7 @@ const useTabs = ({
       if (isAdmin) return true;
       return !adminRequiredKeys.includes(tab.name);
     });
-  }, [isAdmin, orgBranding, user, isDelegationCredentialEnabled, isPbacEnabled, permissions]);
+  }, [isAdmin, orgBranding, user, myTeams, isDelegationCredentialEnabled, isPbacEnabled, permissions]);
 
   return processTabsMemod;
 };

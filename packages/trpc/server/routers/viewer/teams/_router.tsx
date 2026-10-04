@@ -17,6 +17,10 @@ export const teamsRouter = router({
     const handler = (await import("./listMembers.handler")).listMembersHandler;
     return handler({ ctx, input });
   }),
+  myTeams: authedProcedure.query(async ({ ctx }) => {
+    const handler = (await import("./myTeams.handler")).myTeamsHandler;
+    return handler({ ctx });
+  }),
   inviteMember: authedProcedure.input(ZTeamInviteMemberSchema).mutation(async ({ ctx, input }) => {
     const handler = (await import("./inviteMember.handler")).inviteMemberHandler;
     return handler({ ctx, input });

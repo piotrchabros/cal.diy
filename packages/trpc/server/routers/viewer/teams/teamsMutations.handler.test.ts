@@ -8,6 +8,7 @@ import { TeamMembersService } from "@calcom/features/membership/services/TeamMem
 import { acceptInviteHandler } from "./acceptInvite.handler";
 import { inviteMemberHandler } from "./inviteMember.handler";
 import { listMembersHandler } from "./listMembers.handler";
+import { myTeamsHandler } from "./myTeams.handler";
 import { removeMemberHandler } from "./removeMember.handler";
 import { resendInviteHandler } from "./resendInvite.handler";
 import { updateRoleHandler } from "./updateRole.handler";
@@ -27,6 +28,7 @@ const mockCtx = {
 describe("viewer.teams mutation handlers", () => {
   const serviceMock = {
     listMembers: vi.fn(),
+    listMyTeams: vi.fn(),
     inviteMember: vi.fn(),
     acceptInvite: vi.fn(),
     updateMemberRole: vi.fn(),
@@ -102,6 +104,15 @@ describe("viewer.teams mutation handlers", () => {
       requesterName: "Piotr Chabros",
       email: "ada@example.com",
     });
+  });
+
+  it("myTeams lists the session user's teams", async () => {
+    serviceMock.listMyTeams.mockResolvedValue([{ id: 7, name: "BlueBee" }]);
+
+    const result = await myTeamsHandler({ ctx: mockCtx });
+
+    expect(result).toEqual([{ id: 7, name: "BlueBee" }]);
+    expect(serviceMock.listMyTeams).toHaveBeenCalledWith({ userId: 9 });
   });
 
   it("listMembers forwards viewer and filters", async () => {

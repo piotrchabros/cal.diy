@@ -15,8 +15,8 @@ Base: `develop` → branch `feat/teams-members-management`
 | 1 | 1.3 | tRPC mutations: invite, updateRole, remove, resendInvite + tests | inline | done | c965816 |
 | 2 | 2.1 | Members page.tsx (server, permission-gated) + client shell states | inline | done | 2e2e7d6 |
 | 2 | 2.2 | Toolbar (search/filter/display) + table + badges + pagination | inline | done | 57d69f9 |
-| 2 | 2.3 | Invite dialog + row actions (role change/remove/resend) | inline | done | — |
-| 2 | 2.4 | Sidebar My-teams nav + i18n strings | inline | todo | — |
+| 2 | 2.3 | Invite dialog + row actions (role change/remove/resend) | inline | done | 4dad70a |
+| 2 | 2.4 | Sidebar My-teams nav + i18n strings | inline | done | — |
 | 3 | 3.1 | Gauntlet UI pass vs reference bar (harsh critic + fixes) | inline | todo | — |
 | 3 | 3.2 | Final gate + review fixes | inline | todo | — |
 

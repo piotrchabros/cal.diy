@@ -285,4 +285,27 @@ describe("TeamMembersService", () => {
       expect(result).toEqual({ status: "accepted" });
     });
   });
+
+  describe("listMyTeams", () => {
+    it("returns accepted teams flattened with roles", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findAcceptedTeamsByUserId: vi.fn().mockResolvedValue([
+          { role: MembershipRole.OWNER, team: { id: 7, name: "BlueBee", slug: "bluebee", logoUrl: null } },
+        ]),
+      });
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        makeTeamRepo() as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+
+      const result = await service.listMyTeams({ userId: 9 });
+
+      expect(result).toEqual([
+        { role: MembershipRole.OWNER, id: 7, name: "BlueBee", slug: "bluebee", logoUrl: null },
+      ]);
+      expect(membershipRepo.findAcceptedTeamsByUserId).toHaveBeenCalledWith({ userId: 9 });
+    });
+  });
 });
