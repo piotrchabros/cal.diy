@@ -78,7 +78,7 @@ export const OnboardingView = ({ userEmail }: OnboardingViewProps) => {
       if (selectedPlan === "organization") {
         router.push("/onboarding/organization/details");
       } else if (selectedPlan === "team") {
-        router.push("/onboarding/teams/details");
+        router.push("/teams/new");
       } else if (selectedPlan === "personal") {
         router.push("/onboarding/personal/settings");
       }

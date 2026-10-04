@@ -4,7 +4,7 @@ import {
   TEAM_LOGO_ACCEPTED_TYPES,
   validateTeamLogoFile,
 } from "@calcom/features/teams/lib/validateTeamLogoFile";
-import { APP_NAME } from "@calcom/lib/constants";
+import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import slugify from "@calcom/lib/slugify";
 import { trpc } from "@calcom/trpc/react";
@@ -33,6 +33,7 @@ export function CreateTeamView() {
   const [logoError, setLogoError] = useState<string | null>(null);
 
   const normalizedSlug = slugify(slug);
+  const teamUrlHost = WEBAPP_URL.replace(/^https?:\/\//, "");
   const isSlugValid = normalizedSlug.length > 0 && URL_SAFE_SLUG_PATTERN.test(normalizedSlug);
   const { isAvailable: isSlugAvailable } = useTeamSlugAvailability(slug);
   const slugFieldErrors = isSlugValid && isSlugAvailable === false ? [t("url_taken")] : undefined;
@@ -40,7 +41,7 @@ export function CreateTeamView() {
 
   const createTeam = trpc.viewer.teams.create.useMutation({
     onSuccess: (team) => {
-      router.push(`/team/${team.slug}`);
+      router.push(`/settings/my-teams/${team.id}/profile`);
     },
     onError: (error) => {
       showToast(error.message, "error");
@@ -148,7 +149,7 @@ export function CreateTeamView() {
               placeholder={t("team_url_placeholder")}
               value={slug}
               onChange={handleSlugChange}
-              addOnLeading={<span className="text-subtle">cal.eu/team/</span>}
+              addOnLeading={<span className="text-subtle">{teamUrlHost}/team/</span>}
               hintErrors={slugFieldErrors}
             />
           </div>

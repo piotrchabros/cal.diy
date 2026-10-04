@@ -26,6 +26,7 @@ export const ENDPOINTS = [
   "public",
   "timezones",
   "slots",
+  "teams",
   "travelSchedules",
   "users",
   "viewer",

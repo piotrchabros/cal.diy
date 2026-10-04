@@ -1,5 +1,6 @@
 "use client";
 
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import {
@@ -149,7 +150,7 @@ export function TeamsListingView({ teams }: { teams: TeamsListTeam[] }): ReactEl
       )}
       <p className="text-subtle mt-6 flex items-center justify-center gap-1.5 text-center text-sm">
         <Icon name="info" className="h-4 w-4 shrink-0" />
-        <span>{t("teams_list_tip", { host: "cal.com" })}</span>
+        <span>{t("teams_list_tip", { host: WEBAPP_URL.replace(/^https?:\/\//, "") })}</span>
       </p>
     </ShellMainAppDir>
   );
