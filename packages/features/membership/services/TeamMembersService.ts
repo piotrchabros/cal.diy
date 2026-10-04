@@ -327,14 +327,29 @@ export class TeamMembersService {
       });
       return { status: "resent" as const, email: normalizedEmail };
     }
-    const token = await this.teamRepository.findTeamInviteTokenByEmail({ teamId, email: normalizedEmail });
-    if (!token) {
+    const existing = await this.teamRepository.findTeamInviteTokenByEmail({
+      teamId,
+      email: normalizedEmail,
+    });
+    if (!existing) {
       throw ErrorWithCode.Factory.BadRequest(`No pending invitation for ${normalizedEmail}`);
+    }
+    let tokenValue = existing.token;
+    if (existing.expires <= new Date()) {
+      tokenValue = randomBytes(32).toString("hex");
+      const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await this.teamRepository.deleteTeamInviteTokens({ teamId, email: normalizedEmail });
+      await this.teamRepository.createTeamInviteToken({
+        teamId,
+        email: normalizedEmail,
+        token: tokenValue,
+        expires,
+      });
     }
     await this.sendInviteEmail({
       to: normalizedEmail,
       teamName: team.name,
-      joinLink: `${WEBAPP_URL}/signup?token=${token.token}&callbackUrl=${encodeURIComponent(
+      joinLink: `${WEBAPP_URL}/signup?token=${tokenValue}&callbackUrl=${encodeURIComponent(
         `/settings/my-teams/${teamId}/members`
       )}`,
       isExistingUser: false,

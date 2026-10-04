@@ -521,9 +521,11 @@ describe("TeamMembersService", () => {
       });
       const teamRepo = makeTeamRepo({
         findBasicById: vi.fn().mockResolvedValue(team),
-        findTeamInviteTokenByEmail: vi
-          .fn()
-          .mockResolvedValue({ id: 1, token: "pending-token", expires: new Date() }),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "pending-token",
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
       });
       const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
       const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
@@ -541,6 +543,87 @@ describe("TeamMembersService", () => {
         email: "new@example.com",
       });
 
+      expect(sendInviteEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          joinLink: expect.stringContaining("/signup?token=pending-token"),
+        })
+      );
+    });
+
+    it("rotates an expired token when resending to a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "stale-token",
+          expires: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        }),
+        deleteTeamInviteTokens: vi.fn().mockResolvedValue({ count: 1 }),
+        createTeamInviteToken: vi.fn().mockResolvedValue({ id: 2, token: "fresh", expires: new Date() }),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.resendInvite({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+      });
+
+      expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({
+        teamId: 7,
+        email: "new@example.com",
+      });
+      expect(teamRepo.createTeamInviteToken).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 7, email: "new@example.com" })
+      );
+      const joinLink: string = sendInviteEmail.mock.calls[0][0].joinLink;
+      expect(joinLink).toContain("/signup?token=");
+      expect(joinLink).not.toContain("stale-token");
+    });
+
+    it("reuses a still-valid token when resending to a brand-new email", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(adminMembership),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(team),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue({
+          id: 1,
+          token: "pending-token",
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+        deleteTeamInviteTokens: vi.fn(),
+        createTeamInviteToken: vi.fn(),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(null) });
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail
+      );
+
+      await service.resendInvite({
+        teamId: 7,
+        requesterId: 9,
+        requesterName: "Owner",
+        email: "new@example.com",
+      });
+
+      expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+      expect(teamRepo.createTeamInviteToken).not.toHaveBeenCalled();
       expect(sendInviteEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           joinLink: expect.stringContaining("/signup?token=pending-token"),
