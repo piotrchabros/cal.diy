@@ -4,7 +4,7 @@
 **Branch:** feat/teams-members-management
 **PR:** https://github.com/piotrchabros/cal.diy/pull/9 (draft, lock held by @piotrchabros via om-auto-continue-pr-loop resume)
 **Current phase/step:** Phase 3 Step 3.2 — done, pending final full-suite re-run + merge
-**Last commit:** 6d40831 — fix(teams): forward accepted filter in listMembers + regression tests
+**Last commit:** 5cbe7b5 — fix(teams): forward accepted filter in listMembers + regression tests
 
 ## What just happened
 - Resumed from PLAN Tasks (first non-done row 3.2); completed the code-review pass.

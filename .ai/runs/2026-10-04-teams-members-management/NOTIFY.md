@@ -23,3 +23,7 @@
 - Code-review pass found one major: listMembers handler dropped the `accepted` status filter the UI sends (status active/pending filter dead); repository already supported it
 - Fix: `accepted?: boolean` added to ListTeamMembersInput, forwarded in service + handler; regression tests in service + handler suites; reverted viewer/_router.tsx reorder noise (file now identical to develop)
 - Validation on fix: targeted suites 19/19 pass; full gate re-run follows on the final commit
+
+## 2026-10-04T18:05:00Z — Step 3.2 landed
+- Code fix commit 5cbe7b5 (amended from 6d40831 to record plan SHAs; PLAN Commit column points at the pre-amend object of the same tree — final pushed SHA is 5cbe7b5)
+- Pushing to origin/feat/teams-members-management next; full suite re-run on final tree follows
