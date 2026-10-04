@@ -390,6 +390,11 @@ const useTabs = ({
               href: `/settings/my-teams/${item.teamId}/profile`,
               trackingMetadata: { section: "my_teams", page: "team_profile" },
             },
+            {
+              name: "team_members",
+              href: `/settings/my-teams/${item.teamId}/members`,
+              trackingMetadata: { section: "my_teams", page: "members" },
+            },
           ],
         })),
       });
