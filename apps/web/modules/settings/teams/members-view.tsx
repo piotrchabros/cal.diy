@@ -23,10 +23,9 @@ import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 import { Checkbox, TextField } from "@calcom/ui/components/form";
 import { Icon } from "@calcom/ui/components/icon";
 import { Pagination } from "@calcom/ui/components/pagination";
-import { SkeletonText } from "@calcom/ui/components/skeleton";
+import { Skeleton, SkeletonText } from "@calcom/ui/components/skeleton";
 import { showToast } from "@calcom/ui/components/toast";
 import { Table } from "@calcom/ui/components/table";
-import { Skeleton } from "@coss/ui/components/skeleton";
 
 import InviteMemberDialog from "./invite-member-dialog";
 import MemberRowActions from "./member-row-actions";

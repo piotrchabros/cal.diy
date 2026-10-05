@@ -1,5 +1,4 @@
-import { SkeletonContainer, SkeletonText } from "@calcom/ui/components/skeleton";
-import { Skeleton } from "@coss/ui/components/skeleton";
+import { Skeleton, SkeletonContainer, SkeletonText } from "@calcom/ui/components/skeleton";
 
 export default function Loading() {
   return (
