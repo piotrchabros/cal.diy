@@ -6,9 +6,19 @@ import { notFound } from "next/navigation";
 import type { ReactElement } from "react";
 import { TeamPublicView } from "~/teams/views/team-public-view";
 
+const safeDecodeSlug = (slug: string): string | null => {
+  try {
+    return decodeURIComponent(slug);
+  } catch {
+    return null;
+  }
+};
+
 const getPublicTeam = async (slug: string) => {
+  const decoded = safeDecodeSlug(slug);
+  if (!decoded) return null;
   const service = new TeamProfileService(prisma);
-  return service.getPublicTeamBySlug({ slug: decodeURIComponent(slug) });
+  return service.getPublicTeamBySlug({ slug: decoded });
 };
 
 const Page = async ({ params }: PageProps): Promise<ReactElement> => {
