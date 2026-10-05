@@ -1,7 +1,7 @@
-# Handoff — Public team page (#14)
+# Handoff — Public team page (#14) — COMPLETE
 
-- Status: run started 2026-10-05T07:15Z. Branch `feat/14-public-team-page` from origin/develop.
-- Worktree: /tmp/opencode/wt-public-team-page. Primary checkout untouched (prod runs from it).
-- Next: Step 0.1 — commit run folder, open draft PR with `Fixes #14`, claim (assignee + in-progress + comment).
-- Then: Step 1.1 service getter → 2.1 route/view → 3.1 gauntlet critic → 4.1 gate/merge.
-- Open question: does `/team/[slug]/[eventSlug]` booker exist? Verify during 2.1; follow-up issue if missing.
+- All Steps done. PR #15 merged to develop; issue #14 auto-closed via `Fixes #14`.
+- Follow-up filed for `/team/[slug]/[eventSlug]` team event booker (Book now target).
+- Validation: type-check 9/9, lint 11/11, tests 4164 passed (1 flaky timer failure in
+  untouched users-public-view.test.tsx, green in isolation).
+- Worktree /tmp/opencode/wt-public-team-page removed after merge.

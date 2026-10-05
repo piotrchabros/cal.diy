@@ -25,11 +25,11 @@ Builder + SEPARATE harsh critic, blind A/B at same viewport, loop until critic p
 
 | Phase | Step | Title | Exec | Status | Commit |
 |-------|------|-------|------|--------|--------|
-| 0 | 0.1 | Run folder + draft PR + claim | inline | done | — |
-| 1 | 1.1 | `getPublicTeamBySlug` in TeamProfileService + unit tests | inline | todo | — |
-| 2 | 2.1 | `/team/[slug]` route: page, view, loading/error, metadata, i18n | inline | todo | — |
-| 3 | 3.1 | Gauntlet critic pass vs mock + fixes | inline | todo | — |
-| 4 | 4.1 | Final gate + review + merge + verify #14 closed | inline | todo | — |
+| 0 | 0.1 | Run folder + draft PR + claim | inline | done | chore: plan run |
+| 1 | 1.1 | `getPublicTeamBySlug` in TeamProfileService + unit tests | inline | done | 613cd81 |
+| 2 | 2.1 | `/team/[slug]` route: page, view, loading/error, metadata, i18n | inline | done | adb65c4 |
+| 3 | 3.1 | Gauntlet critic pass vs mock + fixes | inline | done | 94513be |
+| 4 | 4.1 | Final gate + review + merge + verify #14 closed | inline | done | — |
 
 ## Risks
 
