@@ -1,3 +1,5 @@
+"use client";
+
 import { SkeletonContainer, SkeletonText } from "@calcom/ui/components/skeleton";
 
 export default function Loading() {
