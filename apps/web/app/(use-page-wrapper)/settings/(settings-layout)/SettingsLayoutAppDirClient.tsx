@@ -377,26 +377,24 @@ const useTabs = ({
 
     const myTeams = (teamsAndProfiles ?? []).filter((item) => item.teamId !== null);
     if (myTeams.length > 0) {
+      // The sidebar renderer only draws two levels (section + links), so team
+      // entries are flattened: one profile link per team plus its members link.
       visibleTabs.push({
         name: "my_teams",
         href: "/settings/my-teams",
         icon: "users",
-        children: myTeams.map((item) => ({
-          name: item.name || "",
-          href: `/settings/my-teams/${item.teamId}/profile`,
-          children: [
-            {
-              name: "team_profile",
-              href: `/settings/my-teams/${item.teamId}/profile`,
-              trackingMetadata: { section: "my_teams", page: "team_profile" },
-            },
-            {
-              name: "team_members",
-              href: `/settings/my-teams/${item.teamId}/members`,
-              trackingMetadata: { section: "my_teams", page: "members" },
-            },
-          ],
-        })),
+        children: myTeams.flatMap((item) => [
+          {
+            name: item.name || "",
+            href: `/settings/my-teams/${item.teamId}/profile`,
+            trackingMetadata: { section: "my_teams", page: "team_profile" },
+          },
+          {
+            name: "team_members",
+            href: `/settings/my-teams/${item.teamId}/members`,
+            trackingMetadata: { section: "my_teams", page: "members" },
+          },
+        ]),
       });
     }
 
