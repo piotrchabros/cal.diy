@@ -135,6 +135,71 @@ describe("TeamProfileService", () => {
     });
   });
 
+  describe("getPublicTeamBySlug", () => {
+    const publicTeam = {
+      ...baseTeam,
+      isPrivate: false,
+      eventTypes: [
+        { id: 1, title: "Demo", slug: "demo", description: "Schedule a demo call with us", length: 15 },
+      ],
+    };
+
+    it("returns null for an empty slug without querying", async () => {
+      await expect(service.getPublicTeamBySlug({ slug: "   " })).resolves.toBeNull();
+      expect(db.team.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("returns null when no team matches the slug", async () => {
+      db.team.findFirst.mockResolvedValue(null);
+      await expect(service.getPublicTeamBySlug({ slug: "nope" })).resolves.toBeNull();
+    });
+
+    it("queries only public-safe fields and visible event types", async () => {
+      db.team.findFirst.mockResolvedValue(publicTeam);
+      await service.getPublicTeamBySlug({ slug: "BlueBee" });
+      expect(db.team.findFirst).toHaveBeenCalledOnce();
+      const args = db.team.findFirst.mock.calls[0][0];
+      expect(args.where).toEqual({ slug: "bluebee", isPrivate: false });
+      expect(args.select).not.toHaveProperty("credentials");
+      expect(args.select).not.toHaveProperty("members");
+      expect(args.select.eventTypes.where).toEqual({ hidden: false });
+      expect(args.select.eventTypes.select).toEqual({
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        length: true,
+      });
+    });
+
+    it("returns the public profile with location, socials and event types", async () => {
+      db.team.findFirst.mockResolvedValue({
+        ...publicTeam,
+        metadata: {
+          location: "London, UK",
+          socialLinks: [{ platform: "x", url: "https://x.com/bluebee" }],
+        },
+      });
+      const profile = await service.getPublicTeamBySlug({ slug: "bluebee" });
+      expect(profile).toMatchObject({
+        id: 10,
+        name: "BlueBee",
+        slug: "bluebee",
+        location: "London, UK",
+        socialLinks: [{ platform: "x", url: "https://x.com/bluebee" }],
+      });
+      expect(profile?.eventTypes).toHaveLength(1);
+      expect(profile).not.toHaveProperty("credentials");
+    });
+
+    it("falls back to defaults when metadata is malformed", async () => {
+      db.team.findFirst.mockResolvedValue({ ...publicTeam, metadata: { location: 42 } });
+      const profile = await service.getPublicTeamBySlug({ slug: "bluebee" });
+      expect(profile?.location).toBeNull();
+      expect(profile?.socialLinks).toEqual([]);
+    });
+  });
+
   describe("disbandTeam", () => {
     it("rejects admins: only owners can disband", async () => {
       db.membership.findUnique.mockResolvedValue(adminMembership);
