@@ -1,7 +1,7 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
-import type { Membership, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
+import type { EventType, Membership, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
 import slugify from "@calcom/lib/slugify";
 
 import type {
@@ -19,6 +19,35 @@ export type TeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | "bio" 
   showMap: boolean;
   socialLinks: { platform: string; url: string }[];
 };
+
+export type PublicTeamEventType = Pick<EventType, "id" | "title" | "slug" | "description" | "length">;
+
+export type PublicTeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | "bio"> & {
+  location: string | null;
+  socialLinks: { platform: string; url: string }[];
+  eventTypes: PublicTeamEventType[];
+};
+
+const publicTeamProfileSelect = {
+  id: true,
+  name: true,
+  slug: true,
+  logoUrl: true,
+  bio: true,
+  metadata: true,
+  isPrivate: true,
+  eventTypes: {
+    where: { hidden: false },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      description: true,
+      length: true,
+    },
+    orderBy: [{ position: "desc" }, { id: "asc" }],
+  },
+} satisfies Prisma.TeamSelect;
 
 const teamProfileSelect = {
   id: true,
@@ -152,6 +181,27 @@ export class TeamProfileService {
       location: updatedMeta.location ?? null,
       showMap: updatedMeta.showMap ?? false,
       socialLinks: updatedMeta.socialLinks ?? [],
+    };
+  }
+
+  async getPublicTeamBySlug({ slug }: { slug: string }): Promise<PublicTeamProfile | null> {
+    const normalizedSlug = slugify(slug);
+    if (!normalizedSlug) return null;
+    const team = await this.prisma.team.findFirst({
+      where: { slug: normalizedSlug, isPrivate: false },
+      select: publicTeamProfileSelect,
+    });
+    if (!team) return null;
+    const profileMeta = parseProfileMetadata(team.metadata);
+    return {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      logoUrl: team.logoUrl,
+      bio: team.bio,
+      location: profileMeta.location ?? null,
+      socialLinks: profileMeta.socialLinks ?? [],
+      eventTypes: team.eventTypes,
     };
   }
 
