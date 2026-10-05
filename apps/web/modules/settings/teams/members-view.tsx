@@ -23,7 +23,7 @@ import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 import { Checkbox, TextField } from "@calcom/ui/components/form";
 import { Icon } from "@calcom/ui/components/icon";
 import { Pagination } from "@calcom/ui/components/pagination";
-import { Skeleton, SkeletonText } from "@calcom/ui/components/skeleton";
+import { SkeletonText } from "@calcom/ui/components/skeleton";
 import { showToast } from "@calcom/ui/components/toast";
 import { Table } from "@calcom/ui/components/table";
 
@@ -143,12 +143,12 @@ function MembersTableSkeleton() {
     <div className="space-y-2" aria-label="loading">
       {[0, 1, 2, 3].map((row) => (
         <div key={row} className="flex items-center gap-3 rounded-md border border-subtle p-3">
-          <Skeleton className="h-8 w-8 rounded-full" />
+          <SkeletonText className="h-8 w-8 rounded-full" />
           <div className="flex-1">
             <SkeletonText className="h-4 w-40" />
             <SkeletonText className="mt-1 h-3 w-56" />
           </div>
-          <Skeleton className="h-5 w-16 rounded" />
+          <SkeletonText className="h-5 w-16 rounded" />
         </div>
       ))}
     </div>
