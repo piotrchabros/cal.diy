@@ -13,15 +13,23 @@ export interface INotetakerTaskServiceDependencies {
 export class NotetakerTaskService implements NotetakerTasks {
   constructor(public readonly dependencies: INotetakerTaskServiceDependencies) {}
 
-  async finalizeSession(_payload: Parameters<NotetakerTasks["finalizeSession"]>[0]): Promise<void> {
-    throw notWiredError("finalizeSession");
+  // The services are resolved through their containers at call time: the finalize service depends on the
+  // tasker, whose DI module loads this class, so a static import or a DI dependency would form a cycle.
+  async finalizeSession(payload: Parameters<NotetakerTasks["finalizeSession"]>[0]): Promise<void> {
+    const { getNotetakerFinalizeService } = await import(
+      "@calcom/features/notetaker/di/NotetakerFinalizeService.container"
+    );
+    await getNotetakerFinalizeService().finalize(payload);
   }
 
   async generateSummary(_payload: Parameters<NotetakerTasks["generateSummary"]>[0]): Promise<void> {
     throw notWiredError("generateSummary");
   }
 
-  async sendNotification(_payload: Parameters<NotetakerTasks["sendNotification"]>[0]): Promise<void> {
-    throw notWiredError("sendNotification");
+  async sendNotification(payload: Parameters<NotetakerTasks["sendNotification"]>[0]): Promise<void> {
+    const { getNotetakerNotificationService } = await import(
+      "@calcom/features/notetaker/di/NotetakerNotificationService.container"
+    );
+    await getNotetakerNotificationService().send(payload);
   }
 }
