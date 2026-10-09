@@ -3,6 +3,7 @@ import {
   sendNotetakerAttendeeNoticeEmail,
   sendNotetakerFailedEmail,
   sendNotetakerResultsReadyEmail,
+  sendNotetakerTurnedOffEmail,
 } from "@calcom/emails/notetaker-email-service";
 import { sendNotification } from "@calcom/features/notifications/sendNotification";
 import { getTranslation } from "@calcom/i18n/server";
@@ -31,6 +32,7 @@ vi.mock("@calcom/emails/notetaker-email-service", () => ({
   sendNotetakerAttendeeNoticeEmail: vi.fn(),
   sendNotetakerFailedEmail: vi.fn(),
   sendNotetakerResultsReadyEmail: vi.fn(),
+  sendNotetakerTurnedOffEmail: vi.fn(),
 }));
 // The real module configures web push at import time.
 vi.mock("@calcom/features/notifications/sendNotification", () => ({ sendNotification: vi.fn() }));
@@ -91,6 +93,16 @@ const FAILED_INPUT_FIELDS: string[] = [
   "locale",
   "notetakerUrl",
   "outcomeReason",
+  "t",
+  "timeZone",
+  "to",
+];
+
+const TURNED_OFF_INPUT_FIELDS: string[] = [
+  "bookingStartTime",
+  "bookingTitle",
+  "locale",
+  "notetakerUrl",
   "t",
   "timeZone",
   "to",
@@ -197,6 +209,7 @@ describe("NotetakerNotificationService", () => {
   const noticeMock = vi.mocked(sendNotetakerAttendeeNoticeEmail);
   const admitMock = vi.mocked(sendNotetakerAdmitPromptEmail);
   const failedMock = vi.mocked(sendNotetakerFailedEmail);
+  const turnedOffMock = vi.mocked(sendNotetakerTurnedOffEmail);
   const pushMock = vi.mocked(sendNotification);
   const logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
 
@@ -211,6 +224,7 @@ describe("NotetakerNotificationService", () => {
     noticeMock.mockResolvedValue(undefined);
     admitMock.mockResolvedValue(undefined);
     failedMock.mockResolvedValue(undefined);
+    turnedOffMock.mockResolvedValue(undefined);
     pushMock.mockResolvedValue(undefined);
 
     repositories = createInMemoryNotetakerRepositories();
@@ -583,10 +597,7 @@ describe("NotetakerNotificationService", () => {
   });
 
   describe("other notification kinds", () => {
-    it.each([
-      "TURNED_OFF",
-      "SHARED_WITH_ATTENDEES",
-    ] as const)("rejects %s as having no handler", async (kind) => {
+    it.each(["SHARED_WITH_ATTENDEES"] as const)("rejects %s as having no handler", async (kind) => {
       const promise = service.send({ kind, bookingId: BOOKING_ID, sessionId: null });
 
       await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
@@ -1764,6 +1775,236 @@ describe("NotetakerNotificationService", () => {
         ]) {
           expect(text).not.toContain(secret);
         }
+      });
+    });
+  });
+
+  describe("TURNED_OFF", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function sendTurnedOff(bookingId: number = BOOKING_ID): Promise<void> {
+      return service.send({ kind: "TURNED_OFF", bookingId, sessionId: null });
+    }
+
+    describe("recipients", () => {
+      it("emails each distinct enabling host once and nobody else", async () => {
+        userLookup.users = [buildUser(1), buildUser(2), buildUser(3)];
+        await seedEnabled(1);
+        await seedEnabled(2);
+        await seedEnabled(1);
+        await repositories.activityRepository.create({
+          bookingId: BOOKING_ID,
+          sessionId: null,
+          action: "DISABLED",
+          actorType: "USER",
+          actorUserId: THIRD_USER_ID,
+          actorName: null,
+          detail: null,
+        });
+        await seedChoice({ enabled: false });
+
+        await sendTurnedOff();
+
+        expect(turnedOffMock).toHaveBeenCalledTimes(2);
+        expect(turnedOffMock.mock.calls.map(([input]) => input.to.email).sort()).toEqual([
+          "user1@example.com",
+          "user2@example.com",
+        ]);
+        expect(sendMock).not.toHaveBeenCalled();
+        expect(noticeMock).not.toHaveBeenCalled();
+        expect(admitMock).not.toHaveBeenCalled();
+        expect(failedMock).not.toHaveBeenCalled();
+        expect(pushMock).not.toHaveBeenCalled();
+      });
+
+      it("sends an inherited choice to the organizer", async () => {
+        userLookup.users = [buildUser(ORGANIZER_ID), buildUser(SECOND_HOST_ID)];
+        await seedEnabled(null);
+        await seedChoice({ enabled: false });
+
+        await sendTurnedOff();
+
+        expect(turnedOffMock).toHaveBeenCalledTimes(1);
+        expect(turnedOffMock.mock.calls[0][0].to.email).toBe("user1@example.com");
+        expect(userLookup.calls).toEqual([[ORGANIZER_ID]]);
+      });
+
+      it("sends nothing and logs when there is no recipient", async () => {
+        repositories.store.removeBooking(BOOKING_ID);
+        repositories.store.addBooking(buildBooking({ userId: null, organizer: null }));
+        await seedChoice({ enabled: false });
+
+        await expect(sendTurnedOff()).resolves.toBeUndefined();
+
+        expect(turnedOffMock).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalled();
+      });
+    });
+
+    describe("content", () => {
+      it("passes the meeting, the recipient, the locale and the notetaker page link", async () => {
+        userLookup.users = [buildUser(1, { locale: "de", timeZone: "Europe/Berlin" })];
+        await seedEnabled(1);
+        await seedChoice({ enabled: false });
+
+        await sendTurnedOff();
+
+        const input = turnedOffMock.mock.calls[0][0];
+        expect(input.bookingTitle).toBe("Planning call");
+        expect(input.bookingStartTime).toEqual(new Date("2026-10-12T10:00:00.000Z"));
+        expect(input.timeZone).toBe("Europe/Berlin");
+        expect(input.locale).toBe("de");
+        expect(input.t).toBe(translatorFor("de"));
+        expect(input.to).toEqual({ email: "user1@example.com", name: "User 1" });
+        expect(input.notetakerUrl).toBe(NOTETAKER_URL);
+        expect(Object.keys(input).sort()).toEqual(TURNED_OFF_INPUT_FIELDS);
+        expect(getTranslation).toHaveBeenCalledWith("de", "common");
+      });
+
+      it("never passes passage or summary text to the email or the logger", async () => {
+        await seedHosts(1);
+        await seedChoice({ enabled: false });
+        const sessionId = await seedReadySession();
+        const transcriptId = await seedTranscript(sessionId);
+        await seedSummary(transcriptId, "READY");
+
+        await sendTurnedOff();
+
+        expect(turnedOffMock).toHaveBeenCalledTimes(1);
+        // JSON.stringify drops the translator function, which is not part of the data under test.
+        const sent = JSON.stringify(turnedOffMock.mock.calls.map(([input]) => input));
+        SECRETS.forEach((secret) => {
+          expect(sent).not.toContain(secret);
+          expect(loggedText()).not.toContain(secret);
+        });
+      });
+    });
+
+    describe("skipped targets", () => {
+      beforeEach(async () => {
+        await seedHosts(1);
+      });
+
+      it("resolves without sending or looking up users for an unknown booking", async () => {
+        await seedChoice({ enabled: false });
+
+        await expect(sendTurnedOff(999)).resolves.toBeUndefined();
+
+        expect(turnedOffMock).not.toHaveBeenCalled();
+        expect(userLookup.calls).toEqual([]);
+        expect(logger.warn).toHaveBeenCalled();
+      });
+
+      it("resolves without sending when the booking has no choice", async () => {
+        await expect(sendTurnedOff()).resolves.toBeUndefined();
+
+        expect(turnedOffMock).not.toHaveBeenCalled();
+        expect(userLookup.calls).toEqual([]);
+        expect(logger.warn).toHaveBeenCalled();
+      });
+
+      it("skips a re-enabled choice as stale without a warning", async () => {
+        await seedChoice({ enabled: true });
+
+        await expect(sendTurnedOff()).resolves.toBeUndefined();
+
+        expect(turnedOffMock).not.toHaveBeenCalled();
+        expect(userLookup.calls).toEqual([]);
+        expect(logger.info).toHaveBeenCalled();
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("failures", () => {
+      it("keeps emailing the other recipient when one send fails, then rejects", async () => {
+        await seedHosts(1, 2);
+        await seedChoice({ enabled: false });
+        turnedOffMock.mockRejectedValueOnce(new Error("render failed"));
+
+        const promise = sendTurnedOff();
+
+        await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+        await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
+        await expect(promise).rejects.toThrow("TURNED_OFF");
+        await expect(promise).rejects.toThrow(String(BOOKING_ID));
+        await expect(promise).rejects.toThrow("1 of 2");
+        expect(turnedOffMock).toHaveBeenCalledTimes(2);
+        expect(logger.error).toHaveBeenCalledTimes(1);
+      });
+
+      describe("with identifying details in the data", () => {
+        const SECRET_TEXTS = [
+          "SECRET-NAME-1",
+          "SECRET-NAME-2",
+          "secret1@example.org",
+          "secret2@example.org",
+          "SECRET-MEETING-TITLE",
+        ];
+
+        beforeEach(() => {
+          repositories.store.removeBooking(BOOKING_ID);
+          repositories.store.addBooking(buildBooking({ title: "SECRET-MEETING-TITLE" }));
+          userLookup.users = [
+            buildUser(1, { name: "SECRET-NAME-1", email: "secret1@example.org" }),
+            buildUser(2, { name: "SECRET-NAME-2", email: "secret2@example.org" }),
+          ];
+        });
+
+        it("keeps host and meeting details out of logs and errors", async () => {
+          await seedEnabled(1);
+          await seedEnabled(2);
+          await seedChoice({ enabled: false });
+          turnedOffMock.mockImplementation(async (input) => {
+            if (input.to.email === "secret1@example.org") throw new Error("render failed");
+          });
+
+          const error = await sendTurnedOff().then(
+            () => null,
+            (caught: unknown) => caught
+          );
+
+          if (!(error instanceof Error)) throw new Error("Expected the partial failure to reject");
+          const text = `${loggedText()}${error.message}`;
+          SECRET_TEXTS.forEach((secret) => {
+            expect(text).not.toContain(secret);
+          });
+        });
+
+        it("keeps them out of the logs on every skip path", async () => {
+          await seedEnabled(1);
+          await seedEnabled(2);
+
+          await sendTurnedOff(999);
+          await sendTurnedOff();
+          await seedChoice({ enabled: true });
+          await sendTurnedOff();
+
+          expect(turnedOffMock).not.toHaveBeenCalled();
+          expect(loggedText()).not.toContain("SECRET-");
+          expect(loggedText()).not.toContain("example.org");
+        });
+
+        it("keeps them out of the logs when there is no recipient", async () => {
+          repositories.store.removeBooking(BOOKING_ID);
+          repositories.store.addBooking(
+            buildBooking({ userId: null, organizer: null, title: "SECRET-MEETING-TITLE" })
+          );
+          await seedChoice({ enabled: false });
+
+          await sendTurnedOff();
+
+          expect(turnedOffMock).not.toHaveBeenCalled();
+          expect(logger.warn).toHaveBeenCalled();
+          SECRET_TEXTS.forEach((secret) => {
+            expect(loggedText()).not.toContain(secret);
+          });
+        });
       });
     });
   });
