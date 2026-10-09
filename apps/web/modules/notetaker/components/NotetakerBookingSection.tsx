@@ -4,7 +4,13 @@ import type { NotetakerIneligibilityReasonDto } from "@calcom/lib/dto/NotetakerS
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
-import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
+import {
+  ConfirmationDialogContent,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+} from "@calcom/ui/components/dialog";
 import { Switch } from "@calcom/ui/components/form";
 import Link from "next/link";
 import { useState } from "react";
@@ -28,6 +34,7 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
   const { data: state, isPending, isError } = useNotetakerState(bookingUid);
   const { setEnabled, stop } = useNotetakerMutations();
   const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
+  const [pendingScope, setPendingScope] = useState<boolean | null>(null);
 
   if (isPending || isError || !state) return null;
   if (!state.featureEnabled) return null;
@@ -41,12 +48,20 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
     );
     const name = state.choice.setByName;
     if (state.choice.enabled) {
+      if (state.choice.source === "EVENT_TYPE_DEFAULT")
+        return t("notetaker_enabled_by_event_type_default", { date });
       if (name) return t("notetaker_enabled_by", { name, date });
       return t("notetaker_enabled_at", { date });
     }
     if (name) return t("notetaker_disabled_by", { name, date });
     return t("notetaker_disabled_at", { date });
   })();
+
+  const confirmScope = (scope: "THIS_BOOKING" | "ALL_FUTURE_OCCURRENCES"): void => {
+    if (pendingScope === null) return;
+    setEnabled.mutate({ bookingUid, enabled: pendingScope, scope });
+    setPendingScope(null);
+  };
 
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
@@ -66,12 +81,43 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
             label={t("notetaker_toggle_label")}
             checked={state.choice?.enabled ?? false}
             disabled={!state.canToggle || setEnabled.isPending}
-            onCheckedChange={(enabled: boolean) =>
-              setEnabled.mutate({ bookingUid, enabled, scope: "THIS_BOOKING" })
-            }
+            onCheckedChange={(enabled: boolean) => {
+              if (state.isRecurring) {
+                setPendingScope(enabled);
+                return;
+              }
+              setEnabled.mutate({ bookingUid, enabled, scope: "THIS_BOOKING" });
+            }}
             data-testid="notetaker-toggle"
           />
           <p className="text-sm text-subtle">{t("notetaker_toggle_description")}</p>
+          <Dialog
+            open={pendingScope !== null}
+            onOpenChange={(open) => {
+              if (!open) setPendingScope(null);
+            }}>
+            <DialogContent
+              title={t("notetaker_scope_title")}
+              description={t("notetaker_scope_description")}
+              data-testid="notetaker-scope-dialog">
+              <DialogFooter>
+                <DialogClose data-testid="notetaker-scope-cancel">{t("cancel")}</DialogClose>
+                <Button
+                  type="button"
+                  color="secondary"
+                  data-testid="notetaker-scope-this-booking"
+                  onClick={() => confirmScope("THIS_BOOKING")}>
+                  {t("notetaker_scope_this_booking")}
+                </Button>
+                <Button
+                  type="button"
+                  data-testid="notetaker-scope-all-future-occurrences"
+                  onClick={() => confirmScope("ALL_FUTURE_OCCURRENCES")}>
+                  {t("notetaker_scope_all_future_occurrences")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
       {state.eligibility.reason !== null && (
