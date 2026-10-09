@@ -3,6 +3,7 @@ import {
   sendNotetakerAttendeeNoticeEmail,
   sendNotetakerFailedEmail,
   sendNotetakerResultsReadyEmail,
+  sendNotetakerTurnedOffEmail,
 } from "@calcom/emails/notetaker-email-service";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { sendNotification as sendWebPush } from "@calcom/features/notifications/sendNotification";
@@ -71,6 +72,8 @@ export class NotetakerNotificationService {
         return this.sendAdmitPrompt(params);
       case "FAILED":
         return this.sendFailed(params);
+      case "TURNED_OFF":
+        return this.sendTurnedOff(params.bookingId);
       default:
         // Thrown rather than skipped so a kind enqueued without a handler fails its task visibly.
         throw ErrorWithCode.Factory.InternalServerError(
@@ -308,6 +311,63 @@ export class NotetakerNotificationService {
     if (failureCount > 0) {
       throw ErrorWithCode.Factory.InternalServerError(
         `NotetakerNotificationService: FAILED for booking ${bookingId} session ${sessionId} failed for ${failureCount} of ${recipients.length} recipients`
+      );
+    }
+  }
+
+  private async sendTurnedOff(bookingId: number): Promise<void> {
+    const { bookingNotetakerRepository, logger } = this.deps;
+
+    const booking = await bookingNotetakerRepository.findByBookingIdIncludeBooking(bookingId);
+    if (!booking) {
+      logger.warn("Notetaker turned-off notice skipped: booking not found", { bookingId });
+      return;
+    }
+    if (booking.choice === null) {
+      logger.warn("Notetaker turned-off notice skipped: no notetaker choice", { bookingId });
+      return;
+    }
+    // A host turned it back on before the task ran, so the notice would be stale (cannot happen under the sync tasker).
+    if (booking.choice.enabled) {
+      logger.info("Notetaker turned-off notice skipped: notetaker was turned on again", { bookingId });
+      return;
+    }
+
+    const recipients = await this.resolveHostRecipients(booking);
+    if (recipients.length === 0) {
+      logger.warn("Notetaker turned-off notice skipped: no recipient", { bookingId });
+      return;
+    }
+
+    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    let failureCount = 0;
+    for (let i = 0; i < recipients.length; i++) {
+      const user = recipients[i];
+      try {
+        const locale = user.locale ?? "en";
+        const t = await getTranslation(locale, "common");
+        await sendNotetakerTurnedOffEmail({
+          t,
+          locale,
+          timeZone: user.timeZone,
+          to: { email: user.email, name: user.name },
+          bookingTitle: booking.title,
+          bookingStartTime: booking.startTime,
+          notetakerUrl,
+        });
+      } catch (error) {
+        failureCount++;
+        logger.error("Failed to send the notetaker turned-off email", {
+          bookingId,
+          userId: user.id,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    if (failureCount > 0) {
+      throw ErrorWithCode.Factory.InternalServerError(
+        `NotetakerNotificationService: TURNED_OFF for booking ${bookingId} failed for ${failureCount} of ${recipients.length} recipients`
       );
     }
   }
