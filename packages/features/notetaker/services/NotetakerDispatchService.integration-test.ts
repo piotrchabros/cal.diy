@@ -3,9 +3,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { INotetakerBotGateway, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
 import { createNotetakerBotGatewayError } from "../bot/INotetakerBotGateway";
 import { getNotetakerConfig } from "../lib/config";
+import type { INotetakerTasker } from "../lib/tasker/types";
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
+import { NotetakerAccessService } from "./NotetakerAccessService";
 import { NotetakerDispatchService } from "./NotetakerDispatchService";
 
 vi.mock("@calcom/i18n/server", () => ({
@@ -53,6 +55,13 @@ function createCountingGateway(mode: "ok" | "transient"): {
 // Only NODE_ENV=production changes the parsed defaults, so "test" keeps the stock config while ignoring NOTETAKER_* in the developer's environment.
 const defaultsOnlyEnv: NodeJS.ProcessEnv = { NODE_ENV: "test" };
 
+// A real tasker would send email from the developer's machine on every successful dispatch.
+const stubTasker: INotetakerTasker = {
+  finalizeSession: async () => ({ runId: "stub" }),
+  generateSummary: async () => ({ runId: "stub" }),
+  sendNotification: async () => ({ runId: "stub" }),
+};
+
 function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
   const binding: NotetakerBotGatewayBinding = { gateway, provider: "FAKE" };
   return new NotetakerDispatchService({
@@ -62,6 +71,9 @@ function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
     botGatewayResolver: { resolve: () => binding },
     config: getNotetakerConfig(defaultsOnlyEnv),
     logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    accessService: new NotetakerAccessService({ bookingNotetakerRepository }),
+    userRepository: { findByIds: async () => [] },
+    notetakerTasker: stubTasker,
   });
 }
 
