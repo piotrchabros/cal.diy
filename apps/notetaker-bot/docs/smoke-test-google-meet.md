@@ -135,9 +135,11 @@ These are as the runner was built. A wrong guessed selector can end every real s
 
 - If the notice is not posted within 30 seconds of admission, the bot leaves and the session ends `INTERRUPTED`. Posting is tried at +0, 5, 10, 15, 20 and 25 seconds. No transcript passage is sent before the notice is posted. So a wrong `chatButton`, `chatInput` or `chatSendButton` selector ends the session.
 - If a participant count above 1 is never read, the session ends `MEETING_DID_NOT_START` at the no-show deadline. So a wrong `participantCountBadge` and `participantTile` pair ends the session.
-- The driver sends the notice. It cannot confirm that the notice appeared. You confirm that by looking.
+- The driver sends the notice and then checks that the chat composer is empty again. An empty composer is its sign that the send went through. It does not show the text in the chat, so you still confirm that by looking.
 - A thrown read becomes `connection_lost` in the adapter, and one reconnect is tried.
 - Meet needs a reply from a person. Be ready to admit the bot within the admission timeout (default 600 seconds).
+
+Seen 2026-10-10 (Linux, Chrome 155, bot account invited as a calendar guest): Meet shows an embedded Google Chat in a child iframe, not in the main frame. The composer is `div[role="textbox"][contenteditable="true"]`, and it takes about 3 to 4 seconds to render after the chat toggle click. Do not match it by its aria-label, which reads "History is on" and reflects a setting. The send control is `button[aria-label="Send message"]`, disabled while the composer is empty. `chatInput` and `chatSendButton` cover this variant and the classic `textarea`. `chatPanelOpen` reads the toggle's `aria-expanded`, so a retry does not close the panel that is already open.
 
 ### Checklist
 
@@ -247,7 +249,7 @@ Both routes:
 
 ## 9. Selectors to re-check
 
-Keys are the 30 keys of `GOOGLE_MEET_SELECTORS` in `src/platform/GoogleMeetAdapter.ts`. The selector strings there are guesses written from memory. Open Meet's developer tools on the real page and check each one against what you see. Fill the last two columns. If the file does not exist yet when you read this, the keys below are the intended set and must be compared with the file.
+Keys are the 31 keys of `GOOGLE_MEET_SELECTORS` in `src/platform/GoogleMeetAdapter.ts`. The selector strings there are guesses written from memory. Open Meet's developer tools on the real page and check each one against what you see. Fill the last two columns. If the file does not exist yet when you read this, the keys below are the intended set and must be compared with the file.
 
 Every alternative of every selector ends in `:visible`. This is because the page wrapper takes the first DOM match with `.first()`, and a hidden element earlier in the page would otherwise hide a visible one. Check that `:visible` after `:text(...)` works in a comma list in Playwright 1.57. This is not confirmed.
 
@@ -259,6 +261,7 @@ Order is by risk. A wrong key near the top ends sessions.
 | `participantCountBadge` | number next to the people button | | |
 | `participantTile` | one match per participant tile; fallback for the count | | |
 | `chatButton` | opens the chat panel | | |
+| `chatPanelOpen` | the chat toggle with `aria-expanded="true"`; read only, never clicked | | |
 | `chatInput` | chat text field | | |
 | `chatSendButton` | sends the notice | | |
 | `waitingText` | text while waiting for admission | | |
@@ -317,7 +320,7 @@ Rules:
 - Google may detect and block automated browsers. This was not tested.
 - Google's terms for automating an account are an open question for the owner (research.md open question 3).
 - An organisation can block guests. Such a meeting ends as `NOT_ADMITTED`.
-- The notice is sent, not confirmed. Only a person looking at the chat can confirm it appeared.
+- The notice is sent, and the driver treats an emptied composer as the sign that it went through. Only a person looking at the chat can confirm the text appeared.
 - The participant count cannot be read if Meet puts it only in an `aria-label`. The wrapper has no attribute read.
 - The page wrapper has no wait for hidden, no wait for one of several, and no sleep. The driver uses a composite selector instead.
 - The runner decisions D1, D2 and D3 of the build plan await the owner. D1 as built leaves when the notice cannot be posted, which is stricter than the plan's text. Confirm which one the owner wants.

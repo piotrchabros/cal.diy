@@ -10,6 +10,9 @@ import type { FakePageAction } from "./browser/FakeMeetingPage";
 import { FakeMeetingBrowserLauncher, FakeMeetingPage } from "./browser/FakeMeetingPage";
 import {
   GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS,
+  GOOGLE_MEET_CHAT_SEND_READY_TIMEOUT_MS,
+  GOOGLE_MEET_CHAT_SENT_POLL_MS,
+  GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS,
   GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS,
   GOOGLE_MEET_JOIN_SCREEN_TIMEOUT_MS,
   GOOGLE_MEET_SELECTORS,
@@ -23,7 +26,7 @@ import { PlatformLinkUnusableError } from "./PlatformAdapter";
 
 type SelectorKey = keyof typeof GOOGLE_MEET_SELECTORS;
 type GoogleConfig = RunnerConfig["google"];
-type FillAction = Extract<FakePageAction, { type: "fill" }>;
+type FillAction = Extract<FakePageAction, { type: "fill" | "fillInAnyFrame" }>;
 
 const S = GOOGLE_MEET_SELECTORS;
 const POLL = DEFAULT_POLL_INTERVAL_MS;
@@ -75,6 +78,7 @@ const ALL_KEYS = [
   "participantTile",
   "activeSpeakerName",
   "chatButton",
+  "chatPanelOpen",
   "chatInput",
   "chatSendButton",
   "leaveCallButton",
@@ -273,8 +277,26 @@ function wireDialog(page: FakeMeetingPage, key: SelectorKey): void {
   onClick(page, key, () => show(page, [key], false));
 }
 
-function wireChat(page: FakeMeetingPage): void {
-  onClick(page, "chatButton", () => show(page, ["chatInput"]));
+// Sending empties the composer, which is the only sign of success the driver can read.
+function clearComposerOnSend(page: FakeMeetingPage): void {
+  page.onAction((action) => {
+    if (action.type === "clickInAnyFrame" && action.selector === S.chatSendButton) {
+      page.setValue(S.chatInput, "");
+    }
+  });
+}
+
+function wireChat(page: FakeMeetingPage, variant: "classic" | "embedded" = "classic"): void {
+  onClick(page, "chatButton", () => {
+    show(page, ["chatPanelOpen"]);
+    if (variant === "classic") {
+      show(page, ["chatInput", "chatSendButton"]);
+      return;
+    }
+    page.setVisibleInChildFrame(S.chatInput);
+    page.setVisibleInChildFrame(S.chatSendButton);
+  });
+  clearComposerOnSend(page);
 }
 
 function wireSignIn(page: FakeMeetingPage): void {
@@ -290,9 +312,13 @@ function prepareJoin(page: FakeMeetingPage, options: { guest: boolean; next: Mee
 }
 
 const clicks = (page: FakeMeetingPage): string[] =>
-  page.actions.flatMap((action) => (action.type === "click" ? [action.selector] : []));
+  page.actions.flatMap((action) =>
+    action.type === "click" || action.type === "clickInAnyFrame" ? [action.selector] : []
+  );
 const fillActions = (page: FakeMeetingPage): FillAction[] =>
-  page.actions.filter((action): action is FillAction => action.type === "fill");
+  page.actions.filter(
+    (action): action is FillAction => action.type === "fill" || action.type === "fillInAnyFrame"
+  );
 const fills = (page: FakeMeetingPage): string[] => fillActions(page).map((action) => action.selector);
 const gotos = (page: FakeMeetingPage): string[] =>
   page.actions.flatMap((action) => (action.type === "goto" ? [action.url] : []));
@@ -396,7 +422,7 @@ afterEach(() => {
   for (const page of pages) {
     expect(clicks(page).filter((selector) => !clickable.includes(selector))).toEqual([]);
     expect(fills(page).filter((selector) => !fillable.includes(selector))).toEqual([]);
-    expect(pressedKeys(page)).toEqual([]);
+    expect(pressedKeys(page).filter((key) => key !== "Enter")).toEqual([]);
   }
 });
 
@@ -997,33 +1023,78 @@ describe("active speakers", () => {
 });
 
 describe("notice", () => {
-  it("opens the chat, types the exact text and sends it", async () => {
+  const notAttempted = (page: FakeMeetingPage): void => {
+    expect(fills(page)).toEqual([]);
+    expect(clicks(page)).not.toContain(S.chatSendButton);
+    expect(pressedKeys(page)).toEqual([]);
+  };
+  const errorMessage = (state: { error?: unknown }): string =>
+    state.error instanceof Error ? state.error.message : "";
+
+  it("opens the classic chat, fills the exact text and sends it", async () => {
     const page = createPage();
-    wireChat(page);
+    wireChat(page, "classic");
 
     await createDriver().postChatMessage(page, NOTICE);
 
     expect(page.actions).toEqual([
       { type: "click", selector: S.chatButton },
-      { type: "fill", selector: S.chatInput, value: NOTICE },
-      { type: "click", selector: S.chatSendButton },
+      { type: "fillInAnyFrame", selector: S.chatInput, value: NOTICE },
+      { type: "clickInAnyFrame", selector: S.chatSendButton },
     ]);
   });
 
-  // The chat button toggles the panel, so a click with the input already open would close it.
-  it("does not toggle the panel when the input is already visible", async () => {
+  it("posts through the embedded chat that lives in a child frame", async () => {
     const page = createPage();
-    show(page, ["chatInput"]);
+    wireChat(page, "embedded");
 
     await createDriver().postChatMessage(page, NOTICE);
 
     expect(page.actions).toEqual([
-      { type: "fill", selector: S.chatInput, value: NOTICE },
-      { type: "click", selector: S.chatSendButton },
+      { type: "click", selector: S.chatButton },
+      { type: "fillInAnyFrame", selector: S.chatInput, value: NOTICE },
+      { type: "clickInAnyFrame", selector: S.chatSendButton },
     ]);
   });
 
-  it("fails without typing when the chat input does not appear", async () => {
+  // The chat button toggles the panel, so a click with the panel already open would close it.
+  it("does not toggle the panel when it is already open and the composer shows", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen", "chatInput", "chatSendButton"]);
+    clearComposerOnSend(page);
+
+    await createDriver().postChatMessage(page, NOTICE);
+
+    expect(page.actions).toEqual([
+      { type: "fillInAnyFrame", selector: S.chatInput, value: NOTICE },
+      { type: "clickInAnyFrame", selector: S.chatSendButton },
+    ]);
+  });
+
+  it("does not toggle the panel while it is open but the composer is still rendering, also on a retry", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen"]);
+    clearComposerOnSend(page);
+    const driver = createDriver();
+
+    const first = track(driver.postChatMessage(page, NOTICE));
+    await advance(GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS);
+    expect(first.settled).toBe(true);
+    expect(first.error).toBeInstanceOf(Error);
+    expect(clicks(page)).toEqual([]);
+
+    const second = track(driver.postChatMessage(page, NOTICE));
+    await advance(GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS / 2);
+    page.setVisibleInChildFrame(S.chatInput);
+    page.setVisibleInChildFrame(S.chatSendButton);
+    await advance(1);
+
+    expect(second.settled).toBe(true);
+    expect(second.error).toBeUndefined();
+    expect(clicks(page)).toEqual([S.chatSendButton]);
+  });
+
+  it("fails without filling or sending when the composer never appears", async () => {
     const page = createPage();
 
     const posting = track(createDriver().postChatMessage(page, NOTICE));
@@ -1033,11 +1104,124 @@ describe("notice", () => {
 
     expect(posting.settled).toBe(true);
     expect(posting.error).toBeInstanceOf(Error);
-    const message = posting.error instanceof Error ? posting.error.message : "";
-    expect(message).toContain("notice was not posted");
-    expect(message).not.toContain(NOTICE);
-    expect(fills(page)).toEqual([]);
-    expect(clicks(page)).not.toContain(S.chatSendButton);
+    expect(errorMessage(posting)).toContain("notice was not posted");
+    expect(errorMessage(posting)).not.toContain(NOTICE);
+    expect(clicks(page)).toEqual([S.chatButton]);
+    notAttempted(page);
+  });
+
+  it("rejects when the send is not confirmed by an emptied composer", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen", "chatInput", "chatSendButton"]);
+
+    const posting = track(createDriver().postChatMessage(page, NOTICE));
+    await advance(GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS - 1);
+    expect(posting.settled).toBe(false);
+    await advance(1);
+
+    expect(posting.settled).toBe(true);
+    expect(errorMessage(posting)).toMatch(/not confirmed/);
+    expect(errorMessage(posting)).not.toContain(NOTICE);
+    expect(clicks(page)).toEqual([S.chatSendButton]);
+    expect(pressedKeys(page)).toEqual([]);
+  });
+
+  it("throws without sending when the fill does not take", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen", "chatInput", "chatSendButton"]);
+    page.onAction((action) => {
+      if (action.type === "fillInAnyFrame") page.setValue(S.chatInput, "");
+    });
+
+    const posting = track(createDriver().postChatMessage(page, NOTICE));
+    await advance(1);
+
+    expect(posting.settled).toBe(true);
+    expect(errorMessage(posting)).toContain("did not take the text");
+    expect(errorMessage(posting)).not.toContain(NOTICE);
+    expect(clicks(page)).toEqual([]);
+    expect(pressedKeys(page)).toEqual([]);
+  });
+
+  describe("when the send button never shows", () => {
+    const setup = (): FakeMeetingPage => {
+      const page = createPage();
+      show(page, ["chatPanelOpen"]);
+      page.setVisibleInChildFrame(S.chatInput);
+      return page;
+    };
+
+    it("presses Enter once after the ready timeout and resolves when the composer empties", async () => {
+      const page = setup();
+      page.onAction((action) => {
+        if (action.type === "pressKey" && action.key === "Enter") page.setValue(S.chatInput, "");
+      });
+
+      const posting = track(createDriver().postChatMessage(page, NOTICE));
+      await advance(GOOGLE_MEET_CHAT_SEND_READY_TIMEOUT_MS - 1);
+      expect(posting.settled).toBe(false);
+      expect(pressedKeys(page)).toEqual([]);
+      await advance(1);
+      await advance(GOOGLE_MEET_CHAT_SENT_POLL_MS);
+
+      expect(posting.settled).toBe(true);
+      expect(posting.error).toBeUndefined();
+      expect(pressedKeys(page)).toEqual(["Enter"]);
+      expect(clicks(page)).toEqual([]);
+    });
+
+    it("throws when Enter does not empty the composer", async () => {
+      const page = setup();
+
+      const posting = track(createDriver().postChatMessage(page, NOTICE));
+      await advance(GOOGLE_MEET_CHAT_SEND_READY_TIMEOUT_MS);
+      await advance(GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS);
+
+      expect(posting.settled).toBe(true);
+      expect(errorMessage(posting)).toMatch(/not confirmed/);
+      expect(pressedKeys(page)).toEqual(["Enter"]);
+      expect(clicks(page)).toEqual([]);
+    });
+  });
+
+  it("does not post twice when a late confirmation shows on the next attempt", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen", "chatInput", "chatSendButton"]);
+    const driver = createDriver();
+
+    const first = track(driver.postChatMessage(page, NOTICE));
+    await advance(GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS);
+    expect(first.settled).toBe(true);
+    expect(first.error).toBeInstanceOf(Error);
+    page.setValue(S.chatInput, "");
+    const actionsAfterFirst = page.actions.length;
+
+    await driver.postChatMessage(page, NOTICE);
+
+    expect(page.actions.length).toBe(actionsAfterFirst);
+    expect(fills(page)).toEqual([S.chatInput]);
+    expect(clicks(page)).toEqual([S.chatSendButton]);
+    expect(pressedKeys(page)).toEqual([]);
+  });
+
+  it("fills and sends once more when the text is still in the composer on the next attempt", async () => {
+    const page = createPage();
+    show(page, ["chatPanelOpen", "chatInput", "chatSendButton"]);
+    const driver = createDriver();
+
+    const first = track(driver.postChatMessage(page, NOTICE));
+    await advance(GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS);
+    expect(first.error).toBeInstanceOf(Error);
+    clearComposerOnSend(page);
+
+    await driver.postChatMessage(page, NOTICE);
+
+    expect(fillActions(page)).toEqual([
+      { type: "fillInAnyFrame", selector: S.chatInput, value: NOTICE },
+      { type: "fillInAnyFrame", selector: S.chatInput, value: NOTICE },
+    ]);
+    expect(clicks(page)).toEqual([S.chatSendButton, S.chatSendButton]);
+    expect(pressedKeys(page)).toEqual([]);
   });
 
   it("posts the notice on the meeting page", async () => {
@@ -1046,7 +1230,11 @@ describe("notice", () => {
 
     await adapter.postChatMessage(NOTICE);
 
-    expect(fillActions(page)).toContainEqual({ type: "fill", selector: S.chatInput, value: NOTICE });
+    expect(fillActions(page)).toContainEqual({
+      type: "fillInAnyFrame",
+      selector: S.chatInput,
+      value: NOTICE,
+    });
     expect(clicks(page).at(-1)).toBe(S.chatSendButton);
   });
 });
@@ -1205,6 +1393,7 @@ describe("only permitted actions", () => {
       S.leaveCallButton,
     ]);
     expect(fills(ctx.page)).toEqual([S.guestNameInput, S.chatInput]);
+    expect(pressedKeys(ctx.page)).toEqual([]);
   });
 
   it("polling performs no action", async () => {

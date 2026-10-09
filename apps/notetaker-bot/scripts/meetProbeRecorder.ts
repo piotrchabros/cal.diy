@@ -396,6 +396,32 @@ export class RecordingMeetingPage implements MeetingPage {
     );
   }
 
+  waitForVisibleInAnyFrame(selector: string, timeoutMs: number): Promise<boolean> {
+    return this.recorded(
+      "waitForVisibleInAnyFrame",
+      selector,
+      () => this.inner.waitForVisibleInAnyFrame(selector, timeoutMs),
+      (value) => ({ kind: "boolean", value })
+    );
+  }
+
+  clickInAnyFrame(selector: string): Promise<void> {
+    return this.recorded("clickInAnyFrame", selector, () => this.inner.clickInAnyFrame(selector));
+  }
+
+  fillInAnyFrame(selector: string, value: string): Promise<void> {
+    return this.recorded("fillInAnyFrame", selector, () => this.inner.fillInAnyFrame(selector, value));
+  }
+
+  readValueInAnyFrame(selector: string): Promise<string | null> {
+    return this.recorded(
+      "readValueInAnyFrame",
+      selector,
+      () => this.inner.readValueInAnyFrame(selector),
+      (value) => ({ kind: "found", value: value !== null })
+    );
+  }
+
   addInitScript(source: string): Promise<void> {
     return this.recorded("addInitScript", null, () => this.inner.addInitScript(source));
   }
