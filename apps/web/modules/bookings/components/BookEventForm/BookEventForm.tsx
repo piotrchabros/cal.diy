@@ -14,6 +14,10 @@ import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 import { Form } from "@calcom/ui/components/form";
+import {
+  getSelectedLocationType,
+  NotetakerDisclosure,
+} from "@calcom/web/modules/notetaker/components/NotetakerDisclosure";
 import type { TFunction } from "i18next";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -72,6 +76,7 @@ export const BookEventForm = ({
   const bookingData = useBookerStoreContext((state) => state.bookingData);
   const rescheduleUid = useBookerStoreContext((state) => state.rescheduleUid);
   const username = useBookerStoreContext((state) => state.username);
+  const eventId = useBookerStoreContext((state) => state.eventId);
   const isPlatformBookerEmbed = useIsPlatformBookerEmbed();
   const { timeFormat, timezone } = useBookerTime();
 
@@ -108,6 +113,10 @@ export const BookEventForm = ({
   }
 
   const watchedCfToken = bookingForm.watch("cfToken");
+  const selectedLocationType = getSelectedLocationType(
+    bookingForm.watch("responses.location"),
+    eventType.locations
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -220,6 +229,9 @@ export const BookEventForm = ({
             </Link>
             .
           </div>
+        )}
+        {!rescheduleUid && (
+          <NotetakerDisclosure eventTypeId={eventId} selectedLocationType={selectedLocationType} />
         )}
         <div className="flex justify-end mt-auto space-x-2 modalsticky rtl:space-x-reverse">
           {!!onCancel && (
