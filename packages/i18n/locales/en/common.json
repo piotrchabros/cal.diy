@@ -4870,5 +4870,16 @@
   "notetaker_reason_removed_by_participant": "A participant removed the notetaker",
   "notetaker_reason_stopped_by_host": "A host stopped the transcription",
   "notetaker_reason_interrupted": "The notetaker was interrupted",
+  "notetaker_attendee_notice_email_subject": "This meeting will be transcribed: {{title}}",
+  "notetaker_attendee_notice_email_title": "This meeting will be transcribed",
+  "notetaker_attendee_notice_email_body": "{{title}} on {{date}} will be transcribed by an automated notetaker on behalf of {{hostName}}.",
+  "notetaker_attendee_notice_email_body_pending": "If this meeting takes place, {{title}} on {{date}} will be transcribed by an automated notetaker on behalf of {{hostName}}.",
+  "notetaker_attendee_notice_email_how_to_object": "If you do not want to be transcribed, contact {{hostName}} before the meeting. During the meeting, any participant can remove the notetaker from the meeting. This stops the transcription, and the notetaker does not come back.",
+  "notetaker_stop_button": "Stop notetaker",
+  "notetaker_stop_confirm_title": "Stop the notetaker?",
+  "notetaker_stop_confirm_description": "The notetaker leaves the meeting, and what it has transcribed so far is kept. If it has already started transcribing, it cannot be turned on again for this meeting.",
+  "notetaker_stop_requested": "The notetaker is leaving the meeting.",
+  "notetaker_ended_early_removed_by_participant": "This transcript ended early at a participant's request.",
+  "notetaker_ended_early_stopped_by_host": "This transcript ended early at the host's request.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

@@ -1,4 +1,6 @@
 import type BaseEmail from "@calcom/emails/templates/_base-email";
+import type { NotetakerAttendeeNoticeEmailInput } from "./templates/attendee-notetaker-notice-email";
+import AttendeeNotetakerNoticeEmail from "./templates/attendee-notetaker-notice-email";
 import type { NotetakerResultsReadyEmailInput } from "./templates/organizer-notetaker-results-ready-email";
 import OrganizerNotetakerResultsReadyEmail from "./templates/organizer-notetaker-results-ready-email";
 
@@ -22,4 +24,10 @@ export const sendNotetakerResultsReadyEmail = async (
   input: NotetakerResultsReadyEmailInput
 ): Promise<void> => {
   await sendEmail(() => new OrganizerNotetakerResultsReadyEmail(input));
+};
+
+export const sendNotetakerAttendeeNoticeEmail = async (
+  input: NotetakerAttendeeNoticeEmailInput
+): Promise<void> => {
+  await sendEmail(() => new AttendeeNotetakerNoticeEmail(input));
 };

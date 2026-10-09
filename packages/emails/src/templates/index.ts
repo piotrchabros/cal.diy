@@ -20,6 +20,7 @@ export { FeedbackEmail } from "./FeedbackEmail";
 export { ForgotPasswordEmail } from "./ForgotPasswordEmail";
 export { MonthlyDigestEmail } from "./MonthlyDigestEmail";
 export { NoShowFeeChargedEmail } from "./NoShowFeeChargedEmail";
+export { NotetakerAttendeeNoticeEmail } from "./NotetakerAttendeeNoticeEmail";
 export { NotetakerResultsReadyEmail } from "./NotetakerResultsReadyEmail";
 export { OAuthClientApprovedNotificationEmail } from "./OAuthClientApprovedNotificationEmail";
 export { OAuthClientRejectedNotificationEmail } from "./OAuthClientRejectedNotificationEmail";
