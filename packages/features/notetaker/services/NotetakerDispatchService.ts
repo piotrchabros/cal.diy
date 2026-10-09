@@ -24,6 +24,7 @@ import type {
   NotetakerSessionRecord,
 } from "../repositories/interfaces/INotetakerSessionRepository";
 import type { NotetakerAccessService } from "./NotetakerAccessService";
+import type { NotetakerCalendarInviteService } from "./NotetakerCalendarInviteService";
 
 const STARTED_LATE_THRESHOLD_MS = 60_000;
 
@@ -67,6 +68,7 @@ export interface INotetakerDispatchServiceDeps {
   accessService: NotetakerAccessService;
   userRepository: INotetakerUserLookup;
   notetakerTasker: INotetakerTasker;
+  calendarInviteService: Pick<NotetakerCalendarInviteService, "ensureBotInvited">;
 }
 
 export class NotetakerDispatchService {
@@ -603,6 +605,10 @@ export class NotetakerDispatchService {
     }
     if (!prepared) return;
 
+    // Before the join: the guest list has to change before the bot reaches the join screen, where Meet
+    // decides between letting it in and making it ask.
+    await this.inviteBotBestEffort(booking.id, prepared.joinRequest);
+
     let externalRef: string;
     try {
       ({ externalRef } = await binding.gateway.requestJoin(prepared.joinRequest));
@@ -617,6 +623,21 @@ export class NotetakerDispatchService {
     await sessionRepository.update(prepared.session.id, { externalRef });
 
     await this.enqueueAttendeeNotice(booking.id, prepared.session.id);
+  }
+
+  private async inviteBotBestEffort(bookingId: number, joinRequest: NotetakerBotJoinRequest): Promise<void> {
+    const { sessionId, platform, meetingUrl } = joinRequest;
+    try {
+      await this.deps.calendarInviteService.ensureBotInvited({ bookingId, sessionId, platform, meetingUrl });
+    } catch (error) {
+      // The invite service promises not to reject, but a rejection here would leave a session row with no
+      // join request.
+      this.deps.logger.warn("Notetaker calendar invite failed; the notetaker will ask to join", {
+        bookingId,
+        sessionId,
+        message: getErrorMessage(error),
+      });
+    }
   }
 
   private async prepareSession(

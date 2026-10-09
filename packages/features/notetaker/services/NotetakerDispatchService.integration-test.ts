@@ -74,6 +74,7 @@ function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
     accessService: new NotetakerAccessService({ bookingNotetakerRepository }),
     userRepository: { findByIds: async () => [] },
     notetakerTasker: stubTasker,
+    calendarInviteService: { ensureBotInvited: async () => "NOT_CONFIGURED" },
   });
 }
 

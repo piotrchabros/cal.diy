@@ -149,6 +149,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
       accessService,
       userRepository,
       notetakerTasker: getNotetakerTasker(),
+      calendarInviteService: { ensureBotInvited: async () => "NOT_CONFIGURED" },
     });
   }
 
