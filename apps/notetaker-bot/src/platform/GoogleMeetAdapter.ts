@@ -269,8 +269,14 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
   }
 
   async leave(page: MeetingPage): Promise<void> {
-    if (!(await page.isVisible(GOOGLE_MEET_SELECTORS.leaveCallButton))) return;
+    if (!(await page.isVisible(GOOGLE_MEET_SELECTORS.leaveCallButton))) {
+      this.logger.warn("leave control not visible; leaving by closing the page", {
+        selectorKey: "leaveCallButton",
+      });
+      return;
+    }
     await page.click(GOOGLE_MEET_SELECTORS.leaveCallButton);
+    this.logger.info("clicked the leave control");
   }
 
   private async awaitSignInStep(page: MeetingPage, key: SelectorKey, step: SignInStep): Promise<void> {

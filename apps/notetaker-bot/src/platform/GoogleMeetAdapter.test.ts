@@ -1069,6 +1069,35 @@ describe("leave", () => {
     expect(page.actions).toEqual([]);
   });
 
+  it("warns once with only the selector key when the control is not shown", async () => {
+    const { logger, lines } = createCapturingLogger();
+    const page = createPage();
+
+    await new GoogleMeetPageDriver({ google: GUEST, logger }).leave(page);
+
+    expect(page.actions).toEqual([]);
+    const warnings = lines.filter((line) => line.includes('"level":"warn"'));
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("leave control not visible");
+    expect(warnings[0]).toContain('"selectorKey":"leaveCallButton"');
+    expect(warnings[0]).not.toContain(S.leaveCallButton);
+  });
+
+  it("logs the click after it, without the selector string", async () => {
+    const { logger, lines } = createCapturingLogger();
+    const page = createPage();
+    show(page, ["leaveCallButton"]);
+
+    await new GoogleMeetPageDriver({ google: GUEST, logger }).leave(page);
+
+    expect(page.actions).toEqual([{ type: "click", selector: S.leaveCallButton }]);
+    const infos = lines.filter((line) => line.includes("clicked the leave control"));
+    expect(infos.length).toBe(1);
+    expect(infos[0]).toContain('"level":"info"');
+    expect(infos[0]).not.toContain(S.leaveCallButton);
+    expect(lines.filter((line) => line.includes('"level":"warn"'))).toEqual([]);
+  });
+
   it("leaves through the page, then closes it", async () => {
     const { adapter, page } = await admittedGuest();
     show(page, ["leaveCallButton"]);

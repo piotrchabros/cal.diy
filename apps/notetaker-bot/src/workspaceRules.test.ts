@@ -164,6 +164,8 @@ const MARKED_FILES = [
   "scripts/spike-speaker-attribution.ts",
   "scripts/capture-smoke.ts",
   "scripts/capture-google-storage-state.ts",
+  "scripts/meet-probe.ts",
+  "scripts/meetProbePageScript.ts",
 ];
 
 function findMissingMarkers(read: (relativePath: string) => string | null): string[] {
