@@ -254,7 +254,41 @@ The E2E spec runs with the fake provider. The file `apps/web/playwright/notetake
 NOTETAKER_BOT_PROVIDER=fake yarn e2e apps/web/playwright/notetaker.e2e.ts
 ```
 
+The E2E file skips itself unless `NOTETAKER_BOT_PROVIDER=fake`, and the server it runs against needs `CRON_API_KEY`, `NOTETAKER_BOT_SECRET` and `NEXT_PUBLIC_IS_E2E=1`.
+
 Running the E2E suite needs explicit approval under the project constitution. Do not start it without that approval. Bot runner tests (state machine and timers against `FakePlatformAdapter` and `FakeSpeechToTextProvider`) live in `apps/notetaker-bot` and run with that package's test script.
+
+### Service-level walk-through
+
+Three integration tests walk the scenario steps that need no browser. They drive the real services, repositories, sync tasker and stub summary generator, with a fake bot the test owns and the email service mocked:
+
+- `packages/features/notetaker/tests/quickstartCore.integration-test.ts` (scenarios 1, 2, 3, 5, 6, 10)
+- `packages/features/notetaker/tests/quickstartLifecycle.integration-test.ts` (scenarios 7, 8, 9)
+- `apps/web/app/api/notetaker/events/__tests__/route.integration-test.ts` (scenarios 4 and 11, through the events route handler)
+
+They run only against a throwaway database. Each file skips itself unless `NOTETAKER_IT_ISOLATED_DB=1` is set and `DATABASE_URL` points at `localhost:5547/calendso_it`. Load an env file that sets both before the command (on the development machine: `.ai/tmp/notetaker/it.env`):
+
+```bash
+set -a; . .ai/tmp/notetaker/it.env; set +a; VITEST_MODE=integration TZ=UTC yarn vitest run \
+  packages/features/notetaker/tests/quickstartCore.integration-test.ts \
+  packages/features/notetaker/tests/quickstartLifecycle.integration-test.ts \
+  apps/web/app/api/notetaker/events/__tests__/route.integration-test.ts \
+  --no-file-parallelism --exclude '.ai/**' --exclude '.herdr-web-ui/**'
+```
+
+The tests create their own users, event types and bookings and delete exactly those rows. The sweep runs in two cases of scenario 9 only (a pending session cancelled by the sweep; a bot unreachable until the give-up deadline), which is why the database must be isolated and the files run one after another. Everywhere else "call the sweep" is a dispatch for that one booking.
+
+Not covered, and left to a person with a running app:
+
+- Scenario 1: the toggle and badge in the booking sheet, the page rendering, the status passing through the intermediate labels, the sweep through HTTP.
+- Scenario 3: the rejoin-blocked text in the UI.
+- Scenario 4: pressing Stop in the app; running `apps/notetaker-bot/scripts/fake-events.ts` over HTTP.
+- Scenario 5: forcing the failure with an invalid `ANTHROPIC_API_KEY`, and the "Request summary again" button.
+- Scenario 6: the admit banner and the labels in the UI.
+- Scenario 7: the advanced-tab toggle, the disclosure on the public page, the real booking flow.
+- Scenario 8: the 403 as rendered, the file download, the deleted notice.
+- Scenario 10: how the booking section shows a Cal Video booking; the diff and webhook checks.
+- Scenario 11: posting with `fake-events.ts` over HTTP.
 
 ## Not covered here
 
