@@ -7,6 +7,8 @@ import type { NotetakerFailedEmailInput } from "./templates/organizer-notetaker-
 import OrganizerNotetakerFailedEmail from "./templates/organizer-notetaker-failed-email";
 import type { NotetakerResultsReadyEmailInput } from "./templates/organizer-notetaker-results-ready-email";
 import OrganizerNotetakerResultsReadyEmail from "./templates/organizer-notetaker-results-ready-email";
+import type { NotetakerTurnedOffEmailInput } from "./templates/organizer-notetaker-turned-off-email";
+import OrganizerNotetakerTurnedOffEmail from "./templates/organizer-notetaker-turned-off-email";
 
 const sendEmail = async (prepare: () => BaseEmail) => {
   let email: BaseEmail | undefined;
@@ -42,4 +44,8 @@ export const sendNotetakerAdmitPromptEmail = async (input: NotetakerAdmitPromptE
 
 export const sendNotetakerFailedEmail = async (input: NotetakerFailedEmailInput): Promise<void> => {
   await sendEmail(() => new OrganizerNotetakerFailedEmail(input));
+};
+
+export const sendNotetakerTurnedOffEmail = async (input: NotetakerTurnedOffEmailInput): Promise<void> => {
+  await sendEmail(() => new OrganizerNotetakerTurnedOffEmail(input));
 };
