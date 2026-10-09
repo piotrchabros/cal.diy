@@ -247,7 +247,7 @@ Both routes:
 
 ## 9. Selectors to re-check
 
-Keys are the 27 keys of `GOOGLE_MEET_SELECTORS` in `src/platform/GoogleMeetAdapter.ts`. The selector strings there are guesses written from memory. Open Meet's developer tools on the real page and check each one against what you see. Fill the last two columns. If the file does not exist yet when you read this, the keys below are the intended set and must be compared with the file.
+Keys are the 30 keys of `GOOGLE_MEET_SELECTORS` in `src/platform/GoogleMeetAdapter.ts`. The selector strings there are guesses written from memory. Open Meet's developer tools on the real page and check each one against what you see. Fill the last two columns. If the file does not exist yet when you read this, the keys below are the intended set and must be compared with the file.
 
 Every alternative of every selector ends in `:visible`. This is because the page wrapper takes the first DOM match with `.first()`, and a hidden element earlier in the page would otherwise hide a visible one. Check that `:visible` after `:text(...)` works in a comma list in Playwright 1.57. This is not confirmed.
 
@@ -269,9 +269,12 @@ Order is by risk. A wrong key near the top ends sessions.
 | `activeSpeakerName` | name label of a tile that shows a speaking indicator | | |
 | `turnOffMicrophone` | pre-join microphone toggle while on | | |
 | `turnOffCamera` | pre-join camera toggle while on | | |
+| `microphoneSettled` | pre-join microphone control in its final state ("Microphone problem" indicator, or the muted toggle via `data-is-muted="true"`); waited for before the turn-off check | | |
+| `cameraSettled` | same for the camera ("Camera problem" indicator, or the muted toggle) | | |
 | `guestNameInput` | guest name field | | |
 | `askToJoinButton` | request entry | | |
 | `joinNowButton` | enter without a request | | |
+| `switchHereButton` | rejoin while a lingering connection of the same account is in the call; takes its place; "Join here too" is deliberately not used (button tag unverified) | | |
 | `joinScreenOrVerdict` | composite: the page settled after load | | |
 | `leaveCallButton` | leaves the call | | |
 | `dialogContinueWithoutDevices` | device-permission dialog | | |
