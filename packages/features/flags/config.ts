@@ -25,6 +25,7 @@ export type AppFlags = {
   "hwm-seating": boolean;
   "signup-watchlist-review": boolean;
   "sink-shortener": boolean;
+  notetaker: boolean;
 };
 
 export type TeamFeatures = Record<keyof AppFlags, boolean>;
