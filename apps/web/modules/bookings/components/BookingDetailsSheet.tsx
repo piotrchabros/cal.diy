@@ -41,6 +41,7 @@ import { BookingActionsDropdown } from "../../../components/booking/actions/Book
 import { BookingActionsStoreProvider } from "../../../components/booking/actions/BookingActionsStoreProvider";
 import { RejectBookingButton } from "../../../components/booking/RejectBookingButton";
 import type { BookingListingStatus } from "../../../components/booking/types";
+import { NotetakerBookingSection } from "../../notetaker/components/NotetakerBookingSection";
 import { usePaymentStatus } from "../hooks/usePaymentStatus";
 import { useBookingDetailsSheetStore } from "../store/bookingDetailsSheetStore";
 import type { BookingOutput } from "../types";
@@ -424,6 +425,8 @@ function BookingDetailsSheetInner({
                 />
 
                 <TrackingSection tracking={bookingDetails?.tracking} />
+
+                <NotetakerBookingSection bookingUid={booking.uid} />
               </>
             )}
 
