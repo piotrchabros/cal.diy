@@ -163,6 +163,11 @@ describe("NotetakerDispatchService", () => {
     options: { idempotencyKey: `notetaker:FAILED:${sessionId}` },
   });
 
+  const turnedOffNotice = (bookingId: number) => ({
+    payload: { kind: "TURNED_OFF", bookingId, sessionId: null },
+    options: undefined,
+  });
+
   const eventSink = async (event: NotetakerBotEvent): Promise<void> => {
     events.push(event);
   };
@@ -357,7 +362,10 @@ describe("NotetakerDispatchService", () => {
     it("resolves the meeting link at dispatch time, not when the choice was armed", async () => {
       await seedArmed();
       repositories.store.addBooking(
-        buildBooking({ metadata: { videoCallUrl: "https://meet.google.com/new-link-xyz" } })
+        buildBooking({
+          location: MeetLocationType,
+          metadata: { videoCallUrl: "https://meet.google.com/new-link-xyz" },
+        })
       );
       const gateway = fake();
 
@@ -561,6 +569,105 @@ describe("NotetakerDispatchService", () => {
         actorType: "SYSTEM",
         actorUserId: null,
         detail: { reason: "UNSUPPORTED_LOCATION" },
+      });
+    });
+
+    it("turns a booking moved to in person off even though a Meet reference is left over", async () => {
+      const bookingId = await seedArmed({
+        location: "123 Main Street",
+        metadata: { videoCallUrl: "" },
+        references: [{ type: "google_meet_video", meetingUrl: MEET_LINK }],
+      });
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(gateway.joinRequests).toHaveLength(0);
+      const choice = repositories.store.choices.get(bookingId);
+      expect(choice?.enabled).toBe(false);
+      expect(choice?.pendingDispatch).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        bookingId,
+        action: "DISABLED",
+        detail: { reason: "UNSUPPORTED_LOCATION" },
+      });
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+    });
+
+    it("turns a Meet booking that fell back to Cal Video off instead of joining", async () => {
+      const bookingId = await seedArmed({
+        location: MeetLocationType,
+        metadata: { videoCallUrl: `${WEBAPP_URL}/video/abc` },
+        references: [{ type: "daily_video", meetingUrl: `${WEBAPP_URL}/video/abc` }],
+      });
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(gateway.joinRequests).toHaveLength(0);
+      expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+    });
+
+    it("turns an armed ACCEPTED booking with a custom link off with one DISABLED activity and one TURNED_OFF notice", async () => {
+      const bookingId = await seedArmed({ location: "https://example.com/room" });
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(gateway.joinRequests).toHaveLength(0);
+      const choice = repositories.store.choices.get(bookingId);
+      expect(choice?.enabled).toBe(false);
+      expect(choice?.pendingDispatch).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        bookingId,
+        sessionId: null,
+        action: "DISABLED",
+        actorType: "SYSTEM",
+        actorUserId: null,
+        detail: { reason: "UNSUPPORTED_LOCATION" },
+      });
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+      expect(tasker.notificationCalls[0].options).toBeUndefined();
+      expect(tasker.finalizeCalls).toEqual([]);
+    });
+
+    it("enqueues nothing more and writes no second activity on a second dispatchDue", async () => {
+      await seedArmed({ location: "https://example.com/room" });
+      const gateway = fake();
+      const service = buildService(fakeBinding(gateway));
+
+      await service.dispatchDue();
+      await service.dispatchDue();
+      await settle(gateway);
+
+      expect(tasker.notificationCalls).toHaveLength(1);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it("logs and keeps the choice off when the TURNED_OFF notice cannot be enqueued", async () => {
+      const bookingId = await seedArmed({ location: "https://example.com/room" });
+      tasker.notificationResult = { runId: "task-failed" };
+      const gateway = fake();
+
+      await expect(buildService(fakeBinding(gateway)).dispatchDue()).resolves.toBeUndefined();
+      await settle(gateway);
+
+      expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(tasker.notificationCalls).toHaveLength(1);
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith("Failed to enqueue notetaker turned-off notice", {
+        bookingId,
       });
     });
 
@@ -950,12 +1057,12 @@ describe("NotetakerDispatchService", () => {
       expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
     });
 
-    it("enqueues no FAILED notice for an unsupported location", async () => {
-      await seedArmed({ location: "integrations:zoom" });
+    it("enqueues only the TURNED_OFF notice, no FAILED notice, for an unsupported location", async () => {
+      const bookingId = await seedArmed({ location: "integrations:zoom" });
 
       await buildService(fakeBinding(createStubGateway())).dispatchDue();
 
-      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
     });
   });
 
@@ -1128,7 +1235,47 @@ describe("NotetakerDispatchService", () => {
         actorType: "SYSTEM",
         detail: { reason: "UNSUPPORTED_LOCATION" },
       });
-      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+    });
+
+    it("turns a booking moved to in person off at give-up even though a Meet reference is left over", async () => {
+      const bookingId = await seedArmed({
+        location: "123 Main Street",
+        metadata: { videoCallUrl: "" },
+        references: [{ type: "google_meet_video", meetingUrl: MEET_LINK }],
+      });
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+    });
+
+    it("enqueues exactly one TURNED_OFF notice when the give-up finds no platform", async () => {
+      const bookingId = await seedArmed({ location: "https://example.com/room" });
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.sessions.size).toBe(0);
+    });
+
+    it("logs and keeps the choice off when the TURNED_OFF notice cannot be enqueued during give-up", async () => {
+      const bookingId = await seedArmed({ location: "https://example.com/room" });
+      tasker.notificationResult = { runId: "task-failed" };
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith("Failed to enqueue notetaker turned-off notice", {
+        bookingId,
+      });
     });
 
     it("records the session with an empty link when a supported type has none", async () => {
