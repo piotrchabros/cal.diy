@@ -2,6 +2,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getNotetakerConfig,
+  getNotetakerSummaryGeneratorKind,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
   type NotetakerConfig,
@@ -194,6 +195,27 @@ describe("getNotetakerConfig other fields", () => {
     expect(JSON.stringify(error.data ?? {})).not.toContain("s3cr3t-value");
   });
 
+  it("returns a null Anthropic API key when unset or blank", () => {
+    expect(getNotetakerConfig(env()).anthropicApiKey).toBeNull();
+    expect(getNotetakerConfig(env({ ANTHROPIC_API_KEY: "" })).anthropicApiKey).toBeNull();
+    expect(getNotetakerConfig(env({ ANTHROPIC_API_KEY: "   " })).anthropicApiKey).toBeNull();
+  });
+
+  it("returns the Anthropic API key trimmed", () => {
+    expect(getNotetakerConfig(env({ ANTHROPIC_API_KEY: " test-anthropic-key " })).anthropicApiKey).toBe(
+      "test-anthropic-key"
+    );
+  });
+
+  it("never leaks the Anthropic API key in a thrown error", () => {
+    const error = getError(() =>
+      getNotetakerConfig(env({ ANTHROPIC_API_KEY: "test-anthropic-key", NOTETAKER_JOIN_LEAD_SECONDS: "abc" }))
+    ) as ErrorWithCode;
+    expect(error).toBeInstanceOf(ErrorWithCode);
+    expect(error.message).not.toContain("test-anthropic-key");
+    expect(JSON.stringify(error.data ?? {})).not.toContain("test-anthropic-key");
+  });
+
   it("exposes the sweep batch size", () => {
     expect(NOTETAKER_SWEEP_BATCH_SIZE).toBe(200);
   });
@@ -266,5 +288,39 @@ describe("isNotetakerBotProviderUsable", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXT_PUBLIC_IS_E2E", "");
     expect(isNotetakerBotProviderUsable({ ...configFor({}), botProvider: "FAKE" })).toBe(false);
+  });
+});
+
+describe("getNotetakerSummaryGeneratorKind", () => {
+  const key = "test-anthropic-key";
+
+  it.each([
+    [{ ANTHROPIC_API_KEY: key }, "ANTHROPIC"],
+    [{ ANTHROPIC_API_KEY: key, NODE_ENV: "production" }, "ANTHROPIC"],
+    [{ ANTHROPIC_API_KEY: key, NODE_ENV: "production", NEXT_PUBLIC_IS_E2E: "1" }, "ANTHROPIC"],
+    [{}, "STUB"],
+    [{ NODE_ENV: "production" }, "DISABLED"],
+    [{ NODE_ENV: "production", NEXT_PUBLIC_IS_E2E: "1" }, "STUB"],
+  ] as const)("%j gives %s", (overrides, expected) => {
+    const e = env(overrides);
+    expect(getNotetakerSummaryGeneratorKind(getNotetakerConfig(e), e)).toBe(expected);
+  });
+
+  it("is STUB in development without a key", () => {
+    const e = env({ NODE_ENV: "development" });
+    expect(getNotetakerSummaryGeneratorKind(getNotetakerConfig(e), e)).toBe("STUB");
+  });
+
+  it("treats a blank E2E flag as unset in production", () => {
+    const e = env({ NODE_ENV: "production", NEXT_PUBLIC_IS_E2E: " " });
+    expect(getNotetakerSummaryGeneratorKind(getNotetakerConfig(e), e)).toBe("DISABLED");
+  });
+
+  it("reads process.env by default", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_IS_E2E", "");
+    expect(getNotetakerSummaryGeneratorKind({ ...getNotetakerConfig(env()), anthropicApiKey: null })).toBe(
+      "DISABLED"
+    );
   });
 });

@@ -30,6 +30,8 @@ type NotetakerConfig = {
   botUrl: string | null;
   botSecret: string | null;
   summaryModel: string;
+  // null means no key; getNotetakerSummaryGeneratorKind then picks the stub or the disabled generator
+  anthropicApiKey: string | null;
   fakeScenario: NotetakerFakeScenario;
 };
 
@@ -133,6 +135,10 @@ const configSchema = z.object({
     .string()
     .optional()
     .transform((value) => value ?? DEFAULT_SUMMARY_MODEL),
+  ANTHROPIC_API_KEY: z
+    .string()
+    .optional()
+    .transform((value) => value ?? null),
   NOTETAKER_FAKE_SCENARIO: z
     .enum(FAKE_SCENARIOS)
     .optional()
@@ -152,7 +158,7 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
 
   const result = configSchema.safeParse(raw);
   if (!result.success) {
-    // Only variable names and rules are reported, never values, so NOTETAKER_BOT_SECRET cannot leak.
+    // Only variable names and rules are reported, never values, so NOTETAKER_BOT_SECRET and ANTHROPIC_API_KEY cannot leak.
     const problems = result.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`);
     throw ErrorWithCode.Factory.InternalServerError(
       `Invalid notetaker configuration: ${problems.join("; ")}`
@@ -175,6 +181,7 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     botUrl: parsed.NOTETAKER_BOT_URL,
     botSecret: parsed.NOTETAKER_BOT_SECRET,
     summaryModel: parsed.NOTETAKER_SUMMARY_MODEL,
+    anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     fakeScenario: parsed.NOTETAKER_FAKE_SCENARIO,
   };
 }
@@ -195,7 +202,24 @@ function isNotetakerBotProviderUsable(
   }
 }
 
+type NotetakerSummaryGeneratorKind = "ANTHROPIC" | "STUB" | "DISABLED";
+
+function getNotetakerSummaryGeneratorKind(
+  config: NotetakerConfig,
+  env: NodeJS.ProcessEnv = process.env
+): NotetakerSummaryGeneratorKind {
+  if (config.anthropicApiKey !== null) return "ANTHROPIC";
+  // The stub must never be chosen silently in production, where fake summaries would reach real users.
+  if (env.NODE_ENV !== "production" || Boolean(trimmedOrUndefined(env.NEXT_PUBLIC_IS_E2E))) return "STUB";
+  return "DISABLED";
+}
+
 const NOTETAKER_SWEEP_BATCH_SIZE = 200;
 
-export type { NotetakerConfig, NotetakerFakeScenario };
-export { getNotetakerConfig, isNotetakerBotProviderUsable, NOTETAKER_SWEEP_BATCH_SIZE };
+export type { NotetakerConfig, NotetakerFakeScenario, NotetakerSummaryGeneratorKind };
+export {
+  getNotetakerConfig,
+  getNotetakerSummaryGeneratorKind,
+  isNotetakerBotProviderUsable,
+  NOTETAKER_SWEEP_BATCH_SIZE,
+};
