@@ -47,6 +47,12 @@ function isNotetakerCall(response: Response, procedure: string): boolean {
   return new RegExp(`/api/trpc/.*notetaker[./][^?]*${procedure}`).test(response.url());
 }
 
+// The status is not asserted: the tRPC error conversion does not map ErrorWithCode to 403 here
+async function expectAccessRefused(response: Response): Promise<void> {
+  expect(response.ok()).toBe(false);
+  expect(await response.text()).toContain("You do not have access to the notetaker results of this booking");
+}
+
 function isStateCallFor(response: Response, bookingUid: string): boolean {
   return isNotetakerCall(response, "getState") && response.url().includes(bookingUid);
 }
@@ -88,10 +94,16 @@ async function openBookingSheet(page: Page, bookingUid: string): Promise<Locator
   await expect(bookingItem).toBeVisible();
   const firstButton = bookingItem.locator('[role="button"]').first();
   await firstButton.waitFor({ state: "visible" });
+  const bookingDetailsResponse = page.waitForResponse((response) =>
+    /\/api\/trpc\/bookings\/getBookingDetails/.test(response.url())
+  );
   await firstButton.click();
 
-  const sheet = page.locator('[role="dialog"]');
+  const sheet = page.getByRole("dialog").filter({ has: page.getByTestId("booking-sheet-title") });
   await expect(sheet).toBeVisible();
+  expect((await bookingDetailsResponse).status()).toBe(200);
+  // The section renders nothing while its getState query is pending
+  await expect(sheet.getByTestId("notetaker-booking-section")).toBeVisible();
   return sheet;
 }
 
@@ -226,7 +238,7 @@ test.describe("Notetaker", () => {
       extraContexts.push(outsiderContext);
       const outsiderState = outsiderPage.waitForResponse((response) => isStateCallFor(response, booking.uid));
       await outsiderPage.goto(resultsUrl);
-      expect((await outsiderState).status()).toBe(403);
+      await expectAccessRefused(await outsiderState);
       await expect(outsiderPage.getByTestId("notetaker-passage")).toHaveCount(0);
 
       await page.getByTestId("notetaker-share-toggle").click();
@@ -234,7 +246,7 @@ test.describe("Notetaker", () => {
 
       const attendeeState = attendeePage.waitForResponse((response) => isStateCallFor(response, booking.uid));
       await attendeePage.reload();
-      expect((await attendeeState).status()).toBe(403);
+      await expectAccessRefused(await attendeeState);
       await expect(attendeePage.getByTestId("notetaker-passage")).toHaveCount(0);
     } finally {
       await Promise.all(extraContexts.map((context) => context.close()));
@@ -254,7 +266,7 @@ test.describe("Notetaker", () => {
           title: "Notetaker default",
           slug: DEFAULT_EVENT_TYPE_SLUG,
           length: 30,
-          locations: [{ type: "link", link: MEET_LINK }],
+          locations: [{ type: "integrations:google:meet" }],
         },
       ],
     });
