@@ -24,7 +24,7 @@ Every belief below is unconfirmed. The status column says "not measured" on ever
 | Google Meet sends a small number of mixed "loudest speaker" audio streams, and Teams on the web is similar. | The designer's own knowledge, recorded in `research.md` risk 1. | not measured |
 | The original tech-stack note assumed one audio track per participant. | The tech-stack note that the plan started from; `research.md` treats it as an unverified risk. | not measured |
 | The bot's capture produces one mixed audio stream, so a speaker's name can only come from signals, never from the audio channel. | Build-plan correction C14. | not measured |
-| Soniox returns per-token fields called `speaker` and `language`. | Written from memory in `src/stt/sonioxProtocol.ts`. | not measured |
+| Soniox returns per-token fields called `speaker` and `language`. | Written from memory in `src/stt/sonioxProtocol.ts`. Confirmed on 2026-10-09 with `scripts/soniox-smoke.ts` on a 16 s two-speaker English sample file (not a Meet call): both fields present, speakers separated correctly. | measured on a sample only |
 | Meet's participant tiles, speaking indicators and audio elements can be found with the candidate selectors in the probe script. | Guesses from memory, written in `scripts/spike-speaker-attribution.ts`. | not measured |
 
 ## 4. `PROVISIONAL_ATTRIBUTION_RULES` are guesses
@@ -99,7 +99,7 @@ Follow the steps in order. Decide and write down the speaking order before the c
 7. One participant leaves and another joins. Note whether the ids and the counts follow.
 8. DOM (Q3). Open Chrome DevTools on the participant tiles and find what changes on a tile while its owner speaks (an attribute, a class, an indicator). Re-run the script with `--selector` for each candidate. A good selector matches exactly 1 element while one person speaks and 0 in silence. Also note where the participant's name and a stable per-participant id can be read from the page.
 9. Mapping (Q2). Decide whether a CSRC or SSRC id can be tied to a participant, either from data the page holds or from the tile. Write down how, or write "no".
-10. Soniox (Q4). This cannot be done with the script. It needs parts of the bot that other work delivers. When `docs/smoke-test-google-meet.md` exists, run the bot in real mode on the same call, read the resulting transcript in the app, and, for the scripted turn order, note whether `language` is set on each passage and whether the unknown-speaker numbers separate the speakers. The raw token fields must be checked against Soniox's own documentation. Nothing in this repository prints tokens.
+10. Soniox (Q4). This cannot be done with the script. It needs parts of the bot that other work delivers. When `docs/smoke-test-google-meet.md` exists, run the bot in real mode on the same call, read the resulting transcript in the app, and, for the scripted turn order, note whether `language` is set on each passage and whether the unknown-speaker numbers separate the speakers. The raw token fields must be checked against Soniox's own documentation. Only `scripts/soniox-smoke.ts --trace` prints tokens, and it takes an audio file, not a call.
 11. SC-005 sample. Using the scripted turn order as ground truth, count how many passages are attributed to the right speaker, over at least 100 passages in a call of 8 participants.
 12. Close the window or press Ctrl+C. Confirm that no file was created.
 
