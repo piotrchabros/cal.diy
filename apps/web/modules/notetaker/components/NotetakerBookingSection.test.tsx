@@ -1,3 +1,4 @@
+import enTranslations from "@calcom/i18n/locales/en/common.json";
 import type { NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -320,6 +321,50 @@ describe("NotetakerBookingSection", () => {
 
     expect(screen.queryByTestId("notetaker-scope-dialog")).not.toBeInTheDocument();
     expect(mocks.setEnabledMutate).not.toHaveBeenCalled();
+  });
+
+  it("shows the Cal Video explanation for a host when the booking uses built-in video", () => {
+    renderSection(
+      buildState({
+        canToggle: false,
+        eligibility: { eligible: false, platform: null, reason: "CAL_VIDEO" },
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-booking-section")).toHaveTextContent(
+      "notetaker_unavailable_cal_video"
+    );
+  });
+
+  it("offers no enabled toggle and no stop button for a Cal Video booking", () => {
+    renderSection(
+      buildState({
+        canToggle: false,
+        eligibility: { eligible: false, platform: null, reason: "CAL_VIDEO" },
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-toggle")).toBeDisabled();
+    expect(screen.getByTestId("notetaker-toggle")).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByTestId("notetaker-stop-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-status-badge")).not.toBeInTheDocument();
+  });
+
+  it("does not mutate when the disabled toggle of a Cal Video booking is clicked", () => {
+    renderSection(
+      buildState({
+        canToggle: false,
+        eligibility: { eligible: false, platform: null, reason: "CAL_VIDEO" },
+      })
+    );
+
+    fireEvent.click(screen.getByTestId("notetaker-toggle"));
+
+    expect(mocks.setEnabledMutate).not.toHaveBeenCalled();
+  });
+
+  it("points the Cal Video explanation at the built-in transcription in the English catalogue", () => {
+    expect(enTranslations.notetaker_unavailable_cal_video).toMatch(/built-in Cal Video transcription/i);
   });
 });
 
