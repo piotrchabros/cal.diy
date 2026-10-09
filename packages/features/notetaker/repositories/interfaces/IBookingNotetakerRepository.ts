@@ -28,6 +28,9 @@ export type NotetakerAttendeeRecord = {
   timeZone: string;
 };
 
+/** `subscription` is the stored JSON string, unparsed. */
+export type NotetakerWebPushSubscriptionRecord = { userId: number; subscription: string };
+
 export type NotetakerBookingContext = {
   id: number;
   uid: string;
@@ -111,4 +114,15 @@ export interface IBookingNotetakerRepository {
   }): Promise<boolean>;
   /** The booking's current Attendee rows, ordered by id ascending. */
   findAttendeesByBookingId(bookingId: number): Promise<NotetakerAttendeeRecord[]>;
+  /**
+   * Compare-and-swap off: updateMany where bookingId matches AND enabled = true, setting
+   * enabled = false and pendingDispatch = false; every other column unchanged. Resolves true only
+   * for the call that flipped the row.
+   */
+  disableIfEnabled(bookingId: number): Promise<boolean>;
+  /**
+   * At most one row per user: the most recent (highest id) NotificationsSubscriptions row of each
+   * listed user, in the order the users first appear in userIds. Empty input gives [] without a query.
+   */
+  findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]>;
 }

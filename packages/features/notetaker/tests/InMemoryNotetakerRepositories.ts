@@ -8,6 +8,7 @@ import type {
   NotetakerBookingContext,
   NotetakerBookingStatus,
   NotetakerSharingGrantRecord,
+  NotetakerWebPushSubscriptionRecord,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type {
   EventTypeNotetakerSettingsRecord,
@@ -128,6 +129,7 @@ export class InMemoryNotetakerStore {
   readonly eventTypes = new Map<number, InMemoryEventTypeSeed>();
   readonly verifiedEmails = new Map<number, string[]>();
   readonly attendees = new Map<number, NotetakerAttendeeRecord[]>();
+  readonly webPushSubscriptions = new Map<number, string[]>();
   readonly choices = new Map<number, BookingNotetakerRecord>();
   readonly sharingGrants = new Map<number, NotetakerSharingGrantRecord>();
   readonly eventTypeSettings = new Map<number, EventTypeNotetakerSettingsRecord>();
@@ -189,6 +191,10 @@ export class InMemoryNotetakerStore {
 
   setAttendees(bookingId: number, attendees: NotetakerAttendeeRecord[]): void {
     this.attendees.set(bookingId, attendees.map(copyAttendee));
+  }
+
+  setWebPushSubscriptions(userId: number, subscriptions: string[]): void {
+    this.webPushSubscriptions.set(userId, [...subscriptions]);
   }
 
   removeTranscript(transcriptId: string): void {
@@ -316,6 +322,15 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     choice.pendingDispatch = false;
   }
 
+  // No await before the write, as in enableIfDisabled: concurrent callers must not both win.
+  async disableIfEnabled(bookingId: number): Promise<boolean> {
+    const choice = this.store.choices.get(bookingId);
+    if (!choice || !choice.enabled) return false;
+    choice.enabled = false;
+    choice.pendingDispatch = false;
+    return true;
+  }
+
   async clearPendingDispatch(bookingId: number): Promise<boolean> {
     const choice = this.store.choices.get(bookingId);
     if (!choice || !choice.pendingDispatch) return false;
@@ -436,6 +451,17 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
 
   async findVerifiedEmailsByUserId(userId: number): Promise<string[]> {
     return [...(this.store.verifiedEmails.get(userId) ?? [])];
+  }
+
+  async findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]> {
+    const result: NotetakerWebPushSubscriptionRecord[] = [];
+    Array.from(new Set(userIds)).forEach((userId) => {
+      const subscriptions = this.store.webPushSubscriptions.get(userId);
+      if (!subscriptions || subscriptions.length === 0) return;
+      // The last entry stands for the highest id, which is the row the Prisma repository keeps.
+      result.push({ userId, subscription: subscriptions[subscriptions.length - 1] });
+    });
+    return result;
   }
 }
 

@@ -8,6 +8,7 @@ import type {
   NotetakerBookingContext,
   NotetakerBookingStatus,
   NotetakerSharingGrantRecord,
+  NotetakerWebPushSubscriptionRecord,
 } from "./interfaces/IBookingNotetakerRepository";
 
 const choiceSelect = {
@@ -199,6 +200,16 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     });
   }
 
+  async disableIfEnabled(bookingId: number): Promise<boolean> {
+    // The enabled filter makes this a single conditional UPDATE, so of two sweeps voiding the same
+    // booking only one sees a count of 1 and writes the activity.
+    const { count } = await this.prismaClient.bookingNotetaker.updateMany({
+      where: { bookingId, enabled: true },
+      data: { enabled: false, pendingDispatch: false },
+    });
+    return count === 1;
+  }
+
   async clearPendingDispatch(bookingId: number): Promise<boolean> {
     // A single conditional UPDATE is what guarantees only one caller wins the dispatch
     // (one session per booking); a read-then-write would let two workers both proceed.
@@ -329,5 +340,26 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     });
     if (!user) return [];
     return [user.email, ...user.secondaryEmails.map((secondary) => secondary.email)];
+  }
+
+  async findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]> {
+    if (userIds.length === 0) return [];
+    const rows = await this.prismaClient.notificationsSubscriptions.findMany({
+      where: { userId: { in: userIds } },
+      orderBy: { id: "desc" },
+      select: { userId: true, subscription: true },
+    });
+    // The table has no unique constraint on userId; rows arrive newest first, so the first one seen
+    // per user is the one to keep.
+    const latestByUserId = new Map<number, NotetakerWebPushSubscriptionRecord>();
+    rows.forEach((row) => {
+      if (!latestByUserId.has(row.userId)) latestByUserId.set(row.userId, row);
+    });
+    const result: NotetakerWebPushSubscriptionRecord[] = [];
+    Array.from(new Set(userIds)).forEach((userId) => {
+      const latest = latestByUserId.get(userId);
+      if (latest) result.push(latest);
+    });
+    return result;
   }
 }
