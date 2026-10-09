@@ -340,6 +340,7 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       where: { id: userId },
       select: {
         email: true,
+        emailVerified: true,
         secondaryEmails: {
           where: { emailVerified: { not: null } },
           select: { email: true },
@@ -347,7 +348,10 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       },
     });
     if (!user) return [];
-    return [user.email, ...user.secondaryEmails.map((secondary) => secondary.email)];
+    return [
+      ...(user.emailVerified !== null ? [user.email] : []),
+      ...user.secondaryEmails.map((secondary) => secondary.email),
+    ];
   }
 
   async findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]> {
@@ -376,5 +380,18 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       where: { bookingId },
       data: { appliedToSeries },
     });
+  }
+
+  async createSharingGrantIfMissing(data: {
+    bookingId: number;
+    grantedByUserId: number | null;
+  }): Promise<boolean> {
+    // The insert itself decides who shared: a duplicate is skipped by the database instead of
+    // read first, so concurrent calls get exactly one true.
+    const { count } = await this.prismaClient.notetakerSharingGrant.createMany({
+      data: [{ bookingId: data.bookingId, grantedByUserId: data.grantedByUserId }],
+      skipDuplicates: true,
+    });
+    return count === 1;
   }
 }

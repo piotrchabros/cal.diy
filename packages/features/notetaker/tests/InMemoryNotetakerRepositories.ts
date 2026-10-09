@@ -470,6 +470,23 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     if (!choice) return;
     choice.appliedToSeries = appliedToSeries;
   }
+
+  async createSharingGrantIfMissing(data: {
+    bookingId: number;
+    grantedByUserId: number | null;
+  }): Promise<boolean> {
+    if (!this.store.bookings.has(data.bookingId)) {
+      throw new Error(`InMemoryNotetakerStore: booking ${data.bookingId} does not exist`);
+    }
+    // No await between the check and the write, so concurrent calls give exactly one true.
+    if (this.store.sharingGrants.has(data.bookingId)) return false;
+    this.store.sharingGrants.set(data.bookingId, {
+      bookingId: data.bookingId,
+      grantedByUserId: data.grantedByUserId,
+      grantedAt: new Date(),
+    });
+    return true;
+  }
 }
 
 export class InMemoryEventTypeNotetakerSettingsRepository implements IEventTypeNotetakerSettingsRepository {
