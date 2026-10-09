@@ -565,6 +565,18 @@ export class NotetakerDispatchService {
     this.deps.logger.error("Failed to enqueue notetaker failed notice", { bookingId, sessionId });
   }
 
+  private async enqueueTurnedOffNotice(bookingId: number): Promise<void> {
+    const { runId } = await this.deps.notetakerTasker.sendNotification({
+      kind: "TURNED_OFF",
+      bookingId,
+      sessionId: null,
+    });
+    if (runId !== "task-failed") return;
+
+    // Not thrown: the choice is already off, and failing the sweep would not send the notice.
+    this.deps.logger.error("Failed to enqueue notetaker turned-off notice", { bookingId });
+  }
+
   private async dispatchBooking(
     booking: NotetakerBookingContext,
     binding: NotetakerBotGatewayBinding
@@ -622,14 +634,13 @@ export class NotetakerDispatchService {
       enabledPlatforms: config.enabledPlatforms,
     });
     const { platform } = eligibility;
-    const meetingUrl = eligibility.eligible ? resolveMeetingLink({ location, metadata, references }) : null;
-    const isSupportedTypeWithoutLink = eligibility.reason === "NO_MEETING_LINK";
 
-    if (platform === null || (meetingUrl === null && !isSupportedTypeWithoutLink)) {
+    if (!eligibility.eligible || platform === null) {
       await this.disableUnsupported(booking);
       return null;
     }
 
+    const meetingUrl = resolveMeetingLink({ location, metadata, references });
     const now = new Date();
 
     if (meetingUrl === null) {
@@ -680,7 +691,11 @@ export class NotetakerDispatchService {
   private async disableUnsupported(booking: NotetakerBookingContext): Promise<void> {
     const { bookingNotetakerRepository, activityRepository } = this.deps;
 
-    await bookingNotetakerRepository.disable(booking.id);
+    // Only the call that flipped the row records it and sends the notice, so two concurrent sweeps
+    // produce one activity and one notice.
+    const flipped = await bookingNotetakerRepository.disableIfEnabled(booking.id);
+    if (!flipped) return;
+
     await activityRepository.create({
       bookingId: booking.id,
       sessionId: null,
@@ -690,6 +705,7 @@ export class NotetakerDispatchService {
       actorName: null,
       detail: { reason: "UNSUPPORTED_LOCATION" },
     });
+    await this.enqueueTurnedOffNotice(booking.id);
   }
 
   private async resolveDisplay(booking: NotetakerBookingContext): Promise<{
