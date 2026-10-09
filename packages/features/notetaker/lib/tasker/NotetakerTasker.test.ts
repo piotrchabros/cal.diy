@@ -9,7 +9,6 @@ import type {
   NotetakerFinalizeSessionPayload,
   NotetakerGenerateSummaryPayload,
   NotetakerSendNotificationPayload,
-  NotetakerTasks,
 } from "./types";
 
 interface RegisteredTaskParams {
@@ -35,6 +34,7 @@ const sdkMocks = vi.hoisted(() => {
 
 const serviceMocks = vi.hoisted(() => ({
   finalize: vi.fn<(payload: NotetakerFinalizeSessionPayload) => Promise<void>>(),
+  generate: vi.fn<(payload: NotetakerGenerateSummaryPayload) => Promise<void>>(),
   send: vi.fn<(payload: NotetakerSendNotificationPayload) => Promise<void>>(),
   dispatchDue: vi.fn<() => Promise<void>>(),
 }));
@@ -54,6 +54,10 @@ vi.mock("@trigger.dev/sdk", () => ({
 
 vi.mock("@calcom/features/notetaker/di/NotetakerFinalizeService.container", () => ({
   getNotetakerFinalizeService: () => ({ finalize: serviceMocks.finalize }),
+}));
+
+vi.mock("@calcom/features/notetaker/di/NotetakerSummaryService.container", () => ({
+  getNotetakerSummaryService: () => ({ generate: serviceMocks.generate }),
 }));
 
 vi.mock("@calcom/features/notetaker/di/NotetakerNotificationService.container", () => ({
@@ -136,7 +140,6 @@ const options: TriggerOptions = { idempotencyKey: "notetaker:RESULTS_READY:sessi
 interface TaskCase {
   name: keyof INotetakerTasker;
   payload: unknown;
-  callService: (service: NotetakerTasks) => Promise<void>;
   callTasker: (tasker: INotetakerTasker, options?: TriggerOptions) => Promise<{ runId: string }>;
 }
 
@@ -144,24 +147,19 @@ const taskCases: TaskCase[] = [
   {
     name: "finalizeSession",
     payload: finalizeSessionPayload,
-    callService: (service) => service.finalizeSession(finalizeSessionPayload),
     callTasker: (tasker, triggerOptions) => tasker.finalizeSession(finalizeSessionPayload, triggerOptions),
   },
   {
     name: "generateSummary",
     payload: generateSummaryPayload,
-    callService: (service) => service.generateSummary(generateSummaryPayload),
     callTasker: (tasker, triggerOptions) => tasker.generateSummary(generateSummaryPayload, triggerOptions),
   },
   {
     name: "sendNotification",
     payload: sendNotificationPayload,
-    callService: (service) => service.sendNotification(sendNotificationPayload),
     callTasker: (tasker, triggerOptions) => tasker.sendNotification(sendNotificationPayload, triggerOptions),
   },
 ];
-
-const scaffoldCases = taskCases.filter(({ name }) => name === "generateSummary");
 
 const TASK_SERVICE_CONTAINER = "@calcom/features/notetaker/di/tasker/NotetakerTaskService.container";
 
@@ -204,6 +202,7 @@ beforeEach(() => {
   sdkMocks.schemaTask.mockClear();
   sdkMocks.scheduledTask.mockClear();
   serviceMocks.finalize.mockReset();
+  serviceMocks.generate.mockReset();
   serviceMocks.send.mockReset();
   serviceMocks.dispatchDue.mockReset();
   taskServiceMocks.finalizeSession.mockReset();
@@ -217,17 +216,6 @@ afterEach(() => {
 });
 
 describe("NotetakerTaskService", () => {
-  describe("scaffold", () => {
-    it.each(scaffoldCases)("$name rejects until it is wired", async ({ name, callService }) => {
-      const service = new NotetakerTaskService({ logger: createMockLogger() });
-
-      await expect(callService(service)).rejects.toMatchObject({
-        message: `Notetaker task "${name}" is not wired yet`,
-        code: "internal_server_error",
-      });
-    });
-  });
-
   describe("wired tasks", () => {
     it("finalizeSession delegates to the finalize service", async () => {
       serviceMocks.finalize.mockResolvedValue(undefined);
@@ -238,6 +226,17 @@ describe("NotetakerTaskService", () => {
       expect(serviceMocks.finalize).toHaveBeenCalledTimes(1);
       expect(serviceMocks.finalize).toHaveBeenCalledWith(finalizeSessionPayload);
       expect(serviceMocks.send).not.toHaveBeenCalled();
+    });
+
+    it("generateSummary delegates to the summary service", async () => {
+      serviceMocks.generate.mockResolvedValue(undefined);
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await service.generateSummary(generateSummaryPayload);
+
+      expect(serviceMocks.generate).toHaveBeenCalledTimes(1);
+      expect(serviceMocks.generate).toHaveBeenCalledWith(generateSummaryPayload);
+      expect(serviceMocks.finalize).not.toHaveBeenCalled();
     });
 
     it("sendNotification delegates to the notification service", async () => {
@@ -258,6 +257,13 @@ describe("NotetakerTaskService", () => {
       await expect(service.finalizeSession(finalizeSessionPayload)).rejects.toThrow("finalize failed");
     });
 
+    it("propagates a summary service error", async () => {
+      serviceMocks.generate.mockRejectedValue(new Error("generate failed"));
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await expect(service.generateSummary(generateSummaryPayload)).rejects.toThrow("generate failed");
+    });
+
     it("propagates a notification service error", async () => {
       serviceMocks.send.mockRejectedValue(new Error("send failed"));
       const service = new NotetakerTaskService({ logger: createMockLogger() });
@@ -268,17 +274,6 @@ describe("NotetakerTaskService", () => {
 });
 
 describe("NotetakerTriggerTasker", () => {
-  describe("scaffold", () => {
-    it.each(scaffoldCases)("$name rejects until it is wired", async ({ name, callTasker }) => {
-      const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
-
-      await expect(callTasker(asyncTasker, options)).rejects.toMatchObject({
-        message: `Notetaker task "${name}" is not wired yet`,
-        code: "internal_server_error",
-      });
-    });
-  });
-
   describe("wired tasks", () => {
     it("finalizeSession triggers the finalize task and returns its run id", async () => {
       sdkMocks.trigger.mockResolvedValue({ id: "run_finalize_1" });
@@ -293,6 +288,21 @@ describe("NotetakerTriggerTasker", () => {
         options
       );
       expect(result).toEqual({ runId: "run_finalize_1" });
+    });
+
+    it("generateSummary triggers the summary task and returns its run id", async () => {
+      sdkMocks.trigger.mockResolvedValue({ id: "run_summary_1" });
+      const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
+
+      const result = await asyncTasker.generateSummary(generateSummaryPayload, options);
+
+      expect(sdkMocks.trigger).toHaveBeenCalledTimes(1);
+      expect(sdkMocks.trigger).toHaveBeenCalledWith(
+        "notetaker.generate-summary",
+        generateSummaryPayload,
+        options
+      );
+      expect(result).toEqual({ runId: "run_summary_1" });
     });
 
     it("sendNotification triggers the notification task and returns its run id", async () => {
@@ -360,6 +370,33 @@ describe("notetaker trigger tasks", () => {
     expect(taskServiceMocks.finalizeSession).toHaveBeenCalledTimes(1);
     expect(taskServiceMocks.finalizeSession).toHaveBeenCalledWith(finalizeSessionPayload);
     expect(taskServiceMocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("generate-summary registers a schema task with the shared config", async () => {
+    const { notetakerTaskConfig } = await import("./trigger/config");
+    const { notetakerGenerateSummarySchema } = await import("./trigger/schema");
+    const { GENERATE_SUMMARY_JOB_ID } = await import("./trigger/generate-summary");
+
+    expect(GENERATE_SUMMARY_JOB_ID).toBe("notetaker.generate-summary");
+    expect(sdkMocks.schemaTask).toHaveBeenCalledTimes(1);
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+    expect(params.id).toBe("notetaker.generate-summary");
+    expect(params.schema).toBe(notetakerGenerateSummarySchema);
+    expect(params.machine).toBe(notetakerTaskConfig.machine);
+    expect(params.queue).toBe(notetakerTaskConfig.queue);
+    expect(params.retry).toEqual(notetakerTaskConfig.retry);
+  });
+
+  it("generate-summary run calls the task service", async () => {
+    taskServiceMocks.generateSummary.mockResolvedValue(undefined);
+    await import("./trigger/generate-summary");
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+
+    await params.run(generateSummaryPayload);
+
+    expect(taskServiceMocks.generateSummary).toHaveBeenCalledTimes(1);
+    expect(taskServiceMocks.generateSummary).toHaveBeenCalledWith(generateSummaryPayload);
+    expect(taskServiceMocks.finalizeSession).not.toHaveBeenCalled();
   });
 
   it("send-notification registers a schema task with the shared config", async () => {

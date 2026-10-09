@@ -2,6 +2,7 @@ import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.s
 import type { NotetakerOutcomeReasonDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { TriggerOptions } from "@trigger.dev/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getNotetakerConfig } from "../lib/config";
 import type {
   INotetakerTasker,
   NotetakerFinalizeSessionPayload,
@@ -59,6 +60,15 @@ function buildTwoPassages(): NotetakerPassageRecord[] {
   ];
 }
 
+// 50 words clears the default summaryMinWords threshold of 40
+function buildLongPassages(): NotetakerPassageRecord[] {
+  const text = Array.from({ length: 25 }, (_, i) => `word${i}`).join(" ");
+  return [
+    buildPassage({ index: 0, startMs: 0, endMs: 4000, text, language: "en" }),
+    buildPassage({ index: 1, startMs: 4000, endMs: 9000, text, language: "en" }),
+  ];
+}
+
 class RecordingNotetakerTasker implements INotetakerTasker {
   sendNotificationCalls: {
     payload: NotetakerSendNotificationPayload;
@@ -67,6 +77,7 @@ class RecordingNotetakerTasker implements INotetakerTasker {
   finalizeSessionCalls: NotetakerFinalizeSessionPayload[] = [];
   generateSummaryCalls: NotetakerGenerateSummaryPayload[] = [];
   sendNotificationRunId = "run-1";
+  generateSummaryRunId = "run-summary";
 
   async finalizeSession(payload: NotetakerFinalizeSessionPayload): Promise<{ runId: string }> {
     this.finalizeSessionCalls.push(payload);
@@ -75,7 +86,7 @@ class RecordingNotetakerTasker implements INotetakerTasker {
 
   async generateSummary(payload: NotetakerGenerateSummaryPayload): Promise<{ runId: string }> {
     this.generateSummaryCalls.push(payload);
-    return { runId: "run-summary" };
+    return { runId: this.generateSummaryRunId };
   }
 
   async sendNotification(
@@ -106,7 +117,9 @@ describe("NotetakerFinalizeService", () => {
     service = new NotetakerFinalizeService({
       sessionRepository: repositories.sessionRepository,
       transcriptRepository: repositories.transcriptRepository,
+      summaryRepository: repositories.summaryRepository,
       notetakerTasker: tasker,
+      config: getNotetakerConfig({ NODE_ENV: "test" }),
       logger,
     });
   });
@@ -461,9 +474,17 @@ describe("NotetakerFinalizeService", () => {
     it.each(seeds)("is enqueued once with an idempotency key for a $name session", async ({
       outcomeReason,
     }) => {
-      const { sessionId } = await seedProcessingSession({ outcomeReason, passages: buildTwoPassages() });
+      const { sessionId, transcriptId } = await seedProcessingSession({
+        outcomeReason,
+        passages: buildTwoPassages(),
+      });
 
       await service.finalize({ sessionId });
+
+      const summary = await repositories.summaryRepository.findByTranscriptId(transcriptId ?? "");
+      expect(summary?.status).toBe("NOT_ENOUGH_CONTENT");
+      expect(summary?.attempts).toBe(0);
+      expect(summary?.failureCode).toBeNull();
 
       expect(tasker.sendNotificationCalls).toHaveLength(1);
       expect(tasker.sendNotificationCalls[0].payload).toEqual({
@@ -488,6 +509,17 @@ describe("NotetakerFinalizeService", () => {
       expect(updateSpy.mock.invocationCallOrder[0]).toBeLessThan(sendSpy.mock.invocationCallOrder[0]);
     });
 
+    it("writes the NOT_ENOUGH_CONTENT row before enqueueing it", async () => {
+      const setStatusSpy = vi.spyOn(repositories.summaryRepository, "setStatus");
+      const sendSpy = vi.spyOn(tasker, "sendNotification");
+      const { sessionId, transcriptId } = await seedProcessingSession({ passages: buildTwoPassages() });
+
+      await service.finalize({ sessionId });
+
+      expect(setStatusSpy).toHaveBeenCalledWith(transcriptId, "NOT_ENOUGH_CONTENT", null);
+      expect(setStatusSpy.mock.invocationCallOrder[0]).toBeLessThan(sendSpy.mock.invocationCallOrder[0]);
+    });
+
     it("is not enqueued when another worker already moved the session", async () => {
       vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
       const { sessionId } = await seedProcessingSession({ passages: buildTwoPassages() });
@@ -505,6 +537,116 @@ describe("NotetakerFinalizeService", () => {
 
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect((await readSession(sessionId))?.status).toBe("READY");
+    });
+  });
+
+  describe("summary generation", () => {
+    const seeds: { name: string; outcomeReason: NotetakerOutcomeReasonDto | null }[] = [
+      { name: "READY", outcomeReason: null },
+      { name: "ENDED_EARLY", outcomeReason: "STOPPED_BY_HOST" },
+    ];
+
+    it.each(seeds)("enqueues the summary once and no notification for a $name session", async ({
+      name,
+      outcomeReason,
+    }) => {
+      const { sessionId, transcriptId } = await seedProcessingSession({
+        outcomeReason,
+        passages: buildLongPassages(),
+      });
+
+      await service.finalize({ sessionId });
+
+      expect(tasker.generateSummaryCalls).toEqual([{ transcriptId, requestedByUserId: null }]);
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(await repositories.summaryRepository.findByTranscriptId(transcriptId ?? "")).toBeNull();
+      expect((await readSession(sessionId))?.status).toBe(name);
+    });
+
+    it("enqueues the summary without options", async () => {
+      const generateSpy = vi.spyOn(tasker, "generateSummary");
+      const { sessionId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await service.finalize({ sessionId });
+
+      expect(generateSpy.mock.calls[0]).toHaveLength(1);
+    });
+
+    it("treats exactly the minimum word count as sufficient", async () => {
+      const exactService = new NotetakerFinalizeService({
+        sessionRepository: repositories.sessionRepository,
+        transcriptRepository: repositories.transcriptRepository,
+        summaryRepository: repositories.summaryRepository,
+        notetakerTasker: tasker,
+        config: getNotetakerConfig({ NODE_ENV: "test", NOTETAKER_SUMMARY_MIN_WORDS: "50" }),
+        logger,
+      });
+      const { sessionId, transcriptId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await exactService.finalize({ sessionId });
+
+      expect(tasker.generateSummaryCalls).toEqual([{ transcriptId, requestedByUserId: null }]);
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+    });
+
+    it("treats one word below the minimum as not enough content", async () => {
+      const strictService = new NotetakerFinalizeService({
+        sessionRepository: repositories.sessionRepository,
+        transcriptRepository: repositories.transcriptRepository,
+        summaryRepository: repositories.summaryRepository,
+        notetakerTasker: tasker,
+        config: getNotetakerConfig({ NODE_ENV: "test", NOTETAKER_SUMMARY_MIN_WORDS: "51" }),
+        logger,
+      });
+      const { sessionId, transcriptId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await strictService.finalize({ sessionId });
+
+      expect(tasker.generateSummaryCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      const summary = await repositories.summaryRepository.findByTranscriptId(transcriptId ?? "");
+      expect(summary?.status).toBe("NOT_ENOUGH_CONTENT");
+    });
+
+    it("enqueues neither when another worker already moved the session", async () => {
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+      const { sessionId, transcriptId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await expect(service.finalize({ sessionId })).resolves.toBeUndefined();
+
+      expect(tasker.generateSummaryCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(await repositories.summaryRepository.findByTranscriptId(transcriptId ?? "")).toBeNull();
+    });
+
+    it("logs a task-failed summary run instead of throwing", async () => {
+      tasker.generateSummaryRunId = "task-failed";
+      const { sessionId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await expect(service.finalize({ sessionId })).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect((await readSession(sessionId))?.status).toBe("READY");
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(JSON.stringify(logger.error.mock.calls)).not.toContain("word3");
+    });
+
+    it("enqueues once when run twice", async () => {
+      const { sessionId } = await seedProcessingSession({ passages: buildLongPassages() });
+
+      await service.finalize({ sessionId });
+      await service.finalize({ sessionId });
+
+      expect(tasker.generateSummaryCalls).toHaveLength(1);
+    });
+
+    it("enqueues neither for a session without passages", async () => {
+      const { sessionId } = await seedProcessingSession();
+
+      await service.finalize({ sessionId });
+
+      expect(tasker.generateSummaryCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
     });
   });
 
