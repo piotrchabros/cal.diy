@@ -1,13 +1,13 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import type { NotetakerSessionStatusDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
-import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerTranscriptDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { getBookingNotetakerEligibility } from "../lib/eligibility";
 import { getDisplayedStatus } from "../lib/sessionStateMachine";
+import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import type {
@@ -21,10 +21,7 @@ import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
 } from "../repositories/interfaces/INotetakerSessionRepository";
-import type {
-  INotetakerSummaryRepository,
-  NotetakerSummaryRecord,
-} from "../repositories/interfaces/INotetakerSummaryRepository";
+import type { INotetakerSummaryRepository } from "../repositories/interfaces/INotetakerSummaryRepository";
 import type {
   INotetakerTranscriptRepository,
   NotetakerTranscriptRecord,
@@ -64,18 +61,6 @@ function toTranscriptDto(transcript: NotetakerTranscriptRecord): NotetakerTransc
     completeness: transcript.completeness,
     durationMs: transcript.durationMs,
     passageCount: transcript.passageCount,
-  };
-}
-
-function toSummaryDto(summary: NotetakerSummaryRecord): NotetakerSummaryDto {
-  return {
-    status: summary.status,
-    language: summary.language,
-    overview: summary.overview,
-    keyPoints: summary.keyPoints,
-    decisions: summary.decisions,
-    actionItems: summary.actionItems.map((item) => ({ text: item.text, owner: item.owner })),
-    generatedAt: toIsoOrNull(summary.generatedAt),
   };
 }
 
@@ -219,7 +204,7 @@ export class NotetakerChoiceService {
       isRecurring: booking.recurringEventId !== null,
       session: latestSession ? toSessionDto(latestSession) : null,
       transcript: transcript ? toTranscriptDto(transcript) : null,
-      summary: summary ? toSummaryDto(summary) : null,
+      summary: summary ? toNotetakerSummaryDto(summary) : null,
       sharedWithAttendees: sharingGrant !== null,
     };
   }

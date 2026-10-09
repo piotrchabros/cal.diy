@@ -80,6 +80,7 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
     botUrl: null,
     botSecret: null,
     summaryModel: "test-model",
+    anthropicApiKey: null,
     fakeScenario: "happy",
     ...overrides,
   };
@@ -868,6 +869,45 @@ describe("NotetakerChoiceService", () => {
       });
       expect(state.summary?.status).toBe("PENDING");
       expect(state.summary?.generatedAt).toBeNull();
+    });
+
+    it("maps a ready summary without internal fields", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      const session = await createSession("READY");
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.summaryRepository.upsertPending(transcript.id);
+      await repositories.summaryRepository.saveResult(transcript.id, {
+        status: "READY",
+        language: "en",
+        overview: "Overview text",
+        keyPoints: ["Point one"],
+        decisions: ["Decision one"],
+        actionItems: [
+          { text: "Send the notes", owner: "Alex" },
+          { text: "Book a room", owner: null },
+        ],
+        model: "test-model",
+        generatedAt: new Date("2026-10-12T10:40:00.000Z"),
+      });
+
+      const state = await getState();
+
+      expect(state.summary).toEqual({
+        status: "READY",
+        language: "en",
+        overview: "Overview text",
+        keyPoints: ["Point one"],
+        decisions: ["Decision one"],
+        actionItems: [
+          { text: "Send the notes", owner: "Alex" },
+          { text: "Book a room", owner: null },
+        ],
+        generatedAt: "2026-10-12T10:40:00.000Z",
+      });
     });
 
     it("hides the transcript and summary once the results were deleted", async () => {
