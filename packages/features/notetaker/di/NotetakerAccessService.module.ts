@@ -1,0 +1,25 @@
+import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
+import { NotetakerAccessService } from "@calcom/features/notetaker/services/NotetakerAccessService";
+import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
+import { NOTETAKER_DI_TOKENS } from "./tokens";
+
+const thisModule = createModule();
+const token = NOTETAKER_DI_TOKENS.NOTETAKER_ACCESS_SERVICE;
+const moduleToken = NOTETAKER_DI_TOKENS.NOTETAKER_ACCESS_SERVICE_MODULE;
+
+const loadModule = bindModuleToClassOnToken({
+  module: thisModule,
+  moduleToken,
+  token,
+  classs: NotetakerAccessService,
+  depsMap: {
+    bookingNotetakerRepository: bookingNotetakerRepositoryModuleLoader,
+  },
+});
+
+export const moduleLoader = {
+  token,
+  loadModule,
+} satisfies ModuleLoader;
+
+export type { NotetakerAccessService };
