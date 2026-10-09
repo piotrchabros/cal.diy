@@ -20,6 +20,7 @@ import { googleWorkspaceRouter } from "./googleWorkspace/_router";
 import { holidaysRouter } from "./holidays/_router";
 import { i18nRouter } from "./i18n/_router";
 import { meRouter } from "./me/_router";
+import { notetakerRouter } from "./notetaker/_router";
 import { oAuthRouter } from "./oAuth/_router";
 import { oooRouter } from "./ooo/_router";
 import { slotsRouter } from "./slots/_router";
@@ -57,4 +58,5 @@ export const viewerRouter = router({
   ooo: oooRouter,
   holidays: holidaysRouter,
   travelSchedules: travelSchedulesRouter,
+  notetaker: notetakerRouter,
 });
