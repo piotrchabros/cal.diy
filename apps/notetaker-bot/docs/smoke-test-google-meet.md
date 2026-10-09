@@ -173,6 +173,45 @@ Event and outcome names above are from the build plan and the contract. If the a
 
 Run this only with the owner's approval (section 3). The default and the recommended mode for this check is guest.
 
+Account mode has three parts: prepare a Google account for the bot, capture a signed-in session from it, and make sure Meet lets the bot in without a person admitting it. Nothing in the three subsections below has been run against Google by the people who wrote it.
+
+### Preparing the bot's Google account
+
+1. Create a dedicated Google account for the bot. A Google Workspace account on your own domain is preferred over a personal account. Do not use a person's account.
+2. Set a recovery email address and a recovery phone number on the account, so you can get back in if Google challenges a sign-in.
+3. Set the account's language to English (US). The bot's selectors are English text.
+4. Sign in to the account once by hand in a normal browser and accept every first-login prompt Google shows.
+5. Decide what the account's profile name should say. In account mode the meeting shows the ACCOUNT's name, not the per-host display name the app sends with the request. This departs from requirement FR-012 (`specs/001-meeting-transcription/spec.md`), which requires a name that identifies the bot as an automated notetaker and identifies the host or organization it acts for. One account name cannot name each host, so choose a profile name that says it is an automated notetaker and names your organization.
+6. Automating a Google account is subject to Google's terms, and Google may challenge or block it. Whether that is acceptable is the owner's decision; see `specs/001-meeting-transcription/research.md`, open question 3.
+
+### Capturing the signed-in session
+
+1. Run the script on your own machine, not on a server. It needs a display and a person to sign in. Use a checkout where dependencies are already installed. Nothing extra is installed: the workspace already depends on `playwright`, and channel `chrome` uses the Google Chrome installed on the machine, not a Playwright browser download.
+2. If Chrome is not installed, the script prints a line saying Google Chrome was not found for the channel, exits with status 1 and writes nothing. Install Chrome, or set `NOTETAKER_CHROME_CHANNEL` to the channel the bot uses, and run it again.
+3. Run it in one of two ways:
+   - `yarn workspace @calcom/notetaker-bot capture-google-state` prints the value for `NOTETAKER_GOOGLE_STORAGE_STATE_B64` on standard output and nothing else. The instructions go to standard error, so you can pipe the value straight to the clipboard with `| pbcopy`, `| wl-copy` or `| xclip -selection clipboard`.
+   - `yarn workspace @calcom/notetaker-bot capture-google-state --out "$HOME/notetaker-google-state.json"` writes the session to a file instead and prints nothing on standard output. Then encode it on one line with `base64 -w0 <file>` (macOS: `base64 -i <file>`) and delete the file.
+4. `--out` must be an absolute path to a file that does not exist yet. The script refuses to overwrite a file. It creates the file with mode 0600.
+5. Chrome opens on Google's sign-in page. Sign in to the bot's account, including any two-step challenge, then press Enter in the terminal. Ctrl+C closes the browser and writes nothing.
+6. Before it writes anything, the script checks three things: the browser holds a Google session cookie (it looks at cookie names only), the Google account page loads without redirecting to sign-in, and Google Meet's home page stays on `meet.google.com` without showing a sign-in link. If it cannot confirm all three, it says which check failed, exits with a non-zero status and writes nothing.
+7. Paste the value into `NOTETAKER_GOOGLE_STORAGE_STATE_B64` in `apps/notetaker-bot/.env` and set `NOTETAKER_GOOGLE_JOIN_MODE=account`.
+8. The value is a credential. Treat it like a password: keep it out of tickets, shared logs, the register and git. Clear it from your terminal scrollback. The bot's `.env` is git-ignored.
+9. Sessions expire. When that happens the bot refuses to join instead of joining anonymously (observation 6 below; the session ends as interrupted), and you must repeat the capture.
+10. Open and unverified: Google may refuse the sign-in in a Chrome window started by automation ("This browser or app may not be secure" is widely reported), and the script adds nothing to work around that. A session captured on one machine and replayed from the bot's machine may also be challenged. Record what happens in observation 11.
+
+The script has not been run by the people who wrote it. It has its own row in [verification-status.md](verification-status.md).
+
+### Letting the bot in without the waiting room
+
+1. Invite the bot account's email address to the calendar event as a guest.
+2. What the invitation changes is taken from other meeting-bot vendors' documentation. We have tested none of it:
+   - A signed-in account that is on the invite is normally let straight in. (Reported in other meeting-bot vendors' documentation; not verified by us.)
+   - A signed-in account that is not invited still asks to join, and someone must admit it. (Reported in other meeting-bot vendors' documentation; not verified by us.)
+   - Meetings whose host settings restrict access to invited people refuse an anonymous guest outright, which is the refusal the owner saw. (Reported in other meeting-bot vendors' documentation; not verified by us.)
+3. The application does not add the bot's email address to bookings today. For this check, invite it by hand. Adding it automatically would be a separate feature.
+
+### Join mode and what to observe
+
 Set `NOTETAKER_GOOGLE_JOIN_MODE=account` and use one of these routes.
 
 Storage-state route:
@@ -180,6 +219,8 @@ Storage-state route:
 1. On your own machine, sign in to the bot's Google account in a Playwright browser and save its storage state as a JSON file.
 2. Encode it on one line: `base64 -w0 <state file>`.
 3. Put the output in `NOTETAKER_GOOGLE_STORAGE_STATE_B64` and delete the JSON file. The bot decodes it in memory and does not write it.
+
+The script in "Capturing the signed-in session" does steps 1 and 2 for you, or step 1 only when you pass `--out`.
 
 Password route:
 
@@ -199,6 +240,10 @@ Both routes:
 | 5 | After a reconnect (close the tab), sign-in runs again, and the display-name warning is not repeated. | |
 | 6 | An expired storage state ends in a refusal to join (`Google Meet shows a guest join screen although account join mode is configured`), not an anonymous join. | |
 | 7 | Password route with a challenge: the session fails at `Google sign-in stalled at step completion`. | |
+| 8 | Account mode, the bot's email address invited to the event. Write down whether the bot joined directly or asked to join. | |
+| 9 | Account mode, the bot not invited. Write down whether it asked to join or was refused. | |
+| 10 | Guest mode against a meeting restricted to invited people. Write down the text Meet shows and the outcome the app shows. | |
+| 11 | The capture script. Write down whether Chrome opened, whether Google accepted the sign-in in that window, whether the script's check passed, and whether the bot started with the value. | |
 
 ## 9. Selectors to re-check
 
