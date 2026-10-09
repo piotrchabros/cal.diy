@@ -1,8 +1,9 @@
 "use client";
 
-import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { NotetakerOutcomeReasonDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Badge } from "@calcom/ui/components/badge";
+import { NOTETAKER_OUTCOME_REASON_KEYS } from "../lib/outcomeReasonKeys";
 
 const STATUS_BADGE: Record<
   NotetakerSessionStatusDto,
@@ -17,13 +18,39 @@ const STATUS_BADGE: Record<
   FAILED: { variant: "red", labelKey: "notetaker_status_failed" },
 };
 
-export function NotetakerStatusBadge({ status }: { status: NotetakerSessionStatusDto }): JSX.Element {
+function getReasonKey(
+  status: NotetakerSessionStatusDto,
+  outcomeReason: NotetakerOutcomeReasonDto | null
+): string | null {
+  if (outcomeReason === null) return null;
+  if (status === "FAILED" || status === "ENDED_EARLY") return NOTETAKER_OUTCOME_REASON_KEYS[outcomeReason];
+  // A READY transcript is complete unless the length limit cut it off, so that is the only reason worth showing next to READY.
+  if (status === "READY" && outcomeReason === "LENGTH_LIMIT_REACHED")
+    return "notetaker_reason_length_limit_reached";
+  return null;
+}
+
+export function NotetakerStatusBadge({
+  status,
+  outcomeReason = null,
+}: {
+  status: NotetakerSessionStatusDto;
+  outcomeReason?: NotetakerOutcomeReasonDto | null;
+}): JSX.Element {
   const { t } = useLocale();
   const { variant, labelKey } = STATUS_BADGE[status];
+  const reasonKey = getReasonKey(status, outcomeReason);
 
   return (
-    <Badge variant={variant} data-testid="notetaker-status-badge">
-      {t(labelKey)}
-    </Badge>
+    <span className="flex items-center gap-2">
+      <Badge variant={variant} data-testid="notetaker-status-badge">
+        {t(labelKey)}
+      </Badge>
+      {reasonKey !== null && (
+        <span className="text-subtle text-xs" data-testid="notetaker-status-reason">
+          {t(reasonKey)}
+        </span>
+      )}
+    </span>
   );
 }
