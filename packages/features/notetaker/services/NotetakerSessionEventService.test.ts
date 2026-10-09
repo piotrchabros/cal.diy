@@ -7,6 +7,7 @@ import type {
   NotetakerBotEvent,
   NotetakerBotPassage,
 } from "@calcom/lib/notetaker/botContract";
+import type { TriggerOptions } from "@trigger.dev/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getProcessingOutcomeReason, mapOutcome } from "../lib/sessionStateMachine";
 import type {
@@ -132,8 +133,10 @@ function ended(
 class RecordingTasker implements INotetakerTasker {
   finalizeCalls: NotetakerFinalizeSessionPayload[] = [];
   summaryCalls: NotetakerGenerateSummaryPayload[] = [];
-  notificationCalls: NotetakerSendNotificationPayload[] = [];
+  notificationCalls: { payload: NotetakerSendNotificationPayload; options: TriggerOptions | undefined }[] =
+    [];
   finalizeResult = { runId: "run-1" };
+  notificationResult = { runId: "notification-run" };
 
   async finalizeSession(payload: NotetakerFinalizeSessionPayload): Promise<{ runId: string }> {
     this.finalizeCalls.push(payload);
@@ -145,9 +148,12 @@ class RecordingTasker implements INotetakerTasker {
     return { runId: "summary-run" };
   }
 
-  async sendNotification(payload: NotetakerSendNotificationPayload): Promise<{ runId: string }> {
-    this.notificationCalls.push(payload);
-    return { runId: "notification-run" };
+  async sendNotification(
+    payload: NotetakerSendNotificationPayload,
+    options?: TriggerOptions
+  ): Promise<{ runId: string }> {
+    this.notificationCalls.push({ payload, options });
+    return this.notificationResult;
   }
 }
 
@@ -169,7 +175,7 @@ describe("NotetakerSessionEventService", () => {
   let service: NotetakerSessionEventService;
 
   beforeEach(() => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
     repositories = createInMemoryNotetakerRepositories();
     repositories.store.addBooking(buildBooking());
     tasker = new RecordingTasker();
@@ -252,6 +258,13 @@ describe("NotetakerSessionEventService", () => {
     });
   }
 
+  function expectedNotice(kind: "ADMIT_PROMPT" | "FAILED", sessionId: string) {
+    return {
+      payload: { kind, bookingId: BOOKING_ID, sessionId },
+      options: { idempotencyKey: `notetaker:${kind}:${sessionId}` },
+    };
+  }
+
   function recordCallOrder(sessionId: string): { order: string[]; statusAtBlock: string[] } {
     const order: string[] = [];
     const statusAtBlock: string[] = [];
@@ -290,6 +303,11 @@ describe("NotetakerSessionEventService", () => {
     vi.spyOn(tasker, "finalizeSession").mockImplementation((...args) => {
       order.push("finalize");
       return finalizeSession(...args);
+    });
+    const sendNotification = tasker.sendNotification.bind(tasker);
+    vi.spyOn(tasker, "sendNotification").mockImplementation((...args) => {
+      order.push("notice");
+      return sendNotification(...args);
     });
     return { order, statusAtBlock };
   }
@@ -390,6 +408,9 @@ describe("NotetakerSessionEventService", () => {
       expect(session.status).toBe("WAITING_TO_BE_ADMITTED");
       expect(session.joinRequestedAt).toEqual(new Date(OCCURRED_AT));
       expect(session.joinRequestedAt).not.toEqual(NOW);
+      expect(tasker.notificationCalls).toEqual([expectedNotice("ADMIT_PROMPT", sessionId)]);
+      expect(tasker.finalizeCalls).toEqual([]);
+      expect(tasker.summaryCalls).toEqual([]);
     });
 
     it("returns GONE for a TRANSCRIBING session and changes nothing", async () => {
@@ -400,6 +421,53 @@ describe("NotetakerSessionEventService", () => {
 
       expect(result).toBe("GONE");
       expect(snapshot(sessionId)).toEqual(before);
+      expectNoTaskerCalls();
+    });
+
+    it("enqueues no second admit prompt when the bot replays the event", async () => {
+      const sessionId = await seedSession();
+
+      await service.handleEvent(withSession(sessionId, joinRequested(1)));
+      const result = await service.handleEvent(withSession(sessionId, joinRequested(1)));
+
+      expect(result).toBe("DUPLICATE");
+      expect(tasker.notificationCalls).toHaveLength(1);
+    });
+
+    it("enqueues nothing for a fresh-sequence join when the session is already WAITING_TO_BE_ADMITTED", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+
+      const result = await service.handleEvent(withSession(sessionId, joinRequested(FRESH_SEQUENCE)));
+
+      expect(result).toBe("GONE");
+      expectNoTaskerCalls();
+    });
+
+    it("enqueues nothing when the transition loses the race", async () => {
+      const sessionId = await seedSession();
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+      const result = await service.handleEvent(withSession(sessionId, joinRequested(1)));
+
+      expect(result).toBe("GONE");
+      expectNoTaskerCalls();
+      expect(sessionOf(sessionId).status).toBe("SCHEDULED");
+    });
+
+    it("logs and still answers ACCEPTED when the admit prompt enqueue fails", async () => {
+      const sessionId = await seedSession();
+      tasker.notificationResult = { runId: "task-failed" };
+
+      const result = await service.handleEvent(withSession(sessionId, joinRequested(1)));
+
+      expect(result).toBe("ACCEPTED");
+      expect(sessionOf(sessionId).status).toBe("WAITING_TO_BE_ADMITTED");
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith("Failed to enqueue notetaker notice", {
+        kind: "ADMIT_PROMPT",
+        sessionId,
+      });
+      expect(tasker.notificationCalls).toHaveLength(1);
     });
   });
 
@@ -541,6 +609,7 @@ describe("NotetakerSessionEventService", () => {
       expect(session.status).toBe("PROCESSING");
       expect(session.outcomeReason).toBe(expectedReason);
       expect(session.outcomeReason).toBe(getProcessingOutcomeReason(endReason));
+      expect(tasker.notificationCalls).toEqual([]);
     });
 
     it("copies duration and passage count to an existing transcript and keeps it PARTIAL", async () => {
@@ -625,7 +694,7 @@ describe("NotetakerSessionEventService", () => {
     it.each<[NotetakerSessionStatusDto, NotetakerBotEndReason]>([
       ["WAITING_TO_BE_ADMITTED", "NOT_ADMITTED"],
       ["SCHEDULED", "MEETING_LINK_UNUSABLE"],
-    ])("fails a %s session ended with %s, without finalize or a warning", async (status, endReason) => {
+    ])("fails a %s session ended with %s, without finalize or a warning, and enqueues one FAILED notice", async (status, endReason) => {
       const sessionId = await seedSession({ status, lastEventSequence: SEEDED_SEQUENCE });
       const expected = expectedPreAdmissionOutcome(endReason);
 
@@ -642,7 +711,9 @@ describe("NotetakerSessionEventService", () => {
       expect(session.lastEventSequence).toBe(FRESH_SEQUENCE);
       expect(session.interruptedAtMs).toBeNull();
       expect(logger.warn).not.toHaveBeenCalled();
-      expectNoTaskerCalls();
+      expect(tasker.finalizeCalls).toEqual([]);
+      expect(tasker.summaryCalls).toEqual([]);
+      expect(tasker.notificationCalls).toEqual([expectedNotice("FAILED", sessionId)]);
     });
 
     it("deletes the session row for a pre-admission STOP_REQUESTED", async () => {
@@ -655,6 +726,99 @@ describe("NotetakerSessionEventService", () => {
       expect(result).toBe("ACCEPTED");
       expect(repositories.store.sessions.has(sessionId)).toBe(false);
       expectNoTaskerCalls();
+    });
+
+    it.each<NotetakerBotEndReason>([
+      "MEETING_ENDED",
+      "ALONE_TIMEOUT",
+      "NOT_ADMITTED",
+      "MEETING_DID_NOT_START",
+      "REMOVED_BY_PARTICIPANT",
+      "INTERRUPTED",
+      "LENGTH_LIMIT_REACHED",
+      "MEETING_LINK_UNUSABLE",
+    ])("enqueues one FAILED notice for %s", async (endReason) => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { endReason, passageCount: 0 }))
+      );
+
+      expect(result).toBe("ACCEPTED");
+      expect(sessionOf(sessionId).status).toBe("FAILED");
+      expect(tasker.notificationCalls).toEqual([expectedNotice("FAILED", sessionId)]);
+      expect(tasker.finalizeCalls).toEqual([]);
+      expect(tasker.summaryCalls).toEqual([]);
+    });
+
+    it("enqueues the notice after the normalised warning", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+      const noticesAtWarn: number[] = [];
+      vi.mocked(logger.warn).mockImplementation(() => {
+        noticesAtWarn.push(tasker.notificationCalls.length);
+      });
+
+      await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { endReason: "ALONE_TIMEOUT", passageCount: 0 }))
+      );
+
+      expect(noticesAtWarn).toEqual([0]);
+      expect(tasker.notificationCalls).toHaveLength(1);
+    });
+
+    it("enqueues nothing when the status write loses the race", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { endReason: "NOT_ADMITTED", passageCount: 0 }))
+      );
+
+      expect(result).toBe("GONE");
+      expectNoTaskerCalls();
+    });
+
+    it("enqueues no second notice for a duplicate ended event", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+      const event = ended(FRESH_SEQUENCE, { endReason: "NOT_ADMITTED", passageCount: 0 });
+
+      await service.handleEvent(withSession(sessionId, event));
+      const result = await service.handleEvent(withSession(sessionId, event));
+
+      expect(result).toBe("DUPLICATE");
+      expect(tasker.notificationCalls).toHaveLength(1);
+      expect(tasker.finalizeCalls).toEqual([]);
+    });
+
+    it("enqueues no second notice for a later ended event on the failed session", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+      await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { endReason: "NOT_ADMITTED", passageCount: 0 }))
+      );
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE + 1, { endReason: "NOT_ADMITTED", passageCount: 0 }))
+      );
+
+      expect(result).toBe("GONE");
+      expect(tasker.notificationCalls).toHaveLength(1);
+    });
+
+    it("logs and still answers ACCEPTED when the FAILED notice enqueue fails", async () => {
+      const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+      tasker.notificationResult = { runId: "task-failed" };
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { endReason: "NOT_ADMITTED", passageCount: 0 }))
+      );
+
+      expect(result).toBe("ACCEPTED");
+      expect(sessionOf(sessionId).status).toBe("FAILED");
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith("Failed to enqueue notetaker notice", {
+        kind: "FAILED",
+        sessionId,
+      });
     });
   });
 
@@ -671,7 +835,9 @@ describe("NotetakerSessionEventService", () => {
       expect(session.status).toBe("FAILED");
       expect(session.outcomeReason).toBe("MEETING_DID_NOT_START");
       expect(logger.warn).toHaveBeenCalledTimes(1);
-      expectNoTaskerCalls();
+      expect(tasker.finalizeCalls).toEqual([]);
+      expect(tasker.summaryCalls).toEqual([]);
+      expect(tasker.notificationCalls).toEqual([expectedNotice("FAILED", sessionId)]);
     });
 
     it("processes a post-admission NOT_ADMITTED as INTERRUPTED and warns once", async () => {
@@ -865,7 +1031,9 @@ describe("NotetakerSessionEventService", () => {
         expect(choice.rejoinBlocked).toBe(true);
         expect(choice.pendingDispatch).toBe(false);
         expect(activities()).toEqual([expectedStoppedActivity(sessionId)]);
-        expectNoTaskerCalls();
+        expect(tasker.finalizeCalls).toEqual([]);
+        expect(tasker.summaryCalls).toEqual([]);
+        expect(tasker.notificationCalls).toEqual([expectedNotice("FAILED", sessionId)]);
         expect(logger.warn).not.toHaveBeenCalled();
       });
 
@@ -876,7 +1044,13 @@ describe("NotetakerSessionEventService", () => {
 
         await service.handleEvent(withSession(sessionId, removed()));
 
-        expect(order).toEqual(["setRejoinBlocked", "setPendingDispatch", "updateIfStatusIn", "activity"]);
+        expect(order).toEqual([
+          "setRejoinBlocked",
+          "setPendingDispatch",
+          "updateIfStatusIn",
+          "activity",
+          "notice",
+        ]);
       });
 
       it("keeps the block but records no activity when the status write loses", async () => {
@@ -889,6 +1063,7 @@ describe("NotetakerSessionEventService", () => {
         expect(result).toBe("GONE");
         expect(choiceOf().rejoinBlocked).toBe(true);
         expect(activities()).toEqual([]);
+        expectNoTaskerCalls();
       });
     });
 
@@ -1014,7 +1189,7 @@ describe("NotetakerSessionEventService", () => {
       expect(logged).not.toContain(PASSAGE_TEXT);
     });
 
-    it("never generates summaries or sends notifications over a full lifecycle", async () => {
+    it("generates no summary and sends only the admit prompt over a full lifecycle", async () => {
       const sessionId = await seedSession();
 
       await service.handleEvent(withSession(sessionId, joinRequested(1)));
@@ -1027,7 +1202,7 @@ describe("NotetakerSessionEventService", () => {
 
       expect(tasker.finalizeCalls).toEqual([{ sessionId }, { sessionId }]);
       expect(tasker.summaryCalls).toEqual([]);
-      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.notificationCalls).toEqual([expectedNotice("ADMIT_PROMPT", sessionId)]);
     });
   });
 });
