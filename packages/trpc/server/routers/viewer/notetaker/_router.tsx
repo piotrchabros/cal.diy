@@ -2,6 +2,7 @@ import authedProcedure from "../../../procedures/authedProcedure";
 import { router } from "../../../trpc";
 import { ZGetStateInputSchema } from "./getState.schema";
 import { ZListPassagesInputSchema } from "./listPassages.schema";
+import { ZRegenerateSummaryInputSchema } from "./regenerateSummary.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
 import { ZStopInputSchema } from "./stop.schema";
 
@@ -24,5 +25,10 @@ export const notetakerRouter = router({
   listPassages: authedProcedure.input(ZListPassagesInputSchema).query(async ({ ctx, input }) => {
     const { listPassagesHandler } = await import("./listPassages.handler");
     return listPassagesHandler({ ctx, input });
+  }),
+
+  regenerateSummary: authedProcedure.input(ZRegenerateSummaryInputSchema).mutation(async ({ ctx, input }) => {
+    const { regenerateSummaryHandler } = await import("./regenerateSummary.handler");
+    return regenerateSummaryHandler({ ctx, input });
   }),
 });
