@@ -46,6 +46,7 @@ function buildConfig(): NotetakerConfig {
     summaryModel: "test-model",
     anthropicApiKey: null,
     fakeScenario: "happy",
+    googleAccountEmail: null,
   };
 }
 

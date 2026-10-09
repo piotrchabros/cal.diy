@@ -33,6 +33,8 @@ type NotetakerConfig = {
   // null means no key; getNotetakerSummaryGeneratorKind then picks the stub or the disabled generator
   anthropicApiKey: string | null;
   fakeScenario: NotetakerFakeScenario;
+  // null means unset: the app then never touches a calendar event for the notetaker
+  googleAccountEmail: string | null;
 };
 
 const DEFAULT_SUMMARY_MODEL = "claude-opus-5-5";
@@ -143,6 +145,11 @@ const configSchema = z.object({
     .enum(FAKE_SCENARIOS)
     .optional()
     .transform((value): NotetakerFakeScenario => value ?? "happy"),
+  NOTETAKER_GOOGLE_ACCOUNT_EMAIL: z
+    .string()
+    .email("must be an email address")
+    .optional()
+    .transform((value) => value?.toLowerCase() ?? null),
 });
 
 const getDefaultBotProvider = (env: NodeJS.ProcessEnv): NotetakerBotProviderDto | null => {
@@ -183,6 +190,7 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     summaryModel: parsed.NOTETAKER_SUMMARY_MODEL,
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     fakeScenario: parsed.NOTETAKER_FAKE_SCENARIO,
+    googleAccountEmail: parsed.NOTETAKER_GOOGLE_ACCOUNT_EMAIL,
   };
 }
 

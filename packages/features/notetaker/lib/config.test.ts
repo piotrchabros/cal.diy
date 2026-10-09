@@ -216,6 +216,35 @@ describe("getNotetakerConfig other fields", () => {
     expect(JSON.stringify(error.data ?? {})).not.toContain("test-anthropic-key");
   });
 
+  it("returns a null Google account email when unset or blank", () => {
+    expect(getNotetakerConfig(env()).googleAccountEmail).toBeNull();
+    expect(getNotetakerConfig(env({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "" })).googleAccountEmail).toBeNull();
+    expect(getNotetakerConfig(env({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "   " })).googleAccountEmail).toBeNull();
+  });
+
+  it("returns the Google account email trimmed and lower-cased", () => {
+    expect(
+      getNotetakerConfig(env({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "  Notetaker.Bot@Example.COM  " }))
+        .googleAccountEmail
+    ).toBe("notetaker.bot@example.com");
+  });
+
+  it("throws for a Google account email that is not an email address", () => {
+    for (const value of ["notetaker-bot.example.com", "notetaker@", "notetaker bot@example.com"]) {
+      expectConfigError({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: value }, "NOTETAKER_GOOGLE_ACCOUNT_EMAIL");
+    }
+  });
+
+  it("never leaks the Google account email value in a thrown error", () => {
+    const error = getError(() =>
+      getNotetakerConfig(env({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "notetaker-bot.example.com" }))
+    ) as ErrorWithCode;
+    expect(error).toBeInstanceOf(ErrorWithCode);
+    expect(error.message).toContain("NOTETAKER_GOOGLE_ACCOUNT_EMAIL");
+    expect(error.message).not.toContain("notetaker-bot.example.com");
+    expect(JSON.stringify(error.data ?? {})).not.toContain("notetaker-bot.example.com");
+  });
+
   it("exposes the sweep batch size", () => {
     expect(NOTETAKER_SWEEP_BATCH_SIZE).toBe(200);
   });
@@ -277,6 +306,17 @@ describe("isNotetakerBotProviderUsable", () => {
       NOTETAKER_BOT_URL: "https://bot.example.com",
     });
     expect(isNotetakerBotProviderUsable(getNotetakerConfig(noSecret), noSecret)).toBe(false);
+  });
+
+  it("is still false for SELF_HOSTED without a url when the Google account email is set", () => {
+    const e = env({
+      NOTETAKER_BOT_PROVIDER: "self_hosted",
+      NOTETAKER_BOT_SECRET: "secret",
+      NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "notetaker@example.com",
+    });
+    const config = getNotetakerConfig(e);
+    expect(config.googleAccountEmail).toBe("notetaker@example.com");
+    expect(isNotetakerBotProviderUsable(config, e)).toBe(false);
   });
 
   it("is false for a hand-built config with a null provider", () => {
