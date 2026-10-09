@@ -1,6 +1,6 @@
 "use client";
 
-import type { NotetakerIneligibilityReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { NotetakerIneligibilityReasonDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
@@ -29,6 +29,39 @@ const INELIGIBILITY_REASON_KEYS: Record<NotetakerIneligibilityReasonDto, string>
   REJOIN_BLOCKED: "notetaker_unavailable_rejoin_blocked",
 };
 
+// An attendee reads shared results but cannot change the choice or stop the notetaker, so only the status and the link are shown
+function NotetakerAttendeeSection({
+  bookingUid,
+  state,
+}: {
+  bookingUid: string;
+  state: NotetakerStateDto;
+}): JSX.Element {
+  const { t } = useLocale();
+
+  return (
+    <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
+      <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
+      {state.status !== null && (
+        <div className="flex">
+          <NotetakerStatusBadge
+            status={state.status}
+            outcomeReason={state.session?.status === state.status ? state.session.outcomeReason : null}
+          />
+        </div>
+      )}
+      {state.transcript !== null && (
+        <Link
+          href={`/booking/${bookingUid}/notetaker`}
+          className="text-emphasis text-sm underline"
+          data-testid="notetaker-view-transcript">
+          {t("notetaker_view_transcript")}
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }): JSX.Element | null {
   const { t, i18n } = useLocale();
   const { data: state, isPending, isError } = useNotetakerState(bookingUid);
@@ -38,6 +71,10 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
 
   if (isPending || isError || !state) return null;
   if (!state.featureEnabled) return null;
+
+  if (state.viewerRole === "ATTENDEE") {
+    return <NotetakerAttendeeSection bookingUid={bookingUid} state={state} />;
+  }
 
   const isRejoinBlocked = state.eligibility.reason === "REJOIN_BLOCKED";
 
@@ -159,6 +196,11 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
         </div>
       )}
       {choiceText !== null && <p className="text-subtle text-xs">{choiceText}</p>}
+      {state.transcript === null && state.session?.resultsDeletedAt != null && (
+        <p className="text-sm text-subtle" data-testid="notetaker-results-deleted">
+          {t("notetaker_results_deleted")}
+        </p>
+      )}
       {state.transcript !== null && (
         <Link
           href={`/booking/${bookingUid}/notetaker`}

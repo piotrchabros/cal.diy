@@ -322,3 +322,166 @@ describe("NotetakerBookingSection", () => {
     expect(mocks.setEnabledMutate).not.toHaveBeenCalled();
   });
 });
+
+type NotetakerTranscript = NonNullable<NotetakerStateDto["transcript"]>;
+
+const TRANSCRIPT: NotetakerTranscript = {
+  id: "transcript-1",
+  language: "en",
+  completeness: "COMPLETE",
+  durationMs: 60000,
+  passageCount: 3,
+};
+
+const DELETED_AT = "2026-01-02T00:00:00.000Z";
+
+describe("NotetakerBookingSection for an attendee", () => {
+  it("shows the status and the transcript link only", () => {
+    renderSection(
+      buildState({
+        viewerRole: "ATTENDEE",
+        status: "READY",
+        canToggle: false,
+        session: buildSession({ status: "READY", outcomeReason: null }),
+        transcript: TRANSCRIPT,
+        sharedWithAttendees: true,
+      })
+    );
+
+    const section = screen.getByTestId("notetaker-booking-section");
+    expect(section.textContent).toContain("notetaker_section_title");
+    expect(screen.getAllByTestId("notetaker-status-badge")).toHaveLength(1);
+    expect(screen.getByTestId("notetaker-status-badge").textContent).toBe("notetaker_status_ready");
+
+    const link = screen.getByTestId("notetaker-view-transcript");
+    expect(link).toHaveAttribute("href", `/booking/${BOOKING_UID}/notetaker`);
+    expect(link.textContent).toBe("notetaker_view_transcript");
+
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+    expect(section.textContent).not.toContain("notetaker_toggle_description");
+  });
+
+  it("hides the switch, the reason, the banner, the stop button and the choice sentence", () => {
+    renderSection(
+      buildState({
+        viewerRole: "ATTENDEE",
+        status: "WAITING_TO_BE_ADMITTED",
+        canToggle: true,
+        canStop: true,
+        choice: buildChoice(),
+        eligibility: { eligible: false, platform: "GOOGLE_MEET", reason: "MEETING_ENDED" },
+        session: buildSession({ status: "WAITING_TO_BE_ADMITTED", outcomeReason: null, endedAt: null }),
+      })
+    );
+
+    const text = screen.getByTestId("notetaker-booking-section").textContent;
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-admit-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-stop-button")).not.toBeInTheDocument();
+    expect(text).not.toContain("notetaker_unavailable_meeting_ended");
+    expect(text).not.toContain("notetaker_toggle_description");
+    expect(text).not.toContain("notetaker_enabled_by");
+    expect(screen.getByTestId("notetaker-status-badge").textContent).toBe(
+      "notetaker_status_waiting_to_be_admitted"
+    );
+  });
+
+  it("hides the rejoin blocked sentence", () => {
+    renderSection(
+      buildState({
+        viewerRole: "ATTENDEE",
+        eligibility: { eligible: false, platform: "GOOGLE_MEET", reason: "REJOIN_BLOCKED" },
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-booking-section")).toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-rejoin-blocked")).not.toBeInTheDocument();
+  });
+
+  it("renders only the title when there is no status and no transcript", () => {
+    renderSection(buildState({ viewerRole: "ATTENDEE" }));
+
+    expect(screen.getByTestId("notetaker-booking-section").textContent).toBe("notetaker_section_title");
+    expect(screen.queryByTestId("notetaker-status-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-view-transcript")).not.toBeInTheDocument();
+  });
+
+  it("shows the reason beside the status under the same rule as for a host", () => {
+    renderSection(
+      buildState({
+        viewerRole: "ATTENDEE",
+        status: "FAILED",
+        session: buildSession({ status: "FAILED", outcomeReason: "NOT_ADMITTED" }),
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-status-reason").textContent).toBe("notetaker_reason_not_admitted");
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+  });
+
+  it("shows no deleted line", () => {
+    renderSection(
+      buildState({
+        viewerRole: "ATTENDEE",
+        status: "READY",
+        session: buildSession({ status: "READY", outcomeReason: null, resultsDeletedAt: DELETED_AT }),
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-booking-section")).toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the feature is disabled", () => {
+    renderSection(buildState({ viewerRole: "ATTENDEE", featureEnabled: false, transcript: TRANSCRIPT }));
+
+    expect(screen.queryByTestId("notetaker-booking-section")).not.toBeInTheDocument();
+  });
+});
+
+describe("NotetakerBookingSection after the results were deleted", () => {
+  it("shows a host the deleted line last in the section and no transcript link", () => {
+    renderSection(
+      buildState({
+        status: "READY",
+        choice: buildChoice(),
+        session: buildSession({ status: "READY", outcomeReason: null, resultsDeletedAt: DELETED_AT }),
+      })
+    );
+
+    const deleted = screen.getByTestId("notetaker-results-deleted");
+    expect(deleted.textContent).toBe("notetaker_results_deleted");
+    expect(screen.getByTestId("notetaker-booking-section").lastElementChild).toBe(deleted);
+    expect(screen.queryByTestId("notetaker-view-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("notetaker-toggle")).toBeInTheDocument();
+  });
+
+  it("shows the transcript link and no deleted line while a transcript exists", () => {
+    renderSection(
+      buildState({
+        status: "READY",
+        session: buildSession({ status: "READY", outcomeReason: null, resultsDeletedAt: DELETED_AT }),
+        transcript: TRANSCRIPT,
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-view-transcript")).toHaveAttribute(
+      "href",
+      `/booking/${BOOKING_UID}/notetaker`
+    );
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+  });
+
+  it("shows no deleted line when nothing was deleted", () => {
+    renderSection(buildState({ status: "FAILED", session: buildSession() }));
+
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+  });
+
+  it("shows no deleted line without a session", () => {
+    renderSection(buildState());
+
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+  });
+});

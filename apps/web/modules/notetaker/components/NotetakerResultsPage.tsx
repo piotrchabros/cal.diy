@@ -3,6 +3,8 @@
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { SkeletonText } from "@calcom/ui/components/skeleton";
+import { NotetakerActivityList } from "@calcom/web/modules/notetaker/components/NotetakerActivityList";
+import { NotetakerResultsActions } from "@calcom/web/modules/notetaker/components/NotetakerResultsActions";
 import { NotetakerStatusBadge } from "@calcom/web/modules/notetaker/components/NotetakerStatusBadge";
 import { NotetakerSummary } from "@calcom/web/modules/notetaker/components/NotetakerSummary";
 import { NotetakerTranscript } from "@calcom/web/modules/notetaker/components/NotetakerTranscript";
@@ -53,6 +55,8 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
     </p>
   ) : null;
 
+  const resultsDeleted = state.transcript === null && state.session?.resultsDeletedAt != null;
+
   return (
     <div className="flex flex-col gap-4">
       {state.status !== null && (
@@ -66,6 +70,12 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
       {/* No sessionId: the default of listPassages is the latest session with a transcript, the one getState describes; state.session can be a later session without one */}
       {state.transcript !== null ? (
         <>
+          <NotetakerResultsActions
+            bookingUid={bookingUid}
+            viewerRole={state.viewerRole}
+            sharedWithAttendees={state.sharedWithAttendees}
+            sessionStatus={state.session?.status ?? null}
+          />
           {endedEarlyText !== null && (
             <p className="text-sm text-subtle" data-testid="notetaker-ended-early-label">
               {endedEarlyText}
@@ -93,9 +103,16 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
       ) : (
         <>
           {startedLateText}
-          <p className="text-sm text-subtle">{t("notetaker_transcript_empty")}</p>
+          {resultsDeleted ? (
+            <p className="text-sm text-subtle" data-testid="notetaker-results-deleted">
+              {t("notetaker_results_deleted")}
+            </p>
+          ) : (
+            <p className="text-sm text-subtle">{t("notetaker_transcript_empty")}</p>
+          )}
         </>
       )}
+      {state.viewerRole === "HOST" && <NotetakerActivityList bookingUid={bookingUid} />}
     </div>
   );
 }
