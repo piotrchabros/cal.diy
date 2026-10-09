@@ -6,6 +6,7 @@ import type {
   IBookingNotetakerRepository,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
+  NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
@@ -37,6 +38,14 @@ const attendeeSelect = {
   locale: true,
   timeZone: true,
 } satisfies Prisma.AttendeeSelect;
+
+const bookingReferenceSelect = {
+  type: true,
+  uid: true,
+  externalCalendarId: true,
+  credentialId: true,
+  delegationCredentialId: true,
+} satisfies Prisma.BookingReferenceSelect;
 
 const bookingBaseSelect = {
   id: true,
@@ -308,6 +317,22 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       where: { bookingId },
       orderBy: { id: "asc" },
       select: attendeeSelect,
+    });
+  }
+
+  async findReferencesByBookingIdAndType(params: {
+    bookingId: number;
+    type: string;
+  }): Promise<NotetakerBookingReferenceRecord[]> {
+    return await this.prismaClient.bookingReference.findMany({
+      where: {
+        bookingId: params.bookingId,
+        type: params.type,
+        // deleted is nullable and `{ not: true }` would drop NULL rows in SQL
+        OR: [{ deleted: null }, { deleted: false }],
+      },
+      orderBy: { id: "asc" },
+      select: bookingReferenceSelect,
     });
   }
 

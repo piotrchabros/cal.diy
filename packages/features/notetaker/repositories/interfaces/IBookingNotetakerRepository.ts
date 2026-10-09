@@ -28,6 +28,15 @@ export type NotetakerAttendeeRecord = {
   timeZone: string;
 };
 
+export type NotetakerBookingReferenceRecord = {
+  type: string;
+  /** The provider's id of the event. */
+  uid: string;
+  externalCalendarId: string | null;
+  credentialId: number | null;
+  delegationCredentialId: string | null;
+};
+
 /** `subscription` is the stored JSON string, unparsed. */
 export type NotetakerWebPushSubscriptionRecord = { userId: number; subscription: string };
 
@@ -125,6 +134,14 @@ export interface IBookingNotetakerRepository {
   }): Promise<boolean>;
   /** The booking's current Attendee rows, ordered by id ascending. */
   findAttendeesByBookingId(bookingId: number): Promise<NotetakerAttendeeRecord[]>;
+  /**
+   * The booking's non-deleted BookingReference rows of exactly this type, ordered by id ascending.
+   * Selects these five columns only; never the credential relation.
+   */
+  findReferencesByBookingIdAndType(params: {
+    bookingId: number;
+    type: string;
+  }): Promise<NotetakerBookingReferenceRecord[]>;
   /**
    * Compare-and-swap off: updateMany where bookingId matches AND enabled = true, setting
    * enabled = false and pendingDispatch = false; every other column unchanged. Resolves true only
