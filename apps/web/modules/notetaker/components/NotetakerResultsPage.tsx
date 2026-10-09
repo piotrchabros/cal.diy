@@ -4,7 +4,9 @@ import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDt
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { SkeletonText } from "@calcom/ui/components/skeleton";
 import { NotetakerStatusBadge } from "@calcom/web/modules/notetaker/components/NotetakerStatusBadge";
+import { NotetakerSummary } from "@calcom/web/modules/notetaker/components/NotetakerSummary";
 import { NotetakerTranscript } from "@calcom/web/modules/notetaker/components/NotetakerTranscript";
+import { useNotetakerMutations } from "@calcom/web/modules/notetaker/hooks/useNotetakerMutations";
 import { useNotetakerState } from "@calcom/web/modules/notetaker/hooks/useNotetakerState";
 import type { TFunction } from "i18next";
 
@@ -23,6 +25,7 @@ function endedEarlyLabel(outcomeReason: NotetakerOutcomeReasonDto | null, t: TFu
 export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JSX.Element {
   const { t } = useLocale();
   const { data: state, isLoading, error } = useNotetakerState(bookingUid);
+  const { regenerateSummary } = useNotetakerMutations();
 
   if (isLoading) {
     return (
@@ -57,6 +60,12 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
               {endedEarlyText}
             </p>
           )}
+          <NotetakerSummary
+            summary={state.summary}
+            viewerRole={state.viewerRole}
+            onRegenerate={() => regenerateSummary.mutate({ bookingUid })}
+            isRegenerating={regenerateSummary.isPending}
+          />
           <NotetakerTranscript bookingUid={bookingUid} />
         </>
       ) : (

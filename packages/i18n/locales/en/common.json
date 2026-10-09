@@ -4881,5 +4881,14 @@
   "notetaker_stop_requested": "The notetaker is leaving the meeting.",
   "notetaker_ended_early_removed_by_participant": "This transcript ended early at a participant's request.",
   "notetaker_ended_early_stopped_by_host": "This transcript ended early at the host's request.",
+  "notetaker_summary_overview": "Overview",
+  "notetaker_summary_key_points": "Key points",
+  "notetaker_summary_decisions": "Decisions",
+  "notetaker_summary_action_items": "Action items",
+  "notetaker_summary_owner": "Owner: {{name}}",
+  "notetaker_summary_pending": "The summary is being generated.",
+  "notetaker_summary_not_enough_content": "No summary could be produced because there was too little speech in this meeting.",
+  "notetaker_summary_failed": "The summary could not be generated.",
+  "notetaker_summary_regenerate": "Request summary again",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
