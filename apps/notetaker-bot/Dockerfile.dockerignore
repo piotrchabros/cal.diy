@@ -1,0 +1,11 @@
+**/node_modules
+**/.next
+**/dist
+.git
+.env*
+specs
+.ai
+**/.env*
+**/.turbo
+.yarn/cache
+.yarn/install-state.gz
