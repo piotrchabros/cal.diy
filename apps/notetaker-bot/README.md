@@ -43,6 +43,7 @@ Run from the repository root.
 | `yarn workspace @calcom/notetaker-bot build` | Bundle of the controller and the runner into `dist/` |
 | `yarn workspace @calcom/notetaker-bot start` | Controller from the bundle |
 | `yarn workspace @calcom/notetaker-bot fake-events --help` | CLI that posts signed events to the app without a meeting |
+| `yarn workspace @calcom/notetaker-bot meet-probe --help` | CLI that joins a Google Meet as the bot does, observes the leave control and the speaker indicators, and writes one JSON report (not run by its authors; see section 12 of docs/smoke-test-google-meet.md) |
 | `yarn workspace @calcom/notetaker-bot capture-google-state --help` | CLI that opens Chrome for a person to sign in to the bot's Google account and prints the value for `NOTETAKER_GOOGLE_STORAGE_STATE_B64` (not run by its authors) |
 
 The root `yarn test` also collects this workspace's tests, under the root Vitest config.

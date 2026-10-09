@@ -4,6 +4,7 @@
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import { chromium, errors } from "playwright";
 import type { Logger } from "../../logger";
+import { buildChromeLaunchOptions, sanitizeBrowserError } from "./chromeLaunch";
 import type { MeetingBrowserLauncher, MeetingBrowserOptions, MeetingPage } from "./MeetingPage";
 
 const NAVIGATION_TIMEOUT_MS = 45000;
@@ -14,14 +15,6 @@ type StorageState = Exclude<NonNullable<BrowserContextOptions["storageState"]>, 
 function isStorageState(value: unknown): value is StorageState {
   if (typeof value !== "object" || value === null) return false;
   return Array.isArray(Reflect.get(value, "cookies")) && Array.isArray(Reflect.get(value, "origins"));
-}
-
-// Playwright messages embed call logs that can contain the meeting URL or typed values, so only the error class
-// name leaves this file.
-function sanitizeError(operation: string, error: unknown): Error {
-  return new Error(
-    `Meeting browser ${operation} failed (${error instanceof Error ? error.name : "unknown"})`
-  );
 }
 
 class PlaywrightMeetingPage implements MeetingPage {
@@ -56,7 +49,7 @@ class PlaywrightMeetingPage implements MeetingPage {
     try {
       return await action();
     } catch (error) {
-      throw sanitizeError(operation, error);
+      throw sanitizeBrowserError(operation, error);
     }
   }
 
@@ -82,7 +75,7 @@ class PlaywrightMeetingPage implements MeetingPage {
       return true;
     } catch (error) {
       if (error instanceof errors.TimeoutError) return false;
-      throw sanitizeError("waitForVisible", error);
+      throw sanitizeBrowserError("waitForVisible", error);
     }
   }
 
@@ -149,13 +142,9 @@ export class PlaywrightChromeLauncher implements MeetingBrowserLauncher {
 
     let browser: Browser;
     try {
-      browser = await chromium.launch({
-        channel: options.channel,
-        headless: options.headless,
-        args: ["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
-      });
+      browser = await chromium.launch(buildChromeLaunchOptions(options));
     } catch (error) {
-      throw sanitizeError("launch", error);
+      throw sanitizeBrowserError("launch", error);
     }
 
     try {
@@ -174,7 +163,7 @@ export class PlaywrightChromeLauncher implements MeetingBrowserLauncher {
       return new PlaywrightMeetingPage(browser, context, page);
     } catch (error) {
       await browser.close().catch(() => undefined);
-      throw sanitizeError("open", error);
+      throw sanitizeBrowserError("open", error);
     }
   }
 }

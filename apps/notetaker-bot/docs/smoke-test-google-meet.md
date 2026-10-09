@@ -288,6 +288,8 @@ Order is by risk. A wrong key near the top ends sessions.
 
 Also note, for each text key, the exact wording Meet shows in your interface language, so the guess can be corrected.
 
+The leave control (`leaveCallButton`) and the speaker selectors (`activeSpeakerName`) are the two open ones; section 12 runs a probe that records what the real page shows for them.
+
 ## 10. Recording the result
 
 Do this per file, for the six files in section 2, in [verification-status.md](verification-status.md). That file may not exist yet when you read this. Create the rows only if it has been added.
@@ -309,6 +311,7 @@ Rules:
 
 ## 11. Known limits and open points
 
+- The leave click and the speaker names are the two defects still open after the 2026-10-09 check; section 12 is the probe that diagnoses them.
 - Speaker ids come from the displayed name, because the page wrapper cannot read Meet's participant id attribute. Two participants with the same display name are one participant to the attributor.
 - No `source_identity` signal can be produced. Only the active-speaker indicator on screen can name a speaker, and its selector is a guess. Speaker attribution rules wait for task T175.
 - Google may detect and block automated browsers. This was not tested.
@@ -318,3 +321,86 @@ Rules:
 - The participant count cannot be read if Meet puts it only in an `aria-label`. The wrapper has no attribute read.
 - The page wrapper has no wait for hidden, no wait for one of several, and no sleep. The driver uses a composite selector instead.
 - The runner decisions D1, D2 and D3 of the build plan await the owner. D1 as built leaves when the notice cannot be posted, which is stricter than the plan's text. Confirm which one the owner wants.
+
+## 12. Meet probe: the leave click and the speaker names
+
+Nothing in this section has been run by the people who wrote it. The probe (`scripts/meet-probe.ts`) has not been executed, not even once.
+
+### What it is for
+
+The 2026-10-09 check left two defects open that nobody can diagnose without seeing the real page. First, on a stop request the leave click failed and the bot left by closing the browser. Second, speakers were labelled "Speaker N" and never named. The probe joins a meeting the way the bot does, records what the page shows around the leave control and the participant tiles while people talk, tries the bot's own leave routine at the end, and writes one JSON file. You run it once and send that file back.
+
+### Before you start
+
+- The same shell environment as the account-mode bot run in section 8: `NOTETAKER_GOOGLE_JOIN_MODE=account` with either `NOTETAKER_GOOGLE_STORAGE_STATE_B64` or both `NOTETAKER_GOOGLE_ACCOUNT_EMAIL` and `NOTETAKER_GOOGLE_ACCOUNT_PASSWORD`, and `NOTETAKER_CHROME_CHANNEL=chrome`, `NOTETAKER_CHROME_HEADLESS=false`. The probe reads these names from the process environment and loads no `.env` file, so export them in the shell you run it from. It needs no Soniox key and no bot secret.
+- Google Chrome installed, on your macOS laptop.
+- A throwaway Google Meet meeting that you host, with at least two other people who will talk in turn.
+- The bot's Google account invited to the event, or ready to be admitted by you (section 8).
+
+**Tell the other participants before the call starts.** A diagnostic tool joins as a participant. Tell them what it records and what it does not: it records the structure of the Meet page (element names, labels, positions, which tile is marked as speaking) and audio levels as numbers. It records no audio, no video, no screenshots and no chat. Unless you pass `--no-notice`, it also posts a one-line notice in the meeting chat after it is admitted, saying that a diagnostic tool is in the call.
+
+### Command
+
+Run from the repository root:
+
+```bash
+yarn workspace @calcom/notetaker-bot meet-probe "<meeting-url>" --out "$HOME/meet-probe.json"
+```
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--out <file>` | Where to write the report. Required. Must be an absolute path to a file that does not exist yet; it is created with mode 0600. | none |
+| `--duration <seconds>` | How long to observe after admission, 10 to 600. | 60 |
+| `--interval-ms <ms>` | Time between page samples, 250 to 5000. | 1000 |
+| `--admit-timeout <seconds>` | How long to wait to be admitted, 10 to 1800. | 300 |
+| `--redact-names` / `--no-redact-names` | Replace participant names with `Participant A`, `Participant B` and so on, or keep them as they appear. Giving both is an error. | redaction on |
+| `--no-notice` | Do not post the notice in the chat. | notice posted |
+
+The probe appears in the meeting under the bot account's name (account mode ignores the display name, section 8). Press Ctrl+C to end the observation early; the probe still leaves and writes the file.
+
+### What to do in the call
+
+Admit the probe if it asks to join. The observation window starts after admission, so a slow admission does not use it up; the probe waits up to the admit timeout. Then follow this script for the default 60 seconds:
+
+| Seconds | What happens |
+|---|---|
+| 0 to 10 | Nobody speaks. |
+| 10 to 25 | Person A speaks alone. |
+| 25 to 40 | Person B speaks alone. |
+| 40 to 50 | A and B speak at the same time. |
+| 50 to 60 | Silence. |
+
+After 60 seconds the probe leaves by itself. Watch the call window and note whether the probe's tile disappears immediately when it leaves, or only after the browser closes a few seconds later. You add that observation by hand (see "Sending the file back").
+
+### What the terminal prints
+
+At the end the probe prints a summary on standard output: a "Leave" block with one line per hypothesis L1 to L6 and a "Speakers" block with S1 to S7, each marked supported, excluded or inconclusive with one sentence of evidence, then the path of the file to send back. On standard error it prints how the run ended and that the report was written. The exit status is 0 when the window ran to its end, 130 when you ended it with Ctrl+C, and 1 for anything else (denied, removed, meeting ended, connection lost, not admitted in time, join failed, or a refusal to write).
+
+### What the file contains
+
+- Per sample, at the interval: the candidate leave controls (role, accessible name, `aria-label`, title, tooltip, `data-*` attribute names, visibility, enabled state, bounding box, what is at its centre, whether it is in a dialog); the participant tiles with every string they show and where it appears (text, `aria-label`, title or tooltip), class tokens and attribute changes; counts for a few speaker selectors; the page's WebRTC audio receivers with contributing and synchronization sources and their audio levels; whether the tab is visible and focused.
+- Match counts of the selectors the adapter uses (matched and visible).
+- The platform events the adapter produced, a count of audio frames and non-silent frames, and every page call the adapter made, with timing.
+- The leave routine step by step: the state before it, what the adapter logged, and what the page showed for up to 3 seconds after it.
+- A table of the name aliases and where each appeared.
+- The run's settings and facts: join mode, credential route (a word, not a value), Chrome channel and headless flag, platform, Node version, the meeting host (`meet.google.com`) and the start time.
+
+It does not contain audio, video, screenshots, recordings, cookies, storage state, credentials, the meeting URL or code, or chat text. Tiles are numbered `tile-1`, `tile-2` and so on, never by Meet's participant id.
+
+### Names and the limits of redaction
+
+With the default redaction, every word taken from the page is kept only if it is a generic Meet interface word; names become `Participant A`, `Participant B` and so on, the same alias each time, and the file still shows where each name appeared. This is a best effort, not a guarantee. A name that is also an ordinary interface word, or a string the probe did not recognise as a name, can survive; a word the probe does not recognise is replaced with `<x>` rather than kept. **Before you send the file, search it for each participant's name (first name, surname, nickname) and for the meeting code.** If one is there, remove it from the file or ask for it to be handled before sending.
+
+The probe checks its own output before writing: if it finds the meeting URL, the meeting code, the account email, the password, the storage state or (with redaction on) a raw participant name in the JSON, it prints which kind of item was found, writes nothing and exits with status 1. The file is deleted. Run it again; if it refuses again, send the author the kind of item it names, not the item.
+
+### Sending the file back
+
+Send `meet-probe.json` to the developers by the same private route you use for the register. Add one line by hand: whether the probe's tile disappeared the moment it left. Do not send anything else from the call.
+
+### Limits
+
+- The probe was not run by its authors. Every selector and page query in it is written from documentation and memory.
+- The accessible tree is approximated: role, `aria-label`, one level of `aria-labelledby`, title and tooltip only.
+- It looks at the top frame of the page only.
+- The probe sends no stop signal, so it cannot show whether the browser was closed by the same signal that starts the bot's leave click (hypothesis L1). It shows whether the leave click works on its own.
+- Timings are the probe's own and are not the bot's stop latency.

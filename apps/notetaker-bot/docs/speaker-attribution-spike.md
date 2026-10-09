@@ -61,6 +61,8 @@ You need:
 
 FR-030 (the requirement that the system must not retain the meeting's audio or video) applies to this spike. Nothing is recorded: the script stores no audio, writes no file and reads no names or transcript text. Do not start a screen recording and do not start a Meet recording. All results are typed into the table in section 7 by hand.
 
+For the Google Meet observations (where the speaker's name and the speaking indicator sit on the page), run the Meet probe instead: section 12 of [smoke-test-google-meet.md](smoke-test-google-meet.md). It joins the way the bot does, with the bot's own launcher and account, and it also records the leave path, which this script does not. `scripts/spike-speaker-attribution.ts` stays in the repository; the command below remains the way to take the receiver and source counts by hand across call sizes.
+
 The command below has never been run in this repository. Run it from the repository root:
 
 ```
