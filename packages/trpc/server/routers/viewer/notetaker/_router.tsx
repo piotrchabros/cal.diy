@@ -1,9 +1,12 @@
 import authedProcedure from "../../../procedures/authedProcedure";
 import { router } from "../../../trpc";
+import { eventOwnerProcedure } from "../eventTypes/util";
+import { ZGetEventTypeDefaultInputSchema } from "./getEventTypeDefault.schema";
 import { ZGetStateInputSchema } from "./getState.schema";
 import { ZListPassagesInputSchema } from "./listPassages.schema";
 import { ZRegenerateSummaryInputSchema } from "./regenerateSummary.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
+import { ZSetEventTypeDefaultInputSchema } from "./setEventTypeDefault.schema";
 import { ZStopInputSchema } from "./stop.schema";
 
 export const notetakerRouter = router({
@@ -31,4 +34,21 @@ export const notetakerRouter = router({
     const { regenerateSummaryHandler } = await import("./regenerateSummary.handler");
     return regenerateSummaryHandler({ ctx, input });
   }),
+
+  getEventTypeDefault: eventOwnerProcedure
+    .input(ZGetEventTypeDefaultInputSchema)
+    .query(async ({ ctx, input }) => {
+      const { getEventTypeDefaultHandler } = await import("./getEventTypeDefault.handler");
+      return getEventTypeDefaultHandler({ ctx, input: { eventTypeId: input.eventTypeId } });
+    }),
+
+  setEventTypeDefault: eventOwnerProcedure
+    .input(ZSetEventTypeDefaultInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setEventTypeDefaultHandler } = await import("./setEventTypeDefault.handler");
+      return setEventTypeDefaultHandler({
+        ctx,
+        input: { eventTypeId: input.eventTypeId, enabledByDefault: input.enabledByDefault },
+      });
+    }),
 });
