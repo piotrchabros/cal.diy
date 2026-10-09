@@ -46,3 +46,5 @@ export const NotetakerTranscriptDtoSchema: z.ZodType<NotetakerTranscriptDto> = z
   durationMs: z.number().int().nonnegative(),
   passageCount: z.number().int().nonnegative(),
 });
+
+export type NotetakerExportDto = { filename: string; mimeType: "text/markdown"; content: string };

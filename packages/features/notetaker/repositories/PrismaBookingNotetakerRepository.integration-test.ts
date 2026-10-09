@@ -18,6 +18,8 @@ let olderSubscriptionId: number | undefined;
 let newerSubscriptionId: number | undefined;
 let bookingCounter = 0;
 const seriesBookingIds: number[] = [];
+let verifiedEmailsUserId: number | undefined;
+const secondaryEmailIds: number[] = [];
 
 function requireBookingId(): number {
   if (bookingId === undefined) {
@@ -110,6 +112,21 @@ function disableConcurrently(id: number): Promise<boolean[]> {
   return Promise.all(Array.from({ length: CONCURRENT_CALLS }, () => repository.disableIfEnabled(id)));
 }
 
+function readGrant(id: number) {
+  return prisma.notetakerSharingGrant.findUnique({
+    where: { bookingId: id },
+    select: { bookingId: true, grantedByUserId: true, grantedAt: true },
+  });
+}
+
+function shareConcurrently(id: number, grantedByUserIds: (number | null)[]): Promise<boolean[]> {
+  return Promise.all(
+    grantedByUserIds.map((grantedByUserId) =>
+      repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId })
+    )
+  );
+}
+
 describe("PrismaBookingNotetakerRepository (integration)", () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -150,6 +167,14 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
       await prisma.notificationsSubscriptions.deleteMany({ where: { id: newerSubscriptionId } });
     }
     newerSubscriptionId = undefined;
+    if (secondaryEmailIds.length > 0) {
+      await prisma.secondaryEmail.deleteMany({ where: { id: { in: secondaryEmailIds } } });
+    }
+    secondaryEmailIds.length = 0;
+    if (verifiedEmailsUserId !== undefined) {
+      await prisma.user.deleteMany({ where: { id: verifiedEmailsUserId } });
+    }
+    verifiedEmailsUserId = undefined;
     // Deleting the booking cascades to its BookingNotetaker and Attendee rows.
     if (seriesBookingIds.length > 0) {
       await prisma.booking.deleteMany({ where: { id: { in: seriesBookingIds } } });
@@ -526,6 +551,125 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
       await expect(repository.setAppliedToSeries(id, true)).resolves.toBeUndefined();
 
       expect(await prisma.bookingNotetaker.count({ where: { bookingId: id } })).toBe(0);
+    });
+  });
+
+  describe("createSharingGrantIfMissing", () => {
+    it("inserts the grant exactly once when five calls race", async () => {
+      const id = requireBookingId();
+      const uid = requireUserId();
+      const grantedByUserIds = [uid, null, uid, null, uid];
+      expect(grantedByUserIds).toHaveLength(CONCURRENT_CALLS);
+
+      const results = await shareConcurrently(id, grantedByUserIds);
+
+      expect(countTrue(results)).toBe(1);
+      expect(await prisma.notetakerSharingGrant.count({ where: { bookingId: id } })).toBe(1);
+      const grant = await readGrant(id);
+      expect(grantedByUserIds).toContain(grant?.grantedByUserId);
+    });
+
+    it("resolves false and writes nothing when the grant already exists", async () => {
+      const id = requireBookingId();
+      const uid = requireUserId();
+
+      expect(await repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId: uid })).toBe(
+        true
+      );
+      const first = await readGrant(id);
+
+      expect(await repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId: null })).toBe(
+        false
+      );
+
+      expect(await readGrant(id)).toEqual(first);
+      expect(first?.grantedByUserId).toBe(uid);
+    });
+
+    it("inserts again after the grant was deleted", async () => {
+      const id = requireBookingId();
+      const uid = requireUserId();
+      await repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId: uid });
+      await repository.deleteSharingGrant(id);
+
+      expect(await repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId: uid })).toBe(
+        true
+      );
+
+      expect(await prisma.notetakerSharingGrant.count({ where: { bookingId: id } })).toBe(1);
+    });
+
+    it("resolves false instead of throwing when createSharingGrant made the row", async () => {
+      const id = requireBookingId();
+      await repository.createSharingGrant({ bookingId: id, grantedByUserId: requireUserId() });
+
+      await expect(
+        repository.createSharingGrantIfMissing({ bookingId: id, grantedByUserId: null })
+      ).resolves.toBe(false);
+
+      expect(await prisma.notetakerSharingGrant.count({ where: { bookingId: id } })).toBe(1);
+    });
+  });
+
+  describe("deleteSharingGrant", () => {
+    it("removes the grant exactly once when two calls race", async () => {
+      const id = requireBookingId();
+      await prisma.notetakerSharingGrant.create({
+        data: { bookingId: id, grantedByUserId: requireUserId() },
+        select: { bookingId: true },
+      });
+
+      const results = await Promise.all(Array.from({ length: 2 }, () => repository.deleteSharingGrant(id)));
+
+      expect(countTrue(results)).toBe(1);
+      expect(await prisma.notetakerSharingGrant.count({ where: { bookingId: id } })).toBe(0);
+    });
+
+    it("resolves false when there is no grant", async () => {
+      const id = requireBookingId();
+
+      expect(await repository.deleteSharingGrant(id)).toBe(false);
+    });
+  });
+
+  describe("findVerifiedEmailsByUserId", () => {
+    it("returns the primary email only once the user is verified, and only verified secondary emails", async () => {
+      const primaryEmail = `notetaker-choice-it-verified-${runId}@example.com`;
+      const verifiedSecondary = `notetaker-choice-it-sec-verified-${runId}@example.com`;
+      const unverifiedSecondary = `notetaker-choice-it-sec-unverified-${runId}@example.com`;
+      const user = await prisma.user.create({
+        data: { email: primaryEmail, username: primaryEmail, emailVerified: null },
+        select: { id: true },
+      });
+      verifiedEmailsUserId = user.id;
+      const verified = await prisma.secondaryEmail.create({
+        data: {
+          userId: user.id,
+          email: verifiedSecondary,
+          emailVerified: new Date("2029-11-01T00:00:00.000Z"),
+        },
+        select: { id: true },
+      });
+      secondaryEmailIds.push(verified.id);
+      const unverified = await prisma.secondaryEmail.create({
+        data: { userId: user.id, email: unverifiedSecondary, emailVerified: null },
+        select: { id: true },
+      });
+      secondaryEmailIds.push(unverified.id);
+
+      expect(await repository.findVerifiedEmailsByUserId(user.id)).toEqual([verifiedSecondary]);
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: new Date("2029-11-02T00:00:00.000Z") },
+        select: { id: true },
+      });
+
+      expect(await repository.findVerifiedEmailsByUserId(user.id)).toEqual([primaryEmail, verifiedSecondary]);
+    });
+
+    it("returns an empty list for an unknown user", async () => {
+      expect(await repository.findVerifiedEmailsByUserId(UNKNOWN_USER_ID)).toEqual([]);
     });
   });
 });

@@ -105,7 +105,10 @@ export interface IBookingNotetakerRepository {
     grantedByUserId: number | null;
   }): Promise<NotetakerSharingGrantRecord>;
   deleteSharingGrant(bookingId: number): Promise<boolean>;
-  /** Primary email plus SecondaryEmail rows with emailVerified set. */
+  /**
+   * The primary email ONLY when User.emailVerified is set, plus SecondaryEmail rows with
+   * emailVerified set. An account whose primary email was never confirmed matches no attendee.
+   */
   findVerifiedEmailsByUserId(userId: number): Promise<string[]>;
   /**
    * Atomic off-to-on. Creates the row with enabled = true and pendingDispatch = true, or flips a
@@ -135,4 +138,10 @@ export interface IBookingNotetakerRepository {
   findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]>;
   /** updateMany where bookingId matches; a missing row is a no-op. Touches no other column. */
   setAppliedToSeries(bookingId: number, appliedToSeries: boolean): Promise<void>;
+  /**
+   * Idempotent share. Inserts the grant row unless one exists for the booking. Resolves true only
+   * for the call that inserted the row; false when a row was already there (nothing is written,
+   * grantedByUserId and grantedAt of the existing row are kept). Never throws on a duplicate.
+   */
+  createSharingGrantIfMissing(data: { bookingId: number; grantedByUserId: number | null }): Promise<boolean>;
 }
