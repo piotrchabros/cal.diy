@@ -1,7 +1,7 @@
 import type { NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotetakerBookingSection } from "./NotetakerBookingSection";
 
 type NotetakerStateQuery = { data: NotetakerStateDto | undefined; isPending: boolean; isError: boolean };
@@ -106,6 +106,11 @@ const STATUSES_WITHOUT_BANNER: NotetakerStateDto["status"][] = [
 ];
 
 describe("NotetakerBookingSection", () => {
+  // The shared setup's reset does not clear the hoisted mutate spies between tests, so call counts would leak into the "does not mutate" cases.
+  beforeEach(() => {
+    mocks.setEnabledMutate.mockClear();
+  });
+
   it("shows the admit banner above the toggle while waiting to be admitted", () => {
     renderSection(
       buildState({
@@ -226,5 +231,94 @@ describe("NotetakerBookingSection", () => {
 
     expect(screen.queryByTestId("notetaker-booking-section")).not.toBeInTheDocument();
     expect(screen.queryByTestId("notetaker-admit-banner")).not.toBeInTheDocument();
+  });
+
+  it("shows the event type default sentence for an enabled inherited choice", () => {
+    renderSection(
+      buildState({ choice: buildChoice({ enabled: true, source: "EVENT_TYPE_DEFAULT", setByName: null }) })
+    );
+
+    const text = screen.getByTestId("notetaker-booking-section").textContent;
+    expect(text).toContain("notetaker_enabled_by_event_type_default");
+    expect(text).not.toContain("notetaker_enabled_by:");
+    expect(text).not.toContain("notetaker_enabled_at");
+  });
+
+  it("shows the event type default sentence even when the inherited choice carries a name", () => {
+    renderSection(
+      buildState({ choice: buildChoice({ enabled: true, source: "EVENT_TYPE_DEFAULT", setByName: "Ada" }) })
+    );
+
+    const text = screen.getByTestId("notetaker-booking-section").textContent;
+    expect(text).toContain("notetaker_enabled_by_event_type_default");
+    expect(text).not.toContain("notetaker_enabled_by:");
+    expect(text).not.toContain("notetaker_enabled_at");
+  });
+
+  it("keeps the disabled sentence for a disabled inherited choice", () => {
+    renderSection(
+      buildState({ choice: buildChoice({ enabled: false, source: "EVENT_TYPE_DEFAULT", setByName: null }) })
+    );
+
+    const text = screen.getByTestId("notetaker-booking-section").textContent;
+    expect(text).toContain("notetaker_disabled_at");
+    expect(text).not.toContain("notetaker_enabled_by_event_type_default");
+  });
+
+  it("mutates at once with THIS_BOOKING when the booking is not recurring", () => {
+    renderSection(buildState({ isRecurring: false }));
+
+    fireEvent.click(screen.getByTestId("notetaker-toggle"));
+
+    expect(mocks.setEnabledMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.setEnabledMutate).toHaveBeenCalledWith({
+      bookingUid: BOOKING_UID,
+      enabled: true,
+      scope: "THIS_BOOKING",
+    });
+    expect(screen.queryByTestId("notetaker-scope-dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens the scope dialog and does not mutate when the booking is recurring", () => {
+    renderSection(buildState({ isRecurring: true, choice: buildChoice({ enabled: false }) }));
+
+    fireEvent.click(screen.getByTestId("notetaker-toggle"));
+
+    const dialog = screen.getByTestId("notetaker-scope-dialog");
+    expect(dialog.textContent).toContain("notetaker_scope_title");
+    expect(dialog.textContent).toContain("notetaker_scope_description");
+    expect(mocks.setEnabledMutate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { enabled: true, buttonId: "notetaker-scope-this-booking", scope: "THIS_BOOKING" },
+    { enabled: true, buttonId: "notetaker-scope-all-future-occurrences", scope: "ALL_FUTURE_OCCURRENCES" },
+    { enabled: false, buttonId: "notetaker-scope-this-booking", scope: "THIS_BOOKING" },
+    { enabled: false, buttonId: "notetaker-scope-all-future-occurrences", scope: "ALL_FUTURE_OCCURRENCES" },
+  ])("mutates with enabled $enabled and scope $scope from the scope dialog", ({
+    enabled,
+    buttonId,
+    scope,
+  }) => {
+    renderSection(buildState({ isRecurring: true, choice: buildChoice({ enabled: !enabled }) }));
+
+    fireEvent.click(screen.getByTestId("notetaker-toggle"));
+    fireEvent.click(within(screen.getByTestId("notetaker-scope-dialog")).getByTestId(buttonId));
+
+    expect(mocks.setEnabledMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.setEnabledMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, enabled, scope });
+    expect(screen.queryByTestId("notetaker-scope-dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes the scope dialog without mutating on cancel", () => {
+    renderSection(buildState({ isRecurring: true, choice: buildChoice({ enabled: false }) }));
+
+    fireEvent.click(screen.getByTestId("notetaker-toggle"));
+    fireEvent.click(
+      within(screen.getByTestId("notetaker-scope-dialog")).getByTestId("notetaker-scope-cancel")
+    );
+
+    expect(screen.queryByTestId("notetaker-scope-dialog")).not.toBeInTheDocument();
+    expect(mocks.setEnabledMutate).not.toHaveBeenCalled();
   });
 });
