@@ -32,7 +32,7 @@ describe("resolveMeetingLink", () => {
   it("prefers metadata.videoCallUrl over references and location", () => {
     expect(
       resolveMeetingLink({
-        location: "https://example.com/loc",
+        location: MeetLocationType,
         metadata: { videoCallUrl: MEET_URL },
         references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: "https://meet.google.com/ref-ref-ref" }],
       })
@@ -42,7 +42,7 @@ describe("resolveMeetingLink", () => {
   it("falls back to a google_meet_video reference when metadata has no videoCallUrl", () => {
     expect(
       resolveMeetingLink({
-        location: null,
+        location: MeetLocationType,
         metadata: {},
         references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL }],
       })
@@ -54,14 +54,18 @@ describe("resolveMeetingLink", () => {
     OFFICE365_CALENDAR_REFERENCE,
   ])("falls back to a %s reference", (type) => {
     expect(
-      resolveMeetingLink({ location: null, metadata: null, references: [{ type, meetingUrl: TEAMS_URL }] })
+      resolveMeetingLink({
+        location: MSTeamsLocationType,
+        metadata: null,
+        references: [{ type, meetingUrl: TEAMS_URL }],
+      })
     ).toBe(TEAMS_URL);
   });
 
   it("ignores a deleted reference and uses the next non-deleted one", () => {
     expect(
       resolveMeetingLink({
-        location: null,
+        location: MeetLocationType,
         metadata: null,
         references: [
           { type: GOOGLE_MEET_REFERENCE, meetingUrl: "https://meet.google.com/old-old-old", deleted: true },
@@ -74,7 +78,7 @@ describe("resolveMeetingLink", () => {
   it("ignores references with a null meetingUrl and references of other types", () => {
     expect(
       resolveMeetingLink({
-        location: null,
+        location: MeetLocationType,
         metadata: null,
         references: [
           { type: GOOGLE_MEET_REFERENCE, meetingUrl: null },
@@ -104,7 +108,37 @@ describe("resolveMeetingLink", () => {
     { videoCallUrl: 123 },
     { videoCallUrl: "" },
   ])("tolerates odd metadata %j", (metadata) => {
-    expect(resolveMeetingLink({ location: null, metadata, references: [] })).toBeNull();
+    expect(resolveMeetingLink({ location: MeetLocationType, metadata, references: [] })).toBeNull();
+  });
+
+  it("ignores leftover metadata and references when the location is in person", () => {
+    expect(
+      resolveMeetingLink({
+        location: "123 Main St",
+        metadata: { videoCallUrl: MEET_URL },
+        references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL }],
+      })
+    ).toBeNull();
+  });
+
+  it("ignores leftover metadata and references when the location is an unsupported integration", () => {
+    expect(
+      resolveMeetingLink({
+        location: "integrations:daily",
+        metadata: { videoCallUrl: MEET_URL },
+        references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL }],
+      })
+    ).toBeNull();
+  });
+
+  it("returns an http location even when metadata holds a different videoCallUrl", () => {
+    expect(
+      resolveMeetingLink({
+        location: "https://zoom.us/j/1",
+        metadata: { videoCallUrl: MEET_URL },
+        references: [],
+      })
+    ).toBe("https://zoom.us/j/1");
   });
 });
 
@@ -141,7 +175,11 @@ describe("classifyMeetingUrl", () => {
 
 describe("getBookingNotetakerEligibility", () => {
   it("is eligible with a Meet URL in metadata.videoCallUrl", () => {
-    expect(getBookingNotetakerEligibility(booking({ metadata: { videoCallUrl: MEET_URL } }))).toEqual({
+    expect(
+      getBookingNotetakerEligibility(
+        booking({ location: MeetLocationType, metadata: { videoCallUrl: MEET_URL } })
+      )
+    ).toEqual({
       eligible: true,
       platform: "GOOGLE_MEET",
       reason: null,
@@ -150,7 +188,10 @@ describe("getBookingNotetakerEligibility", () => {
 
   it("is eligible with a Meet URL only through a google_meet_video reference", () => {
     const result = getBookingNotetakerEligibility(
-      booking({ references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL }] })
+      booking({
+        location: MeetLocationType,
+        references: [{ type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL }],
+      })
     );
     expect(result).toEqual({ eligible: true, platform: "GOOGLE_MEET", reason: null });
   });
@@ -183,11 +224,27 @@ describe("getBookingNotetakerEligibility", () => {
     ).toEqual({ eligible: true, platform: "MICROSOFT_TEAMS", reason: null });
   });
 
-  it("reports NO_MEETING_LINK with the platform for an accepted Meet booking without a link", () => {
-    expect(getBookingNotetakerEligibility(booking({ location: MeetLocationType }))).toEqual({
+  it("is eligible for an accepted Meet booking whose link is not stored yet", () => {
+    expect(
+      getBookingNotetakerEligibility(
+        booking({ location: MeetLocationType, metadata: null, references: [], bookingStatus: "ACCEPTED" })
+      )
+    ).toEqual({ eligible: true, platform: "GOOGLE_MEET", reason: null });
+  });
+
+  it("is eligible for an accepted Teams booking without a link when Teams is enabled", () => {
+    expect(
+      getBookingNotetakerEligibility(
+        booking({ location: MSTeamsLocationType, enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] })
+      )
+    ).toEqual({ eligible: true, platform: "MICROSOFT_TEAMS", reason: null });
+  });
+
+  it("reports UNSUPPORTED_PLATFORM with the platform for an accepted Teams booking without a link when Teams is not enabled", () => {
+    expect(getBookingNotetakerEligibility(booking({ location: MSTeamsLocationType }))).toEqual({
       eligible: false,
-      platform: "GOOGLE_MEET",
-      reason: "NO_MEETING_LINK",
+      platform: "MICROSOFT_TEAMS",
+      reason: "UNSUPPORTED_PLATFORM",
     });
   });
 
@@ -222,7 +279,7 @@ describe("getBookingNotetakerEligibility", () => {
 
   it("reports CAL_VIDEO for a daily.co URL", () => {
     const result = getBookingNotetakerEligibility(
-      booking({ metadata: { videoCallUrl: "https://cal.daily.co/room" } })
+      booking({ location: MeetLocationType, metadata: { videoCallUrl: "https://cal.daily.co/room" } })
     );
     expect(result.reason).toBe("CAL_VIDEO");
   });
@@ -230,6 +287,7 @@ describe("getBookingNotetakerEligibility", () => {
   it("does not treat a deleted daily_video reference as Cal Video", () => {
     const result = getBookingNotetakerEligibility(
       booking({
+        location: MeetLocationType,
         metadata: { videoCallUrl: MEET_URL },
         references: [
           { type: DAILY_REFERENCE, meetingUrl: "https://app.example.com/video/abc", deleted: true },
@@ -272,7 +330,11 @@ describe("getBookingNotetakerEligibility", () => {
   });
 
   it("reports UNSUPPORTED_PLATFORM with the platform for a Teams URL when Teams is not enabled", () => {
-    expect(getBookingNotetakerEligibility(booking({ metadata: { videoCallUrl: TEAMS_URL } }))).toEqual({
+    expect(
+      getBookingNotetakerEligibility(
+        booking({ location: MSTeamsLocationType, metadata: { videoCallUrl: TEAMS_URL } })
+      )
+    ).toEqual({
       eligible: false,
       platform: "MICROSOFT_TEAMS",
       reason: "UNSUPPORTED_PLATFORM",
@@ -282,7 +344,11 @@ describe("getBookingNotetakerEligibility", () => {
   it("is eligible for a Teams URL when Teams is enabled", () => {
     expect(
       getBookingNotetakerEligibility(
-        booking({ metadata: { videoCallUrl: TEAMS_URL }, enabledPlatforms: ["MICROSOFT_TEAMS"] })
+        booking({
+          location: MSTeamsLocationType,
+          metadata: { videoCallUrl: TEAMS_URL },
+          enabledPlatforms: ["MICROSOFT_TEAMS"],
+        })
       )
     ).toEqual({ eligible: true, platform: "MICROSOFT_TEAMS", reason: null });
   });
@@ -296,9 +362,142 @@ describe("getBookingNotetakerEligibility", () => {
   it("reports UNSUPPORTED_PLATFORM with the platform for a Meet URL when only Teams is enabled", () => {
     expect(
       getBookingNotetakerEligibility(
-        booking({ metadata: { videoCallUrl: MEET_URL }, enabledPlatforms: ["MICROSOFT_TEAMS"] })
+        booking({
+          location: MeetLocationType,
+          metadata: { videoCallUrl: MEET_URL },
+          enabledPlatforms: ["MICROSOFT_TEAMS"],
+        })
       )
     ).toEqual({ eligible: false, platform: "GOOGLE_MEET", reason: "UNSUPPORTED_PLATFORM" });
+  });
+
+  describe("stale link data after a location change", () => {
+    const staleMeetReference = { type: GOOGLE_MEET_REFERENCE, meetingUrl: MEET_URL };
+
+    it("reports IN_PERSON_OR_PHONE for an in-person location with a stale Meet reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({ location: "123 Main St", metadata: {}, references: [staleMeetReference] })
+        )
+      ).toEqual({ eligible: false, platform: null, reason: "IN_PERSON_OR_PHONE" });
+    });
+
+    it("reports IN_PERSON_OR_PHONE for an in-person location with a stale videoCallUrl", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({ location: "123 Main St", metadata: { videoCallUrl: MEET_URL } })
+        ).reason
+      ).toBe("IN_PERSON_OR_PHONE");
+    });
+
+    it("reports IN_PERSON_OR_PHONE for a phone location with a blank videoCallUrl and a stale Meet reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: "+48123456789",
+            metadata: { videoCallUrl: "" },
+            references: [staleMeetReference],
+          })
+        ).reason
+      ).toBe("IN_PERSON_OR_PHONE");
+    });
+
+    it("reports UNSUPPORTED_PLATFORM without a platform for another integration with a stale Meet reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({ location: "integrations:zoom", metadata: {}, references: [staleMeetReference] })
+        )
+      ).toEqual({ eligible: false, platform: null, reason: "UNSUPPORTED_PLATFORM" });
+    });
+
+    it("lets an http location win over a stale Meet videoCallUrl and reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: "https://zoom.us/j/1",
+            metadata: { videoCallUrl: MEET_URL },
+            references: [staleMeetReference],
+          })
+        ).reason
+      ).toBe("UNSUPPORTED_PLATFORM");
+    });
+
+    it("keeps reporting CAL_VIDEO for the Cal Video location despite stale Meet data", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: DailyLocationType,
+            metadata: { videoCallUrl: MEET_URL },
+            references: [staleMeetReference],
+          })
+        ).reason
+      ).toBe("CAL_VIDEO");
+    });
+
+    it("reports CAL_VIDEO for a Cal Video http location with a daily_video reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: "https://cal.daily.co/room",
+            metadata: { videoCallUrl: "https://cal.daily.co/room" },
+            references: [{ type: DAILY_REFERENCE, meetingUrl: "https://cal.daily.co/room" }],
+          })
+        ).reason
+      ).toBe("CAL_VIDEO");
+    });
+
+    it("reports CAL_VIDEO for a Meet location that fell back to a Cal Video link", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: MeetLocationType,
+            metadata: { videoCallUrl: "https://app.example.com/video/abc123" },
+            references: [{ type: DAILY_REFERENCE, meetingUrl: "https://app.example.com/video/abc123" }],
+          })
+        )
+      ).toEqual({ eligible: false, platform: null, reason: "CAL_VIDEO" });
+    });
+
+    it("reports CAL_VIDEO for a Meet location with only a daily_video reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: MeetLocationType,
+            references: [{ type: DAILY_REFERENCE, meetingUrl: "https://app.example.com/video/abc" }],
+          })
+        ).reason
+      ).toBe("CAL_VIDEO");
+    });
+
+    it("is eligible for a Meet location with a Meet link despite a leftover daily_video reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: MeetLocationType,
+            metadata: { videoCallUrl: MEET_URL },
+            references: [{ type: DAILY_REFERENCE, meetingUrl: "https://app.example.com/video/abc" }],
+          })
+        )
+      ).toEqual({ eligible: true, platform: "GOOGLE_MEET", reason: null });
+    });
+
+    it("is eligible for a pasted Meet link despite a daily_video reference", () => {
+      expect(
+        getBookingNotetakerEligibility(
+          booking({
+            location: MEET_URL,
+            references: [{ type: DAILY_REFERENCE, meetingUrl: "https://app.example.com/video/abc" }],
+          })
+        ).eligible
+      ).toBe(true);
+    });
+  });
+
+  it("does not resolve prototype keys as platforms", () => {
+    expect(getBookingNotetakerEligibility(booking({ location: "constructor" })).reason).toBe(
+      "IN_PERSON_OR_PHONE"
+    );
+    expect(classifyMeetingUrl("https://constructor/x")).toBeNull();
   });
 
   it.each([
