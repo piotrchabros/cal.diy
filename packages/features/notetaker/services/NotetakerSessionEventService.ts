@@ -61,12 +61,17 @@ export class NotetakerSessionEventService {
     const at = new Date(event.occurredAt);
 
     switch (event.type) {
-      case "session.join_requested":
-        return this.applyUpdate(session.id, fromStatusesFor("WAITING_TO_BE_ADMITTED"), {
+      case "session.join_requested": {
+        const result = await this.applyUpdate(session.id, fromStatusesFor("WAITING_TO_BE_ADMITTED"), {
           status: "WAITING_TO_BE_ADMITTED",
           joinRequestedAt: at,
           lastEventSequence: seq,
         });
+        if (result === "ACCEPTED") {
+          await this.enqueueNotice("ADMIT_PROMPT", session.bookingId, session.id);
+        }
+        return result;
+      }
       case "session.admitted":
         return this.applyUpdate(session.id, fromStatusesFor("TRANSCRIBING"), {
           status: "TRANSCRIBING",
@@ -213,6 +218,7 @@ export class NotetakerSessionEventService {
       });
     }
 
+    await this.enqueueNotice("FAILED", session.bookingId, session.id);
     return "ACCEPTED";
   }
 
@@ -244,5 +250,21 @@ export class NotetakerSessionEventService {
     throw ErrorWithCode.Factory.InternalServerError(
       `Unable to enqueue finalize for notetaker session ${sessionId}`
     );
+  }
+
+  // Unlike finalize, no duplicate path re-enqueues a notice, so throwing would only make the bot retry
+  // an event that is by then a duplicate, while the status transition has already won.
+  private async enqueueNotice(
+    kind: "ADMIT_PROMPT" | "FAILED",
+    bookingId: number,
+    sessionId: string
+  ): Promise<void> {
+    const { runId } = await this.deps.notetakerTasker.sendNotification(
+      { kind, bookingId, sessionId },
+      { idempotencyKey: `notetaker:${kind}:${sessionId}` }
+    );
+    if (runId !== "task-failed") return;
+
+    this.deps.logger.error("Failed to enqueue notetaker notice", { kind, sessionId });
   }
 }
