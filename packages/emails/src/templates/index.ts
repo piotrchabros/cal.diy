@@ -24,6 +24,7 @@ export { NotetakerAdmitPromptEmail } from "./NotetakerAdmitPromptEmail";
 export { NotetakerAttendeeNoticeEmail } from "./NotetakerAttendeeNoticeEmail";
 export { NotetakerFailedEmail } from "./NotetakerFailedEmail";
 export { NotetakerResultsReadyEmail } from "./NotetakerResultsReadyEmail";
+export { NotetakerSharedEmail } from "./NotetakerSharedEmail";
 export { NotetakerTurnedOffEmail } from "./NotetakerTurnedOffEmail";
 export { OAuthClientApprovedNotificationEmail } from "./OAuthClientApprovedNotificationEmail";
 export { OAuthClientRejectedNotificationEmail } from "./OAuthClientRejectedNotificationEmail";

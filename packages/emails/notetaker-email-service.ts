@@ -1,6 +1,8 @@
 import type BaseEmail from "@calcom/emails/templates/_base-email";
 import type { NotetakerAttendeeNoticeEmailInput } from "./templates/attendee-notetaker-notice-email";
 import AttendeeNotetakerNoticeEmail from "./templates/attendee-notetaker-notice-email";
+import type { NotetakerSharedEmailInput } from "./templates/attendee-notetaker-shared-email";
+import AttendeeNotetakerSharedEmail from "./templates/attendee-notetaker-shared-email";
 import type { NotetakerAdmitPromptEmailInput } from "./templates/organizer-notetaker-admit-prompt-email";
 import OrganizerNotetakerAdmitPromptEmail from "./templates/organizer-notetaker-admit-prompt-email";
 import type { NotetakerFailedEmailInput } from "./templates/organizer-notetaker-failed-email";
@@ -48,4 +50,8 @@ export const sendNotetakerFailedEmail = async (input: NotetakerFailedEmailInput)
 
 export const sendNotetakerTurnedOffEmail = async (input: NotetakerTurnedOffEmailInput): Promise<void> => {
   await sendEmail(() => new OrganizerNotetakerTurnedOffEmail(input));
+};
+
+export const sendNotetakerSharedEmail = async (input: NotetakerSharedEmailInput): Promise<void> => {
+  await sendEmail(() => new AttendeeNotetakerSharedEmail(input));
 };
