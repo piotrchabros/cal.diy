@@ -4,6 +4,7 @@ import type { Prisma } from "@calcom/prisma/client";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingStatus,
   NotetakerSharingGrantRecord,
@@ -27,6 +28,13 @@ const sharingGrantSelect = {
   grantedByUserId: true,
   grantedAt: true,
 } satisfies Prisma.NotetakerSharingGrantSelect;
+
+const attendeeSelect = {
+  email: true,
+  name: true,
+  locale: true,
+  timeZone: true,
+} satisfies Prisma.AttendeeSelect;
 
 const bookingBaseSelect = {
   id: true,
@@ -157,6 +165,33 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     });
   }
 
+  async enableIfDisabled(data: {
+    bookingId: number;
+    source: NotetakerChoiceSourceDto;
+    appliedToSeries: boolean;
+    setByUserId: number | null;
+    setAt: Date;
+  }): Promise<boolean> {
+    // Each branch is a single conditional statement, which is what makes exactly one caller win;
+    // a read-then-write would let two hosts both arm the booking. skipDuplicates makes the loser of
+    // the insert race get a count of 0 instead of a unique-violation. An already enabled or
+    // rejoin-blocked row matches neither statement, so nothing is written.
+    const { bookingId, source, appliedToSeries, setByUserId, setAt } = data;
+    const updated = await this.prismaClient.bookingNotetaker.updateMany({
+      where: { bookingId, enabled: false, rejoinBlocked: false },
+      data: { enabled: true, pendingDispatch: true, source, appliedToSeries, setByUserId, setAt },
+    });
+    if (updated.count === 1) return true;
+
+    const created = await this.prismaClient.bookingNotetaker.createMany({
+      data: [
+        { bookingId, enabled: true, pendingDispatch: true, source, appliedToSeries, setByUserId, setAt },
+      ],
+      skipDuplicates: true,
+    });
+    return created.count === 1;
+  }
+
   async disable(bookingId: number): Promise<void> {
     await this.prismaClient.bookingNotetaker.updateMany({
       where: { bookingId },
@@ -247,6 +282,14 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       select: { notifiedAttendeeEmails: true },
     });
     return Array.from(new Set(rows.flatMap((row) => row.notifiedAttendeeEmails)));
+  }
+
+  async findAttendeesByBookingId(bookingId: number): Promise<NotetakerAttendeeRecord[]> {
+    return await this.prismaClient.attendee.findMany({
+      where: { bookingId },
+      orderBy: { id: "asc" },
+      select: attendeeSelect,
+    });
   }
 
   async findSharingGrant(bookingId: number): Promise<NotetakerSharingGrantRecord | null> {

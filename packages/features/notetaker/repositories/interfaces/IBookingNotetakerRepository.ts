@@ -21,6 +21,13 @@ export type NotetakerSharingGrantRecord = {
   grantedAt: Date;
 };
 
+export type NotetakerAttendeeRecord = {
+  email: string;
+  name: string;
+  locale: string | null;
+  timeZone: string;
+};
+
 export type NotetakerBookingContext = {
   id: number;
   uid: string;
@@ -89,4 +96,19 @@ export interface IBookingNotetakerRepository {
   deleteSharingGrant(bookingId: number): Promise<boolean>;
   /** Primary email plus SecondaryEmail rows with emailVerified set. */
   findVerifiedEmailsByUserId(userId: number): Promise<string[]>;
+  /**
+   * Atomic off-to-on. Creates the row with enabled = true and pendingDispatch = true, or flips a
+   * row that has enabled = false AND rejoinBlocked = false. Resolves true only for the call that
+   * made the change; false when the row is already enabled or is rejoin-blocked (nothing is
+   * written). Never touches notifiedAttendeeEmails, attendeesNotifiedAt or rejoinBlocked.
+   */
+  enableIfDisabled(data: {
+    bookingId: number;
+    source: NotetakerChoiceSourceDto;
+    appliedToSeries: boolean;
+    setByUserId: number | null;
+    setAt: Date;
+  }): Promise<boolean>;
+  /** The booking's current Attendee rows, ordered by id ascending. */
+  findAttendeesByBookingId(bookingId: number): Promise<NotetakerAttendeeRecord[]>;
 }

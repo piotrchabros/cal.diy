@@ -1,19 +1,27 @@
-import { sendNotetakerResultsReadyEmail } from "@calcom/emails/notetaker-email-service";
+import {
+  sendNotetakerAttendeeNoticeEmail,
+  sendNotetakerResultsReadyEmail,
+} from "@calcom/emails/notetaker-email-service";
 import { getTranslation } from "@calcom/i18n/server";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerTranscriptCompletenessDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { createInstance, type TFunction } from "i18next";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
+import type {
+  BookingNotetakerRecord,
+  NotetakerAttendeeRecord,
+} from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerNotificationService } from "./NotetakerNotificationService";
 
 vi.mock("@calcom/emails/notetaker-email-service", () => ({
+  sendNotetakerAttendeeNoticeEmail: vi.fn(),
   sendNotetakerResultsReadyEmail: vi.fn(),
 }));
 vi.mock("@calcom/i18n/server", () => ({ getTranslation: vi.fn() }));
@@ -44,6 +52,22 @@ const INPUT_FIELDS = [
   "to",
   "transcriptCompleteness",
 ];
+
+const NOTICE_INPUT_FIELDS: string[] = [
+  "bookingStartTime",
+  "bookingTitle",
+  "hostName",
+  "isPending",
+  "locale",
+  "t",
+  "timeZone",
+  "to",
+];
+
+const NOW: Date = new Date("2026-10-10T08:00:00.000Z");
+const ANN = "ann@example.com";
+const BOB = "bob@example.com";
+const CY = "cy@example.com";
 
 const translators = new Map<string, TFunction>();
 
@@ -101,6 +125,7 @@ function buildBooking(overrides: Partial<InMemoryBookingSeed> = {}): InMemoryBoo
 
 describe("NotetakerNotificationService", () => {
   const sendMock = vi.mocked(sendNotetakerResultsReadyEmail);
+  const noticeMock = vi.mocked(sendNotetakerAttendeeNoticeEmail);
   const logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
 
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
@@ -111,6 +136,7 @@ describe("NotetakerNotificationService", () => {
     vi.clearAllMocks();
     vi.mocked(getTranslation).mockImplementation(async (locale) => translatorFor(locale));
     sendMock.mockResolvedValue(undefined);
+    noticeMock.mockResolvedValue(undefined);
 
     repositories = createInMemoryNotetakerRepositories();
     userLookup = new FakeUserLookup();
@@ -451,7 +477,6 @@ describe("NotetakerNotificationService", () => {
 
   describe("other notification kinds", () => {
     it.each([
-      "ATTENDEE_NOTICE",
       "ADMIT_PROMPT",
       "FAILED",
       "TURNED_OFF",
@@ -463,6 +488,7 @@ describe("NotetakerNotificationService", () => {
       await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
       await expect(promise).rejects.toThrow(kind);
       expect(sendMock).not.toHaveBeenCalled();
+      expect(noticeMock).not.toHaveBeenCalled();
     });
   });
 
@@ -480,6 +506,438 @@ describe("NotetakerNotificationService", () => {
       await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
       expect(sendMock).toHaveBeenCalledTimes(2);
       expect(logger.error).toHaveBeenCalled();
+    });
+  });
+
+  describe("ATTENDEE_NOTICE", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function buildAttendee(
+      email: string,
+      overrides: Partial<NotetakerAttendeeRecord> = {}
+    ): NotetakerAttendeeRecord {
+      return { email, name: "Guest Person", locale: "en", timeZone: "UTC", ...overrides };
+    }
+
+    async function seedChoice(
+      options: { bookingId?: number; enabled?: boolean; notifiedAttendeeEmails?: string[] } = {}
+    ): Promise<void> {
+      await repositories.bookingNotetakerRepository.upsert({
+        bookingId: options.bookingId ?? BOOKING_ID,
+        enabled: options.enabled ?? true,
+        pendingDispatch: true,
+        source: "HOST",
+        appliedToSeries: false,
+        setByUserId: ORGANIZER_ID,
+        setAt: new Date("2026-10-09T09:00:00.000Z"),
+        notifiedAttendeeEmails: options.notifiedAttendeeEmails,
+      });
+    }
+
+    function setAttendees(attendees: NotetakerAttendeeRecord[], bookingId: number = BOOKING_ID): void {
+      repositories.store.setAttendees(bookingId, attendees);
+    }
+
+    function sendNotice(bookingId: number = BOOKING_ID, sessionId: string | null = null): Promise<void> {
+      return service.send({ kind: "ATTENDEE_NOTICE", bookingId, sessionId });
+    }
+
+    function noticedEmails(): string[] {
+      return noticeMock.mock.calls.map(([input]) => input.to.email);
+    }
+
+    function storedChoice(): Promise<BookingNotetakerRecord | null> {
+      return repositories.bookingNotetakerRepository.findByBookingId(BOOKING_ID);
+    }
+
+    function failFor(email: string): void {
+      noticeMock.mockImplementation(async (input) => {
+        if (input.to.email === email) throw new Error("render failed");
+      });
+    }
+
+    describe("recipients", () => {
+      it("emails every current attendee once", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB), buildAttendee(CY)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([ANN, BOB, CY]);
+        expect(sendMock).not.toHaveBeenCalled();
+        expect(userLookup.calls).toEqual([]);
+      });
+
+      it("skips attendees already on the booking's own notified list", async () => {
+        await seedChoice({ notifiedAttendeeEmails: [ANN] });
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([BOB]);
+      });
+
+      it("skips attendees notified on another booking of the same series", async () => {
+        repositories.store.addBooking(buildBooking({ recurringEventId: "series-1" }));
+        repositories.store.addBooking(
+          buildBooking({ id: OTHER_BOOKING_ID, uid: "booking-uid-2", recurringEventId: "series-1" })
+        );
+        await seedChoice();
+        await seedChoice({ bookingId: OTHER_BOOKING_ID, notifiedAttendeeEmails: [ANN] });
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([BOB]);
+      });
+
+      it("does not look across bookings when there is no series", async () => {
+        const seriesLookup = vi.spyOn(
+          repositories.bookingNotetakerRepository,
+          "findNotifiedAttendeeEmailsByRecurringEventId"
+        );
+        repositories.store.addBooking(buildBooking({ id: OTHER_BOOKING_ID, uid: "booking-uid-2" }));
+        await seedChoice();
+        await seedChoice({ bookingId: OTHER_BOOKING_ID, notifiedAttendeeEmails: [ANN] });
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([ANN, BOB]);
+        expect(seriesLookup).not.toHaveBeenCalled();
+      });
+
+      it("compares addresses trimmed and case-insensitively", async () => {
+        await seedChoice({ notifiedAttendeeEmails: [" ANN@Example.COM "] });
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        expect(noticeMock).not.toHaveBeenCalled();
+      });
+
+      it("emails a duplicated address once, in the first row's spelling", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee("Ann@Example.com"), buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual(["Ann@Example.com"]);
+      });
+
+      it("sends nothing and writes nothing when everyone was already notified", async () => {
+        await seedChoice({ notifiedAttendeeEmails: [ANN, BOB] });
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        expect(noticeMock).not.toHaveBeenCalled();
+        const choice = await storedChoice();
+        expect(choice?.notifiedAttendeeEmails).toEqual([ANN, BOB]);
+        expect(choice?.attendeesNotifiedAt).toBeNull();
+      });
+
+      it("sends nothing and writes nothing when the booking has no attendees", async () => {
+        await seedChoice();
+        setAttendees([]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        expect(noticeMock).not.toHaveBeenCalled();
+        const choice = await storedChoice();
+        expect(choice?.notifiedAttendeeEmails).toEqual([]);
+        expect(choice?.attendeesNotifiedAt).toBeNull();
+      });
+    });
+
+    describe("recording", () => {
+      it("stores the addresses as written on the attendee rows and the time", async () => {
+        await seedChoice({ notifiedAttendeeEmails: [CY] });
+        setAttendees([buildAttendee("Ann@Example.com"), buildAttendee(BOB)]);
+
+        await sendNotice();
+
+        const choice = await storedChoice();
+        expect(choice?.notifiedAttendeeEmails).toEqual([CY, "Ann@Example.com", BOB]);
+        expect(choice?.attendeesNotifiedAt).toEqual(NOW);
+      });
+
+      it("sends nothing on a second run", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+        await sendNotice();
+        vi.setSystemTime(new Date(NOW.getTime() + 60 * 60 * 1000));
+        noticeMock.mockClear();
+
+        await sendNotice();
+
+        expect(noticeMock).not.toHaveBeenCalled();
+        expect((await storedChoice())?.attendeesNotifiedAt).toEqual(NOW);
+      });
+
+      it("emails only an attendee added after the first run", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+        await sendNotice();
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB), buildAttendee(CY)]);
+        noticeMock.mockClear();
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([CY]);
+        expect((await storedChoice())?.notifiedAttendeeEmails).toEqual([ANN, BOB, CY]);
+      });
+
+      it("does not email again after the notetaker is turned off and on", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN)]);
+        await sendNotice();
+        await repositories.bookingNotetakerRepository.disable(BOOKING_ID);
+        await seedChoice();
+        noticeMock.mockClear();
+
+        await sendNotice();
+
+        expect(noticeMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("content", () => {
+      beforeEach(async () => {
+        await seedChoice();
+      });
+
+      it("uses each attendee's locale and time zone and falls back to English", async () => {
+        setAttendees([
+          buildAttendee(ANN, { locale: "de", timeZone: "Europe/Berlin" }),
+          buildAttendee(BOB, { locale: null, timeZone: "America/New_York" }),
+        ]);
+
+        await sendNotice();
+
+        expect(getTranslation).toHaveBeenCalledWith("de", "common");
+        expect(getTranslation).toHaveBeenCalledWith("en", "common");
+        const [first, second] = noticeMock.mock.calls.map(([input]) => input);
+        expect(first.locale).toBe("de");
+        expect(first.timeZone).toBe("Europe/Berlin");
+        expect(first.t).toBe(translatorFor("de"));
+        expect(second.locale).toBe("en");
+        expect(second.timeZone).toBe("America/New_York");
+        expect(second.t).toBe(translatorFor("en"));
+      });
+
+      it("passes the meeting, the host and the recipient", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        const input = noticeMock.mock.calls[0][0];
+        expect(input.bookingTitle).toBe("Planning call");
+        expect(input.bookingStartTime).toEqual(new Date("2026-10-12T10:00:00.000Z"));
+        expect(input.hostName).toBe("Organizer");
+        expect(input.isPending).toBe(false);
+        expect(input.to).toEqual({ email: ANN, name: "Guest Person" });
+        expect(Object.keys(input).sort()).toEqual(NOTICE_INPUT_FIELDS);
+      });
+
+      it("falls back to the app name when the booking has no organizer", async () => {
+        repositories.store.addBooking(buildBooking({ userId: null, organizer: null }));
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        expect(noticeMock.mock.calls[0][0].hostName).toBe(APP_NAME);
+      });
+
+      it.each(["PENDING", "AWAITING_HOST"] as const)("marks a %s booking as pending", async (status) => {
+        repositories.store.addBooking(buildBooking({ status }));
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        expect(noticeMock.mock.calls[0][0].isPending).toBe(true);
+      });
+
+      it.each(["", "   "])("passes a null name for the attendee name %j", async (name) => {
+        setAttendees([buildAttendee(ANN, { name })]);
+
+        await sendNotice();
+
+        expect(noticeMock.mock.calls[0][0].to.name).toBeNull();
+      });
+
+      it("carries no link", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        // JSON.stringify drops the translator function, which is not part of the data under test.
+        const sent = JSON.stringify(noticeMock.mock.calls);
+        for (const fragment of ["http", BOOKING_UID, "/notetaker", WEBAPP_URL]) {
+          expect(sent).not.toContain(fragment);
+        }
+      });
+
+      it("is sent although standard emails are disabled for the booking", async () => {
+        repositories.store.addBooking(
+          buildBooking({ metadata: { disableStandardEmails: { all: { attendee: true, host: true } } } })
+        );
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([ANN]);
+      });
+
+      it("ignores the session id", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendNotice(BOOKING_ID, "missing-session");
+
+        expect(noticedEmails()).toEqual([ANN]);
+      });
+    });
+
+    describe("skipped targets", () => {
+      async function expectSkipped(): Promise<void> {
+        expect(noticeMock).not.toHaveBeenCalled();
+        expect(loggerWasCalled()).toBe(true);
+        const choice = await storedChoice();
+        if (choice) {
+          expect(choice.notifiedAttendeeEmails).toEqual([]);
+          expect(choice.attendeesNotifiedAt).toBeNull();
+        }
+      }
+
+      it("resolves without sending for an unknown booking", async () => {
+        await expect(sendNotice(999)).resolves.toBeUndefined();
+
+        await expectSkipped();
+      });
+
+      it("resolves without sending for a booking with no choice", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        await expectSkipped();
+      });
+
+      it("resolves without sending when the choice is off", async () => {
+        await seedChoice({ enabled: false });
+        setAttendees([buildAttendee(ANN)]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        await expectSkipped();
+      });
+
+      it.each([
+        "CANCELLED",
+        "REJECTED",
+      ] as const)("resolves without sending for a %s booking", async (status) => {
+        repositories.store.addBooking(buildBooking({ status }));
+        await seedChoice();
+        setAttendees([buildAttendee(ANN)]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        await expectSkipped();
+      });
+    });
+
+    describe("failures", () => {
+      beforeEach(async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB), buildAttendee(CY)]);
+      });
+
+      it("emails everyone, records the successes and rejects naming the failures", async () => {
+        failFor(BOB);
+
+        const promise = sendNotice();
+
+        await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+        await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
+        await expect(promise).rejects.toThrow(String(BOOKING_ID));
+        await expect(promise).rejects.toThrow("1 of 3");
+        expect(noticeMock).toHaveBeenCalledTimes(3);
+        const choice = await storedChoice();
+        expect(choice?.notifiedAttendeeEmails).toEqual([ANN, CY]);
+        expect(choice?.attendeesNotifiedAt).toEqual(NOW);
+        expect(logger.error).toHaveBeenCalledTimes(1);
+      });
+
+      it("emails only the failed attendee on the retry", async () => {
+        failFor(BOB);
+        await expect(sendNotice()).rejects.toBeInstanceOf(ErrorWithCode);
+        noticeMock.mockReset();
+        noticeMock.mockResolvedValue(undefined);
+
+        await sendNotice();
+
+        expect(noticedEmails()).toEqual([BOB]);
+        expect((await storedChoice())?.notifiedAttendeeEmails).toEqual([ANN, CY, BOB]);
+      });
+
+      it("records nothing when every send fails", async () => {
+        noticeMock.mockRejectedValue(new Error("render failed"));
+
+        await expect(sendNotice()).rejects.toBeInstanceOf(ErrorWithCode);
+
+        const choice = await storedChoice();
+        expect(choice?.notifiedAttendeeEmails).toEqual([]);
+        expect(choice?.attendeesNotifiedAt).toBeNull();
+      });
+
+      it("keeps attendee and meeting details out of logs and errors", async () => {
+        repositories.store.addBooking(
+          buildBooking({
+            title: "SECRET-MEETING-TITLE",
+            organizer: {
+              id: ORGANIZER_ID,
+              name: "SECRET-HOST-NAME",
+              email: "secret-host@example.org",
+              locale: "en",
+            },
+          })
+        );
+        setAttendees([
+          buildAttendee(ANN, { name: "SECRET-NAME-ANN" }),
+          buildAttendee(BOB, { name: "SECRET-NAME-BOB" }),
+          buildAttendee(CY, { name: "SECRET-NAME-CY" }),
+        ]);
+        failFor(BOB);
+
+        const error = await sendNotice().then(
+          () => null,
+          (caught: unknown) => caught
+        );
+        repositories.store.addBooking(buildBooking({ title: "SECRET-MEETING-TITLE", status: "CANCELLED" }));
+        await sendNotice();
+
+        if (!(error instanceof Error)) throw new Error("Expected the partial failure to reject");
+        const text = `${loggedText()}${error.message}`;
+        for (const secret of [
+          ANN,
+          BOB,
+          CY,
+          "SECRET-NAME-ANN",
+          "SECRET-NAME-BOB",
+          "SECRET-NAME-CY",
+          "SECRET-MEETING-TITLE",
+          "SECRET-HOST-NAME",
+          "secret-host@example.org",
+        ]) {
+          expect(text).not.toContain(secret);
+        }
+      });
     });
   });
 });

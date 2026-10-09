@@ -4,6 +4,7 @@ import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummary
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingStatus,
   NotetakerSharingGrantRecord,
@@ -56,6 +57,10 @@ function copyChoice(choice: BookingNotetakerRecord): BookingNotetakerRecord {
 
 function copyGrant(grant: NotetakerSharingGrantRecord): NotetakerSharingGrantRecord {
   return { ...grant };
+}
+
+function copyAttendee(attendee: NotetakerAttendeeRecord): NotetakerAttendeeRecord {
+  return { ...attendee };
 }
 
 function copySettings(settings: EventTypeNotetakerSettingsRecord): EventTypeNotetakerSettingsRecord {
@@ -122,6 +127,7 @@ export class InMemoryNotetakerStore {
   readonly bookings = new Map<number, InMemoryBookingSeed>();
   readonly eventTypes = new Map<number, InMemoryEventTypeSeed>();
   readonly verifiedEmails = new Map<number, string[]>();
+  readonly attendees = new Map<number, NotetakerAttendeeRecord[]>();
   readonly choices = new Map<number, BookingNotetakerRecord>();
   readonly sharingGrants = new Map<number, NotetakerSharingGrantRecord>();
   readonly eventTypeSettings = new Map<number, EventTypeNotetakerSettingsRecord>();
@@ -148,6 +154,7 @@ export class InMemoryNotetakerStore {
     this.bookings.delete(bookingId);
     this.choices.delete(bookingId);
     this.sharingGrants.delete(bookingId);
+    this.attendees.delete(bookingId);
 
     const sessionIds = new Set<string>();
     for (const session of Array.from(this.sessions.values())) {
@@ -178,6 +185,10 @@ export class InMemoryNotetakerStore {
 
   setVerifiedEmails(userId: number, emails: string[]): void {
     this.verifiedEmails.set(userId, [...emails]);
+  }
+
+  setAttendees(bookingId: number, attendees: NotetakerAttendeeRecord[]): void {
+    this.attendees.set(bookingId, attendees.map(copyAttendee));
   }
 
   removeTranscript(transcriptId: string): void {
@@ -258,6 +269,44 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
       existing.notifiedAttendeeEmails = [...data.notifiedAttendeeEmails];
     }
     return copyChoice(existing);
+  }
+
+  // No await before the write: the check and the mutation must be one synchronous step so
+  // concurrent callers cannot both win, mirroring the conditional update in the Prisma repository.
+  async enableIfDisabled(data: {
+    bookingId: number;
+    source: NotetakerChoiceSourceDto;
+    appliedToSeries: boolean;
+    setByUserId: number | null;
+    setAt: Date;
+  }): Promise<boolean> {
+    if (!this.store.bookings.has(data.bookingId)) {
+      throw new Error(`InMemoryNotetakerStore: booking ${data.bookingId} does not exist`);
+    }
+    const existing = this.store.choices.get(data.bookingId);
+    if (!existing) {
+      this.store.choices.set(data.bookingId, {
+        bookingId: data.bookingId,
+        enabled: true,
+        pendingDispatch: true,
+        source: data.source,
+        appliedToSeries: data.appliedToSeries,
+        rejoinBlocked: false,
+        setByUserId: data.setByUserId,
+        setAt: data.setAt,
+        attendeesNotifiedAt: null,
+        notifiedAttendeeEmails: [],
+      });
+      return true;
+    }
+    if (existing.enabled || existing.rejoinBlocked) return false;
+    existing.enabled = true;
+    existing.pendingDispatch = true;
+    existing.source = data.source;
+    existing.appliedToSeries = data.appliedToSeries;
+    existing.setByUserId = data.setByUserId;
+    existing.setAt = data.setAt;
+    return true;
   }
 
   async disable(bookingId: number): Promise<void> {
@@ -347,6 +396,14 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
       for (const email of choice.notifiedAttendeeEmails) seen.add(email);
     }
     return Array.from(seen);
+  }
+
+  async findAttendeesByBookingId(bookingId: number): Promise<NotetakerAttendeeRecord[]> {
+    const seed = this.store.bookings.get(bookingId);
+    if (!seed) return [];
+    const given = this.store.attendees.get(bookingId);
+    if (given) return given.map(copyAttendee);
+    return seed.attendeeEmails.map((email) => ({ email, name: email, locale: null, timeZone: "UTC" }));
   }
 
   async findSharingGrant(bookingId: number): Promise<NotetakerSharingGrantRecord | null> {
