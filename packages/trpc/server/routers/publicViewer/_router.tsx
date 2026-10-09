@@ -2,6 +2,7 @@ import publicProcedure from "../../procedures/publicProcedure";
 import { router } from "../../trpc";
 import { ZUserEmailVerificationRequiredSchema } from "./checkIfUserEmailVerificationRequired.schema";
 import { ZMarkHostAsNoShowInputSchema } from "./markHostAsNoShow.schema";
+import { ZNotetakerDisclosureInputSchema } from "./notetakerDisclosure.schema";
 import { event } from "./procedures/event";
 import { ZSubmitRatingInputSchema } from "./submitRating.schema";
 
@@ -27,4 +28,8 @@ export const publicViewerRouter = router({
       const { default: handler } = await import("./checkIfUserEmailVerificationRequired.handler");
       return handler(opts);
     }),
+  notetakerDisclosure: publicProcedure.input(ZNotetakerDisclosureInputSchema).query(async ({ input }) => {
+    const { default: handler } = await import("./notetakerDisclosure.handler");
+    return handler({ input });
+  }),
 });
