@@ -2,6 +2,7 @@
 
 import type { NotetakerIneligibilityReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
 import { Switch } from "@calcom/ui/components/form";
@@ -50,6 +51,15 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
       <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
+      {state.status === "WAITING_TO_BE_ADMITTED" && (
+        <div data-testid="notetaker-admit-banner">
+          <Alert
+            severity="warning"
+            title={t("notetaker_admit_banner_title")}
+            message={t("notetaker_admit_banner_description")}
+          />
+        </div>
+      )}
       {!isRejoinBlocked && (
         <>
           <Switch
@@ -73,7 +83,11 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
       )}
       {state.status !== null && (
         <div className="flex">
-          <NotetakerStatusBadge status={state.status} />
+          {/* A re-armed choice reports SCHEDULED while state.session is still the previous session; its reason must not be shown beside the new status */}
+          <NotetakerStatusBadge
+            status={state.status}
+            outcomeReason={state.session?.status === state.status ? state.session.outcomeReason : null}
+          />
         </div>
       )}
       {state.canStop && (
