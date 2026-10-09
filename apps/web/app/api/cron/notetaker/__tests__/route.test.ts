@@ -107,6 +107,76 @@ describe("/api/cron/notetaker", () => {
     });
   });
 
+  describe("authorization with unconfigured secrets", () => {
+    test("returns 401 for 'Bearer undefined' when CRON_SECRET is unset", async () => {
+      vi.stubEnv("CRON_SECRET", undefined);
+      const request = new NextRequest(CRON_URL, { headers: { authorization: "Bearer undefined" } });
+
+      const response = await callGet(request);
+
+      expect(response.status).toBe(401);
+      expect(dispatchDue).not.toHaveBeenCalled();
+    });
+
+    test("returns 401 without credentials when both env vars are unset", async () => {
+      vi.stubEnv("CRON_API_KEY", undefined);
+      vi.stubEnv("CRON_SECRET", undefined);
+
+      const response = await callGet(new NextRequest(CRON_URL));
+
+      expect(response.status).toBe(401);
+      expect(dispatchDue).not.toHaveBeenCalled();
+    });
+
+    test("returns 401 for an 'undefined' apiKey query parameter when both env vars are unset", async () => {
+      vi.stubEnv("CRON_API_KEY", undefined);
+      vi.stubEnv("CRON_SECRET", undefined);
+
+      const response = await callGet(new NextRequest(`${CRON_URL}?apiKey=undefined`));
+
+      expect(response.status).toBe(401);
+      expect(dispatchDue).not.toHaveBeenCalled();
+    });
+
+    test("returns 401 for an empty apiKey query parameter when CRON_API_KEY is empty", async () => {
+      vi.stubEnv("CRON_API_KEY", "");
+
+      const response = await callGet(new NextRequest(`${CRON_URL}?apiKey=`));
+
+      expect(response.status).toBe(401);
+      expect(dispatchDue).not.toHaveBeenCalled();
+    });
+
+    test("returns 401 for a bare 'Bearer ' apiKey query parameter when CRON_SECRET is empty", async () => {
+      vi.stubEnv("CRON_SECRET", "");
+
+      const response = await callGet(new NextRequest(`${CRON_URL}?apiKey=Bearer%20`));
+
+      expect(response.status).toBe(401);
+      expect(dispatchDue).not.toHaveBeenCalled();
+    });
+
+    test("still accepts CRON_API_KEY when CRON_SECRET is unset", async () => {
+      vi.stubEnv("CRON_SECRET", undefined);
+      const request = new NextRequest(CRON_URL, { headers: { authorization: "test-cron-key" } });
+
+      const response = await callGet(request);
+
+      expect(response.status).toBe(200);
+      expect(dispatchDue).toHaveBeenCalledOnce();
+    });
+
+    test("still accepts Bearer CRON_SECRET when CRON_API_KEY is unset", async () => {
+      vi.stubEnv("CRON_API_KEY", undefined);
+      const request = new NextRequest(CRON_URL, { headers: { authorization: "Bearer test-cron-secret" } });
+
+      const response = await callGet(request);
+
+      expect(response.status).toBe(200);
+      expect(dispatchDue).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("failures", () => {
     test("returns 500 when dispatchDue rejects", async () => {
       const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
