@@ -52,6 +52,15 @@ export type NotetakerBookingContext = {
   choice: BookingNotetakerRecord | null;
 };
 
+export type NotetakerSeriesBookingRecord = {
+  bookingId: number;
+  bookingUid: string;
+  startTime: Date;
+  endTime: Date;
+  status: NotetakerBookingStatus;
+  choice: BookingNotetakerRecord | null;
+};
+
 export interface IBookingNotetakerRepository {
   findByBookingId(bookingId: number): Promise<BookingNotetakerRecord | null>;
   findByBookingUidIncludeBooking(bookingUid: string): Promise<NotetakerBookingContext | null>;
@@ -83,12 +92,11 @@ export interface IBookingNotetakerRepository {
     pendingDispatch?: boolean;
     limit: number;
   }): Promise<NotetakerBookingContext[]>;
+  /** Ordered by startTime asc, then bookingId asc. Every status is returned; callers filter. */
   findByRecurringEventIdFromStartTime(params: {
     recurringEventId: string;
     startTimeGte: Date;
-  }): Promise<
-    { bookingId: number; bookingUid: string; startTime: Date; choice: BookingNotetakerRecord | null }[]
-  >;
+  }): Promise<NotetakerSeriesBookingRecord[]>;
   appendNotifiedAttendeeEmails(bookingId: number, emails: string[], at: Date): Promise<void>;
   findNotifiedAttendeeEmailsByRecurringEventId(recurringEventId: string): Promise<string[]>;
   findSharingGrant(bookingId: number): Promise<NotetakerSharingGrantRecord | null>;
@@ -125,4 +133,6 @@ export interface IBookingNotetakerRepository {
    * listed user, in the order the users first appear in userIds. Empty input gives [] without a query.
    */
   findWebPushSubscriptionsByUserIds(userIds: number[]): Promise<NotetakerWebPushSubscriptionRecord[]>;
+  /** updateMany where bookingId matches; a missing row is a no-op. Touches no other column. */
+  setAppliedToSeries(bookingId: number, appliedToSeries: boolean): Promise<void>;
 }

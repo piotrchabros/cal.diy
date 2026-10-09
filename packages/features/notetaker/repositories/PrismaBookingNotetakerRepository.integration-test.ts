@@ -17,6 +17,7 @@ let bookingId: number | undefined;
 let olderSubscriptionId: number | undefined;
 let newerSubscriptionId: number | undefined;
 let bookingCounter = 0;
+const seriesBookingIds: number[] = [];
 
 function requireBookingId(): number {
   if (bookingId === undefined) {
@@ -63,6 +64,36 @@ function readChoice(id: number) {
       attendeesNotifiedAt: true,
     },
   });
+}
+
+async function createSeries() {
+  const recurringEventId = `notetaker-choice-it-series-${runId}-${bookingCounter}`;
+  const starts = ["2030-02-01T10:00:00.000Z", "2030-02-08T10:00:00.000Z", "2030-02-15T10:00:00.000Z"];
+  const statuses = ["ACCEPTED", "CANCELLED", "ACCEPTED"] as const;
+  const occurrences: { id: number; uid: string; startTime: Date; endTime: Date }[] = [];
+
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    if (start === undefined) continue;
+    const startTime = new Date(start);
+    const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+    const booking = await prisma.booking.create({
+      data: {
+        uid: `notetaker-choice-it-${runId}-${bookingCounter}-series-${index + 1}`,
+        title: "Notetaker choice integration test",
+        startTime,
+        endTime,
+        userId: requireUserId(),
+        recurringEventId,
+        status: statuses[index],
+      },
+      select: { id: true, uid: true },
+    });
+    seriesBookingIds.push(booking.id);
+    occurrences.push({ id: booking.id, uid: booking.uid, startTime, endTime });
+  }
+
+  return { recurringEventId, occurrences };
 }
 
 function countTrue(results: boolean[]): number {
@@ -120,6 +151,10 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
     }
     newerSubscriptionId = undefined;
     // Deleting the booking cascades to its BookingNotetaker and Attendee rows.
+    if (seriesBookingIds.length > 0) {
+      await prisma.booking.deleteMany({ where: { id: { in: seriesBookingIds } } });
+    }
+    seriesBookingIds.length = 0;
     if (bookingId !== undefined) {
       await prisma.booking.deleteMany({ where: { id: bookingId } });
     }
@@ -394,6 +429,103 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
 
     it("returns an empty list for an empty input", async () => {
       expect(await repository.findWebPushSubscriptionsByUserIds([])).toEqual([]);
+    });
+  });
+
+  describe("findByRecurringEventIdFromStartTime", () => {
+    it("returns every occurrence with its status and end time in start order", async () => {
+      const { recurringEventId, occurrences } = await createSeries();
+      const [first, second, third] = occurrences;
+      if (!first || !second || !third) throw new Error("Series setup did not create three bookings");
+      await prisma.bookingNotetaker.create({
+        data: { bookingId: first.id, enabled: true, source: "HOST", setAt: SEEDED_AT },
+        select: { bookingId: true },
+      });
+
+      const rows = await repository.findByRecurringEventIdFromStartTime({
+        recurringEventId,
+        startTimeGte: first.startTime,
+      });
+
+      expect(rows).toEqual([
+        {
+          bookingId: first.id,
+          bookingUid: first.uid,
+          startTime: first.startTime,
+          endTime: first.endTime,
+          status: "ACCEPTED",
+          choice: expect.objectContaining({ bookingId: first.id, enabled: true }),
+        },
+        {
+          bookingId: second.id,
+          bookingUid: second.uid,
+          startTime: second.startTime,
+          endTime: second.endTime,
+          status: "CANCELLED",
+          choice: null,
+        },
+        {
+          bookingId: third.id,
+          bookingUid: third.uid,
+          startTime: third.startTime,
+          endTime: third.endTime,
+          status: "ACCEPTED",
+          choice: null,
+        },
+      ]);
+    });
+
+    it("respects startTimeGte", async () => {
+      const { recurringEventId, occurrences } = await createSeries();
+      const [, second, third] = occurrences;
+      if (!second || !third) throw new Error("Series setup did not create three bookings");
+
+      const fromSecond = await repository.findByRecurringEventIdFromStartTime({
+        recurringEventId,
+        startTimeGte: second.startTime,
+      });
+      const afterThird = await repository.findByRecurringEventIdFromStartTime({
+        recurringEventId,
+        startTimeGte: new Date(third.startTime.getTime() + 1),
+      });
+
+      expect(fromSecond.map((row) => row.bookingId)).toEqual([second.id, third.id]);
+      expect(afterThird).toEqual([]);
+    });
+  });
+
+  describe("setAppliedToSeries", () => {
+    it("changes only appliedToSeries", async () => {
+      const id = requireBookingId();
+      await prisma.bookingNotetaker.create({
+        data: {
+          bookingId: id,
+          enabled: true,
+          pendingDispatch: true,
+          rejoinBlocked: true,
+          source: "EVENT_TYPE_DEFAULT",
+          setAt: SEEDED_AT,
+          setByUserId: requireUserId(),
+          notifiedAttendeeEmails: [`a-${runId}@example.com`],
+          attendeesNotifiedAt: SEEDED_AT,
+        },
+        select: { bookingId: true },
+      });
+      const before = await repository.findByBookingId(id);
+
+      await repository.setAppliedToSeries(id, true);
+      expect(await repository.findByBookingId(id)).toEqual({ ...before, appliedToSeries: true });
+
+      await repository.setAppliedToSeries(id, false);
+      expect(await repository.findByBookingId(id)).toEqual(before);
+    });
+
+    it("creates nothing when the booking has no choice", async () => {
+      const id = requireBookingId();
+
+      await expect(repository.setAppliedToSeries(id, true)).resolves.toBeUndefined();
+
+      expect(await prisma.bookingNotetaker.count({ where: { bookingId: id } })).toBe(0);
     });
   });
 });
