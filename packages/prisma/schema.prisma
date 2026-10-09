@@ -286,6 +286,7 @@ model EventType {
   rrHostSubsetEnabled           Boolean                        @default(false)
   requiresCancellationReason    CancellationReasonRequirement? @default(MANDATORY_HOST_ONLY)
   enablePerHostLocations        Boolean                        @default(false)
+  notetakerSettings             EventTypeNotetakerSettings?
 
   createdAt DateTime? @default(now())
   updatedAt DateTime? @updatedAt
@@ -912,6 +913,11 @@ model Booking {
   expenseLogs            CreditExpenseLog[]
   report                 BookingReport?
   wrongAssignmentReports WrongAssignmentReport[]
+  notetaker              BookingNotetaker?
+  notetakerSessions      NotetakerSession[]
+  notetakerTranscripts   NotetakerTranscript[]
+  notetakerSharingGrant  NotetakerSharingGrant?
+  notetakerActivities    NotetakerActivity[]
 
   // @@partial_index([reassignById])
 
@@ -2848,4 +2854,209 @@ model AttributeSyncFieldMapping {
 
   @@unique([integrationAttributeSyncId, attributeId])
   @@index([integrationAttributeSyncId])
+}
+
+enum NotetakerSessionStatus {
+  SCHEDULED
+  WAITING_TO_BE_ADMITTED
+  TRANSCRIBING
+  PROCESSING
+  READY
+  ENDED_EARLY
+  FAILED
+}
+
+enum NotetakerOutcomeReason {
+  NOT_ADMITTED
+  MEETING_DID_NOT_START
+  NO_SPEECH_DETECTED
+  REMOVED_BY_PARTICIPANT
+  STOPPED_BY_HOST
+  INTERRUPTED
+  LENGTH_LIMIT_REACHED
+  MEETING_LINK_UNUSABLE
+}
+
+enum NotetakerPlatform {
+  GOOGLE_MEET
+  MICROSOFT_TEAMS
+}
+
+enum NotetakerBotProvider {
+  SELF_HOSTED
+  RECALL
+  FAKE
+}
+
+enum NotetakerChoiceSource {
+  HOST
+  EVENT_TYPE_DEFAULT
+}
+
+enum NotetakerTranscriptCompleteness {
+  COMPLETE
+  PARTIAL
+  TRUNCATED
+}
+
+enum NotetakerSummaryStatus {
+  PENDING
+  READY
+  FAILED
+  NOT_ENOUGH_CONTENT
+}
+
+enum NotetakerActivityAction {
+  ENABLED
+  DISABLED
+  STOPPED
+  SHARED
+  SHARING_REVOKED
+  EXPORTED
+  DELETED
+  SUMMARY_REQUESTED
+}
+
+enum NotetakerActorType {
+  USER
+  PARTICIPANT
+  SYSTEM
+}
+
+model EventTypeNotetakerSettings {
+  eventTypeId      Int       @id
+  eventType        EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  enabledByDefault Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model BookingNotetaker {
+  bookingId              Int                   @id
+  booking                Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  enabled                Boolean
+  pendingDispatch        Boolean               @default(false)
+  source                 NotetakerChoiceSource
+  appliedToSeries        Boolean               @default(false)
+  rejoinBlocked          Boolean               @default(false)
+  // Soft reference to User.id without an FK (AuditActor precedent), so User gains no relation field
+  setByUserId            Int?
+  setAt                  DateTime              @default(now())
+  attendeesNotifiedAt    DateTime?
+  notifiedAttendeeEmails String[]              @default([])
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  @@index([enabled, pendingDispatch])
+}
+
+model NotetakerSession {
+  id                    String                  @id @default(uuid())
+  bookingId             Int
+  booking               Booking                 @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  status                NotetakerSessionStatus  @default(SCHEDULED)
+  outcomeReason         NotetakerOutcomeReason?
+  platform              NotetakerPlatform
+  meetingUrl            String
+  botProvider           NotetakerBotProvider
+  externalRef           String?
+  displayName           String
+  scheduledStartAt      DateTime
+  dispatchedAt          DateTime                @default(now())
+  joinRequestedAt       DateTime?
+  admittedAt            DateTime?
+  noticePostedAt        DateTime?
+  endedAt               DateTime?
+  startedLate           Boolean                 @default(false)
+  rejoinAttempted       Boolean                 @default(false)
+  interruptedAtMs       Int?
+  lastHeartbeatAt       DateTime?
+  lastEventSequence     Int                     @default(0)
+  stopRequestedAt       DateTime?
+  // Soft reference to User.id without an FK
+  stopRequestedByUserId Int?
+  resultsDeletedAt      DateTime?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  transcript            NotetakerTranscript?
+
+  @@index([bookingId])
+  @@index([status])
+}
+
+model NotetakerTranscript {
+  id           String                          @id @default(uuid())
+  sessionId    String                          @unique
+  session      NotetakerSession                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  bookingId    Int
+  booking      Booking                         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  language     String?
+  // PARTIAL by default so a transcript whose bot died before finalize is labelled correctly
+  completeness NotetakerTranscriptCompleteness @default(PARTIAL)
+  durationMs   Int                             @default(0)
+  passageCount Int                             @default(0)
+  createdAt    DateTime                        @default(now())
+  updatedAt    DateTime                        @updatedAt
+  passages     NotetakerTranscriptPassage[]
+  summary      NotetakerSummary?
+
+  @@index([bookingId])
+}
+
+model NotetakerTranscriptPassage {
+  transcriptId         String
+  transcript           NotetakerTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  index                Int
+  speakerKey           String
+  speakerName          String?
+  unknownSpeakerNumber Int?
+  startMs              Int
+  endMs                Int
+  text                 String              @db.Text
+  language             String?
+
+  @@id([transcriptId, index])
+}
+
+model NotetakerSummary {
+  id           String                 @id @default(uuid())
+  transcriptId String                 @unique
+  transcript   NotetakerTranscript    @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  status       NotetakerSummaryStatus @default(PENDING)
+  language     String?
+  overview     String?                @db.Text
+  keyPoints    Json                   @default("[]")
+  decisions    Json                   @default("[]")
+  actionItems  Json                   @default("[]")
+  model        String?
+  attempts     Int                    @default(0)
+  failureCode  String?
+  generatedAt  DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+}
+
+model NotetakerSharingGrant {
+  bookingId       Int      @id
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Soft reference to User.id without an FK
+  grantedByUserId Int?
+  grantedAt       DateTime @default(now())
+}
+
+model NotetakerActivity {
+  id          String                  @id @default(uuid())
+  bookingId   Int
+  booking     Booking                 @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Soft reference to NotetakerSession.id without an FK: the history must survive a deleted pre-admission session
+  sessionId   String?
+  action      NotetakerActivityAction
+  actorType   NotetakerActorType
+  // Soft reference to User.id without an FK
+  actorUserId Int?
+  actorName   String?
+  detail      Json?
+  createdAt   DateTime                @default(now())
+
+  @@index([bookingId, createdAt])
 }
