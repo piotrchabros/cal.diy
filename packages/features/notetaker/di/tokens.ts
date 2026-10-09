@@ -33,4 +33,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_SUMMARY_GENERATOR_MODULE: Symbol("NotetakerSummaryGeneratorModule"),
   NOTETAKER_CONFIG: Symbol("NotetakerConfig"),
   NOTETAKER_CONFIG_MODULE: Symbol("NotetakerConfigModule"),
+  NOTETAKER_CALENDAR_GUEST_GATEWAY: Symbol("NotetakerCalendarGuestGateway"),
+  NOTETAKER_CALENDAR_GUEST_GATEWAY_MODULE: Symbol("NotetakerCalendarGuestGatewayModule"),
+  NOTETAKER_CALENDAR_INVITE_SERVICE: Symbol("NotetakerCalendarInviteService"),
+  NOTETAKER_CALENDAR_INVITE_SERVICE_MODULE: Symbol("NotetakerCalendarInviteServiceModule"),
 };

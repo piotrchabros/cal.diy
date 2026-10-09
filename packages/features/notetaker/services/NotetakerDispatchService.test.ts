@@ -33,6 +33,10 @@ import type { NotetakerSessionUpdateInput } from "../repositories/interfaces/INo
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
+import type {
+  NotetakerCalendarInviteOutcome,
+  NotetakerCalendarInviteService,
+} from "./NotetakerCalendarInviteService";
 import { getNotetakerGiveUpDeadline, NotetakerDispatchService } from "./NotetakerDispatchService";
 
 vi.mock("@calcom/i18n/server", () => ({
@@ -154,6 +158,10 @@ describe("NotetakerDispatchService", () => {
   };
   let tasker: RecordingTasker;
   let users: NotetakerUserRecord[];
+  type InviteParams = Parameters<NotetakerCalendarInviteService["ensureBotInvited"]>[0];
+  let inviteCalls: InviteParams[];
+  let callLog: string[];
+  let inviteBot: (params: InviteParams) => Promise<NotetakerCalendarInviteOutcome>;
   const config: NotetakerConfig = getNotetakerConfig({});
   const NO_SHOW_MS = config.limits.noShowTimeoutSeconds * 1000;
   const HEARTBEAT_MS = config.limits.heartbeatTimeoutSeconds * 1000;
@@ -178,6 +186,9 @@ describe("NotetakerDispatchService", () => {
     events = [];
     logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
     tasker = new RecordingTasker();
+    inviteCalls = [];
+    callLog = [];
+    inviteBot = async () => "NOT_CONFIGURED";
     users = [
       { id: ORGANIZER_ID, name: ORGANIZER_NAME, email: ORGANIZER_EMAIL, locale: "en", timeZone: "UTC" },
     ];
@@ -192,6 +203,13 @@ describe("NotetakerDispatchService", () => {
     const userRepository: INotetakerUserLookup = {
       findByIds: async ({ ids }) => users.filter((user) => ids.includes(user.id)),
     };
+    const calendarInviteService: Pick<NotetakerCalendarInviteService, "ensureBotInvited"> = {
+      ensureBotInvited: async (params) => {
+        inviteCalls.push(params);
+        callLog.push(`invite:${params.sessionId}`);
+        return inviteBot(params);
+      },
+    };
     return new NotetakerDispatchService({
       bookingNotetakerRepository: repositories.bookingNotetakerRepository,
       sessionRepository: repositories.sessionRepository,
@@ -204,6 +222,7 @@ describe("NotetakerDispatchService", () => {
       }),
       userRepository,
       notetakerTasker: tasker,
+      calendarInviteService,
     });
   }
 
@@ -227,6 +246,16 @@ describe("NotetakerDispatchService", () => {
       ...overrides,
     });
     return { gateway, stopRequests };
+  }
+
+  function joinLoggingGateway(overrides: Partial<INotetakerBotGateway> = {}): INotetakerBotGateway {
+    return createStubGateway({
+      requestJoin: async (input) => {
+        callLog.push(`join:${input.sessionId}`);
+        return { externalRef: `stub-ref-${input.sessionId}` };
+      },
+      ...overrides,
+    });
   }
 
   async function settle(gateway: FakeBotGateway): Promise<void> {
@@ -1063,6 +1092,199 @@ describe("NotetakerDispatchService", () => {
       await buildService(fakeBinding(createStubGateway())).dispatchDue();
 
       expect(tasker.notificationCalls).toEqual([turnedOffNotice(bookingId)]);
+    });
+  });
+
+  describe("dispatchDue: calendar invite", () => {
+    const NO_LINK: Partial<InMemoryBookingSeed> = {
+      location: MeetLocationType,
+      references: [],
+      metadata: null,
+    };
+
+    it("invites the bot once with the session's details before the join request", async () => {
+      const bookingId = await seedArmed();
+
+      await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+      const sessionId = onlySession().id;
+      expect(inviteCalls).toEqual([{ bookingId, sessionId, platform: "GOOGLE_MEET", meetingUrl: MEET_LINK }]);
+      expect(callLog).toEqual([`invite:${sessionId}`, `join:${sessionId}`]);
+    });
+
+    it("invites once per dispatched booking, each before its own join request", async () => {
+      await seedArmed({ id: 1, uid: "uid-1", startTime: offsetFromNow(10_000) });
+      await seedArmed({ id: 2, uid: "uid-2", startTime: offsetFromNow(20_000) });
+
+      await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+      const [first, second] = inviteCalls;
+      expect(inviteCalls.map((call) => call.bookingId)).toEqual([1, 2]);
+      expect(callLog).toEqual([
+        `invite:${first.sessionId}`,
+        `join:${first.sessionId}`,
+        `invite:${second.sessionId}`,
+        `join:${second.sessionId}`,
+      ]);
+    });
+
+    it("invites once before the join request when dispatchForBooking dispatches", async () => {
+      const bookingId = await seedArmed();
+
+      await buildService(fakeBinding(joinLoggingGateway())).dispatchForBooking({ bookingUid: BOOKING_UID });
+
+      const sessionId = onlySession().id;
+      expect(inviteCalls).toEqual([{ bookingId, sessionId, platform: "GOOGLE_MEET", meetingUrl: MEET_LINK }]);
+      expect(callLog).toEqual([`invite:${sessionId}`, `join:${sessionId}`]);
+    });
+
+    describe("when the invite fails", () => {
+      it("still joins, logs one warning and finishes the dispatch when the invite rejects", async () => {
+        const bookingId = await seedArmed();
+        inviteBot = async () => {
+          throw new Error("calendar down");
+        };
+
+        await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+        const session = onlySession();
+        expect(callLog).toEqual([`invite:${session.id}`, `join:${session.id}`]);
+        expect(session).toMatchObject({ status: "SCHEDULED", externalRef: `stub-ref-${session.id}` });
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(expect.any(String), {
+          bookingId,
+          sessionId: session.id,
+          message: "calendar down",
+        });
+        expect(logger.error).not.toHaveBeenCalled();
+        expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+        expect(tasker.notificationCalls).toEqual([
+          {
+            payload: { kind: "ATTENDEE_NOTICE", bookingId, sessionId: session.id },
+            options: { delay: "30s" },
+          },
+        ]);
+      });
+
+      it("logs an unknown error message when the invite rejects with a non-Error", async () => {
+        const bookingId = await seedArmed();
+        inviteBot = async () => {
+          throw "calendar down";
+        };
+
+        await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+        const session = onlySession();
+        expect(callLog).toEqual([`invite:${session.id}`, `join:${session.id}`]);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(expect.any(String), {
+          bookingId,
+          sessionId: session.id,
+          message: "unknown error",
+        });
+      });
+    });
+
+    describe("when no session is prepared", () => {
+      it.each([
+        { name: "the location is unsupported", seed: { location: "integrations:zoom" }, liveSession: false },
+        { name: "a supported type has no link", seed: NO_LINK, liveSession: false },
+        { name: "a live session already exists", seed: {}, liveSession: true },
+      ])("does not invite when $name", async ({ seed, liveSession }) => {
+        const bookingId = await seedArmed(seed);
+        if (liveSession) await seedSession(bookingId, "SCHEDULED");
+
+        await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+        expect(inviteCalls).toEqual([]);
+        expect(callLog).toEqual([]);
+      });
+
+      it("does not invite when no bot gateway is configured", async () => {
+        await seedArmed();
+
+        await buildService(null).dispatchDue();
+
+        expect(inviteCalls).toEqual([]);
+        expect(callLog).toEqual([]);
+      });
+    });
+
+    it("invites exactly once when the bot reports the link unusable", async () => {
+      await seedArmed();
+      const gateway = joinLoggingGateway({
+        requestJoin: async () => {
+          throw createNotetakerBotGatewayError("LINK_UNUSABLE", "unusable");
+        },
+      });
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(onlySession().status).toBe("FAILED");
+      expect(inviteCalls).toHaveLength(1);
+    });
+
+    it("does not invite when the dispatch gives up", async () => {
+      await seedArmed();
+      vi.setSystemTime(END);
+
+      await buildService(fakeBinding(createTransientGateway())).dispatchDue();
+
+      expect(onlySession()).toMatchObject({ status: "FAILED", outcomeReason: "INTERRUPTED" });
+      expect(inviteCalls).toEqual([]);
+    });
+
+    it("does not invite when the watchdog fails a session", async () => {
+      const bookingId = await seedDispatched();
+      const sessionId = await seedSession(bookingId, "SCHEDULED");
+      vi.setSystemTime(new Date(NOW.getTime() + HEARTBEAT_MS));
+      const { gateway, stopRequests } = stopRecorder();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(repositories.store.sessions.get(sessionId)?.status).toBe("FAILED");
+      expect(stopRequests).toHaveLength(1);
+      expect(inviteCalls).toEqual([]);
+    });
+
+    it("invites again for the new session when a transient join failure re-arms the dispatch", async () => {
+      const bookingId = await seedArmed();
+      let joins = 0;
+      const gateway = joinLoggingGateway({
+        requestJoin: async (input) => {
+          callLog.push(`join:${input.sessionId}`);
+          joins += 1;
+          if (joins === 1) throw createNotetakerBotGatewayError("TRANSIENT", "bot unreachable");
+          return { externalRef: `stub-ref-${input.sessionId}` };
+        },
+      });
+      const service = buildService(fakeBinding(gateway));
+
+      await service.dispatchDue();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+      expect(inviteCalls).toHaveLength(1);
+
+      await service.dispatchDue();
+
+      const firstId = inviteCalls[0].sessionId;
+      const secondId = onlySession().id;
+      expect(inviteCalls).toHaveLength(2);
+      expect(inviteCalls[1]).toEqual({
+        bookingId,
+        sessionId: secondId,
+        platform: inviteCalls[0].platform,
+        meetingUrl: inviteCalls[0].meetingUrl,
+      });
+      expect(firstId).not.toBe(secondId);
+      expect(callLog).toEqual([
+        `invite:${firstId}`,
+        `join:${firstId}`,
+        `invite:${secondId}`,
+        `join:${secondId}`,
+      ]);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
     });
   });
 
