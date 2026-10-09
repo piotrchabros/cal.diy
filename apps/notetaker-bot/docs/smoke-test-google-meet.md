@@ -181,7 +181,7 @@ Account mode has three parts: prepare a Google account for the bot, capture a si
 2. Set a recovery email address and a recovery phone number on the account, so you can get back in if Google challenges a sign-in.
 3. Set the account's language to English (US). The bot's selectors are English text.
 4. Sign in to the account once by hand in a normal browser and accept every first-login prompt Google shows.
-5. Decide what the account's profile name should say. In account mode the meeting shows the ACCOUNT's name, not the per-host display name the app sends with the request. This departs from requirement FR-012 (`specs/001-meeting-transcription/spec.md`), which requires a name that identifies the bot as an automated notetaker and identifies the host or organization it acts for. One account name cannot name each host, so choose a profile name that says it is an automated notetaker and names your organization.
+5. Decide what the account's profile name should say. In account mode the meeting shows the ACCOUNT's name, not the per-host display name the app sends with the request. Requirement FR-012 (`specs/001-meeting-transcription/spec.md`) covers this case: the account's name must say it is an automated notetaker and name the organization that operates it, and the host is named by the notice the bot posts and by the advance notice the app sends. Choose the profile name accordingly.
 6. Automating a Google account is subject to Google's terms, and Google may challenge or block it. Whether that is acceptable is the owner's decision; see `specs/001-meeting-transcription/research.md`, open question 3.
 
 ### Capturing the signed-in session
@@ -205,10 +205,10 @@ The script has not been run by the people who wrote it. It has its own row in [v
 
 1. Invite the bot account's email address to the calendar event as a guest.
 2. What the invitation changes is taken from other meeting-bot vendors' documentation. We have tested none of it:
-   - A signed-in account that is on the invite is normally let straight in. (Reported in other meeting-bot vendors' documentation; not verified by us.)
-   - A signed-in account that is not invited still asks to join, and someone must admit it. (Reported in other meeting-bot vendors' documentation; not verified by us.)
+   - A signed-in account that is on the invite is normally let straight in. (Observed on 2026-10-09, see verification-status.md.)
+   - A signed-in account that is not invited still asks to join, and someone must admit it. (Observed on 2026-10-09, see verification-status.md.)
    - Meetings whose host settings restrict access to invited people refuse an anonymous guest outright, which is the refusal the owner saw. (Reported in other meeting-bot vendors' documentation; not verified by us.)
-3. The application does not add the bot's email address to bookings today. For this check, invite it by hand. Adding it automatically would be a separate feature.
+3. The application adds the bot's email address to the booking's Google Calendar event itself, about two minutes before the meeting, when `NOTETAKER_GOOGLE_ACCOUNT_EMAIL` is set in the application's environment (not the bot's) and the Meet link was created by the application on that event. It does not do so for a pasted Meet link, for a booking whose calendar it cannot write to, or when the variable is empty; invite the account by hand in those cases, or admit it. For a check started with a hand-signed request (route B) there is no booking, so invite it by hand.
 
 ### Join mode and what to observe
 

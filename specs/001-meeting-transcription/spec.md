@@ -40,7 +40,7 @@ Everyone in the meeting can tell a notetaker is present, who sent it and why. At
 **Acceptance Scenarios**:
 
 1. **Given** the notetaker is enabled before the meeting, **When** the choice is saved (or at booking time, if it was already enabled), **Then** every attendee receives a notice that the meeting will be transcribed and on whose behalf.
-2. **Given** the notetaker joins, **When** it enters, **Then** its display name identifies it as an automated notetaker and names the host or organization it acts for.
+2. **Given** the notetaker joins, **When** it enters, **Then** its display name identifies it as an automated notetaker, and the host or organization it acts for is named in that display name or, on a platform that shows the notetaker's account name instead, in the message it posts when it begins transcribing and in the advance notice.
 3. **Given** the notetaker has joined, **When** it starts transcribing, **Then** a message visible to all participants in the meeting chat states that the meeting is being transcribed, for whom, and how to stop it.
 4. **Given** transcription is in progress, **When** any participant removes the notetaker or a host stops it from the application, **Then** transcription stops within 10 seconds and the notetaker does not rejoin that meeting.
 5. **Given** transcription was stopped on request, **When** the host views the booking, **Then** the content captured up to that point is labelled as ended early at a participant's or host's request.
@@ -164,7 +164,7 @@ Hosts control who else sees the transcript and summary and can remove them perma
 
 *Transparency and consent*
 
-- **FR-012**: The notetaker MUST appear under a name that identifies it as an automated notetaker and identifies the host or organization it acts for.
+- **FR-012**: The notetaker MUST appear under a name that identifies it as an automated notetaker. Where the meeting platform lets the notetaker choose the name it joins under, that name MUST also identify the host or organization it acts for. Where the platform instead shows the name of the account the notetaker is signed in to (Google Meet), that account's name MUST identify it as an automated notetaker and name the organization that operates it, and the host it acts for MUST be identified to participants by the in-meeting message (FR-013) and by the advance notice (FR-014).
 - **FR-013**: The notetaker MUST post a message visible to all participants when it begins transcribing, stating that the meeting is being transcribed, for whom, and how to stop it.
 - **FR-014**: System MUST inform attendees before the meeting that it will be transcribed: on the public booking page when the event-type default is on, and by notification when a host enables it for an existing booking.
 - **FR-015**: Any participant MUST be able to end transcription by removing the notetaker, and any host MUST be able to stop it from the application; once stopped, the notetaker MUST NOT rejoin that meeting.
@@ -233,8 +233,9 @@ Hosts control who else sees the transcript and summary and can remove them perma
 - **Eligible meetings:** the notetaker applies to bookings made through this application, the only scheduled meetings the application presents to users today. Selecting events from connected external calendars is out of scope for this specification.
 - **Platforms:** Google Meet first, then Microsoft Teams. Zoom and others are out of scope for this specification.
 - **Built-in video:** it already has its own transcription, which is unchanged and out of scope.
-- **Admission:** the notetaker may be placed in a waiting area; a human participant admitting it is an accepted part of the flow.
+- **Admission:** the notetaker may be placed in a waiting area; a human participant admitting it is an accepted part of the flow. On Google Meet, when the operator has configured the notetaker's account and the meeting link was created by this application on the host's Google Calendar event, the application adds that account to the event's guest list shortly before the meeting so that the platform lets it in without a person. In every other case (a pasted meeting link, a calendar the application cannot write to, a failed calendar update) a participant admits it.
 - **Consent model:** notice plus the ability to object — advance notice, an identifiable name, an in-meeting message, and removal by any participant. Collecting explicit per-participant consent before transcription starts is out of scope.
+- **Notetaker identity on Google Meet:** participants see the name of the notetaker's Google account, which is the same in every meeting and is chosen by the operator, not by the host. The operator is responsible for a name that says it is an automated notetaker and names the organization. The host is named in the in-meeting message and in the advance notice.
 - **After an objection or host stop:** content captured so far is kept, labelled, and deletable by hosts.
 - **Visibility:** hosts only by default. Sharing is limited to the booking's attendees; public links and sharing with arbitrary third parties are out of scope.
 - **Retention:** indefinite until deleted by a host or removed with the booking or account. Configurable retention periods are out of scope.
@@ -245,4 +246,4 @@ Hosts control who else sees the transcript and summary and can remove them perma
 - **Limits:** the 10-minute admission wait, 15-minute no-show wait, 2-minute alone timeout and 4-hour maximum are product defaults and may be tuned.
 - **Availability and pricing:** which plans or roles may use the notetaker, and any usage limits, are a commercial decision outside this specification. It assumes any user who can host a booking can use it.
 - **Authority to enable:** hosts are assumed entitled to invite a notetaker to meetings they host. Organization-level policy controls (such as an administrator disabling the feature) are out of scope for this version.
-- **Dependency:** supported meeting platforms continue to allow an automated participant to join as a guest.
+- **Dependency:** supported meeting platforms continue to allow an automated participant to join: as a guest where the platform accepts one, and signed in to an account where it does not. Google Meet refused the notetaker as an anonymous guest when this was checked on 2026-10-09, so on Google Meet the notetaker joins signed in to one dedicated Google account provided by the operator.
