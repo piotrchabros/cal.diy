@@ -3,6 +3,7 @@ import {
   sendNotetakerAttendeeNoticeEmail,
   sendNotetakerFailedEmail,
   sendNotetakerResultsReadyEmail,
+  sendNotetakerSharedEmail,
   sendNotetakerTurnedOffEmail,
 } from "@calcom/emails/notetaker-email-service";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
@@ -74,11 +75,15 @@ export class NotetakerNotificationService {
         return this.sendFailed(params);
       case "TURNED_OFF":
         return this.sendTurnedOff(params.bookingId);
-      default:
+      case "SHARED_WITH_ATTENDEES":
+        return this.sendSharedWithAttendees(params.bookingId);
+      default: {
+        const unhandled: never = params.kind;
         // Thrown rather than skipped so a kind enqueued without a handler fails its task visibly.
         throw ErrorWithCode.Factory.InternalServerError(
-          `NotetakerNotificationService: no handler for notification kind ${params.kind}`
+          `NotetakerNotificationService: no handler for notification kind ${String(unhandled)}`
         );
+      }
     }
   }
 
@@ -512,6 +517,86 @@ export class NotetakerNotificationService {
     if (failureCount > 0) {
       throw ErrorWithCode.Factory.InternalServerError(
         `NotetakerNotificationService: ATTENDEE_NOTICE for booking ${bookingId} failed for ${failureCount} of ${recipients.length} recipients`
+      );
+    }
+  }
+
+  // A booking whose sharing or results are gone is logged and dropped instead of thrown:
+  // the notice would point at something the reader cannot open, and a retry would not change that.
+  private async sendSharedWithAttendees(bookingId: number): Promise<void> {
+    const { bookingNotetakerRepository, sessionRepository, userRepository, logger } = this.deps;
+
+    const booking = await bookingNotetakerRepository.findByBookingIdIncludeBooking(bookingId);
+    if (!booking) {
+      logger.warn("Notetaker shared notice skipped: booking not found", { bookingId });
+      return;
+    }
+    const grant = await bookingNotetakerRepository.findSharingGrant(booking.id);
+    if (!grant) {
+      logger.info("Notetaker shared notice skipped: sharing was revoked", { bookingId });
+      return;
+    }
+    const latest = await sessionRepository.findLatestWithTranscriptByBookingId(booking.id);
+    if (!latest || latest.session.resultsDeletedAt !== null) {
+      logger.info("Notetaker shared notice skipped: no results", { bookingId });
+      return;
+    }
+
+    const allAttendees = await bookingNotetakerRepository.findAttendeesByBookingId(booking.id);
+    const seen = new Set<string>();
+    const attendees: NotetakerAttendeeRecord[] = [];
+    for (let i = 0; i < allAttendees.length; i++) {
+      const key = normalizeEmail(allAttendees[i].email);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      attendees.push(allAttendees[i]);
+    }
+    if (attendees.length === 0) {
+      logger.warn("Notetaker shared notice skipped: no attendees", { bookingId });
+      return;
+    }
+
+    let sharedByName = getNotetakerHostName(booking.organizer);
+    if (grant.grantedByUserId !== null) {
+      const users = await userRepository.findByIds({ ids: [grant.grantedByUserId] });
+      for (let i = 0; i < users.length; i++) {
+        if (users[i].id !== grant.grantedByUserId) continue;
+        // Only the name is read: the lookup may be backed by a query that returns secret columns.
+        const name = users[i].name?.trim();
+        if (name) sharedByName = name;
+        break;
+      }
+    }
+
+    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    let failureCount = 0;
+    for (let i = 0; i < attendees.length; i++) {
+      const attendee = attendees[i];
+      try {
+        const locale = attendee.locale ?? "en";
+        const t = await getTranslation(locale, "common");
+        await sendNotetakerSharedEmail({
+          t,
+          locale,
+          timeZone: attendee.timeZone,
+          to: { email: attendee.email, name: attendee.name.trim() === "" ? null : attendee.name },
+          bookingTitle: booking.title,
+          bookingStartTime: booking.startTime,
+          sharedByName,
+          notetakerUrl,
+        });
+      } catch (error) {
+        failureCount++;
+        logger.error("Failed to send the notetaker shared email", {
+          bookingId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    if (failureCount > 0) {
+      throw ErrorWithCode.Factory.InternalServerError(
+        `NotetakerNotificationService: SHARED_WITH_ATTENDEES for booking ${bookingId} failed for ${failureCount} of ${attendees.length} recipients`
       );
     }
   }
