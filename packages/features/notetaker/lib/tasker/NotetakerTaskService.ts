@@ -1,10 +1,5 @@
-import { ErrorWithCode } from "@calcom/lib/errors";
 import type { ITaskerDependencies } from "@calcom/lib/tasker/types";
 import type { NotetakerTasks } from "./types";
-
-function notWiredError(name: keyof NotetakerTasks): ErrorWithCode {
-  return ErrorWithCode.Factory.InternalServerError(`Notetaker task "${name}" is not wired yet`);
-}
 
 export interface INotetakerTaskServiceDependencies {
   logger: ITaskerDependencies["logger"];
@@ -22,8 +17,11 @@ export class NotetakerTaskService implements NotetakerTasks {
     await getNotetakerFinalizeService().finalize(payload);
   }
 
-  async generateSummary(_payload: Parameters<NotetakerTasks["generateSummary"]>[0]): Promise<void> {
-    throw notWiredError("generateSummary");
+  async generateSummary(payload: Parameters<NotetakerTasks["generateSummary"]>[0]): Promise<void> {
+    const { getNotetakerSummaryService } = await import(
+      "@calcom/features/notetaker/di/NotetakerSummaryService.container"
+    );
+    await getNotetakerSummaryService().generate(payload);
   }
 
   async sendNotification(payload: Parameters<NotetakerTasks["sendNotification"]>[0]): Promise<void> {

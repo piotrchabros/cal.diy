@@ -1,7 +1,9 @@
 import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
 import { moduleLoader as loggerServiceModuleLoader } from "@calcom/features/di/shared/services/logger.service";
 import { NotetakerFinalizeService } from "@calcom/features/notetaker/services/NotetakerFinalizeService";
+import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
 import { moduleLoader as notetakerSessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
+import { moduleLoader as notetakerSummaryRepositoryModuleLoader } from "./PrismaNotetakerSummaryRepository.module";
 import { moduleLoader as notetakerTranscriptRepositoryModuleLoader } from "./PrismaNotetakerTranscriptRepository.module";
 import { moduleLoader as notetakerTaskerModuleLoader } from "./tasker/NotetakerTasker.module";
 import { NOTETAKER_DI_TOKENS } from "./tokens";
@@ -18,7 +20,9 @@ const loadModule = bindModuleToClassOnToken({
   depsMap: {
     sessionRepository: notetakerSessionRepositoryModuleLoader,
     transcriptRepository: notetakerTranscriptRepositoryModuleLoader,
+    summaryRepository: notetakerSummaryRepositoryModuleLoader,
     notetakerTasker: notetakerTaskerModuleLoader,
+    config: configModuleLoader,
     logger: loggerServiceModuleLoader,
   },
 });

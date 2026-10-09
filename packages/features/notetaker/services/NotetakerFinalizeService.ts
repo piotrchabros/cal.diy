@@ -1,7 +1,10 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
+import type { NotetakerConfig } from "../lib/config";
 import { getEndCauseFromProcessingOutcomeReason, mapOutcome } from "../lib/sessionStateMachine";
 import type { INotetakerTasker } from "../lib/tasker/types";
+import { countTranscriptWords } from "../lib/transcriptWords";
 import type { INotetakerSessionRepository } from "../repositories/interfaces/INotetakerSessionRepository";
+import type { INotetakerSummaryRepository } from "../repositories/interfaces/INotetakerSummaryRepository";
 import type {
   INotetakerTranscriptRepository,
   NotetakerPassageRecord,
@@ -10,7 +13,9 @@ import type {
 export interface INotetakerFinalizeServiceDeps {
   sessionRepository: INotetakerSessionRepository;
   transcriptRepository: INotetakerTranscriptRepository;
+  summaryRepository: INotetakerSummaryRepository;
   notetakerTasker: INotetakerTasker;
+  config: NotetakerConfig;
   logger: ISimpleLogger;
 }
 
@@ -40,7 +45,8 @@ export class NotetakerFinalizeService {
 
   async finalize(params: { sessionId: string }): Promise<void> {
     const { sessionId } = params;
-    const { sessionRepository, transcriptRepository, notetakerTasker, logger } = this.deps;
+    const { sessionRepository, transcriptRepository, summaryRepository, notetakerTasker, config, logger } =
+      this.deps;
 
     const session = await sessionRepository.findById(sessionId);
     if (!session || session.status !== "PROCESSING") return;
@@ -73,7 +79,8 @@ export class NotetakerFinalizeService {
       return;
     }
 
-    const language = getDurationWeightedLanguage(await transcriptRepository.findAllPassages(transcript.id));
+    const passages = await transcriptRepository.findAllPassages(transcript.id);
+    const language = getDurationWeightedLanguage(passages);
     // A positive stored duration is the one carried by the end event; 0 means none was reported.
     let durationMs = transcript.durationMs;
     if (durationMs <= 0) {
@@ -90,6 +97,26 @@ export class NotetakerFinalizeService {
     if (!updated) return;
 
     if (outcome.status !== "READY" && outcome.status !== "ENDED_EARLY") return;
+
+    if (countTranscriptWords(passages) >= config.limits.summaryMinWords) {
+      // The summary service sends RESULTS_READY once generation settles.
+      const summaryRun = await notetakerTasker.generateSummary({
+        transcriptId: transcript.id,
+        requestedByUserId: null,
+      });
+      if (summaryRun.runId === "task-failed") {
+        logger.error("Failed to enqueue the notetaker summary generation", {
+          sessionId,
+          bookingId: session.bookingId,
+          transcriptId: transcript.id,
+        });
+      }
+      return;
+    }
+
+    // The results email reads the summary status, so the row must exist before the notification is enqueued.
+    await summaryRepository.upsertPending(transcript.id);
+    await summaryRepository.setStatus(transcript.id, "NOT_ENOUGH_CONTENT", null);
 
     const result = await notetakerTasker.sendNotification(
       { kind: "RESULTS_READY", bookingId: session.bookingId, sessionId },
