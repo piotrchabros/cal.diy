@@ -3,6 +3,7 @@ import { router } from "../../../trpc";
 import { ZGetStateInputSchema } from "./getState.schema";
 import { ZListPassagesInputSchema } from "./listPassages.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
+import { ZStopInputSchema } from "./stop.schema";
 
 export const notetakerRouter = router({
   getState: authedProcedure.input(ZGetStateInputSchema).query(async ({ ctx, input }) => {
@@ -13,6 +14,11 @@ export const notetakerRouter = router({
   setEnabled: authedProcedure.input(ZSetEnabledInputSchema).mutation(async ({ ctx, input }) => {
     const { setEnabledHandler } = await import("./setEnabled.handler");
     return setEnabledHandler({ ctx, input });
+  }),
+
+  stop: authedProcedure.input(ZStopInputSchema).mutation(async ({ ctx, input }) => {
+    const { stopHandler } = await import("./stop.handler");
+    return stopHandler({ ctx, input });
   }),
 
   listPassages: authedProcedure.input(ZListPassagesInputSchema).query(async ({ ctx, input }) => {
