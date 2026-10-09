@@ -1,8 +1,9 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { getTranslation } from "@calcom/i18n/server";
 import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import type { NotetakerOutcomeReasonDto, NotetakerPlatformDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import type { NotetakerBotJoinRequest } from "@calcom/lib/notetaker/botContract";
+import type { NotetakerBotJoinRequest, NotetakerBotStopReason } from "@calcom/lib/notetaker/botContract";
 import type { INotetakerBotGatewayResolver, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "../bot/INotetakerBotGateway";
 import type { NotetakerConfig } from "../lib/config";
@@ -15,6 +16,7 @@ import type { INotetakerUserLookup } from "../lib/userLookup";
 import type {
   IBookingNotetakerRepository,
   NotetakerBookingContext,
+  NotetakerBookingStatus,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
 import type {
@@ -43,6 +45,18 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
 
+export function getNotetakerGiveUpDeadline(params: {
+  startTime: Date;
+  endTime: Date;
+  setAt: Date;
+  noShowTimeoutSeconds: number;
+}): Date {
+  const { startTime, endTime, setAt, noShowTimeoutSeconds } = params;
+  return new Date(
+    Math.min(endTime.getTime(), Math.max(startTime.getTime(), setAt.getTime()) + noShowTimeoutSeconds * 1000)
+  );
+}
+
 export interface INotetakerDispatchServiceDeps {
   bookingNotetakerRepository: IBookingNotetakerRepository;
   sessionRepository: INotetakerSessionRepository;
@@ -59,7 +73,7 @@ export class NotetakerDispatchService {
   constructor(private readonly deps: INotetakerDispatchServiceDeps) {}
 
   async dispatchDue(): Promise<void> {
-    const { bookingNotetakerRepository, botGatewayResolver, config, logger } = this.deps;
+    const { botGatewayResolver, logger } = this.deps;
 
     const binding = botGatewayResolver.resolve();
     if (!binding) {
@@ -68,6 +82,29 @@ export class NotetakerDispatchService {
     }
 
     const now = new Date();
+    // In this order: a join that failed and re-armed the choice is given up in the same run once
+    // its deadline has passed.
+    await this.runSweepStep("dispatch", () => this.dispatchArmed(now, binding));
+    await this.runSweepStep("give-up", () => this.giveUpOverdue(now, binding));
+    await this.runSweepStep("void-unconfirmed", () => this.voidUnconfirmed(now));
+    await this.runSweepStep("watchdog", () => this.runWatchdog(now, binding));
+  }
+
+  // One step's failing query must not stop the steps after it.
+  private async runSweepStep(
+    step: "dispatch" | "give-up" | "void-unconfirmed" | "watchdog",
+    run: () => Promise<void>
+  ): Promise<void> {
+    try {
+      await run();
+    } catch (error) {
+      this.deps.logger.error("Notetaker sweep step failed", { step, message: getErrorMessage(error) });
+    }
+  }
+
+  private async dispatchArmed(now: Date, binding: NotetakerBotGatewayBinding): Promise<void> {
+    const { bookingNotetakerRepository, config, logger } = this.deps;
+
     const candidates = await bookingNotetakerRepository.findEnabledIncludeBooking({
       bookingStatuses: ["ACCEPTED"],
       startTimeLte: new Date(now.getTime() + config.limits.joinLeadSeconds * 1000),
@@ -85,6 +122,230 @@ export class NotetakerDispatchService {
           message: getErrorMessage(error),
         });
       }
+    }
+  }
+
+  private async giveUpOverdue(now: Date, binding: NotetakerBotGatewayBinding): Promise<void> {
+    const { bookingNotetakerRepository, logger } = this.deps;
+
+    // No endTimeGt: a booking past its end is due as well, its deadline being the end itself.
+    const candidates = await bookingNotetakerRepository.findEnabledIncludeBooking({
+      bookingStatuses: ["ACCEPTED"],
+      startTimeLte: now,
+      pendingDispatch: true,
+      limit: NOTETAKER_SWEEP_BATCH_SIZE,
+    });
+
+    for (const booking of candidates) {
+      try {
+        await this.giveUpBooking(booking, binding, now);
+      } catch (error) {
+        logger.error("Notetaker give-up failed", {
+          bookingId: booking.id,
+          message: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  private async giveUpBooking(
+    booking: NotetakerBookingContext,
+    binding: NotetakerBotGatewayBinding,
+    now: Date
+  ): Promise<void> {
+    const { bookingNotetakerRepository, sessionRepository, config } = this.deps;
+    const { location, metadata, references, choice } = booking;
+    if (!choice) return;
+
+    const deadline = getNotetakerGiveUpDeadline({
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+      setAt: choice.setAt,
+      noShowTimeoutSeconds: config.limits.noShowTimeoutSeconds,
+    });
+    if (deadline.getTime() > now.getTime()) return;
+
+    // Checked before the swap so a choice re-armed during a live session stays armed for later; a
+    // FAILED row beside that session would also become the latest one and hide its status.
+    const liveSession = await sessionRepository.findByBookingIdAndStatusIn(
+      booking.id,
+      NOTETAKER_LIVE_SESSION_STATUSES
+    );
+    if (liveSession) return;
+
+    const wonSwap = await bookingNotetakerRepository.clearPendingDispatch(booking.id);
+    if (!wonSwap) return;
+
+    let session: NotetakerSessionRecord;
+    try {
+      const { platform } = getBookingNotetakerEligibility({
+        location,
+        metadata,
+        references,
+        bookingStatus: booking.status,
+        enabledPlatforms: config.enabledPlatforms,
+      });
+      if (platform === null) {
+        await this.disableUnsupported(booking);
+        return;
+      }
+
+      session = await this.createFailedSession(booking, binding, {
+        platform,
+        meetingUrl: resolveMeetingLink({ location, metadata, references }) ?? "",
+        outcomeReason: "INTERRUPTED",
+        now,
+      });
+    } catch (error) {
+      // Nothing was recorded, so without re-arming the host would never hear that it failed.
+      await bookingNotetakerRepository.setPendingDispatch(booking.id, true);
+      throw error;
+    }
+
+    await this.enqueueFailedNotice(booking.id, session.id);
+  }
+
+  private async voidUnconfirmed(now: Date): Promise<void> {
+    const { bookingNotetakerRepository, logger } = this.deps;
+
+    const candidates = await bookingNotetakerRepository.findEnabledIncludeBooking({
+      bookingStatuses: ["PENDING", "AWAITING_HOST"],
+      startTimeLte: now,
+      limit: NOTETAKER_SWEEP_BATCH_SIZE,
+    });
+
+    for (const booking of candidates) {
+      try {
+        await this.voidChoice(booking.id, "BOOKING_NOT_CONFIRMED");
+      } catch (error) {
+        logger.error("Notetaker voiding failed", {
+          bookingId: booking.id,
+          message: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  private async voidChoice(
+    bookingId: number,
+    reason: "BOOKING_NOT_CONFIRMED" | "BOOKING_NOT_ACTIVE"
+  ): Promise<void> {
+    const { bookingNotetakerRepository, activityRepository } = this.deps;
+
+    // Only the call that flipped the row records it, so two concurrent sweeps write one activity.
+    const voided = await bookingNotetakerRepository.disableIfEnabled(bookingId);
+    if (!voided) return;
+
+    await activityRepository.create({
+      bookingId,
+      sessionId: null,
+      action: "DISABLED",
+      actorType: "SYSTEM",
+      actorUserId: null,
+      actorName: null,
+      detail: { reason },
+    });
+  }
+
+  private async runWatchdog(now: Date, binding: NotetakerBotGatewayBinding): Promise<void> {
+    const { sessionRepository, logger } = this.deps;
+
+    const sessions = await sessionRepository.findByStatusInIncludeBooking({
+      statuses: NOTETAKER_LIVE_SESSION_STATUSES,
+      limit: NOTETAKER_SWEEP_BATCH_SIZE,
+    });
+
+    for (const session of sessions) {
+      try {
+        await this.watchSession(session, binding, now);
+      } catch (error) {
+        logger.error("Notetaker watchdog failed", {
+          bookingId: session.bookingId,
+          sessionId: session.id,
+          message: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  private async watchSession(
+    session: NotetakerSessionRecord & { bookingStatus: NotetakerBookingStatus },
+    binding: NotetakerBotGatewayBinding,
+    now: Date
+  ): Promise<void> {
+    const { sessionRepository, notetakerTasker, config, logger } = this.deps;
+    const { id, bookingId } = session;
+    const timeoutMs = config.limits.heartbeatTimeoutSeconds * 1000;
+    const nowMs = now.getTime();
+
+    if (session.status === "PROCESSING") {
+      const since = (session.endedAt ?? session.dispatchedAt).getTime();
+      if (nowMs - since < timeoutMs) return;
+
+      // A finalize whose enqueue failed would leave the session PROCESSING for good. The key makes
+      // the task runner drop the repeats of a finalize that is merely slow.
+      const { runId } = await notetakerTasker.finalizeSession(
+        { sessionId: id },
+        { idempotencyKey: `notetaker:finalize:${id}` }
+      );
+      // Not thrown: nothing was written, and the next sweep asks again.
+      if (runId === "task-failed") {
+        logger.error("Failed to re-enqueue notetaker session finalize", { sessionId: id });
+      }
+      return;
+    }
+
+    const admitted = session.admittedAt !== null;
+
+    if (session.bookingStatus !== "ACCEPTED") {
+      await this.requestStopBestEffort(binding, id, "BOOKING_NOT_ACTIVE");
+      if (!admitted) {
+        await sessionRepository.deleteById(id);
+        await this.voidChoice(bookingId, "BOOKING_NOT_ACTIVE");
+        return;
+      }
+      // Not returned: a live bot ends the session itself, but a dead one never reports, so the
+      // heartbeat check below still has to finalize what was recorded.
+    }
+
+    const since = Math.max(session.dispatchedAt.getTime(), session.lastHeartbeatAt?.getTime() ?? 0);
+    if (nowMs - since < timeoutMs) return;
+
+    // The wire contract has no reason for a lost bot; this one makes a bot that is only cut off
+    // from us leave without posting anything.
+    await this.requestStopBestEffort(binding, id, "DISABLED");
+
+    if (!admitted) {
+      const failed = await sessionRepository.updateIfStatusIn(id, ["SCHEDULED", "WAITING_TO_BE_ADMITTED"], {
+        status: "FAILED",
+        outcomeReason: "INTERRUPTED",
+        endedAt: now,
+      });
+      if (failed) await this.enqueueFailedNotice(bookingId, id);
+      return;
+    }
+
+    const won = await sessionRepository.updateIfStatusIn(id, ["TRANSCRIBING"], {
+      status: "PROCESSING",
+      outcomeReason: "INTERRUPTED",
+      endedAt: now,
+    });
+    if (won) await this.enqueueFinalize(id);
+  }
+
+  private async requestStopBestEffort(
+    binding: NotetakerBotGatewayBinding,
+    sessionId: string,
+    reason: NotetakerBotStopReason
+  ): Promise<void> {
+    try {
+      await binding.gateway.requestStop({ sessionId, reason });
+    } catch (error) {
+      this.deps.logger.warn("Notetaker stop request failed", {
+        sessionId,
+        reason,
+        message: getErrorMessage(error),
+      });
     }
   }
 
@@ -293,6 +554,17 @@ export class NotetakerDispatchService {
     this.deps.logger.error("Failed to enqueue notetaker attendee notice", { bookingId, sessionId });
   }
 
+  private async enqueueFailedNotice(bookingId: number, sessionId: string): Promise<void> {
+    const { runId } = await this.deps.notetakerTasker.sendNotification(
+      { kind: "FAILED", bookingId, sessionId },
+      { idempotencyKey: `notetaker:FAILED:${sessionId}` }
+    );
+    if (runId !== "task-failed") return;
+
+    // Not thrown: the session is already final, and failing the row would not send the notice.
+    this.deps.logger.error("Failed to enqueue notetaker failed notice", { bookingId, sessionId });
+  }
+
   private async dispatchBooking(
     booking: NotetakerBookingContext,
     binding: NotetakerBotGatewayBinding
@@ -339,7 +611,7 @@ export class NotetakerDispatchService {
     booking: NotetakerBookingContext,
     binding: NotetakerBotGatewayBinding
   ): Promise<PreparedSession | null> {
-    const { bookingNotetakerRepository, sessionRepository, activityRepository, config } = this.deps;
+    const { sessionRepository, config } = this.deps;
     const { location, metadata, references } = booking;
 
     const eligibility = getBookingNotetakerEligibility({
@@ -354,41 +626,25 @@ export class NotetakerDispatchService {
     const isSupportedTypeWithoutLink = eligibility.reason === "NO_MEETING_LINK";
 
     if (platform === null || (meetingUrl === null && !isSupportedTypeWithoutLink)) {
-      await bookingNotetakerRepository.disable(booking.id);
-      await activityRepository.create({
-        bookingId: booking.id,
-        sessionId: null,
-        action: "DISABLED",
-        actorType: "SYSTEM",
-        actorUserId: null,
-        actorName: null,
-        detail: { reason: "UNSUPPORTED_LOCATION" },
-      });
+      await this.disableUnsupported(booking);
       return null;
     }
 
     const now = new Date();
-    const t = await getTranslation(booking.organizer?.locale ?? "en", "common");
-    const hostName = getNotetakerHostName(booking.organizer);
-    const displayName = t("notetaker_display_name", { appName: APP_NAME, hostName });
-    const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
 
     if (meetingUrl === null) {
-      await sessionRepository.create({
-        bookingId: booking.id,
+      const session = await this.createFailedSession(booking, binding, {
         platform,
         meetingUrl: "",
-        botProvider: binding.provider,
-        displayName,
-        scheduledStartAt: booking.startTime,
-        dispatchedAt: now,
-        startedLate,
-        status: "FAILED",
         outcomeReason: "MEETING_LINK_UNUSABLE",
-        endedAt: now,
+        now,
       });
+      await this.enqueueFailedNotice(booking.id, session.id);
       return null;
     }
+
+    const { t, hostName, displayName } = await this.resolveDisplay(booking);
+    const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
 
     const session = await sessionRepository.create({
       bookingId: booking.id,
@@ -421,16 +677,71 @@ export class NotetakerDispatchService {
     };
   }
 
+  private async disableUnsupported(booking: NotetakerBookingContext): Promise<void> {
+    const { bookingNotetakerRepository, activityRepository } = this.deps;
+
+    await bookingNotetakerRepository.disable(booking.id);
+    await activityRepository.create({
+      bookingId: booking.id,
+      sessionId: null,
+      action: "DISABLED",
+      actorType: "SYSTEM",
+      actorUserId: null,
+      actorName: null,
+      detail: { reason: "UNSUPPORTED_LOCATION" },
+    });
+  }
+
+  private async resolveDisplay(booking: NotetakerBookingContext): Promise<{
+    t: Awaited<ReturnType<typeof getTranslation>>;
+    hostName: string;
+    displayName: string;
+  }> {
+    const t = await getTranslation(booking.organizer?.locale ?? "en", "common");
+    const hostName = getNotetakerHostName(booking.organizer);
+    const displayName = t("notetaker_display_name", { appName: APP_NAME, hostName });
+    return { t, hostName, displayName };
+  }
+
+  private async createFailedSession(
+    booking: NotetakerBookingContext,
+    binding: NotetakerBotGatewayBinding,
+    params: {
+      platform: NotetakerPlatformDto;
+      meetingUrl: string;
+      outcomeReason: NotetakerOutcomeReasonDto;
+      now: Date;
+    }
+  ): Promise<NotetakerSessionRecord> {
+    const { platform, meetingUrl, outcomeReason, now } = params;
+    const { displayName } = await this.resolveDisplay(booking);
+
+    return this.deps.sessionRepository.create({
+      bookingId: booking.id,
+      platform,
+      meetingUrl,
+      botProvider: binding.provider,
+      displayName,
+      scheduledStartAt: booking.startTime,
+      dispatchedAt: now,
+      startedLate: now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS,
+      status: "FAILED",
+      outcomeReason,
+      endedAt: now,
+    });
+  }
+
   private async handleJoinFailure(bookingId: number, sessionId: string, error: unknown): Promise<void> {
     const { bookingNotetakerRepository, sessionRepository, logger } = this.deps;
 
     if (getNotetakerBotGatewayFailure(error) === "LINK_UNUSABLE") {
       // A false result means the row already left SCHEDULED; that transition wins.
-      await sessionRepository.updateIfStatusIn(sessionId, ["SCHEDULED"], {
+      const failed = await sessionRepository.updateIfStatusIn(sessionId, ["SCHEDULED"], {
         status: "FAILED",
         outcomeReason: "MEETING_LINK_UNUSABLE",
         endedAt: new Date(),
       });
+      if (failed) await this.enqueueFailedNotice(bookingId, sessionId);
       return;
     }
 

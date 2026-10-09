@@ -33,7 +33,7 @@ import type { NotetakerSessionUpdateInput } from "../repositories/interfaces/INo
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
-import { NotetakerDispatchService } from "./NotetakerDispatchService";
+import { getNotetakerGiveUpDeadline, NotetakerDispatchService } from "./NotetakerDispatchService";
 
 vi.mock("@calcom/i18n/server", () => ({
   getTranslation: vi.fn(
@@ -155,6 +155,13 @@ describe("NotetakerDispatchService", () => {
   let tasker: RecordingTasker;
   let users: NotetakerUserRecord[];
   const config: NotetakerConfig = getNotetakerConfig({});
+  const NO_SHOW_MS = config.limits.noShowTimeoutSeconds * 1000;
+  const HEARTBEAT_MS = config.limits.heartbeatTimeoutSeconds * 1000;
+
+  const failedNotice = (bookingId: number, sessionId: string) => ({
+    payload: { kind: "FAILED", bookingId, sessionId },
+    options: { idempotencyKey: `notetaker:FAILED:${sessionId}` },
+  });
 
   const eventSink = async (event: NotetakerBotEvent): Promise<void> => {
     events.push(event);
@@ -203,6 +210,20 @@ describe("NotetakerDispatchService", () => {
     return { gateway, provider: "FAKE" };
   }
 
+  function stopRecorder(overrides: Partial<INotetakerBotGateway> = {}): {
+    gateway: INotetakerBotGateway;
+    stopRequests: { sessionId: string; reason: NotetakerBotStopReason }[];
+  } {
+    const stopRequests: { sessionId: string; reason: NotetakerBotStopReason }[] = [];
+    const gateway = createStubGateway({
+      requestStop: async (input) => {
+        stopRequests.push({ sessionId: input.sessionId, reason: input.reason });
+      },
+      ...overrides,
+    });
+    return { gateway, stopRequests };
+  }
+
   async function settle(gateway: FakeBotGateway): Promise<void> {
     await gateway.whenIdle();
     expect(gateway.scriptErrors).toEqual([]);
@@ -210,7 +231,7 @@ describe("NotetakerDispatchService", () => {
 
   async function arm(
     bookingId: number,
-    overrides: { enabled?: boolean; pendingDispatch?: boolean } = {}
+    overrides: { enabled?: boolean; pendingDispatch?: boolean; setAt?: Date } = {}
   ): Promise<void> {
     await repositories.bookingNotetakerRepository.upsert({
       bookingId,
@@ -231,6 +252,14 @@ describe("NotetakerDispatchService", () => {
     return booking.id;
   }
 
+  // Enabled but not armed, so the dispatch and give-up steps leave the booking to the step under test.
+  async function seedDispatched(overrides: Partial<InMemoryBookingSeed> = {}): Promise<number> {
+    const booking = buildBooking(overrides);
+    repositories.store.addBooking(booking);
+    await arm(booking.id, { pendingDispatch: false });
+    return booking.id;
+  }
+
   async function seedSession(
     bookingId: number,
     status: "SCHEDULED" | "WAITING_TO_BE_ADMITTED" | "TRANSCRIBING" | "PROCESSING"
@@ -245,6 +274,12 @@ describe("NotetakerDispatchService", () => {
       status,
     });
     return session.id;
+  }
+
+  async function seedSessionWith(bookingId: number, patch: NotetakerSessionUpdateInput): Promise<string> {
+    const sessionId = await seedSession(bookingId, "SCHEDULED");
+    await repositories.sessionRepository.update(sessionId, patch);
+    return sessionId;
   }
 
   function onlySession() {
@@ -692,7 +727,7 @@ describe("NotetakerDispatchService", () => {
       { name: "the choice is not armed", choice: { pendingDispatch: false }, gateway: () => fake() },
     ];
 
-    it.each(noNoticeCases)("does not enqueue a notice when $name", async (testCase) => {
+    it.each(noNoticeCases)("does not enqueue an attendee notice when $name", async (testCase) => {
       const seed = buildBooking(testCase.booking);
       repositories.store.addBooking(seed);
       await arm(seed.id, testCase.choice);
@@ -702,7 +737,7 @@ describe("NotetakerDispatchService", () => {
       await buildService(gateway ? fakeBinding(gateway) : null).dispatchDue();
       if (gateway instanceof FakeBotGateway) await settle(gateway);
 
-      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.notificationCalls.filter((call) => call.payload.kind === "ATTENDEE_NOTICE")).toEqual([]);
     });
 
     it("does not enqueue a notice when storing externalRef fails", async () => {
@@ -799,6 +834,1158 @@ describe("NotetakerDispatchService", () => {
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect(repositories.store.sessions.size).toBe(0);
       expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+    });
+  });
+
+  describe("getNotetakerGiveUpDeadline", () => {
+    const at = (time: string): Date => new Date(`2026-10-12T${time}:00.000Z`);
+
+    it.each([
+      {
+        name: "the no-show timeout after the start when the choice was set before it",
+        times: { startTime: at("10:00"), endTime: at("10:30"), setAt: at("09:59") },
+        expected: at("10:15"),
+      },
+      {
+        name: "the no-show timeout after the choice when it was set after the start",
+        times: { startTime: at("10:00"), endTime: at("10:30"), setAt: at("10:05") },
+        expected: at("10:20"),
+      },
+      {
+        name: "the end of the booking when it comes before the timeout",
+        times: { startTime: at("10:00"), endTime: at("10:10"), setAt: at("09:59") },
+        expected: at("10:10"),
+      },
+      {
+        name: "the end of the booking when the choice was set after it",
+        times: { startTime: at("10:00"), endTime: at("10:30"), setAt: at("10:45") },
+        expected: at("10:30"),
+      },
+    ])("is $name", ({ times, expected }) => {
+      expect(getNotetakerGiveUpDeadline({ ...times, noShowTimeoutSeconds: 900 })).toEqual(expected);
+    });
+  });
+
+  describe("dispatchDue: FAILED notices at dispatch", () => {
+    const NO_LINK: Partial<InMemoryBookingSeed> = {
+      location: MeetLocationType,
+      references: [],
+      metadata: null,
+    };
+
+    function linkUnusableGateway(): INotetakerBotGateway {
+      return createStubGateway({
+        requestJoin: async () => {
+          throw createNotetakerBotGatewayError("LINK_UNUSABLE", "unusable");
+        },
+      });
+    }
+
+    it("enqueues one keyed FAILED notice when the bot reports the link unusable", async () => {
+      const bookingId = await seedArmed();
+
+      await buildService(fakeBinding(linkUnusableGateway())).dispatchDue();
+
+      const session = onlySession();
+      expect(session).toMatchObject({
+        status: "FAILED",
+        outcomeReason: "MEETING_LINK_UNUSABLE",
+        endedAt: NOW,
+      });
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+    });
+
+    it("enqueues one keyed FAILED notice when a supported type has no link", async () => {
+      const bookingId = await seedArmed(NO_LINK);
+      const requestJoin = vi.fn();
+
+      await buildService(fakeBinding(createStubGateway({ requestJoin }))).dispatchDue();
+
+      expect(requestJoin).not.toHaveBeenCalled();
+      const session = onlySession();
+      expect(session).toMatchObject({
+        status: "FAILED",
+        outcomeReason: "MEETING_LINK_UNUSABLE",
+        meetingUrl: "",
+      });
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+    });
+
+    it("enqueues the same notice when dispatchForBooking hits an unusable link", async () => {
+      const bookingId = await seedArmed();
+
+      await buildService(fakeBinding(linkUnusableGateway())).dispatchForBooking({ bookingUid: BOOKING_UID });
+
+      const session = onlySession();
+      expect(session).toMatchObject({ status: "FAILED", outcomeReason: "MEETING_LINK_UNUSABLE" });
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+    });
+
+    it("enqueues nothing when the FAILED transition loses the race", async () => {
+      await seedArmed();
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+      await buildService(fakeBinding(linkUnusableGateway())).dispatchDue();
+
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+
+    it.each([
+      { name: "the bot reports the link unusable", booking: {}, gateway: linkUnusableGateway },
+      { name: "a supported type has no link", booking: NO_LINK, gateway: createStubGateway },
+    ])("logs and keeps the FAILED session when the notice cannot be enqueued and $name", async (testCase) => {
+      const bookingId = await seedArmed(testCase.booking);
+      tasker.notificationResult = { runId: "task-failed" };
+
+      await expect(buildService(fakeBinding(testCase.gateway())).dispatchDue()).resolves.toBeUndefined();
+
+      const session = onlySession();
+      expect(session.status).toBe("FAILED");
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ bookingId, sessionId: session.id })
+      );
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+    });
+
+    it("enqueues no FAILED notice for an unsupported location", async () => {
+      await seedArmed({ location: "integrations:zoom" });
+
+      await buildService(fakeBinding(createStubGateway())).dispatchDue();
+
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+  });
+
+  describe("dispatchDue: give-up", () => {
+    const SET_AFTER_START = new Date(START.getTime() + 300_000);
+    const EARLY_END = new Date(START.getTime() + 600_000);
+
+    const deadlineBranches: { name: string; seed: () => Promise<number>; deadline: Date }[] = [
+      {
+        name: "the choice was set before the start",
+        seed: () => seedArmed(),
+        deadline: new Date(START.getTime() + NO_SHOW_MS),
+      },
+      {
+        name: "the choice was set after the start",
+        seed: async () => {
+          const booking = buildBooking();
+          repositories.store.addBooking(booking);
+          await arm(booking.id, { setAt: SET_AFTER_START });
+          return booking.id;
+        },
+        deadline: new Date(SET_AFTER_START.getTime() + NO_SHOW_MS),
+      },
+      {
+        name: "the booking ends before the no-show timeout",
+        seed: () => seedArmed({ endTime: EARLY_END }),
+        deadline: EARLY_END,
+      },
+    ];
+
+    function giveUp(gateway: INotetakerBotGateway = createTransientGateway()): Promise<void> {
+      return buildService(fakeBinding(gateway)).dispatchDue();
+    }
+
+    it.each(deadlineBranches)("records a FAILED session at exactly the deadline when $name", async ({
+      seed,
+      deadline,
+    }) => {
+      const bookingId = await seed();
+      vi.setSystemTime(deadline);
+
+      await giveUp();
+
+      const session = onlySession();
+      expect(session).toMatchObject({
+        bookingId,
+        status: "FAILED",
+        outcomeReason: "INTERRUPTED",
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET_LINK,
+        botProvider: "FAKE",
+        displayName: EXPECTED_DISPLAY_NAME,
+        scheduledStartAt: START,
+        dispatchedAt: deadline,
+        endedAt: deadline,
+        externalRef: null,
+        startedLate: true,
+      });
+      const choice = repositories.store.choices.get(bookingId);
+      expect(choice?.pendingDispatch).toBe(false);
+      expect(choice?.enabled).toBe(true);
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+      expect(repositories.store.activities).toEqual([]);
+    });
+
+    it.each(deadlineBranches)("keeps retrying one second before the deadline when $name", async ({
+      seed,
+      deadline,
+    }) => {
+      const bookingId = await seed();
+      vi.setSystemTime(new Date(deadline.getTime() - 1000));
+
+      await giveUp();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+
+    it("gives up in the same run as the last transient join failure", async () => {
+      const bookingId = await seedArmed();
+      const service = buildService(fakeBinding(createTransientGateway()));
+
+      await service.dispatchDue();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+
+      vi.setSystemTime(new Date(START.getTime() + NO_SHOW_MS));
+      await service.dispatchDue();
+
+      const session = onlySession();
+      expect(session).toMatchObject({ status: "FAILED", outcomeReason: "INTERRUPTED" });
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends no join request once the booking has ended", async () => {
+      await seedArmed();
+      vi.setSystemTime(END);
+      const requestJoin = vi.fn();
+
+      await giveUp(createStubGateway({ requestJoin }));
+
+      expect(requestJoin).not.toHaveBeenCalled();
+      expect(onlySession()).toMatchObject({ status: "FAILED", outcomeReason: "INTERRUPTED" });
+    });
+
+    it("leaves a booking with a live session armed", async () => {
+      // The clock moves first so the seeded session's dispatchedAt is fresh for the watchdog.
+      vi.setSystemTime(new Date(START.getTime() + NO_SHOW_MS));
+      const bookingId = await seedArmed();
+      await seedSession(bookingId, "SCHEDULED");
+
+      await giveUp();
+
+      expect(onlySession().status).toBe("SCHEDULED");
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+
+    it("creates no session when clearPendingDispatch loses", async () => {
+      await seedArmed();
+      vi.setSystemTime(END);
+      vi.spyOn(repositories.bookingNotetakerRepository, "clearPendingDispatch").mockResolvedValueOnce(false);
+
+      await giveUp();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+
+    it("creates one session and one notice when two runs overlap", async () => {
+      const bookingId = await seedArmed();
+      vi.setSystemTime(END);
+      const service = buildService(fakeBinding(createTransientGateway()));
+
+      await Promise.all([service.dispatchDue(), service.dispatchDue()]);
+
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, onlySession().id)]);
+    });
+
+    it("changes nothing on a second run at the same clock", async () => {
+      const bookingId = await seedArmed();
+      vi.setSystemTime(END);
+      const service = buildService(fakeBinding(createTransientGateway()));
+      await service.dispatchDue();
+      const snapshot = { ...onlySession() };
+
+      await service.dispatchDue();
+
+      expect(onlySession()).toEqual(snapshot);
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, snapshot.id)]);
+    });
+
+    it("disables the choice instead of creating a session for an unsupported location", async () => {
+      const bookingId = await seedArmed({ location: "integrations:zoom" });
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      const choice = repositories.store.choices.get(bookingId);
+      expect(choice?.enabled).toBe(false);
+      expect(choice?.pendingDispatch).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        bookingId,
+        action: "DISABLED",
+        actorType: "SYSTEM",
+        detail: { reason: "UNSUPPORTED_LOCATION" },
+      });
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+
+    it("records the session with an empty link when a supported type has none", async () => {
+      const bookingId = await seedArmed({ location: MeetLocationType, references: [], metadata: null });
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      const session = onlySession();
+      expect(session).toMatchObject({
+        status: "FAILED",
+        outcomeReason: "INTERRUPTED",
+        meetingUrl: "",
+        platform: "GOOGLE_MEET",
+      });
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
+    });
+
+    it("re-arms the choice when the session cannot be created, so the next run gives up", async () => {
+      const bookingId = await seedArmed();
+      vi.setSystemTime(END);
+      vi.spyOn(repositories.sessionRepository, "create").mockRejectedValueOnce(new Error("db down"));
+      const service = buildService(fakeBinding(createTransientGateway()));
+
+      await expect(service.dispatchDue()).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ bookingId }));
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+      expect(repositories.store.sessions.size).toBe(0);
+
+      await service.dispatchDue();
+
+      expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, onlySession().id)]);
+    });
+
+    it("logs and keeps the FAILED session when the notice cannot be enqueued", async () => {
+      const bookingId = await seedArmed();
+      vi.setSystemTime(END);
+      tasker.notificationResult = { runId: "task-failed" };
+
+      await expect(giveUp()).resolves.toBeUndefined();
+
+      const session = onlySession();
+      expect(session.status).toBe("FAILED");
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ bookingId, sessionId: session.id })
+      );
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+    });
+
+    const nonCandidates: {
+      name: string;
+      booking?: Partial<InMemoryBookingSeed>;
+      choice?: { enabled?: boolean; pendingDispatch?: boolean };
+    }[] = [
+      { name: "is not pending dispatch", choice: { pendingDispatch: false } },
+      { name: "is not enabled", choice: { enabled: false } },
+      { name: "is CANCELLED", booking: { status: "CANCELLED" } },
+      {
+        name: "is PENDING and has not started",
+        booking: {
+          status: "PENDING",
+          startTime: new Date(END.getTime() + 1000),
+          endTime: new Date(END.getTime() + 1_800_000),
+        },
+      },
+    ];
+
+    it.each(nonCandidates)("does not give up on a booking that $name", async ({ booking, choice }) => {
+      const seed = buildBooking(booking);
+      repositories.store.addBooking(seed);
+      await arm(seed.id, choice);
+      vi.setSystemTime(END);
+
+      await giveUp();
+
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(tasker.notificationCalls).toEqual([]);
+    });
+  });
+
+  describe("dispatchDue: voiding unconfirmed bookings", () => {
+    const UNCONFIRMED: InMemoryBookingSeed["status"][] = ["PENDING", "AWAITING_HOST"];
+
+    it.each(UNCONFIRMED)("turns the choice off for a %s booking that starts now", async (status) => {
+      const booking = buildBooking({ status, startTime: NOW });
+      repositories.store.addBooking(booking);
+      await arm(booking.id);
+      await repositories.bookingNotetakerRepository.setRejoinBlocked(booking.id, true);
+      await repositories.bookingNotetakerRepository.appendNotifiedAttendeeEmails(
+        booking.id,
+        ["a@example.com"],
+        NOW
+      );
+      const before = await repositories.bookingNotetakerRepository.findByBookingId(booking.id);
+      const requestJoin = vi.fn();
+      const { gateway, stopRequests } = stopRecorder({ requestJoin });
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(repositories.store.choices.get(booking.id)).toEqual({
+        ...before,
+        enabled: false,
+        pendingDispatch: false,
+      });
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        bookingId: booking.id,
+        sessionId: null,
+        action: "DISABLED",
+        actorType: "SYSTEM",
+        actorUserId: null,
+        actorName: null,
+        detail: { reason: "BOOKING_NOT_CONFIRMED" },
+      });
+      expect(repositories.store.sessions.size).toBe(0);
+      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.finalizeCalls).toEqual([]);
+      expect(requestJoin).not.toHaveBeenCalled();
+      expect(stopRequests).toEqual([]);
+    });
+
+    it.each(UNCONFIRMED)("leaves a %s booking that starts in one second alone", async (status) => {
+      const bookingId = await seedArmed({ status, startTime: offsetFromNow(1000) });
+      const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+
+      await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+      expect(repositories.store.choices.get(bookingId)).toEqual(before);
+      expect(repositories.store.activities).toEqual([]);
+    });
+
+    it("turns off a choice that is enabled but no longer armed", async () => {
+      const bookingId = await seedDispatched({ status: "PENDING", startTime: NOW });
+
+      await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+      expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+    });
+
+    it.each<InMemoryBookingSeed["status"]>([
+      "CANCELLED",
+      "REJECTED",
+    ])("does not write to a %s booking without a session", async (status) => {
+      const bookingId = await seedArmed({ status, startTime: NOW });
+      const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+
+      await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+      expect(repositories.store.choices.get(bookingId)).toEqual(before);
+      expect(repositories.store.activities).toEqual([]);
+      expect(repositories.store.sessions.size).toBe(0);
+    });
+
+    it("writes one activity over two runs", async () => {
+      await seedArmed({ status: "PENDING", startTime: NOW });
+      const service = buildService(fakeBinding(stopRecorder().gateway));
+
+      await service.dispatchDue();
+      await service.dispatchDue();
+
+      expect(repositories.store.activities).toHaveLength(1);
+    });
+
+    it("writes one activity when two runs overlap", async () => {
+      await seedArmed({ status: "PENDING", startTime: NOW });
+      const service = buildService(fakeBinding(stopRecorder().gateway));
+
+      await Promise.all([service.dispatchDue(), service.dispatchDue()]);
+
+      expect(repositories.store.activities).toHaveLength(1);
+    });
+
+    it("still voids the second booking when the first one's activity cannot be written", async () => {
+      const first = await seedArmed({
+        id: 1,
+        uid: "uid-1",
+        status: "PENDING",
+        startTime: offsetFromNow(-2000),
+      });
+      const second = await seedArmed({
+        id: 2,
+        uid: "uid-2",
+        status: "PENDING",
+        startTime: offsetFromNow(-1000),
+      });
+      vi.spyOn(repositories.activityRepository, "create").mockRejectedValueOnce(new Error("db down"));
+
+      await expect(buildService(fakeBinding(stopRecorder().gateway)).dispatchDue()).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ bookingId: first })
+      );
+      expect(repositories.store.choices.get(second)?.enabled).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        bookingId: second,
+        detail: { reason: "BOOKING_NOT_CONFIRMED" },
+      });
+    });
+
+    it("voids at most one batch, earliest starts first", async () => {
+      const total = NOTETAKER_SWEEP_BATCH_SIZE + 1;
+      for (let id = 1; id <= total; id += 1) {
+        // Descending start by id, so booking 1 is the latest and falls outside the batch.
+        const startTime = offsetFromNow(-(id - 1) * 100);
+        repositories.store.addBooking(
+          buildBooking({
+            id,
+            uid: `uid-${id}`,
+            status: "PENDING",
+            startTime,
+            endTime: new Date(startTime.getTime() + 1_800_000),
+          })
+        );
+        await arm(id);
+      }
+
+      await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+      const disabled = Array.from(repositories.store.choices.values()).filter((choice) => !choice.enabled);
+      expect(disabled).toHaveLength(NOTETAKER_SWEEP_BATCH_SIZE);
+      expect(repositories.store.activities).toHaveLength(NOTETAKER_SWEEP_BATCH_SIZE);
+      expect(repositories.store.choices.get(1)?.enabled).toBe(true);
+    });
+  });
+
+  describe("dispatchDue: watchdog", () => {
+    type PreAdmissionStatus = "SCHEDULED" | "WAITING_TO_BE_ADMITTED";
+
+    const PRE_ADMISSION: PreAdmissionStatus[] = ["SCHEDULED", "WAITING_TO_BE_ADMITTED"];
+    const AT_TIMEOUT = new Date(NOW.getTime() + HEARTBEAT_MS);
+    const INSIDE_TIMEOUT = new Date(NOW.getTime() + HEARTBEAT_MS - 1000);
+
+    const finalizeKey = (sessionId: string) => ({
+      payload: { sessionId },
+      options: { idempotencyKey: `notetaker:finalize:${sessionId}` },
+    });
+
+    function failingStop(): INotetakerBotGateway {
+      return stopRecorder({
+        requestStop: async () => {
+          throw new Error("bot down");
+        },
+      }).gateway;
+    }
+
+    // TRANSCRIBING is seeded with admittedAt, which is what the watchdog reads as "after admission".
+    function seedLive(bookingId: number, status: PreAdmissionStatus | "TRANSCRIBING"): Promise<string> {
+      if (status === "TRANSCRIBING") return seedTranscribing(bookingId);
+      return seedSession(bookingId, status);
+    }
+
+    function setBookingStatus(status: InMemoryBookingSeed["status"]): void {
+      repositories.store.addBooking(buildBooking({ status }));
+    }
+
+    describe("when the booking is no longer ACCEPTED", () => {
+      const notActiveCases: {
+        bookingStatus: InMemoryBookingSeed["status"];
+        sessionStatus: PreAdmissionStatus;
+      }[] = [
+        { bookingStatus: "CANCELLED", sessionStatus: "SCHEDULED" },
+        { bookingStatus: "CANCELLED", sessionStatus: "WAITING_TO_BE_ADMITTED" },
+        { bookingStatus: "REJECTED", sessionStatus: "SCHEDULED" },
+        { bookingStatus: "REJECTED", sessionStatus: "WAITING_TO_BE_ADMITTED" },
+        { bookingStatus: "PENDING", sessionStatus: "SCHEDULED" },
+        { bookingStatus: "PENDING", sessionStatus: "WAITING_TO_BE_ADMITTED" },
+      ];
+
+      it.each(
+        notActiveCases
+      )("stops and deletes a $sessionStatus session and voids the choice of a $bookingStatus booking", async ({
+        bookingStatus,
+        sessionStatus,
+      }) => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, sessionStatus);
+        setBookingStatus(bookingStatus);
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(stopRequests).toEqual([{ sessionId, reason: "BOOKING_NOT_ACTIVE" }]);
+        expect(repositories.store.sessions.has(sessionId)).toBe(false);
+        expect(repositories.store.choices.get(bookingId)).toEqual({
+          ...before,
+          enabled: false,
+          pendingDispatch: false,
+        });
+        expect(repositories.store.activities).toHaveLength(1);
+        expect(repositories.store.activities[0]).toMatchObject({
+          bookingId,
+          sessionId: null,
+          action: "DISABLED",
+          actorType: "SYSTEM",
+          detail: { reason: "BOOKING_NOT_ACTIVE" },
+        });
+        expect(tasker.notificationCalls).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+
+      it("deletes the row and voids the choice even when the bot cannot be reached", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, "SCHEDULED");
+        setBookingStatus("CANCELLED");
+
+        await buildService(fakeBinding(failingStop())).dispatchDue();
+
+        expect(repositories.store.sessions.has(sessionId)).toBe(false);
+        expect(repositories.store.choices.get(bookingId)?.enabled).toBe(false);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessionId }));
+      });
+
+      it("writes no activity when the choice is already off", async () => {
+        const bookingId = await seedDispatched();
+        await arm(bookingId, { enabled: false, pendingDispatch: false });
+        const sessionId = await seedSession(bookingId, "SCHEDULED");
+        setBookingStatus("CANCELLED");
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(repositories.store.sessions.has(sessionId)).toBe(false);
+        expect(repositories.store.activities).toEqual([]);
+      });
+
+      it("records only BOOKING_NOT_CONFIRMED for a started PENDING booking with a session", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, "SCHEDULED");
+        repositories.store.addBooking(buildBooking({ status: "PENDING", startTime: NOW }));
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(repositories.store.sessions.has(sessionId)).toBe(false);
+        expect(repositories.store.activities).toHaveLength(1);
+        expect(repositories.store.activities[0]).toMatchObject({
+          bookingId,
+          detail: { reason: "BOOKING_NOT_CONFIRMED" },
+        });
+      });
+
+      it("only requests the stop after admission while the heartbeat is fresh", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedTranscribing(bookingId);
+        setBookingStatus("CANCELLED");
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        const { gateway, stopRequests } = stopRecorder();
+        const service = buildService(fakeBinding(gateway));
+
+        await service.dispatchDue();
+
+        expect(stopRequests).toEqual([{ sessionId, reason: "BOOKING_NOT_ACTIVE" }]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(repositories.store.activities).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([]);
+        expect(tasker.notificationCalls).toEqual([]);
+
+        await service.dispatchDue();
+
+        expect(stopRequests).toHaveLength(2);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+
+      it("also finalizes after admission once the heartbeat is lost", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedTranscribing(bookingId);
+        setBookingStatus("CANCELLED");
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        vi.setSystemTime(AT_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(stopRequests).toEqual([
+          { sessionId, reason: "BOOKING_NOT_ACTIVE" },
+          { sessionId, reason: "DISABLED" },
+        ]);
+        expect(repositories.store.sessions.get(sessionId)).toMatchObject({
+          status: "PROCESSING",
+          outcomeReason: "INTERRUPTED",
+          endedAt: AT_TIMEOUT,
+          interruptedAtMs: null,
+        });
+        expect(tasker.finalizeCalls).toEqual([{ payload: { sessionId }, options: undefined }]);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(tasker.notificationCalls).toEqual([]);
+      });
+    });
+
+    describe("when the heartbeat is lost", () => {
+      it.each(
+        PRE_ADMISSION
+      )("fails a %s session at exactly the timeout and enqueues a FAILED notice", async (status) => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, status);
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        vi.setSystemTime(AT_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(stopRequests).toEqual([{ sessionId, reason: "DISABLED" }]);
+        expect(repositories.store.sessions.get(sessionId)).toMatchObject({
+          status: "FAILED",
+          outcomeReason: "INTERRUPTED",
+          endedAt: AT_TIMEOUT,
+        });
+        expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, sessionId)]);
+        expect(tasker.finalizeCalls).toEqual([]);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(repositories.store.activities).toEqual([]);
+      });
+
+      it("moves an admitted session to PROCESSING at exactly the timeout and enqueues one finalize", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedTranscribing(bookingId);
+        vi.setSystemTime(AT_TIMEOUT);
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(repositories.store.sessions.get(sessionId)).toMatchObject({
+          status: "PROCESSING",
+          outcomeReason: "INTERRUPTED",
+          endedAt: AT_TIMEOUT,
+          interruptedAtMs: null,
+        });
+        expect(tasker.finalizeCalls).toEqual([{ payload: { sessionId }, options: undefined }]);
+        expect(tasker.notificationCalls).toEqual([]);
+      });
+
+      it.each([
+        ...PRE_ADMISSION,
+        "TRANSCRIBING" as const,
+      ])("leaves a %s session alone one second inside the timeout", async (status) => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedLive(bookingId, status);
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        vi.setSystemTime(INSIDE_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(stopRequests).toEqual([]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(tasker.notificationCalls).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+
+      it("counts from the last heartbeat when it is later than the dispatch", async () => {
+        const bookingId = await seedDispatched();
+        const lastHeartbeatAt = offsetFromNow(60_000);
+        const sessionId = await seedSessionWith(bookingId, { lastHeartbeatAt });
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        const { gateway, stopRequests } = stopRecorder();
+        const service = buildService(fakeBinding(gateway));
+
+        vi.setSystemTime(AT_TIMEOUT);
+        await service.dispatchDue();
+
+        expect(stopRequests).toEqual([]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+
+        vi.setSystemTime(new Date(lastHeartbeatAt.getTime() + HEARTBEAT_MS));
+        await service.dispatchDue();
+
+        expect(stopRequests).toEqual([{ sessionId, reason: "DISABLED" }]);
+        expect(repositories.store.sessions.get(sessionId)?.status).toBe("FAILED");
+      });
+
+      it("counts from the dispatch when it is later than the last heartbeat", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, {
+          dispatchedAt: NOW,
+          lastHeartbeatAt: offsetFromNow(-60_000),
+        });
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        vi.setSystemTime(INSIDE_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(stopRequests).toEqual([]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+      });
+
+      it.each([
+        { name: "before admission", status: "SCHEDULED" as const, notices: 1, finalizes: 0 },
+        { name: "after admission", status: "TRANSCRIBING" as const, notices: 0, finalizes: 1 },
+      ])("changes nothing on a second run at the same clock $name", async ({
+        status,
+        notices,
+        finalizes,
+      }) => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedLive(bookingId, status);
+        vi.setSystemTime(AT_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+        const service = buildService(fakeBinding(gateway));
+        await service.dispatchDue();
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+
+        await service.dispatchDue();
+
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(tasker.notificationCalls).toHaveLength(notices);
+        expect(tasker.finalizeCalls).toHaveLength(finalizes);
+        expect(stopRequests).toHaveLength(1);
+      });
+
+      it.each([
+        { name: "notice before admission", status: "SCHEDULED" as const },
+        { name: "finalize after admission", status: "TRANSCRIBING" as const },
+      ])("enqueues no $name when the transition loses the race", async ({ status }) => {
+        const bookingId = await seedDispatched();
+        await seedLive(bookingId, status);
+        vi.setSystemTime(AT_TIMEOUT);
+        vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(tasker.notificationCalls).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+
+      it("still fails the session when the bot cannot be reached", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, "SCHEDULED");
+        vi.setSystemTime(AT_TIMEOUT);
+
+        await buildService(fakeBinding(failingStop())).dispatchDue();
+
+        expect(repositories.store.sessions.get(sessionId)).toMatchObject({
+          status: "FAILED",
+          outcomeReason: "INTERRUPTED",
+        });
+        expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, sessionId)]);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessionId }));
+      });
+
+      it("logs and keeps the FAILED session when the notice cannot be enqueued", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSession(bookingId, "SCHEDULED");
+        vi.setSystemTime(AT_TIMEOUT);
+        tasker.notificationResult = { runId: "task-failed" };
+
+        await expect(
+          buildService(fakeBinding(stopRecorder().gateway)).dispatchDue()
+        ).resolves.toBeUndefined();
+
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ bookingId, sessionId })
+        );
+        expect(repositories.store.sessions.get(sessionId)?.status).toBe("FAILED");
+      });
+
+      it("handles every row when finalize cannot be enqueued, and re-enqueues it one timeout later", async () => {
+        const first = await seedDispatched({ id: 1, uid: "uid-1" });
+        const second = await seedDispatched({ id: 2, uid: "uid-2" });
+        const sessionIds = [await seedTranscribing(first), await seedTranscribing(second)];
+        vi.setSystemTime(AT_TIMEOUT);
+        tasker.finalizeResult = { runId: "task-failed" };
+        const service = buildService(fakeBinding(stopRecorder().gateway));
+
+        await expect(service.dispatchDue()).resolves.toBeUndefined();
+
+        for (const sessionId of sessionIds) {
+          expect(repositories.store.sessions.get(sessionId)?.status).toBe("PROCESSING");
+          expect(logger.error).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ sessionId })
+          );
+        }
+
+        tasker.finalizeResult = { runId: "finalize-run" };
+        vi.setSystemTime(new Date(AT_TIMEOUT.getTime() + HEARTBEAT_MS));
+        await service.dispatchDue();
+
+        for (const sessionId of sessionIds) {
+          expect(tasker.finalizeCalls).toContainEqual(finalizeKey(sessionId));
+        }
+      });
+
+      it.each<NotetakerSessionStatusDto>([
+        "READY",
+        "ENDED_EARLY",
+        "FAILED",
+      ])("never touches a %s session", async (status) => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, {
+          status,
+          dispatchedAt: offsetFromNow(-3_600_000),
+        });
+        setBookingStatus("CANCELLED");
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(stopRequests).toEqual([]);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(repositories.store.activities).toEqual([]);
+        expect(tasker.notificationCalls).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+    });
+
+    describe("when a PROCESSING session is stale", () => {
+      const ENDED: NotetakerSessionUpdateInput = { status: "PROCESSING", admittedAt: NOW, endedAt: NOW };
+
+      it("re-enqueues finalize with a key at exactly the timeout", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, ENDED);
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        vi.setSystemTime(AT_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(tasker.finalizeCalls).toEqual([finalizeKey(sessionId)]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(stopRequests).toEqual([]);
+      });
+
+      it("enqueues nothing one second inside the timeout", async () => {
+        const bookingId = await seedDispatched();
+        await seedSessionWith(bookingId, ENDED);
+        vi.setSystemTime(INSIDE_TIMEOUT);
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(tasker.finalizeCalls).toEqual([]);
+      });
+
+      it("counts from the dispatch when the session has no endedAt", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, { status: "PROCESSING", admittedAt: NOW });
+        vi.setSystemTime(AT_TIMEOUT);
+
+        await buildService(fakeBinding(stopRecorder().gateway)).dispatchDue();
+
+        expect(tasker.finalizeCalls).toEqual([finalizeKey(sessionId)]);
+      });
+
+      it("logs and changes nothing when finalize cannot be enqueued", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, ENDED);
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        vi.setSystemTime(AT_TIMEOUT);
+        tasker.finalizeResult = { runId: "task-failed" };
+
+        await expect(
+          buildService(fakeBinding(stopRecorder().gateway)).dispatchDue()
+        ).resolves.toBeUndefined();
+
+        expect(logger.error).toHaveBeenCalledTimes(1);
+        expect(logger.error).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessionId }));
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+      });
+
+      it("only re-enqueues finalize on a CANCELLED booking", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, ENDED);
+        setBookingStatus("CANCELLED");
+        const snapshot = await repositories.sessionRepository.findById(sessionId);
+        const before = await repositories.bookingNotetakerRepository.findByBookingId(bookingId);
+        vi.setSystemTime(AT_TIMEOUT);
+        const { gateway, stopRequests } = stopRecorder();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+
+        expect(tasker.finalizeCalls).toEqual([finalizeKey(sessionId)]);
+        expect(stopRequests).toEqual([]);
+        expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+        expect(repositories.store.choices.get(bookingId)).toEqual(before);
+        expect(repositories.store.activities).toEqual([]);
+      });
+    });
+
+    describe("privacy", () => {
+      it("logs neither the organizer's email nor the booking title", async () => {
+        const cancelled = await seedDispatched({ id: 1, uid: "uid-1", status: "CANCELLED" });
+        const silent = await seedDispatched({ id: 2, uid: "uid-2" });
+        const admitted = await seedDispatched({ id: 3, uid: "uid-3" });
+        await seedSession(cancelled, "SCHEDULED");
+        await seedSession(silent, "SCHEDULED");
+        await seedTranscribing(admitted);
+        vi.setSystemTime(AT_TIMEOUT);
+        tasker.finalizeResult = { runId: "task-failed" };
+
+        await buildService(fakeBinding(failingStop())).dispatchDue();
+
+        expect(logger.warn).toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalled();
+        expect(loggedText()).not.toContain(ORGANIZER_EMAIL);
+        expect(loggedText()).not.toContain("Planning call");
+      });
+    });
+  });
+
+  describe("dispatchDue: sweep steps", () => {
+    type SweepStep = "dispatch" | "give-up" | "void-unconfirmed" | "watchdog";
+    type EnabledQuery = Parameters<
+      typeof repositories.bookingNotetakerRepository.findEnabledIncludeBooking
+    >[0];
+
+    function getEnabledQueryStep(params: EnabledQuery): SweepStep {
+      if (params.bookingStatuses.includes("PENDING")) return "void-unconfirmed";
+      return params.endTimeGt === undefined ? "give-up" : "dispatch";
+    }
+
+    function failStepQuery(step: SweepStep): void {
+      if (step === "watchdog") {
+        vi.spyOn(repositories.sessionRepository, "findByStatusInIncludeBooking").mockRejectedValueOnce(
+          new Error("db down")
+        );
+        return;
+      }
+      const findEnabledIncludeBooking =
+        repositories.bookingNotetakerRepository.findEnabledIncludeBooking.bind(
+          repositories.bookingNotetakerRepository
+        );
+      vi.spyOn(repositories.bookingNotetakerRepository, "findEnabledIncludeBooking").mockImplementation(
+        async (params) => {
+          if (getEnabledQueryStep(params) === step) throw new Error("db down");
+          return findEnabledIncludeBooking(params);
+        }
+      );
+    }
+
+    // One booking per step at clock END: due for dispatch, past its give-up deadline, started but
+    // unconfirmed, and dispatched with a session that has been silent for longer than the timeout.
+    async function seedOneUnitPerStep(): Promise<{
+      dueId: number;
+      overdueId: number;
+      unconfirmedId: number;
+      silentSessionId: string;
+    }> {
+      vi.setSystemTime(END);
+      const dueId = await seedArmed({
+        id: 1,
+        uid: "uid-1",
+        startTime: END,
+        endTime: new Date(END.getTime() + 1_800_000),
+      });
+      const overdueId = await seedArmed({ id: 2, uid: "uid-2" });
+      const unconfirmedId = await seedArmed({ id: 3, uid: "uid-3", status: "PENDING" });
+      const silentBookingId = await seedDispatched({ id: 4, uid: "uid-4" });
+      const silentSessionId = await seedSessionWith(silentBookingId, { dispatchedAt: NOW });
+      return { dueId, overdueId, unconfirmedId, silentSessionId };
+    }
+
+    function storeSnapshot() {
+      return structuredClone({
+        choices: Array.from(repositories.store.choices.values()),
+        sessions: Array.from(repositories.store.sessions.values()),
+        activities: repositories.store.activities,
+      });
+    }
+
+    it("bounds every step's query by the sweep batch size", async () => {
+      const findEnabled = vi.spyOn(repositories.bookingNotetakerRepository, "findEnabledIncludeBooking");
+      const findSessions = vi.spyOn(repositories.sessionRepository, "findByStatusInIncludeBooking");
+
+      await buildService(fakeBinding(createStubGateway())).dispatchDue();
+
+      const enabledQueries = findEnabled.mock.calls.map((call) => call[0]);
+      expect(enabledQueries).toEqual([
+        {
+          bookingStatuses: ["ACCEPTED"],
+          startTimeLte: offsetFromNow(config.limits.joinLeadSeconds * 1000),
+          endTimeGt: NOW,
+          pendingDispatch: true,
+          limit: NOTETAKER_SWEEP_BATCH_SIZE,
+        },
+        {
+          bookingStatuses: ["ACCEPTED"],
+          startTimeLte: NOW,
+          pendingDispatch: true,
+          limit: NOTETAKER_SWEEP_BATCH_SIZE,
+        },
+        {
+          bookingStatuses: ["PENDING", "AWAITING_HOST"],
+          startTimeLte: NOW,
+          limit: NOTETAKER_SWEEP_BATCH_SIZE,
+        },
+      ]);
+      // toEqual treats an undefined key as absent, and the repository reads an absent key as "no filter".
+      expect(enabledQueries[1]).not.toHaveProperty("endTimeGt");
+      expect(enabledQueries[2]).not.toHaveProperty("endTimeGt");
+      expect(enabledQueries[2]).not.toHaveProperty("pendingDispatch");
+      expect(findSessions).toHaveBeenCalledTimes(1);
+      expect(findSessions).toHaveBeenCalledWith({
+        statuses: ["SCHEDULED", "WAITING_TO_BE_ADMITTED", "TRANSCRIBING", "PROCESSING"],
+        limit: NOTETAKER_SWEEP_BATCH_SIZE,
+      });
+    });
+
+    it.each<SweepStep>([
+      "dispatch",
+      "give-up",
+      "void-unconfirmed",
+      "watchdog",
+    ])("logs a failing %s query and still runs the other steps", async (step) => {
+      const { dueId, overdueId, unconfirmedId, silentSessionId } = await seedOneUnitPerStep();
+      failStepQuery(step);
+
+      await expect(buildService(fakeBinding(stopRecorder().gateway)).dispatchDue()).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "Notetaker sweep step failed",
+        expect.objectContaining({ step, message: "db down" })
+      );
+      const sessions = Array.from(repositories.store.sessions.values());
+      expect({
+        dispatch: sessions.some((session) => session.bookingId === dueId && session.status === "SCHEDULED"),
+        "give-up": sessions.some((session) => session.bookingId === overdueId && session.status === "FAILED"),
+        "void-unconfirmed": repositories.store.choices.get(unconfirmedId)?.enabled === false,
+        watchdog: repositories.store.sessions.get(silentSessionId)?.status === "FAILED",
+      }).toEqual({
+        dispatch: true,
+        "give-up": true,
+        "void-unconfirmed": true,
+        watchdog: true,
+        [step]: false,
+      });
+    });
+
+    it("skips every step when the provider is unusable", async () => {
+      await seedOneUnitPerStep();
+      const findEnabled = vi.spyOn(repositories.bookingNotetakerRepository, "findEnabledIncludeBooking");
+      const findSessions = vi.spyOn(repositories.sessionRepository, "findByStatusInIncludeBooking");
+      const before = storeSnapshot();
+
+      await buildService(null).dispatchDue();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(findEnabled).not.toHaveBeenCalled();
+      expect(findSessions).not.toHaveBeenCalled();
+      expect(storeSnapshot()).toEqual(before);
+      expect(tasker.notificationCalls).toEqual([]);
+      expect(tasker.finalizeCalls).toEqual([]);
     });
   });
 
