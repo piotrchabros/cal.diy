@@ -56,5 +56,15 @@ export function useNotetakerMutations() {
     },
   });
 
-  return { setEnabled };
+  const stop = trpc.viewer.notetaker.stop.useMutation({
+    onSuccess: async () => {
+      await utils.viewer.notetaker.getState.invalidate();
+      showToast(t("notetaker_stop_requested"), "success");
+    },
+    onError: (error) => {
+      showToast(getErrorMessage(error.message), "error");
+    },
+  });
+
+  return { setEnabled, stop };
 }
