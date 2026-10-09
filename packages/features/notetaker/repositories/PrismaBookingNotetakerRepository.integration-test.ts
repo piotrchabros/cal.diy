@@ -7,11 +7,15 @@ const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const SEEDED_AT = new Date("2029-12-01T00:00:00.000Z");
 const ENABLED_AT = new Date("2029-12-02T00:00:00.000Z");
 const CONCURRENT_CALLS = 5;
+// Ids are autoincrement and positive, so -1 never matches a real user.
+const UNKNOWN_USER_ID = -1;
 
 const repository = new PrismaBookingNotetakerRepository(prisma);
 
 let userId: number | undefined;
 let bookingId: number | undefined;
+let olderSubscriptionId: number | undefined;
+let newerSubscriptionId: number | undefined;
 let bookingCounter = 0;
 
 function requireBookingId(): number {
@@ -19,6 +23,20 @@ function requireBookingId(): number {
     throw new Error("Test setup did not complete: booking id is missing");
   }
   return bookingId;
+}
+
+function requireUserId(): number {
+  if (userId === undefined) {
+    throw new Error("Test setup did not complete: user id is missing");
+  }
+  return userId;
+}
+
+function subscriptionJson(label: string): string {
+  return JSON.stringify({
+    endpoint: `https://push.example.test/${runId}/${label}`,
+    keys: { auth: "auth", p256dh: "p256dh" },
+  });
 }
 
 function enableInput(id: number, setAt: Date) {
@@ -57,6 +75,10 @@ function enableConcurrently(id: number): Promise<boolean[]> {
   );
 }
 
+function disableConcurrently(id: number): Promise<boolean[]> {
+  return Promise.all(Array.from({ length: CONCURRENT_CALLS }, () => repository.disableIfEnabled(id)));
+}
+
 describe("PrismaBookingNotetakerRepository (integration)", () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -89,6 +111,14 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
   afterEach(async () => {
     // Prisma treats `where: { id: undefined }` as no filter, so every delete needs an explicit guard
     // to avoid wiping a real database when setup failed before the id was assigned.
+    if (olderSubscriptionId !== undefined) {
+      await prisma.notificationsSubscriptions.deleteMany({ where: { id: olderSubscriptionId } });
+    }
+    olderSubscriptionId = undefined;
+    if (newerSubscriptionId !== undefined) {
+      await prisma.notificationsSubscriptions.deleteMany({ where: { id: newerSubscriptionId } });
+    }
+    newerSubscriptionId = undefined;
     // Deleting the booking cascades to its BookingNotetaker and Attendee rows.
     if (bookingId !== undefined) {
       await prisma.booking.deleteMany({ where: { id: bookingId } });
@@ -217,6 +247,73 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
     });
   });
 
+  describe("disableIfEnabled", () => {
+    it("turns an enabled row off exactly once when five calls race", async () => {
+      const id = requireBookingId();
+      const notifiedAttendeeEmails = [`a-${runId}@example.com`];
+      await prisma.bookingNotetaker.create({
+        data: {
+          bookingId: id,
+          enabled: true,
+          pendingDispatch: true,
+          rejoinBlocked: true,
+          source: "HOST",
+          setAt: SEEDED_AT,
+          setByUserId: requireUserId(),
+          notifiedAttendeeEmails,
+          attendeesNotifiedAt: SEEDED_AT,
+        },
+        select: { bookingId: true },
+      });
+
+      const results = await disableConcurrently(id);
+
+      expect(countTrue(results)).toBe(1);
+      expect(await readChoice(id)).toEqual({
+        enabled: false,
+        pendingDispatch: false,
+        rejoinBlocked: true,
+        setAt: SEEDED_AT,
+        setByUserId: userId,
+        source: "HOST",
+        notifiedAttendeeEmails,
+        attendeesNotifiedAt: SEEDED_AT,
+      });
+    });
+
+    it("writes nothing when the row is already disabled", async () => {
+      const id = requireBookingId();
+      // The armed flag on a disabled row proves the update is filtered on `enabled: true`.
+      await prisma.bookingNotetaker.create({
+        data: {
+          bookingId: id,
+          enabled: false,
+          pendingDispatch: true,
+          source: "HOST",
+          setAt: SEEDED_AT,
+        },
+        select: { bookingId: true },
+      });
+
+      const changed = await repository.disableIfEnabled(id);
+
+      expect(changed).toBe(false);
+      const choice = await readChoice(id);
+      expect(choice?.enabled).toBe(false);
+      expect(choice?.pendingDispatch).toBe(true);
+      expect(choice?.setAt).toEqual(SEEDED_AT);
+    });
+
+    it("resolves false and creates no row when the booking has no choice", async () => {
+      const id = requireBookingId();
+
+      const changed = await repository.disableIfEnabled(id);
+
+      expect(changed).toBe(false);
+      expect(await prisma.bookingNotetaker.count({ where: { bookingId: id } })).toBe(0);
+    });
+  });
+
   describe("findAttendeesByBookingId", () => {
     it("returns the attendees in id order", async () => {
       const id = requireBookingId();
@@ -253,6 +350,50 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
       const id = requireBookingId();
 
       expect(await repository.findAttendeesByBookingId(id)).toEqual([]);
+    });
+  });
+
+  describe("findWebPushSubscriptionsByUserIds", () => {
+    it("returns only the most recent subscription of a user", async () => {
+      const uid = requireUserId();
+      const older = await prisma.notificationsSubscriptions.create({
+        data: { userId: uid, subscription: subscriptionJson("older") },
+        select: { id: true },
+      });
+      olderSubscriptionId = older.id;
+      const newer = await prisma.notificationsSubscriptions.create({
+        data: { userId: uid, subscription: subscriptionJson("newer") },
+        select: { id: true },
+      });
+      newerSubscriptionId = newer.id;
+      expect(newer.id).toBeGreaterThan(older.id);
+
+      const result = await repository.findWebPushSubscriptionsByUserIds([uid, UNKNOWN_USER_ID]);
+
+      expect(result).toEqual([{ userId: uid, subscription: subscriptionJson("newer") }]);
+    });
+
+    it("returns one record when the user is listed twice", async () => {
+      const uid = requireUserId();
+      const created = await prisma.notificationsSubscriptions.create({
+        data: { userId: uid, subscription: subscriptionJson("only") },
+        select: { id: true },
+      });
+      olderSubscriptionId = created.id;
+
+      const result = await repository.findWebPushSubscriptionsByUserIds([uid, uid]);
+
+      expect(result).toEqual([{ userId: uid, subscription: subscriptionJson("only") }]);
+    });
+
+    it("returns nothing for users without a subscription", async () => {
+      const result = await repository.findWebPushSubscriptionsByUserIds([requireUserId(), UNKNOWN_USER_ID]);
+
+      expect(result).toEqual([]);
+    });
+
+    it("returns an empty list for an empty input", async () => {
+      expect(await repository.findWebPushSubscriptionsByUserIds([])).toEqual([]);
     });
   });
 });
