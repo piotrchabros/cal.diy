@@ -1,6 +1,9 @@
-// UNVERIFIED AGAINST THE REAL SERVICE (Soniox realtime API): written from documentation and memory and
-// exercised only against fakes. Run the manual check in docs/smoke-test-google-meet.md and record the result in
-// docs/verification-status.md before relying on it, then remove this notice.
+// UNVERIFIED AGAINST THE REAL SERVICE (Soniox realtime API), in part. Verified live on 2026-10-09 with
+// scripts/soniox-smoke.ts (16 s two-speaker English sample at real-time pace): connect and start, streaming
+// 128 ms PCM frames, grouping final tokens into utterances, graceful close, and no reconnect on an auth or model
+// error. Not exercised live, only against fakes: reconnect after an abrupt loss (and the speaker relabelling and
+// offsetting that follow it), retryable error types, long sessions, rate limits, and the bot's real captured
+// meeting audio. See docs/verification-status.md.
 import type { RawData } from "ws";
 import { WebSocket } from "ws";
 import type { Pcm16Frame } from "../audio/AudioFrame";
@@ -9,11 +12,14 @@ import type { Logger } from "../logger";
 import type { SpeechToTextProvider, SttHandlers, SttUtterance } from "./SpeechToTextProvider";
 import type { SonioxToken } from "./sonioxProtocol";
 import {
+  buildSonioxAuthHeaders,
   buildSonioxStartMessage,
+  isRetryableSonioxError,
   SONIOX_DEFAULT_MODEL,
   SONIOX_DEFAULT_WS_URL,
   SONIOX_END_OF_AUDIO_MESSAGE,
   SONIOX_ENDPOINT_TOKEN,
+  SONIOX_KEEPALIVE_MESSAGE,
   sonioxResponseSchema,
 } from "./sonioxProtocol";
 
@@ -23,12 +29,20 @@ const CONNECT_TIMEOUT_MS = 10000;
 const CLOSE_FLUSH_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_UTTERANCE_MS = 30000;
 const DEFAULT_MAX_TOKEN_GAP_MS = 1500;
+// The service may close a connection that gets neither audio nor a keepalive for more than 20 s, and
+// the bot can sit admitted with no remote audio track for longer than that.
+const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 
 const START_FAILURE_MESSAGE =
   "Unable to start Soniox realtime transcription: the connection could not be opened";
 const SECOND_LOSS_MESSAGE = "Soniox realtime connection was lost twice; transcription has stopped";
 
 type ProviderState = "idle" | "connecting" | "open" | "reconnecting" | "closing" | "closed";
+
+type SonioxErrorFrame = {
+  code: number;
+  type: string | undefined;
+};
 
 type PendingUtterance = {
   startMs: number;
@@ -49,9 +63,10 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
   private readonly url: string;
   private readonly model: string;
   private readonly logger: Logger;
-  private readonly createSocket: (url: string) => WebSocket;
+  private readonly createSocket: (url: string, headers: Record<string, string>) => WebSocket;
   private readonly maxUtteranceMs: number;
   private readonly maxTokenGapMs: number;
+  private readonly keepaliveIntervalMs: number;
 
   private handlers: SttHandlers | null = null;
   private socket: WebSocket | null = null;
@@ -60,6 +75,10 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
   private pushedAudioMs = 0;
   private connectionOffsetMs = 0;
   private reconnectUsed = false;
+  private connectionCount = 0;
+  private lastErrorFrame: SonioxErrorFrame | null = null;
+  private lastSentAtMs = 0;
+  private keepaliveTimer: NodeJS.Timeout | null = null;
   private pending: PendingUtterance | null = null;
   private lastEndMs = 0;
   private closePromise: Promise<void> | null = null;
@@ -71,19 +90,23 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     url?: string;
     model?: string;
     logger: Logger;
-    createSocket?: (url: string) => WebSocket;
+    createSocket?: (url: string, headers: Record<string, string>) => WebSocket;
     maxUtteranceMs?: number;
     maxTokenGapMs?: number;
+    keepaliveIntervalMs?: number;
   }) {
     this.apiKey = deps.apiKey;
     this.url = deps.url ?? SONIOX_DEFAULT_WS_URL;
     this.model = deps.model ?? SONIOX_DEFAULT_MODEL;
     this.logger = deps.logger;
-    // No headers and no query string: the key travels only in the first message.
+    // The key travels only in the Authorization header of the upgrade request: never in the query
+    // string, which ends up in access logs, and never in a message.
     this.createSocket =
-      deps.createSocket ?? ((url) => new WebSocket(url, { handshakeTimeout: CONNECT_TIMEOUT_MS }));
+      deps.createSocket ??
+      ((url, headers) => new WebSocket(url, { headers, handshakeTimeout: CONNECT_TIMEOUT_MS }));
     this.maxUtteranceMs = deps.maxUtteranceMs ?? DEFAULT_MAX_UTTERANCE_MS;
     this.maxTokenGapMs = deps.maxTokenGapMs ?? DEFAULT_MAX_TOKEN_GAP_MS;
+    this.keepaliveIntervalMs = deps.keepaliveIntervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS;
   }
 
   start(handlers: SttHandlers): Promise<void> {
@@ -121,6 +144,7 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     // PCM16 little-endian is the host byte order on every supported platform, so the samples go
     // out as they are, without a copy.
     socket.send(Buffer.from(frame.samples.buffer, frame.samples.byteOffset, frame.samples.byteLength));
+    this.lastSentAtMs = performance.now();
   }
 
   close(): Promise<void> {
@@ -137,6 +161,8 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
       return;
     }
 
+    this.stopKeepalive();
+
     if (this.state !== "open" || !socket) {
       this.state = "closing";
       socket?.terminate();
@@ -150,7 +176,8 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     socket.send(SONIOX_END_OF_AUDIO_MESSAGE);
 
     // Messages keep being processed during this wait, so tokens finalised by the end-of-audio
-    // signal are emitted before close() resolves.
+    // signal are emitted before close() resolves. The service closes the socket itself after its
+    // finished response; the "closing" state keeps that from being read as a lost connection.
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, CLOSE_FLUSH_TIMEOUT_MS);
       this.finishFlushWait = () => {
@@ -166,7 +193,9 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
   }
 
   private openConnection(): void {
-    const socket = this.createSocket(this.url);
+    this.lastErrorFrame = null;
+    this.connectionCount += 1;
+    const socket = this.createSocket(this.url, buildSonioxAuthHeaders(this.apiKey));
     this.socket = socket;
 
     socket.on("open", () => this.handleOpen(socket));
@@ -185,14 +214,47 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
       return;
     }
 
-    socket.send(buildSonioxStartMessage({ apiKey: this.apiKey, model: this.model }));
+    socket.send(buildSonioxStartMessage({ model: this.model }));
+    this.lastSentAtMs = performance.now();
     // The service counts from zero on every connection, so later positions are shifted by the
     // audio already pushed.
     this.connectionOffsetMs = Math.round(this.pushedAudioMs);
     this.state = "open";
+    this.scheduleKeepalive(socket, this.keepaliveIntervalMs);
 
     this.startSettlers?.resolve();
     this.startSettlers = null;
+  }
+
+  private scheduleKeepalive(socket: WebSocket, delayMs: number): void {
+    this.stopKeepalive();
+    const timer = setTimeout(() => this.handleKeepaliveTimer(socket), delayMs);
+    // An idle transcription connection must not hold the process open on its own.
+    timer.unref();
+    this.keepaliveTimer = timer;
+  }
+
+  private handleKeepaliveTimer(socket: WebSocket): void {
+    this.keepaliveTimer = null;
+    if (socket !== this.socket || this.state !== "open" || socket.readyState !== WebSocket.OPEN) return;
+
+    // Audio sent since the timer was armed pushes the deadline out instead of re-arming the timer
+    // on every frame.
+    const remainingMs = this.lastSentAtMs + this.keepaliveIntervalMs - performance.now();
+    if (remainingMs > 0) {
+      this.scheduleKeepalive(socket, remainingMs);
+      return;
+    }
+
+    socket.send(SONIOX_KEEPALIVE_MESSAGE);
+    this.lastSentAtMs = performance.now();
+    this.scheduleKeepalive(socket, this.keepaliveIntervalMs);
+  }
+
+  private stopKeepalive(): void {
+    if (!this.keepaliveTimer) return;
+    clearTimeout(this.keepaliveTimer);
+    this.keepaliveTimer = null;
   }
 
   private handleMessage(socket: WebSocket, data: RawData, isBinary: boolean): void {
@@ -215,9 +277,14 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     const response = parsed.data;
 
     if (response.error_code !== undefined) {
-      // The error message can echo request content, so only the code is logged. The service
-      // closes the socket afterwards and the close path takes over.
-      this.logger.error("soniox error response", { errorCode: response.error_code });
+      // The error message can echo request content, so it is never logged. The service closes the
+      // socket afterwards (with a normal close code), and the close path decides by the error type.
+      this.lastErrorFrame = { code: response.error_code, type: response.error_type };
+      this.logger.error("soniox error response", {
+        errorCode: response.error_code,
+        errorType: response.error_type,
+        requestId: response.request_id,
+      });
     }
 
     for (const token of response.tokens ?? []) {
@@ -245,7 +312,7 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
       token.end_ms !== undefined ? this.connectionOffsetMs + Math.round(token.end_ms) : tokenStart,
       tokenStart
     );
-    const speaker = token.speaker ?? null;
+    const speaker = this.toDiarizationLabel(token.speaker);
     const language = token.language ?? null;
 
     const open = this.pending;
@@ -267,6 +334,14 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     // Tokens are sub-word pieces carrying their own leading spaces, so they are joined verbatim.
     this.pending.parts.push(token.text);
     this.pending.endMs = tokenEnd;
+  }
+
+  // The service numbers speakers per connection, so the same raw label after a reconnect may be a
+  // different person. Labels of a replacement connection are prefixed to keep them apart.
+  private toDiarizationLabel(speaker: string | undefined): string | null {
+    if (speaker === undefined) return null;
+    if (this.connectionCount <= 1) return speaker;
+    return `${this.connectionCount}:${speaker}`;
   }
 
   private flushPending(): void {
@@ -309,7 +384,23 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
       return;
     }
 
+    this.stopKeepalive();
     this.flushPending();
+
+    const errorFrame = this.lastErrorFrame;
+    if (errorFrame && !isRetryableSonioxError(errorFrame.type)) {
+      this.state = "closed";
+      this.socket = null;
+      this.logger.error("soniox reported an error a reconnect cannot cure, transcription stopped", {
+        errorCode: errorFrame.code,
+        errorType: errorFrame.type,
+        reconnect: false,
+      });
+      this.reportError(
+        `Soniox realtime transcription stopped: the service reported error ${errorFrame.code} (${errorFrame.type ?? "unknown"})`
+      );
+      return;
+    }
 
     if (!this.reconnectUsed) {
       this.reconnectUsed = true;
@@ -326,8 +417,12 @@ export class SonioxRealtimeProvider implements SpeechToTextProvider {
     this.state = "closed";
     this.socket = null;
     this.logger.error("soniox connection lost twice, transcription stopped", { reconnect: false });
+    this.reportError(SECOND_LOSS_MESSAGE);
+  }
+
+  private reportError(message: string): void {
     try {
-      this.handlers?.onError(new Error(SECOND_LOSS_MESSAGE));
+      this.handlers?.onError(new Error(message));
     } catch {
       this.logger.error("soniox error handler failed");
     }

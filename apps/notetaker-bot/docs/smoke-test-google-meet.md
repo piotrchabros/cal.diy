@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-Nothing in this document has been run by the people who wrote the code. Every command, expected result and selector below comes from documentation, memory and the source files, and none of it has been tried against Google Meet, Chrome or Soniox. Read "expected" as "expected (unconfirmed)". The register that records results is [verification-status.md](verification-status.md). It is empty until a person fills it in after this check (section 10).
+Nothing in this document has been run by the people who wrote the code. Every command, expected result and selector below comes from documentation, memory and the source files, and none of it has been tried against Google Meet or Chrome. The Soniox provider was run on 2026-10-09 against the real Soniox service with a sample audio file only (see the register), not in a meeting. Read "expected" as "expected (unconfirmed)". The register that records results is [verification-status.md](verification-status.md). It is empty until a person fills it in after this check (section 10).
 
 Where a name, route or behaviour below could not be confirmed in the repository, the text says so and tells you to confirm it first.
 

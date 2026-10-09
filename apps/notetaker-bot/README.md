@@ -23,7 +23,7 @@ drivers, the Soniox speech-to-text provider, and the child-process and Docker ru
 What was run here: unit tests against fakes, and a loopback test of the signed contract in both
 directions (`src/contractLoop.test.ts`) with a scripted meeting.
 
-What was not run here: any real meeting, browser, Soniox request, Docker image or container. The
+What was not run here: any real meeting, browser, Docker image or container. Soniox was contacted on 2026-10-09 with a sample audio file only; see docs/verification-status.md. The
 manual checks for those are [docs/smoke-test-google-meet.md](docs/smoke-test-google-meet.md),
 [docs/smoke-test-microsoft-teams.md](docs/smoke-test-microsoft-teams.md) and
 [docs/deployment.md](docs/deployment.md).

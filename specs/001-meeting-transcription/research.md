@@ -422,7 +422,7 @@ The plan proceeds on the recommended default for each question below unless the 
 | 15 | API v2 location changes bypass the hook. | `TURNED_OFF` at dispatch. | PR 18 (booking hooks) scope |
 | 16 | Flag granularity. | Global plus per-user; `checkIfUserHasFeature` semantics to be confirmed. | PR 1 (flag seed) and PR 7 (flag checks) |
 | 17 | Seated events. | Supported; the notice goes to all attendees. | PR 15 (attendee notification emails) |
-| 18 | Speaker attribution feasibility on Meet and Teams, and Soniox language/diarization output. | Spike in B3 before committing to SC-005. | Committing to SC-005; PR B3 |
+| 18 | Speaker attribution feasibility on Meet and Teams. Soniox language and diarization output was confirmed on 2026-10-09 against the real API with a clean two-speaker sample (per-token `speaker` and `language`; see `apps/notetaker-bot/docs/verification-status.md`); it has not been measured on audio captured from a meeting. | Spike in B3 before committing to SC-005. | Committing to SC-005; PR B3 |
 | 19 | Several transcripts on one booking after a retry. | Show the latest session; earlier attempts in a collapsed list. | PR 20 (results page) |
 | 20 | Give-up reason when the bot service cannot be reached before the deadline. A clearer "notetaker unavailable" reason would add a ninth value to FR-024's fixed list, which is a spec change. | `INTERRUPTED`. | PR 9 (dispatch and watchdog service); any change to FR-024's list |
 | 21 | Late-added attendees (guests, new seats). Notifying them when they are added needs two more edits to shared booking paths (`addGuests`, `handleSeats`). | Notice at dispatch, about two minutes before start. | PR 15 (attendee notification emails) and PR 18 (booking hooks) scope |
