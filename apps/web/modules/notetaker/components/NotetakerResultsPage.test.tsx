@@ -311,3 +311,158 @@ describe("NotetakerResultsPage", () => {
     expect(mocks.useNotetakerState).toHaveBeenCalledWith("uid-1");
   });
 });
+
+vi.mock("@calcom/web/modules/notetaker/components/NotetakerResultsActions", () => ({
+  NotetakerResultsActions: (props: {
+    bookingUid: string;
+    viewerRole: string;
+    sharedWithAttendees: boolean;
+    sessionStatus: string | null;
+  }) => (
+    <div
+      data-testid="results-actions-stub"
+      data-booking-uid={props.bookingUid}
+      data-viewer-role={props.viewerRole}
+      data-shared-with-attendees={String(props.sharedWithAttendees)}
+      data-session-status={String(props.sessionStatus)}
+    />
+  ),
+}));
+
+vi.mock("@calcom/web/modules/notetaker/components/NotetakerActivityList", () => ({
+  NotetakerActivityList: (props: { bookingUid: string }) => (
+    <div data-testid="activity-list-stub" data-booking-uid={props.bookingUid} />
+  ),
+}));
+
+const DELETED_AT = "2026-01-02T00:00:00.000Z";
+
+describe("NotetakerResultsPage sharing, export, deletion and activity", () => {
+  it("gives a host with a transcript the actions with the four props and the activity list", () => {
+    renderPage(buildState({ sharedWithAttendees: true }));
+
+    const actions = screen.getByTestId("results-actions-stub");
+    expect(actions).toHaveAttribute("data-booking-uid", "uid-1");
+    expect(actions).toHaveAttribute("data-viewer-role", "HOST");
+    expect(actions).toHaveAttribute("data-shared-with-attendees", "true");
+    expect(actions).toHaveAttribute("data-session-status", "READY");
+    expect(screen.getByTestId("activity-list-stub")).toHaveAttribute("data-booking-uid", "uid-1");
+  });
+
+  it("passes the status of the session, not the booking status, to the actions", () => {
+    renderPage(buildState({ status: "SCHEDULED", session: buildSession({ status: "FAILED" }) }));
+
+    const actions = screen.getByTestId("results-actions-stub");
+    expect(actions).toHaveAttribute("data-session-status", "FAILED");
+    expect(actions).toHaveAttribute("data-shared-with-attendees", "false");
+  });
+
+  it("passes a null session status when there is no session", () => {
+    renderPage(buildState({ session: null }));
+
+    expect(screen.getByTestId("results-actions-stub")).toHaveAttribute("data-session-status", "null");
+  });
+
+  it("puts the actions first in the transcript block and the activity list last on the page", () => {
+    renderPage(partialState("INTERRUPTED"));
+
+    const actions = screen.getByTestId("results-actions-stub");
+    const activity = screen.getByTestId("activity-list-stub");
+    expect(
+      screen.getByTestId("notetaker-status-badge").compareDocumentPosition(actions) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      actions.compareDocumentPosition(screen.getByTestId("notetaker-ended-early-label")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("transcript-stub").compareDocumentPosition(activity) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(activity.parentElement?.lastElementChild).toBe(activity);
+  });
+
+  it("gives an attendee the actions as an attendee and no activity list", () => {
+    renderPage(buildState({ viewerRole: "ATTENDEE", sharedWithAttendees: true }));
+
+    expect(screen.getByTestId("results-actions-stub")).toHaveAttribute("data-viewer-role", "ATTENDEE");
+    expect(screen.getByTestId("summary-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-stub")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-list-stub")).not.toBeInTheDocument();
+  });
+
+  it("shows a host the deleted statement and the activity list, and nothing of the results", () => {
+    renderPage(buildState({ transcript: null, session: buildSession({ resultsDeletedAt: DELETED_AT }) }));
+
+    expect(screen.getByTestId("notetaker-results-deleted").textContent).toBe("notetaker_results_deleted");
+    expect(screen.queryByText("notetaker_transcript_empty")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("summary-stub")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("transcript-stub")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("results-actions-stub")).not.toBeInTheDocument();
+
+    const activity = screen.getByTestId("activity-list-stub");
+    expect(activity).toHaveAttribute("data-booking-uid", "uid-1");
+    expect(activity.parentElement?.lastElementChild).toBe(activity);
+  });
+
+  it("keeps the started-late line above the deleted statement", () => {
+    renderPage(
+      buildState({
+        transcript: null,
+        session: buildSession({ startedLate: true, resultsDeletedAt: DELETED_AT }),
+      })
+    );
+
+    expect(
+      screen
+        .getByTestId("notetaker-started-late")
+        .compareDocumentPosition(screen.getByTestId("notetaker-results-deleted")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("shows an attendee the deleted statement without the activity list", () => {
+    renderPage(
+      buildState({
+        viewerRole: "ATTENDEE",
+        transcript: null,
+        session: buildSession({ resultsDeletedAt: DELETED_AT }),
+      })
+    );
+
+    expect(screen.getByTestId("notetaker-results-deleted")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-list-stub")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty text when there is no transcript and nothing was deleted", () => {
+    renderPage(buildState({ transcript: null }));
+
+    expect(screen.getByText("notetaker_transcript_empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("results-actions-stub")).not.toBeInTheDocument();
+    expect(screen.getByTestId("activity-list-stub")).toBeInTheDocument();
+  });
+
+  it("keeps the empty text when there is no transcript and no session", () => {
+    renderPage(buildState({ status: null, session: null, transcript: null }));
+
+    expect(screen.getByText("notetaker_transcript_empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+  });
+
+  it("shows no deleted statement while a transcript exists", () => {
+    renderPage(buildState({ session: buildSession({ resultsDeletedAt: DELETED_AT }) }));
+
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+    expect(screen.getByTestId("transcript-stub")).toBeInTheDocument();
+  });
+
+  it("still renders the transcript block when the feature is disabled for the reader", () => {
+    renderPage(buildState({ featureEnabled: false, viewerRole: "ATTENDEE", sharedWithAttendees: true }));
+
+    expect(screen.getByTestId("results-actions-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("summary-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-stub")).toBeInTheDocument();
+  });
+});

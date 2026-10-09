@@ -4,6 +4,7 @@ import type { NotetakerIneligibilityReasonDto } from "@calcom/lib/dto/NotetakerS
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { showToast } from "@calcom/ui/components/toast";
+import { downloadTextFile } from "@calcom/web/modules/notetaker/lib/downloadTextFile";
 
 const INELIGIBILITY_REASONS: readonly string[] = [
   "FEATURE_DISABLED",
@@ -69,11 +70,48 @@ export function useNotetakerMutations() {
   const regenerateSummary = trpc.viewer.notetaker.regenerateSummary.useMutation({
     onSuccess: async () => {
       await utils.viewer.notetaker.getState.invalidate();
+      await utils.viewer.notetaker.getActivity.invalidate();
     },
     onError: (error) => {
       showToast(getErrorMessage(error.message), "error");
     },
   });
 
-  return { setEnabled, stop, regenerateSummary };
+  const setSharing = trpc.viewer.notetaker.setSharing.useMutation({
+    onSuccess: async (data) => {
+      await utils.viewer.notetaker.getState.invalidate();
+      await utils.viewer.notetaker.getActivity.invalidate();
+      showToast(
+        t(data.sharedWithAttendees ? "notetaker_share_success" : "notetaker_stop_sharing_success"),
+        "success"
+      );
+    },
+    onError: (error) => {
+      showToast(getErrorMessage(error.message), "error");
+    },
+  });
+
+  const exportResults = trpc.viewer.notetaker.export.useMutation({
+    onSuccess: async (data) => {
+      downloadTextFile(data);
+      await utils.viewer.notetaker.getActivity.invalidate();
+    },
+    onError: (error) => {
+      showToast(getErrorMessage(error.message), "error");
+    },
+  });
+
+  const deleteResults = trpc.viewer.notetaker.deleteResults.useMutation({
+    onSuccess: async (data, variables) => {
+      utils.viewer.notetaker.getState.setData({ bookingUid: variables.bookingUid }, data);
+      await utils.viewer.notetaker.listPassages.invalidate();
+      await utils.viewer.notetaker.getActivity.invalidate();
+      showToast(t("notetaker_delete_results_success"), "success");
+    },
+    onError: (error) => {
+      showToast(getErrorMessage(error.message), "error");
+    },
+  });
+
+  return { setEnabled, stop, regenerateSummary, setSharing, exportResults, deleteResults };
 }
