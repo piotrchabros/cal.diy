@@ -2626,7 +2626,11 @@ export class RegularBookingService implements IBookingService {
 
       const bookingEventHandler = this.deps.bookingEventHandler;
 
-      if (!isRecurringBooking) {
+      if (isRecurringBooking) {
+        await bookingEventHandler.onRecurringOccurrenceCreated({
+          payload: bookingCreatedPayload,
+        });
+      } else {
         if (originalRescheduledBooking) {
           const bookingRescheduledPayload: BookingRescheduledPayload = {
             ...bookingCreatedPayload,
