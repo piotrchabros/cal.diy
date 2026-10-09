@@ -306,6 +306,26 @@ export async function editLocationHandler({ ctx, input, actionSource }: EditLoca
     references: updatedResult.referencesToCreate,
   });
 
+  // The notetaker must never fail a location change. Its modules are loaded here rather than at the top of
+  // the file so that a failing import or an invalid NOTETAKER_* variable is logged like any other error.
+  try {
+    const { getNotetakerChoiceService } = await import(
+      "@calcom/features/notetaker/di/NotetakerChoiceService.container"
+    );
+    const { turnedOff } = await getNotetakerChoiceService().onBookingLocationChanged({
+      bookingId: booking.id,
+    });
+    if (turnedOff) {
+      // A bot already sent inside the lead window would otherwise still join the meeting the host moved from.
+      const { getNotetakerDispatchService } = await import(
+        "@calcom/features/notetaker/di/NotetakerDispatchService.container"
+      );
+      await getNotetakerDispatchService().stopForBooking({ bookingUid: booking.uid, reason: "DISABLED" });
+    }
+  } catch (error) {
+    logger.error("Error applying the location change to the notetaker", safeStringify(error));
+  }
+
   try {
     await sendLocationChangeEmailsAndSMS(
       { ...evt, additionalInformation },
