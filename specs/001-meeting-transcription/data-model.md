@@ -124,7 +124,7 @@ Notetaker Session: one attempt by the notetaker to attend one booking's meeting,
 | meetingUrl | String | no | | Resolved at dispatch (FR-007) |
 | botProvider | NotetakerBotProvider | no | | |
 | externalRef | String | yes | | |
-| displayName | String | no | | |
+| displayName | String | no | | The name requested in the join request. In Google Meet account mode participants see the bot account's name instead |
 | scheduledStartAt | DateTime | no | | |
 | dispatchedAt | DateTime | no | now() | |
 | joinRequestedAt | DateTime | yes | | |
@@ -152,6 +152,8 @@ Notetaker Session: one attempt by the notetaker to attend one booking's meeting,
   - `interruptedAtMs` is set by `session.reconnecting` to its `atMs`, on the same clock as passage `startMs` (milliseconds since transcription started at admission). `session.ended.interruptedAtMs` then overwrites it: null when the rejoin succeeded, the same value when `endReason` is `INTERRUPTED`. On a watchdog interruption with the field still null, finalize sets it to the last passage's `endMs`, or 0. `session.reconnecting` causes no status change.
   - `startedLate` is true when `dispatchedAt > scheduledStartAt + 60 s`.
   - `meetingUrl` is resolved at dispatch, from the link current at that moment (FR-007).
+
+Phase 11 adds no model, column or enum value. The calendar invite stores nothing.
 
 ### `NotetakerTranscript`
 

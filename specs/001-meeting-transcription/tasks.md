@@ -384,6 +384,33 @@
 
 ---
 
+## Phase 11: Google Meet account mode (app side)
+
+**Purpose**: Google Meet refused the bot as a guest on 2026-10-09 and admits it only signed in to a dedicated Google account (research.md Decision 14). The app adds that account to the booking's Google Calendar event at dispatch so that Meet lets it in directly, and the documents say which name participants see.
+
+**Independent Test**: With `NOTETAKER_GOOGLE_ACCOUNT_EMAIL` set, a booking whose Meet link the app created on Google Calendar shows the account in the event's guest list about two minutes before the start and the bot joins without being admitted; with the variable empty, or a pasted Meet link, nothing is written to any calendar and the host is prompted to admit the bot.
+
+- [X] T204 [P] Add tests to `packages/features/notetaker/lib/config.test.ts` for `NOTETAKER_GOOGLE_ACCOUNT_EMAIL`: null when unset or blank, trimmed and lower-cased when valid, an error that names the variable and not the value when it is not an email, and no effect on `isNotetakerBotProviderUsable` (PR 23)
+- [X] T205 Add `googleAccountEmail` to `NotetakerConfig` in `packages/features/notetaker/lib/config.ts`, add the variable to `turbo.json` `globalEnv` and to `.env.example`, and add the field to the two full config literals in `packages/features/notetaker/services/NotetakerChoiceService.test.ts` and `packages/trpc/server/routers/publicViewer/notetakerDisclosure.handler.test.ts` (PR 23)
+- [X] T206 [P] Add `packages/features/notetaker/repositories/PrismaBookingNotetakerRepository.references.integration-test.ts`, guarded to the scratch database like the quickstart walk-through, for `findReferencesByBookingIdAndType`: only non-deleted rows of the asked type, ordered by id, five columns, own rows deleted by id (PR 24)
+- [X] T207 [P] Add `NotetakerBookingReferenceRecord` and `findReferencesByBookingIdAndType` to `packages/features/notetaker/repositories/interfaces/IBookingNotetakerRepository.ts`, implement it with `select` in `packages/features/notetaker/repositories/PrismaBookingNotetakerRepository.ts` and in `packages/features/notetaker/tests/InMemoryNotetakerRepositories.ts` with a `setReferences` seeding method (PR 24)
+- [X] T208 [P] Add `packages/features/notetaker/calendar/GoogleCalendarGuestGateway.test.ts` with a hand-written fake events client: credential unavailable, cancelled event, conference link different from the meeting link, omitted guest list, guest already present (case-insensitive), guest appended with the existing guest objects untouched and `sendUpdates: "none"`, provider error propagated, and `isSameMeetingLink` cases (PR 24)
+- [X] T209 [P] Create `packages/features/notetaker/calendar/INotetakerCalendarGuestGateway.ts`, `packages/features/notetaker/calendar/GoogleCalendarGuestGateway.ts` (read the event, compare its conference link, patch the guest list only) and `packages/features/notetaker/calendar/googleEventsClient.ts` (the host's Google Calendar client from a credential id, through `CredentialRepository.findCredentialForCalendarServiceById` and `createGoogleCalendarServiceWithGoogleType`; no shared file is edited) (PR 24)
+- [X] T210 Add `packages/features/notetaker/services/NotetakerCalendarInviteService.test.ts`: one case per outcome (`INVITED`, `ALREADY_INVITED`, `NOT_CONFIGURED` for an unset email and for a provider other than self-hosted, `NOT_GOOGLE_MEET`, `NO_CALENDAR_EVENT`, `NOT_THE_MEETING_EVENT`, `CREDENTIAL_UNAVAILABLE`, `FAILED` on a rejection and on the 8-second limit), the second reference tried after the first, and log lines without link or email (PR 25)
+- [X] T211 Create `packages/features/notetaker/services/NotetakerCalendarInviteService.ts` (`ensureBotInvited`, never rejects), add four tokens to `packages/features/notetaker/di/tokens.ts`, and create `packages/features/notetaker/di/NotetakerCalendarGuestGateway.module.ts` (factory binding, Google client loaded by dynamic import) and `packages/features/notetaker/di/NotetakerCalendarInviteService.module.ts` (PR 25)
+- [X] T212 Add tests to `packages/features/notetaker/services/NotetakerDispatchService.test.ts`: the invite is called once per dispatch with booking id, session id, platform and meeting link and before the join request; a rejecting invite does not stop the join; no invite when no session is prepared, on give-up or from the watchdog; a retried dispatch invites again (PR 25)
+- [X] T213 Call the invite from `dispatchBooking` in `packages/features/notetaker/services/NotetakerDispatchService.ts` between session preparation and the join request, add the dependency to `packages/features/notetaker/di/NotetakerDispatchService.module.ts`, and pass a no-op invite service where the service is built by hand in `packages/features/notetaker/services/NotetakerDispatchService.integration-test.ts` and `packages/features/notetaker/tests/quickstartHarness.ts` (FR-025 fallback unchanged) (PR 25)
+- [X] T214 [P] Amend `specs/001-meeting-transcription/spec.md`: FR-012, User Story 2 acceptance scenario 2, and the Assumptions "Admission", "Dependency" and the new "Notetaker identity on Google Meet" (FR-012) (PR 26)
+- [X] T215 [P] Amend `specs/001-meeting-transcription/contracts/bot-control-api.md` (`displayName`, the first behaviour bullet, the new section on what the app does before a join request on Google Meet), `specs/001-meeting-transcription/contracts/notifications.md` (in-meeting strings, attendee-notice recipients) and the `displayName` row of `specs/001-meeting-transcription/data-model.md` (FR-012, FR-013, FR-014) (PR 26)
+- [X] T216 [P] Record the owner's run of 2026-10-09 in `specs/001-meeting-transcription/research.md` (open question 3 answered, Decision 14, risk 2, Decision 7 alternative, "Not verified") and update `specs/001-meeting-transcription/plan.md` (summary, source tree, delivery sequence 23 to 26) and the variable list of `specs/001-meeting-transcription/quickstart.md` (PR 26)
+- [X] T217 [P] Update `apps/notetaker-bot/docs/smoke-test-google-meet.md` section 8 (step 5 on FR-012, "Letting the bot in" item 3 and its two observed bullets) and the "Open after this run" sentence of `apps/notetaker-bot/docs/verification-status.md` where they describe the application or quote FR-012 (PR 26)
+- [X] T218 Run the Phase 11 gate: `packages/lib`, `packages/features`, `packages/emails`, tRPC server and `apps/web` type-checks against their baselines after `cd packages/trpc && yarn build:server`, `yarn type-check:ci --force`, Biome on the changed paths, the notetaker unit suite, and the notetaker integration suite against the scratch database only (PR 26)
+- [ ] T219 With the owner: on a real Google Meet booking created by the app on Google Calendar, with `NOTETAKER_GOOGLE_ACCOUNT_EMAIL` set and the bot in account mode, confirm that the account appears in the event's guest list before the start and the bot joins through "Join now" without being admitted; repeat with a pasted Meet link and confirm "Ask to join" and the admit prompt; repeat on one occurrence of a recurring booking; record the result in `apps/notetaker-bot/docs/verification-status.md` and remove the marker comment from `packages/features/notetaker/calendar/googleEventsClient.ts` (FR-012, FR-025) (PR 26)
+
+**Checkpoint**: With the variable unset nothing in the app behaves differently from Phase 10. With it set, a Meet meeting the app created admits the notetaker without a person; every other case falls back to the admit prompt.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -393,6 +420,7 @@
 - **User Stories (Phases 3 to 8)**: all depend on Foundational. They are written to be done in priority order, because later stories extend services first built in User Story 1 (see below).
 - **Bot service (Phase 9)**: depends only on T018 and approval 3. It runs in parallel with Phases 3 to 8. The self-hosted path additionally needs T046.
 - **Polish (Phase 10)**: T194 needs US1 and US3; T195 needs US6; T196 needs US5; T198 needs all six stories and T182; T203 needs staging traffic.
+- **Google Meet account mode (Phase 11)**: needs Phases 3 and 9; T219 needs the bot in account mode and a real Google account.
 
 ### User Story Dependencies
 
@@ -446,6 +474,10 @@
 | 21a | add event-type default toggle | T158 |
 | 21b | add booking-page disclosure | T140, T149, T157, T159 |
 | 22 | add e2e with fake bot | T194-T202 |
+| 23 | read the bot's Google account email | T204, T205 |
+| 24 | add calendar guest gateway and references | T206-T209 |
+| 25 | invite the bot's account at dispatch | T210-T213 |
+| 26 | record account mode and amend FR-012 | T214-T219 |
 | B1 | scaffold service, contract client and fake adapter | T176-T182 |
 | B2 | add meeting runner state machine and timers | T183-T186 |
 | B3 | add audio capture, Soniox provider and speaker attribution | T175, T187-T190 |
@@ -620,8 +652,8 @@ Each functional requirement of spec.md and the tasks that implement or verify it
 | FR-009 | Speaker-attributed, timestamped passages | T010, T013, T018, T030, T058, T059, T061, T067, T070, T079, T082, T088, T187, T188, T190 |
 | FR-010 | Leave conditions and limits | T009, T020, T056, T069, T121, T133, T185, T186 |
 | FR-011 | Partial content preserved and labelled | T009, T038, T039, T058, T059, T062, T067, T070, T077, T106, T123, T130, T133, T136, T198 |
-| FR-012 | Identifying display name | T006, T093, T101, T186, T191 |
-| FR-013 | In-meeting notice | T006, T093, T101, T185, T186, T191 |
+| FR-012 | Identifying display name | T006, T093, T101, T186, T191, T214, T215, T219 |
+| FR-013 | In-meeting notice | T006, T093, T101, T185, T186, T191, T215 |
 | FR-014 | Advance notice to attendees | T091-T093, T096-T099, T101, T137, T140, T143, T145, T149, T157, T159, T196 |
 | FR-015 | Removal or host stop ends it; no rejoin | T039, T091, T093-T096, T100, T102-T105, T185, T186 |
 | FR-016 | No acting beyond join, notice, leave | T179, T185, T186, T191, T193 |
@@ -633,7 +665,7 @@ Each functional requirement of spec.md and the tasks that implement or verify it
 | FR-022 | Request the summary again | T011, T033, T108, T114, T117-T120 |
 | FR-023 | Exactly one status | T007, T009, T016, T038, T039, T055, T058, T065-T067, T080, T083, T085, T086, T134, T135 |
 | FR-024 | Specific failure reason and host notice | T007, T009, T016, T038, T039, T059, T067, T070, T102, T106, T121-T125, T127-T131, T133-T136 |
-| FR-025 | Prompt the host to admit | T122, T124-T126, T128, T129, T135 |
+| FR-025 | Prompt the host to admit | T122, T124-T126, T128, T129, T135, T213, T219 |
 | FR-026 | Hosts only unless shared | T040, T041, T061, T079, T080, T090, T161, T165, T174, T195 |
 | FR-027 | Share with attendees and revoke | T011, T040, T041, T161, T163-T165, T169-T171, T174, T195 |
 | FR-028 | Permanent delete | T161, T164, T166, T171, T174 |

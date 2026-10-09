@@ -62,7 +62,7 @@ Account mode (password route, a dedicated Google Workspace account, interface la
 | Account 9, not invited | "Ask to join"; admission not tested |
 | Account 11, capture script | not run (password route used) |
 
-Open after this run: speaker names (`activeSpeakerName`), the leave click (a probable cause was found afterwards by reading the code, the launcher's Playwright signal handlers, now disabled; not confirmed on the real page; the leave routine now logs whether the control was not visible or was clicked, and browser errors keep their class name in `errorName`; speaker names have no code fix, the wiring was read end to end and found intact, the cause is on the real page and awaits the Meet probe; both stay open until the probe or the bot is run again), the guest refusal of automated browsers (owner decision, research.md open question 3), and the checks marked not run.
+Open after this run: speaker names (`activeSpeakerName`), the leave click (a probable cause was found afterwards by reading the code, the launcher's Playwright signal handlers, now disabled; not confirmed on the real page; the leave routine now logs whether the control was not visible or was clicked, and browser errors keep their class name in `errorName`; speaker names have no code fix, the wiring was read end to end and found intact, the cause is on the real page and awaits the Meet probe; both stay open until the probe or the bot is run again), the guest refusal of automated browsers (decided: the app supports account mode and invites the account itself, research.md Decision 14; that the app's own invite is honoured by Meet is unchecked, tasks.md T219), and the checks marked not run.
 
 ## Manual checks
 

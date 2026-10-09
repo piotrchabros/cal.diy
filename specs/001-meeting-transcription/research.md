@@ -12,7 +12,7 @@ The user's tech-stack note (`.herdr-web-ui/meeting-bot-tech-stack-20261008-21342
 | Storage: Postgres plus S3 for audio | Postgres only. No audio or video is persisted anywhere and no object storage is used. | FR-030 forbids retaining audio or video once the transcript is produced. The bot forwards PCM frames to speech-to-text and discards them (Decisions 4 and 6). |
 | Audio capture assumes per-participant tracks ("Per-participant tracks make diarization easy") | Per-participant tracks are treated as an unverified risk and a spike runs before SC-005 is promised. Speaker attribution combines contributing-source info, the meeting UI's active-speaker timeline and provider diarization as a fallback. | The designer believes Meet sends a small number of mixed "loudest speaker" streams, and Teams web is similar. This is unverified (see Risks to resolve early). |
 | Scheduling through the Google Calendar API (and Microsoft Graph for Teams) to discover meeting links | Meeting links come from the application's own bookings (`Booking.metadata.videoCallUrl`, `BookingReference.meetingUrl`, `location`). No calendar API is called to discover meetings. | The spec limits eligible meetings to bookings made through this application (FR-001, Assumptions: "Eligible meetings"). Events that exist only on connected external calendars are out of scope. |
-| Admission gotcha: use a signed-in Google account for the bot instead of joining anonymously | The plan keeps this for Google Meet (open question 3 asks who owns the account and whether automating it is acceptable). Teams joins as a guest. | The note's mitigation is retained; the account ownership and terms-of-service question is open. |
+| Admission gotcha: use a signed-in Google account for the bot instead of joining anonymously | Kept, and confirmed by the owner's run of 2026-10-09: Google Meet refuses the bot as an anonymous guest and admits it signed in to a dedicated account. Teams joins as a guest. | Account ownership is settled (a dedicated Workspace account of the operator); whether automating it is acceptable under Google's terms stays the operator's risk. |
 | Build vs. buy: own bot long-term, Recall.ai for fast validation | Build the own bot, but sequence all app-side work against `FakeBotGateway`. A `RecallBotGateway` is not built in v1 and remains a contingency behind `INotetakerBotGateway`. | The app side is identical either way, and the own bot keeps audio out of a third-party recorder (FR-030) (Decision 3). |
 
 ## Codebase findings
@@ -60,6 +60,11 @@ These items were not checked. The plan must not treat any of them as fact.
 - The translation process for the other 43 locales.
 - Soniox and Recall.ai API details.
 - `schedules.task` running against this project's Trigger.dev plan.
+- Whether Meet lets the bot's account in when the app's own API patch adds it (`sendUpdates: "none"`, no response status, about two minutes or a few seconds before the bot arrives). The owner's run invited the account by hand in Google Calendar; tasks.md T219 is the check.
+- Whether a guest of one instance of a recurring Google event is treated by Meet as invited, and whether patching `attendees` on an instance id behaves like patching a single event.
+- The Google Calendar API behaviour the guest gateway assumes: that `events.patch` with only `attendees` leaves the rest of the event alone, that `events.get` returns the full guest list, that `hangoutLink` equals the stored link up to query string and case, and what the API answers for a calendar the credential can no longer write to. No request was sent to Google.
+- Whether a host's Workspace settings can make Meet ask an invited external account to knock, and what the bot then sees.
+- What an added guest changes for the people in the meeting, and what the bot account's calendar and inbox receive.
 
 ## Decisions
 
@@ -230,7 +235,7 @@ Pure functions in `packages/features/notetaker/lib/eligibility.ts`.
 **Alternatives considered**
 
 - Location type only: wrong after the fallback.
-- App-store credential checks: irrelevant, since the bot joins as a guest.
+- App-store credential checks for eligibility: not used. Eligibility depends on the link only. Since Phase 11 the host's Google Calendar credential is used for one thing, adding the bot's account to the event's guest list at dispatch (Decision 14).
 
 ### 8. Booking lifecycle hooks
 
@@ -378,10 +383,61 @@ An API v2 location change does not call the hook, and this is handled at dispatc
 - Testing only against real Meet/Teams meetings: not reproducible in CI and subject to selector breakage.
 - Deep mocks of repositories: rejected by `agents/rules/testing-mocking.md` in favour of simple fakes.
 
+### 14. Google Meet account mode and the calendar invite
+
+Observed on 2026-10-09 (Piotr Chabros; Chrome 155.0.8059.39, macOS, Meet in English (US), a dedicated Google Workspace account). Source: `apps/notetaker-bot/docs/verification-status.md`, section "Google Meet check, 2026-10-09", and `apps/notetaker-bot/docs/smoke-test-google-meet.md` section 8.
+
+- Guest join is refused before any join screen ("You can't join this video call"); the session ends `NOT_ADMITTED`. The same link in a normal Incognito window offered "Ask to join".
+- Account mode works (password route): admitted, notice posted once, passages, removal, stop, alone timeout and reconnect all pass.
+- The account invited to the calendar event joins directly through "Join now".
+- The account not invited gets "Ask to join"; admission by a person was not tested.
+- The meeting shows the account's name; the bot logs once that `displayName` cannot be applied.
+- The invitation in that run was made by hand in Google Calendar.
+
+**Decision**
+
+- The app invites the bot's account at dispatch only, about `NOTETAKER_JOIN_LEAD_SECONDS` (default 120 s) before the start, immediately before the join request.
+- The invite is a read followed by a patch of the guest list only, on the booking's own Google Calendar event, with the host's stored credential.
+- It happens only when the event's own conference link is the meeting link.
+- The patch uses `sendUpdates: "none"`, so Google mails nobody.
+- No `Attendee` row is written.
+- It is configured by `NOTETAKER_GOOGLE_ACCOUNT_EMAIL`; unset means nothing changes.
+- The step is limited to 8 seconds and can never fail the join request.
+- Every other outcome falls back to "Ask to join" and the admit prompt (FR-025).
+- The guest entry is not removed afterwards.
+- FR-012 is amended, because in account mode Meet shows the account's own name instead of the display name in the join request.
+
+**Rationale**
+
+- A patch of `attendees` leaves every other field of the event alone, and the read before it proves the event's conference is the link the bot will join.
+- Dispatch is the one place all cases meet, whatever enabled the notetaker (host, event-type default, reschedule copy, series) and however the booking was created (web, API v2). A guest added earlier, at enable time, would be dropped silently by any later app update of the event, and would have to be removed on every path that turns the choice off. Added at dispatch, the guest is added after the last app update that matters and never for a meeting the bot is not sent to, with no hook in shared code.
+- The cost is timing: the guest list changes about two minutes before the start, or seconds before the join when the host enables late. Whether Meet honours a guest added that late is not verified (see Not verified). If the check shows it does not, the remedy is a second call at enable time plus a removal path; that is an owner decision, not built now.
+- Google sends no invitation email, because every calendar write of the app uses `sendUpdates: "none"`. The event does appear in the bot account's calendar, and the other guests see one more guest on it.
+
+**Alternatives considered**
+
+- The existing add-guests flow: it writes an `Attendee` row, which every reader of attendees then treats as a person (notices, emails, webhooks, seats, exports), so it needs a dozen suppressions in shared code, and it cannot be reached from the sweep because it is a tRPC handler.
+- `EventManager.updateCalendarAttendees` with an extra guest: it is a full replace of the host's event from a rebuilt event two minutes before the meeting, and the only builder omits team and conference data.
+- No invite, a person admits the bot every time: kept as the fallback, rejected as the only mechanism by the owner.
+
+**Not covered**
+
+1. Pasted Meet links (location is a `https://meet.google.com/...` URL). The link belongs to a meeting the app did not create; the app's calendar event, if there is one, has no conference or a different one, so the invite is skipped. The bot asks to join and a participant admits it, or the host invites the account by hand in the calendar that owns the link.
+2. Bookings with no Google Calendar event the app wrote: platform clients with calendar events disabled, a failed event creation, a host whose calendar connection was removed.
+3. Delegation credentials (a reference with a delegation credential and no positive credential id). Supporting them needs the service-account lookup, a separate change.
+4. A calendar the app cannot write to at that moment (revoked or invalid credential, event deleted or moved in Google, Google API error, more than 8 seconds). It is logged and the bot asks to join. The booking, the enable and the join request are never failed or blocked by it.
+5. An app update of the event after dispatch (a guest added during the meeting, a late reschedule): the entry is dropped. A bot already in the meeting is unaffected; a bot that reconnects afterwards asks to join.
+6. A persistent record of the outcome. It is logged, not stored: there is no column or enum value for it and adding one is a schema change. The host needs no record to act: an uninvited bot produces the "waiting to be admitted" status and the admit prompt.
+7. Microsoft Teams (the bot joins as a guest; nothing to do) and non-Google calendars (a Meet location without Google Calendar falls back to Cal Video and is not eligible at all).
+8. The host's own Meet access settings. If the host's organization does not let invited external accounts in directly, the bot asks to join.
+9. Bookings created through API v2 are covered when they have a Google Calendar event with the Meet link, exactly like web bookings, because nothing depends on how the booking was created. A location changed through API v2 is covered too: dispatch reads the references that exist then.
+10. Team, collective and round-robin events are covered. There is one Google event per booking, on the organizer's calendar; the other hosts are its guests. After a reassignment dispatch uses the references of the booking as it is then.
+11. Recurring bookings: each occurrence is dispatched by itself and its own instance is patched, so the account is a guest only of occurrences the notetaker is on for. Whether Meet treats a guest of one instance as invited is not verified (see Not verified).
+
 ## Risks to resolve early
 
 1. **Speaker attribution may not be feasible as the note assumes.** The note assumes one audio track per participant. The designer's own knowledge, which is not from the repository or the note and is unverified, is that Google Meet sends a small number of mixed "loudest speaker" streams rather than one track per participant, and Teams web is similar. If that holds, SC-005 (at least 90% of passages attributed to the correct speaker in meetings of up to 8 participants) cannot be promised on audio alone. A spike must run before SC-005 is committed to, in PR B3 (audio capture, Soniox provider and speaker attribution). The spike also covers Soniox per-token language and diarization output, which are likewise unverified.
-2. **Admission and selector breakage.** The note lists two gotchas that apply directly. First, someone must admit the bot from "Ask to join", which is why the plan prompts the host (FR-025) and uses a signed-in Google account for Meet (open question 3). Second, UI selectors break when Google or Microsoft change their pages, so the plan budgets maintenance time, monitors join failures through `MEETING_LINK_UNUSABLE` and `NOT_ADMITTED` outcomes, and keeps real Meet/Teams adapter smoke tests manual or nightly rather than in CI. `RecallBotGateway` stays available behind `INotetakerBotGateway` as a contingency if admission or selector work stalls.
+2. **Admission and selector breakage.** The note lists two gotchas that apply directly. First, someone must admit the bot from "Ask to join", which is why the plan prompts the host (FR-025), uses a signed-in Google account for Meet, and adds that account to the calendar event's guest list so that Meet lets it in directly (Decision 14). Second, UI selectors break when Google or Microsoft change their pages, so the plan budgets maintenance time, monitors join failures through `MEETING_LINK_UNUSABLE` and `NOT_ADMITTED` outcomes, and keeps real Meet/Teams adapter smoke tests manual or nightly rather than in CI. `RecallBotGateway` stays available behind `INotetakerBotGateway` as a contingency if admission or selector work stalls.
 3. **API v2 location changes bypass the location hook.** API v2 changes a booking's location through its own repository, not `editLocationHandler`, so `NotetakerChoiceService.onBookingLocationChanged` is not called. This is handled at dispatch: an unsupported location turns the choice off with a turned-off notice, and a supported type with no usable link ends as `FAILED` / `MEETING_LINK_UNUSABLE`. The remaining cost is that the host learns about it shortly before the meeting rather than when the location changes (Decision 8, open question 15).
 
 ## Approval gates
@@ -407,7 +463,7 @@ The plan proceeds on the recommended default for each question below unless the 
 |---|---|---|---|
 | 1 | Build own bot first, or validate with Recall.ai? | Own bot; the app is built against the fake gateway either way. | Bot track (B1 onward); not the app track |
 | 2 | Bot hosting and launcher: single Docker host on Hetzner, or Kubernetes Jobs? | Docker host with one container per meeting via the controller; child-process launcher for local dev. | PR B5 (container launcher and deployment) |
-| 3 | Bot identity: who owns the signed-in Google account, and is automating it acceptable under Google's terms? Teams joins as a guest. | Dedicated Workspace account. | PR B4 (Google Meet adapter) in production |
+| 3 | Bot identity: who owns the signed-in Google account, and is automating it acceptable under Google's terms? Teams joins as a guest. **Answered 2026-10-09** (owner's run, `apps/notetaker-bot/docs/verification-status.md`, "Google Meet check, 2026-10-09"): guest join is refused for the bot's automated browser before any join screen; account mode with a dedicated Google Workspace account works; the invited account is let in through "Join now", the uninvited one gets "Ask to join". The owner decided to support account mode. Still the operator's risk: Google's terms for an automated account. | Dedicated Workspace account, invited to the event by the app (Decision 14). | Nothing |
 | 4 | Vendor data terms: audio goes to Soniox and transcript text to Anthropic. Are DPAs and zero or short retention confirmed? | Required before production. | Production rollout |
 | 5 | Summary model. | `claude-opus-5-5` via `NOTETAKER_SUMMARY_MODEL`; operator may choose a cheaper tier. | PR 12b (summary generator) default config |
 | 6 | How do attendees without an account view shared results? | v1: signed-in user whose email matches an attendee; an emailed one-time code is a follow-up. | PR 17a (sharing procedures) |

@@ -33,6 +33,7 @@ This guide proves the notetaker feature works end to end without a real meeting.
 | `NOTETAKER_MAX_DURATION_SECONDS` | `14400` (default) | Four-hour cap (FR-010). |
 | `NOTETAKER_HEARTBEAT_TIMEOUT_SECONDS` | `180` (default) | Watchdog for a silent bot. |
 | `NOTETAKER_SUMMARY_MIN_WORDS` | `40` (default) | Below this the summary is `NOT_ENOUGH_CONTENT`. |
+| `NOTETAKER_GOOGLE_ACCOUNT_EMAIL` | unset | Leave empty for every scenario here; the fake bot never triggers a calendar write. |
 
 `NOTETAKER_BOT_URL`, `NOTETAKER_SUMMARY_MODEL` and the bot-side `SONIOX_API_KEY` are not needed for a fake-bot run. The default limits are fine; lower them only if you want a faster timeout check.
 

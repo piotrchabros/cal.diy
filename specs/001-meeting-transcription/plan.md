@@ -6,7 +6,7 @@
 
 ## Summary
 
-A host can turn a notetaker on for a booking held on Google Meet, and later on Microsoft Teams. The notetaker joins the meeting visibly under a name that identifies it, transcribes the conversation with speaker attribution, and then publishes the transcript and a summary on the booking. The host can stop it at any time, share the results with attendees, export them and delete them. Hosts can also set a default per event type, and the booking page tells guests about it before they confirm.
+A host can turn a notetaker on for a booking held on Google Meet, and later on Microsoft Teams. The notetaker joins the meeting visibly under a name that identifies it, transcribes the conversation with speaker attribution, and then publishes the transcript and a summary on the booking. On Google Meet the notetaker joins signed in to one dedicated Google account, so the name participants see is that account's; the app adds the account to the booking's Google Calendar event shortly before the meeting so that Meet lets it in without a person. The host can stop it at any time, share the results with attendees, export them and delete them. Hosts can also set a default per event type, and the booking page tells guests about it before they confirm.
 
 The app owns the choices, scheduling, storage, summaries and notifications. It is built as a feature slice in `packages/features/notetaker`, with Trigger.dev tasks for the scheduled sweep, finalization, summary generation and notifications. A separate bot service, `apps/notetaker-bot`, joins the meeting in a real browser and streams text back to the app over a signed HTTP contract. The app never depends on how the bot works, only on `INotetakerBotGateway`. A fake bot gateway emits scripted events, so the whole app side can be built and tested before the real bot exists. Design rationale and alternatives are in [research.md](./research.md).
 
@@ -82,6 +82,8 @@ These are constitution requirements, not optional. Work on the affected PRs does
 
 A design addendum settled 23 open points found while writing the contracts, and [data-model.md](./data-model.md), the contracts, [quickstart.md](./quickstart.md) and [research.md](./research.md) reflect it; the constitution gates are unchanged by it, because it adds no models, dependencies, public surface or packages.
 
+Phase 11 edits no shared booking or calendar file; it imports `createGoogleCalendarServiceWithGoogleType` and `CredentialRepository` read-only and adds one variable to `turbo.json` and `.env.example`.
+
 **Result**: The gates pass, with three justified deviations recorded under Complexity Tracking. The six approvals listed above are outstanding and must be granted before the affected PRs begin.
 
 ## Project Structure
@@ -155,6 +157,7 @@ packages/features/notetaker/
     NotetakerSummaryService.ts
     NotetakerResultsService.ts
     NotetakerNotificationService.ts
+    NotetakerCalendarInviteService.ts
   bot/
     INotetakerBotGateway.ts
     SelfHostedBotGateway.ts
@@ -163,6 +166,11 @@ packages/features/notetaker/
   summary/
     INotetakerSummaryGenerator.ts
     AnthropicSummaryGenerator.ts
+  calendar/
+    INotetakerCalendarGuestGateway.ts
+    GoogleCalendarGuestGateway.ts
+    GoogleCalendarGuestGateway.test.ts
+    googleEventsClient.ts                 the only file that imports shared calendar code
   lib/tasker/
     types.ts
     NotetakerTasker.ts
@@ -177,6 +185,7 @@ packages/features/notetaker/
     trigger/send-notification.ts
   di/tokens.ts
   di/<Class>.module.ts and <Service>.container.ts
+  di/NotetakerCalendarGuestGateway.module.ts, NotetakerCalendarInviteService.module.ts   (no container)
   di/tasker/...
 packages/features/di/tokens.ts                                  (changed: spread NOTETAKER_DI_TOKENS)
 packages/features/trigger.config.ts                             (changed: add "./notetaker/lib/tasker/trigger")
@@ -271,6 +280,10 @@ apps/notetaker-bot/
 | 21a | `feat(notetaker): add event-type default toggle` | 17c | 3 |
 | 21b | `feat(notetaker): add booking-page disclosure` | 18 | 6 |
 | 22 | `test(notetaker): add e2e with fake bot` | 20, 21a, 21b | 2 |
+| 23 | `feat(notetaker): read the bot's Google account email from the environment` | 4 | 4 |
+| 24 | `feat(notetaker): add the calendar guest gateway and booking calendar references` | 5 | 8 |
+| 25 | `feat(notetaker): invite the bot's Google account to the calendar event at dispatch` | 23, 24, 7 | 10 |
+| 26 | `docs(notetaker): record Google Meet account mode and amend FR-012` | 25 | 0 |
 | B1 | `feat(notetaker-bot): scaffold service, contract client and fake adapter` | 3 (dependency approval) | 9 |
 | B2 | `feat(notetaker-bot): add meeting runner state machine and timers` | B1 | 4 |
 | B3 | `feat(notetaker-bot): add audio capture, Soniox provider and speaker attribution` | B2 | 8 |
