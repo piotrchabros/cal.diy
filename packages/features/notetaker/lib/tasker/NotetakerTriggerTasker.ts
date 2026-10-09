@@ -11,10 +11,12 @@ export class NotetakerTriggerTasker implements INotetakerTasker {
   constructor(public readonly dependencies: ITaskerDependencies) {}
 
   async finalizeSession(
-    _payload: Parameters<INotetakerTasker["finalizeSession"]>[0],
-    _options?: TriggerOptions
+    payload: Parameters<INotetakerTasker["finalizeSession"]>[0],
+    options?: TriggerOptions
   ): Promise<{ runId: string }> {
-    throw notWiredError("finalizeSession");
+    const { finalizeSession } = await import("./trigger/finalize-session");
+    const handle = await finalizeSession.trigger(payload, options);
+    return { runId: handle.id };
   }
 
   async generateSummary(
@@ -25,9 +27,11 @@ export class NotetakerTriggerTasker implements INotetakerTasker {
   }
 
   async sendNotification(
-    _payload: Parameters<INotetakerTasker["sendNotification"]>[0],
-    _options?: TriggerOptions
+    payload: Parameters<INotetakerTasker["sendNotification"]>[0],
+    options?: TriggerOptions
   ): Promise<{ runId: string }> {
-    throw notWiredError("sendNotification");
+    const { sendNotification } = await import("./trigger/send-notification");
+    const handle = await sendNotification.trigger(payload, options);
+    return { runId: handle.id };
   }
 }

@@ -1,6 +1,6 @@
 import type { ILogger } from "@calcom/lib/tasker/types";
 import type { TriggerOptions } from "@trigger.dev/sdk";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NotetakerSyncTasker } from "./NotetakerSyncTasker";
 import { NotetakerTaskService } from "./NotetakerTaskService";
 import { NotetakerTriggerTasker } from "./NotetakerTriggerTasker";
@@ -12,8 +12,56 @@ import type {
   NotetakerTasks,
 } from "./types";
 
+interface RegisteredTaskParams {
+  id: string;
+  run: (payload?: unknown) => Promise<void>;
+  [key: string]: unknown;
+}
+
+// Each mocked task forwards to one shared spy with its own id, so a test can tell which task was triggered.
+const sdkMocks = vi.hoisted(() => {
+  const trigger =
+    vi.fn<(taskId: string, payload: unknown, options?: TriggerOptions) => Promise<{ id: string }>>();
+  return {
+    trigger,
+    queue: vi.fn((params: Record<string, unknown>) => params),
+    schemaTask: vi.fn((params: RegisteredTaskParams) => ({
+      ...params,
+      trigger: (payload: unknown, options?: TriggerOptions) => trigger(params.id, payload, options),
+    })),
+    scheduledTask: vi.fn((params: RegisteredTaskParams) => params),
+  };
+});
+
+const serviceMocks = vi.hoisted(() => ({
+  finalize: vi.fn<(payload: NotetakerFinalizeSessionPayload) => Promise<void>>(),
+  send: vi.fn<(payload: NotetakerSendNotificationPayload) => Promise<void>>(),
+  dispatchDue: vi.fn<() => Promise<void>>(),
+}));
+
+const taskServiceMocks = vi.hoisted(() => ({
+  finalizeSession: vi.fn<(payload: NotetakerFinalizeSessionPayload) => Promise<void>>(),
+  generateSummary: vi.fn<(payload: NotetakerGenerateSummaryPayload) => Promise<void>>(),
+  sendNotification: vi.fn<(payload: NotetakerSendNotificationPayload) => Promise<void>>(),
+}));
+
 vi.mock("@trigger.dev/sdk", () => ({
   configure: vi.fn(),
+  queue: sdkMocks.queue,
+  schemaTask: sdkMocks.schemaTask,
+  schedules: { task: sdkMocks.scheduledTask },
+}));
+
+vi.mock("@calcom/features/notetaker/di/NotetakerFinalizeService.container", () => ({
+  getNotetakerFinalizeService: () => ({ finalize: serviceMocks.finalize }),
+}));
+
+vi.mock("@calcom/features/notetaker/di/NotetakerNotificationService.container", () => ({
+  getNotetakerNotificationService: () => ({ send: serviceMocks.send }),
+}));
+
+vi.mock("@calcom/features/notetaker/di/NotetakerDispatchService.container", () => ({
+  getNotetakerDispatchService: () => ({ dispatchDue: serviceMocks.dispatchDue }),
 }));
 
 vi.mock("@calcom/lib/redactError", () => ({
@@ -113,6 +161,10 @@ const taskCases: TaskCase[] = [
   },
 ];
 
+const scaffoldCases = taskCases.filter(({ name }) => name === "generateSummary");
+
+const TASK_SERVICE_CONTAINER = "@calcom/features/notetaker/di/tasker/NotetakerTaskService.container";
+
 function stubServiceResolves(service: NotetakerTaskService): void {
   vi.spyOn(service, "finalizeSession").mockResolvedValue(undefined);
   vi.spyOn(service, "generateSummary").mockResolvedValue(undefined);
@@ -145,6 +197,20 @@ function createTaskers() {
   return { logger, service, asyncTasker, syncTasker };
 }
 
+// vi.restoreAllMocks() only restores spies, so the hoisted mocks are reset by hand.
+beforeEach(() => {
+  sdkMocks.trigger.mockReset();
+  sdkMocks.queue.mockClear();
+  sdkMocks.schemaTask.mockClear();
+  sdkMocks.scheduledTask.mockClear();
+  serviceMocks.finalize.mockReset();
+  serviceMocks.send.mockReset();
+  serviceMocks.dispatchDue.mockReset();
+  taskServiceMocks.finalizeSession.mockReset();
+  taskServiceMocks.generateSummary.mockReset();
+  taskServiceMocks.sendNotification.mockReset();
+});
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -152,7 +218,7 @@ afterEach(() => {
 
 describe("NotetakerTaskService", () => {
   describe("scaffold", () => {
-    it.each(taskCases)("$name rejects until it is wired", async ({ name, callService }) => {
+    it.each(scaffoldCases)("$name rejects until it is wired", async ({ name, callService }) => {
       const service = new NotetakerTaskService({ logger: createMockLogger() });
 
       await expect(callService(service)).rejects.toMatchObject({
@@ -161,11 +227,49 @@ describe("NotetakerTaskService", () => {
       });
     });
   });
+
+  describe("wired tasks", () => {
+    it("finalizeSession delegates to the finalize service", async () => {
+      serviceMocks.finalize.mockResolvedValue(undefined);
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await service.finalizeSession(finalizeSessionPayload);
+
+      expect(serviceMocks.finalize).toHaveBeenCalledTimes(1);
+      expect(serviceMocks.finalize).toHaveBeenCalledWith(finalizeSessionPayload);
+      expect(serviceMocks.send).not.toHaveBeenCalled();
+    });
+
+    it("sendNotification delegates to the notification service", async () => {
+      serviceMocks.send.mockResolvedValue(undefined);
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await service.sendNotification(sendNotificationPayload);
+
+      expect(serviceMocks.send).toHaveBeenCalledTimes(1);
+      expect(serviceMocks.send).toHaveBeenCalledWith(sendNotificationPayload);
+      expect(serviceMocks.finalize).not.toHaveBeenCalled();
+    });
+
+    it("propagates a finalize service error", async () => {
+      serviceMocks.finalize.mockRejectedValue(new Error("finalize failed"));
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await expect(service.finalizeSession(finalizeSessionPayload)).rejects.toThrow("finalize failed");
+    });
+
+    it("propagates a notification service error", async () => {
+      serviceMocks.send.mockRejectedValue(new Error("send failed"));
+      const service = new NotetakerTaskService({ logger: createMockLogger() });
+
+      await expect(service.sendNotification(sendNotificationPayload)).rejects.toThrow("send failed");
+    });
+  });
 });
 
 describe("NotetakerTriggerTasker", () => {
   describe("scaffold", () => {
-    it.each(taskCases)("$name rejects until it is wired", async ({ name, callTasker }) => {
+    it.each(scaffoldCases)("$name rejects until it is wired", async ({ name, callTasker }) => {
       const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
 
       await expect(callTasker(asyncTasker, options)).rejects.toMatchObject({
@@ -173,6 +277,142 @@ describe("NotetakerTriggerTasker", () => {
         code: "internal_server_error",
       });
     });
+  });
+
+  describe("wired tasks", () => {
+    it("finalizeSession triggers the finalize task and returns its run id", async () => {
+      sdkMocks.trigger.mockResolvedValue({ id: "run_finalize_1" });
+      const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
+
+      const result = await asyncTasker.finalizeSession(finalizeSessionPayload, options);
+
+      expect(sdkMocks.trigger).toHaveBeenCalledTimes(1);
+      expect(sdkMocks.trigger).toHaveBeenCalledWith(
+        "notetaker.finalize-session",
+        finalizeSessionPayload,
+        options
+      );
+      expect(result).toEqual({ runId: "run_finalize_1" });
+    });
+
+    it("sendNotification triggers the notification task and returns its run id", async () => {
+      sdkMocks.trigger.mockResolvedValue({ id: "run_notification_1" });
+      const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
+
+      const result = await asyncTasker.sendNotification(sendNotificationPayload, options);
+
+      expect(sdkMocks.trigger).toHaveBeenCalledTimes(1);
+      expect(sdkMocks.trigger).toHaveBeenCalledWith(
+        "notetaker.send-notification",
+        sendNotificationPayload,
+        options
+      );
+      expect(result).toEqual({ runId: "run_notification_1" });
+    });
+
+    it("propagates a trigger failure so the tasker can fall back", async () => {
+      sdkMocks.trigger.mockRejectedValue(new Error("trigger down"));
+      const asyncTasker = new NotetakerTriggerTasker({ logger: createMockLogger() });
+
+      await expect(asyncTasker.finalizeSession(finalizeSessionPayload, options)).rejects.toThrow(
+        "trigger down"
+      );
+    });
+  });
+});
+
+describe("notetaker trigger tasks", () => {
+  // The task files register at import time, so each case needs a fresh module graph. The task service
+  // container is mocked only here; the DI container cases below need the real one.
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doMock(TASK_SERVICE_CONTAINER, () => ({
+      getNotetakerTaskService: () => taskServiceMocks,
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock(TASK_SERVICE_CONTAINER);
+  });
+
+  it("finalize-session registers a schema task with the shared config", async () => {
+    const { notetakerTaskConfig } = await import("./trigger/config");
+    const { notetakerFinalizeSessionSchema } = await import("./trigger/schema");
+    const { FINALIZE_SESSION_JOB_ID } = await import("./trigger/finalize-session");
+
+    expect(FINALIZE_SESSION_JOB_ID).toBe("notetaker.finalize-session");
+    expect(sdkMocks.schemaTask).toHaveBeenCalledTimes(1);
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+    expect(params.id).toBe("notetaker.finalize-session");
+    expect(params.schema).toBe(notetakerFinalizeSessionSchema);
+    expect(params.machine).toBe(notetakerTaskConfig.machine);
+    expect(params.queue).toBe(notetakerTaskConfig.queue);
+    expect(params.retry).toEqual(notetakerTaskConfig.retry);
+  });
+
+  it("finalize-session run calls the task service", async () => {
+    taskServiceMocks.finalizeSession.mockResolvedValue(undefined);
+    await import("./trigger/finalize-session");
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+
+    await params.run(finalizeSessionPayload);
+
+    expect(taskServiceMocks.finalizeSession).toHaveBeenCalledTimes(1);
+    expect(taskServiceMocks.finalizeSession).toHaveBeenCalledWith(finalizeSessionPayload);
+    expect(taskServiceMocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("send-notification registers a schema task with the shared config", async () => {
+    const { notetakerTaskConfig } = await import("./trigger/config");
+    const { notetakerSendNotificationSchema } = await import("./trigger/schema");
+    const { SEND_NOTIFICATION_JOB_ID } = await import("./trigger/send-notification");
+
+    expect(SEND_NOTIFICATION_JOB_ID).toBe("notetaker.send-notification");
+    expect(sdkMocks.schemaTask).toHaveBeenCalledTimes(1);
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+    expect(params.id).toBe("notetaker.send-notification");
+    expect(params.schema).toBe(notetakerSendNotificationSchema);
+    expect(params.machine).toBe(notetakerTaskConfig.machine);
+    expect(params.queue).toBe(notetakerTaskConfig.queue);
+    expect(params.retry).toEqual(notetakerTaskConfig.retry);
+  });
+
+  it("send-notification run calls the task service", async () => {
+    taskServiceMocks.sendNotification.mockResolvedValue(undefined);
+    await import("./trigger/send-notification");
+    const [params] = sdkMocks.schemaTask.mock.calls[0];
+
+    await params.run(sendNotificationPayload);
+
+    expect(taskServiceMocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(taskServiceMocks.sendNotification).toHaveBeenCalledWith(sendNotificationPayload);
+    expect(taskServiceMocks.finalizeSession).not.toHaveBeenCalled();
+  });
+
+  it("dispatch-due-sessions registers a scheduled task that runs every minute in UTC", async () => {
+    const { notetakerTaskConfig } = await import("./trigger/config");
+    const { DISPATCH_DUE_SESSIONS_JOB_ID } = await import("./trigger/dispatch-due-sessions");
+
+    expect(DISPATCH_DUE_SESSIONS_JOB_ID).toBe("notetaker.dispatch-due-sessions");
+    expect(sdkMocks.scheduledTask).toHaveBeenCalledTimes(1);
+    expect(sdkMocks.schemaTask).not.toHaveBeenCalled();
+    const [params] = sdkMocks.scheduledTask.mock.calls[0];
+    expect(params.id).toBe("notetaker.dispatch-due-sessions");
+    expect(params.cron).toEqual({ pattern: "* * * * *", timezone: "UTC" });
+    expect(params.machine).toBe(notetakerTaskConfig.machine);
+    expect(params.queue).toBe(notetakerTaskConfig.queue);
+    expect(params.retry).toEqual(notetakerTaskConfig.retry);
+  });
+
+  it("dispatch-due-sessions run sweeps the due sessions", async () => {
+    serviceMocks.dispatchDue.mockResolvedValue(undefined);
+    await import("./trigger/dispatch-due-sessions");
+    const [params] = sdkMocks.scheduledTask.mock.calls[0];
+
+    await params.run();
+
+    expect(serviceMocks.dispatchDue).toHaveBeenCalledTimes(1);
+    expect(serviceMocks.dispatchDue).toHaveBeenCalledWith();
   });
 });
 
