@@ -11,18 +11,18 @@ type MeetingReference = { type: string; meetingUrl: string | null; deleted?: boo
 const DAILY_REFERENCE_TYPE = "daily_video";
 const LINK_REFERENCE_TYPES = ["google_meet_video", "office365_video", "office365_calendar"];
 
-const PLATFORM_BY_HOST: Record<string, NotetakerPlatformDto> = {
-  "meet.google.com": "GOOGLE_MEET",
-  "teams.microsoft.com": "MICROSOFT_TEAMS",
-  "teams.live.com": "MICROSOFT_TEAMS",
-};
+// Maps, not plain records: both are indexed by untrusted strings, and a key like "constructor"
+// would otherwise resolve to an inherited function.
+const PLATFORM_BY_HOST = new Map<string, NotetakerPlatformDto>([
+  ["meet.google.com", "GOOGLE_MEET"],
+  ["teams.microsoft.com", "MICROSOFT_TEAMS"],
+  ["teams.live.com", "MICROSOFT_TEAMS"],
+]);
 
-const PLATFORM_BY_LOCATION_TYPE: Record<string, NotetakerPlatformDto> = {
-  [MeetLocationType]: "GOOGLE_MEET",
-  [MSTeamsLocationType]: "MICROSOFT_TEAMS",
-};
-
-const PROVISIONAL_STATUSES: NotetakerBookingStatus[] = ["PENDING", "AWAITING_HOST"];
+const PLATFORM_BY_LOCATION_TYPE = new Map<string, NotetakerPlatformDto>([
+  [MeetLocationType, "GOOGLE_MEET"],
+  [MSTeamsLocationType, "MICROSOFT_TEAMS"],
+]);
 
 function ineligible(
   reason: NotetakerIneligibilityReasonDto,
@@ -56,10 +56,23 @@ function isCalVideoUrl(url: string): boolean {
   return /^\/video\/[^/]+\/?$/.test(pathname) && classifyMeetingUrl(url) === null;
 }
 
+const HTTP_LOCATION = /^https?:\/\//i;
+
+function classifyLink(
+  link: string,
+  enabledPlatforms: NotetakerPlatformDto[]
+): NotetakerStateDto["eligibility"] {
+  if (isCalVideoUrl(link)) return ineligible("CAL_VIDEO");
+  const platform = classifyMeetingUrl(link);
+  if (!platform) return ineligible("UNSUPPORTED_PLATFORM");
+  if (!enabledPlatforms.includes(platform)) return ineligible("UNSUPPORTED_PLATFORM", platform);
+  return { eligible: true, platform, reason: null };
+}
+
 export function classifyMeetingUrl(url: string): NotetakerPlatformDto | null {
   const parsed = parseHttpUrl(url);
   if (!parsed) return null;
-  return PLATFORM_BY_HOST[parsed.hostname] ?? null;
+  return PLATFORM_BY_HOST.get(parsed.hostname) ?? null;
 }
 
 export function resolveMeetingLink(input: {
@@ -68,6 +81,10 @@ export function resolveMeetingLink(input: {
   references: MeetingReference[];
 }): string | null {
   const { location, metadata, references } = input;
+
+  if (nonBlank(location) === null) return null;
+  if (location && HTTP_LOCATION.test(location)) return location;
+  if (!location || !PLATFORM_BY_LOCATION_TYPE.has(location)) return null;
 
   if (typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)) {
     const videoCallUrl = nonBlank((metadata as Record<string, unknown>).videoCallUrl);
@@ -80,7 +97,7 @@ export function resolveMeetingLink(input: {
     if (meetingUrl) return meetingUrl;
   }
 
-  return location && /^https?:\/\//i.test(location) ? location : null;
+  return null;
 }
 
 export function getBookingNotetakerEligibility(input: {
@@ -96,38 +113,27 @@ export function getBookingNotetakerEligibility(input: {
     return ineligible("BOOKING_NOT_ACTIVE");
   }
 
+  if (!location || location.trim() === "") return ineligible("UNSUPPORTED_PLATFORM");
+  if (location === DailyLocationType) return ineligible("CAL_VIDEO");
+  if (HTTP_LOCATION.test(location)) return classifyLink(location, enabledPlatforms);
+
+  const typePlatform = PLATFORM_BY_LOCATION_TYPE.get(location);
+  if (!typePlatform) {
+    return ineligible(location.startsWith("integrations:") ? "UNSUPPORTED_PLATFORM" : "IN_PERSON_OR_PHONE");
+  }
+
   const link = resolveMeetingLink(input);
+  if (link !== null) return classifyLink(link, enabledPlatforms);
 
-  const isCalVideo =
-    location === DailyLocationType ||
-    references.some((reference) => reference.deleted !== true && reference.type === DAILY_REFERENCE_TYPE) ||
-    (link !== null && isCalVideoUrl(link));
-  if (isCalVideo) return ineligible("CAL_VIDEO");
+  const hasCalVideoReference = references.some(
+    (reference) => reference.deleted !== true && reference.type === DAILY_REFERENCE_TYPE
+  );
+  if (hasCalVideoReference) return ineligible("CAL_VIDEO");
 
-  if (link !== null) {
-    const platform = classifyMeetingUrl(link);
-    if (!platform) return ineligible("UNSUPPORTED_PLATFORM");
-    if (!enabledPlatforms.includes(platform)) return ineligible("UNSUPPORTED_PLATFORM", platform);
-    return { eligible: true, platform, reason: null };
-  }
-
-  const locationPlatform = location ? (PLATFORM_BY_LOCATION_TYPE[location] ?? null) : null;
-  if (locationPlatform) {
-    if (!enabledPlatforms.includes(locationPlatform)) {
-      return ineligible("UNSUPPORTED_PLATFORM", locationPlatform);
-    }
-    // Before confirmation the conferencing link does not exist yet, so eligibility is only provisional.
-    if (PROVISIONAL_STATUSES.includes(bookingStatus)) {
-      return { eligible: true, platform: locationPlatform, reason: null };
-    }
-    // Dispatch relies on the platform being set whenever the reason is NO_MEETING_LINK.
-    return ineligible("NO_MEETING_LINK", locationPlatform);
-  }
-
-  if (!location || location.trim() === "" || location.startsWith("integrations:")) {
-    return ineligible("UNSUPPORTED_PLATFORM");
-  }
-  return ineligible("IN_PERSON_OR_PHONE");
+  if (!enabledPlatforms.includes(typePlatform)) return ineligible("UNSUPPORTED_PLATFORM", typePlatform);
+  // At booking creation the hook runs before the link is stored, so a supported type without a link
+  // is eligible and dispatch resolves the link later.
+  return { eligible: true, platform: typePlatform, reason: null };
 }
 
 export function getEventTypeNotetakerAvailability(input: {
@@ -142,7 +148,7 @@ export function getEventTypeNotetakerAvailability(input: {
 
   const supportedLocationTypes: string[] = [];
   for (const { type } of locations) {
-    const platform = PLATFORM_BY_LOCATION_TYPE[type];
+    const platform = PLATFORM_BY_LOCATION_TYPE.get(type);
     if (platform && enabledPlatforms.includes(platform) && !supportedLocationTypes.includes(type)) {
       supportedLocationTypes.push(type);
     }
