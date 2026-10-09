@@ -182,7 +182,8 @@ export class NotetakerChoiceService {
     const now = new Date();
 
     const [featureEnabled, latestSession, latestWithTranscript, sharingGrant] = await Promise.all([
-      this.isFeatureEnabled(userId),
+      // A granted attendee reads what a host with the feature shared, so their own flag is not the gate.
+      role === "HOST" ? this.isFeatureEnabled(userId) : isNotetakerBotProviderUsable(this.deps.config),
       this.deps.sessionRepository.findLatestByBookingId(booking.id),
       this.deps.sessionRepository.findLatestWithTranscriptByBookingId(booking.id),
       this.deps.bookingNotetakerRepository.findSharingGrant(booking.id),
