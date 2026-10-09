@@ -1,16 +1,28 @@
 import { DailyLocationType, MeetLocationType } from "@calcom/app-store/constants";
+import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type {
   NotetakerIneligibilityReasonDto,
   NotetakerSessionStatusDto,
 } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import type { TriggerOptions } from "@trigger.dev/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotetakerConfig } from "../lib/config";
+import type {
+  INotetakerTasker,
+  NotetakerFinalizeSessionPayload,
+  NotetakerGenerateSummaryPayload,
+  NotetakerSendNotificationPayload,
+} from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
+import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
-import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
+import {
+  createInMemoryNotetakerRepositories,
+  InMemoryBookingNotetakerRepository,
+} from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
 import { NotetakerChoiceService } from "./NotetakerChoiceService";
 
@@ -91,14 +103,56 @@ async function captureError(promise: Promise<unknown>): Promise<ErrorWithCode> {
   throw new Error("Expected the promise to reject");
 }
 
+class RecordingNotetakerTasker implements INotetakerTasker {
+  sendNotificationCalls: {
+    payload: NotetakerSendNotificationPayload;
+    options: TriggerOptions | undefined;
+  }[] = [];
+  sendNotificationRunId = "run-1";
+
+  async finalizeSession(_payload: NotetakerFinalizeSessionPayload): Promise<{ runId: string }> {
+    return { runId: "run-finalize" };
+  }
+
+  async generateSummary(_payload: NotetakerGenerateSummaryPayload): Promise<{ runId: string }> {
+    return { runId: "run-summary" };
+  }
+
+  async sendNotification(
+    payload: NotetakerSendNotificationPayload,
+    options?: TriggerOptions
+  ): Promise<{ runId: string }> {
+    this.sendNotificationCalls.push({ payload, options });
+    return { runId: this.sendNotificationRunId };
+  }
+}
+
+function createLogger() {
+  return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } satisfies ISimpleLogger;
+}
+
+// Models a second host blocking the booking after this request passed the eligibility check.
+class BlockingBeforeEnableRepository extends InMemoryBookingNotetakerRepository {
+  async enableIfDisabled(
+    data: Parameters<IBookingNotetakerRepository["enableIfDisabled"]>[0]
+  ): Promise<boolean> {
+    await this.setRejoinBlocked(data.bookingId, true);
+    return super.enableIfDisabled(data);
+  }
+}
+
 describe("NotetakerChoiceService", () => {
   const checkIfUserHasFeature = vi.fn(async (_userId: number, _slug: string): Promise<boolean> => true);
   let users: NotetakerUserRecord[];
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
+  let tasker: RecordingNotetakerTasker;
+  let logger: ReturnType<typeof createLogger>;
   let service: NotetakerChoiceService;
 
-  function buildService(config: NotetakerConfig = buildConfig()): NotetakerChoiceService {
-    const { bookingNotetakerRepository } = repositories;
+  function buildService(
+    config: NotetakerConfig = buildConfig(),
+    bookingNotetakerRepository: IBookingNotetakerRepository = repositories.bookingNotetakerRepository
+  ): NotetakerChoiceService {
     const userRepository: INotetakerUserLookup = {
       findByIds: async ({ ids }) => users.filter((user) => ids.includes(user.id)),
     };
@@ -112,6 +166,8 @@ describe("NotetakerChoiceService", () => {
       accessService: new NotetakerAccessService({ bookingNotetakerRepository }),
       featuresRepository: { checkIfUserHasFeature },
       userRepository,
+      notetakerTasker: tasker,
+      logger,
       config,
     });
   }
@@ -154,9 +210,27 @@ describe("NotetakerChoiceService", () => {
     return service.getState({ bookingUid: BOOKING_UID, userId });
   }
 
+  async function blockEnabledChoice(): Promise<void> {
+    await enable();
+    await repositories.bookingNotetakerRepository.setRejoinBlocked(BOOKING_ID, true);
+  }
+
+  async function blockDisabledChoice(): Promise<void> {
+    await enable();
+    await disable();
+    await repositories.bookingNotetakerRepository.setRejoinBlocked(BOOKING_ID, true);
+  }
+
+  function expectRejoinBlocked(error: ErrorWithCode): void {
+    expect(error.code).toBe(ErrorCode.BadRequest);
+    expect(error.message).toBe("REJOIN_BLOCKED");
+    expect(error.data).toEqual({ reason: "REJOIN_BLOCKED" });
+  }
+
   function expectNothingWritten(): void {
     expect(repositories.store.choices.size).toBe(0);
     expect(repositories.store.activities).toHaveLength(0);
+    expect(tasker.sendNotificationCalls).toHaveLength(0);
   }
 
   beforeEach(() => {
@@ -165,6 +239,8 @@ describe("NotetakerChoiceService", () => {
     checkIfUserHasFeature.mockResolvedValue(true);
     users = [userRecord(ORGANIZER_ID, "Organizer"), userRecord(CO_HOST_ID, "Co Host")];
     repositories = createInMemoryNotetakerRepositories();
+    tasker = new RecordingNotetakerTasker();
+    logger = createLogger();
     service = buildService();
   });
 
@@ -307,6 +383,15 @@ describe("NotetakerChoiceService", () => {
         sessionId: null,
         detail: null,
       });
+      expect(tasker.sendNotificationCalls).toEqual([
+        { payload: { kind: "ATTENDEE_NOTICE", bookingId: BOOKING_ID, sessionId: null }, options: undefined },
+      ]);
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        rejoinBlocked: false,
+        attendeesNotifiedAt: null,
+        notifiedAttendeeEmails: [],
+      });
+      expect(logger.error).not.toHaveBeenCalled();
     });
 
     it("does not arm a second time when another host enables an already enabled booking", async () => {
@@ -320,6 +405,7 @@ describe("NotetakerChoiceService", () => {
       expect(choice?.pendingDispatch).toBe(false);
       expect(choice?.setByUserId).toBe(ORGANIZER_ID);
       expect(repositories.store.activities).toHaveLength(1);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
     });
 
     it("turns an enabled choice off, keeps notified attendee emails and records DISABLED", async () => {
@@ -348,6 +434,7 @@ describe("NotetakerChoiceService", () => {
         sessionId: null,
         detail: null,
       });
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
     });
 
     it("creates no row and no activity when disabling a booking that has no choice", async () => {
@@ -371,6 +458,11 @@ describe("NotetakerChoiceService", () => {
       repositories.store.addBooking(buildBooking());
       await enable();
       await repositories.bookingNotetakerRepository.clearPendingDispatch(BOOKING_ID);
+      await repositories.bookingNotetakerRepository.appendNotifiedAttendeeEmails(
+        BOOKING_ID,
+        [ATTENDEE_EMAIL],
+        NOW
+      );
       await disable();
 
       await enable();
@@ -381,6 +473,8 @@ describe("NotetakerChoiceService", () => {
         "DISABLED",
         "ENABLED",
       ]);
+      expect(tasker.sendNotificationCalls).toHaveLength(2);
+      expect(repositories.store.choices.get(BOOKING_ID)?.notifiedAttendeeEmails).toEqual([ATTENDEE_EMAIL]);
     });
 
     it("allows disabling after the booking end time", async () => {
@@ -425,6 +519,148 @@ describe("NotetakerChoiceService", () => {
       await enable();
 
       expect(repositories.store.activities[0].actorName).toBeNull();
+    });
+
+    it("refuses with REJOIN_BLOCKED when a disabled choice is rejoin-blocked", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockDisabledChoice();
+
+      const error = await captureError(enable());
+
+      expectRejoinBlocked(error);
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        enabled: false,
+        pendingDispatch: false,
+      });
+      expect(repositories.store.activities.map((activity) => activity.action)).toEqual([
+        "ENABLED",
+        "DISABLED",
+      ]);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+    });
+
+    it("refuses with REJOIN_BLOCKED when the blocked choice is still enabled", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      await repositories.bookingNotetakerRepository.setPendingDispatch(BOOKING_ID, false);
+      await repositories.bookingNotetakerRepository.setRejoinBlocked(BOOKING_ID, true);
+
+      const error = await captureError(enable());
+
+      expectRejoinBlocked(error);
+      expect(repositories.store.choices.get(BOOKING_ID)?.pendingDispatch).toBe(false);
+      expect(repositories.store.activities).toHaveLength(1);
+    });
+
+    it("reports REJOIN_BLOCKED before MEETING_ENDED", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockDisabledChoice();
+      vi.setSystemTime(AFTER_END);
+
+      const error = await captureError(enable());
+
+      expect(error.message).toBe("REJOIN_BLOCKED");
+    });
+
+    it("reports BOOKING_NOT_ACTIVE before REJOIN_BLOCKED", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockDisabledChoice();
+      repositories.store.addBooking(buildBooking({ status: "CANCELLED" }));
+
+      const error = await captureError(enable());
+
+      expect(error.message).toBe("BOOKING_NOT_ACTIVE");
+    });
+
+    it("reports FEATURE_DISABLED before REJOIN_BLOCKED", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockDisabledChoice();
+      checkIfUserHasFeature.mockResolvedValue(false);
+
+      const error = await captureError(enable());
+
+      expect(error.message).toBe("FEATURE_DISABLED");
+    });
+
+    it("does not set rejoinBlocked when the host disables before admission", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      await disable();
+
+      expect(repositories.store.choices.get(BOOKING_ID)?.rejoinBlocked).toBe(false);
+
+      await expect(enable()).resolves.toBeUndefined();
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        enabled: true,
+        pendingDispatch: true,
+      });
+    });
+
+    it("keeps rejoinBlocked when a blocked choice is turned off", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockEnabledChoice();
+
+      await expect(disable()).resolves.toBeUndefined();
+
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        enabled: false,
+        rejoinBlocked: true,
+      });
+      expect(repositories.store.activities.map((activity) => activity.action)).toEqual([
+        "ENABLED",
+        "DISABLED",
+      ]);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+    });
+
+    it("writes one ENABLED activity and one notice when two hosts enable at the same time", async () => {
+      repositories.store.addBooking(buildCoHostBooking());
+
+      await Promise.all([enable(ORGANIZER_ID), enable(CO_HOST_ID)]);
+
+      const choice = repositories.store.choices.get(BOOKING_ID);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0].action).toBe("ENABLED");
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      expect(choice).toMatchObject({ enabled: true, pendingDispatch: true });
+      expect(repositories.store.activities[0].actorUserId).toBe(choice?.setByUserId);
+    });
+
+    it("refuses with REJOIN_BLOCKED when the choice is blocked between the eligibility check and the write", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      await disable();
+      service = buildService(buildConfig(), new BlockingBeforeEnableRepository(repositories.store));
+
+      const error = await captureError(enable());
+
+      expectRejoinBlocked(error);
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        enabled: false,
+        pendingDispatch: false,
+        rejoinBlocked: true,
+      });
+      expect(repositories.store.activities.map((activity) => activity.action)).toEqual([
+        "ENABLED",
+        "DISABLED",
+      ]);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+    });
+
+    it("logs a failed notice enqueue and keeps the choice enabled", async () => {
+      repositories.store.addBooking(buildBooking());
+      tasker.sendNotificationRunId = "task-failed";
+
+      await expect(enable()).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error.mock.calls[0][1]).toEqual({ bookingId: BOOKING_ID });
+      expect(JSON.stringify(logger.error.mock.calls)).not.toContain(ATTENDEE_EMAIL);
+      expect(repositories.store.choices.get(BOOKING_ID)).toMatchObject({
+        enabled: true,
+        pendingDispatch: true,
+      });
+      expect(repositories.store.activities.map((activity) => activity.action)).toEqual(["ENABLED"]);
     });
   });
 
@@ -691,6 +927,69 @@ describe("NotetakerChoiceService", () => {
       const state = await getState();
 
       expect(state.choice?.setByName).toBeNull();
+    });
+
+    it("reports REJOIN_BLOCKED and disallows toggling for a blocked, disabled choice", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockDisabledChoice();
+
+      const state = await getState();
+
+      expect(state.eligibility).toEqual({
+        eligible: false,
+        platform: "GOOGLE_MEET",
+        reason: "REJOIN_BLOCKED",
+      });
+      expect(state.canToggle).toBe(false);
+      expect(state.choice?.enabled).toBe(false);
+    });
+
+    it("disallows toggling a blocked choice that is still enabled", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      await repositories.bookingNotetakerRepository.clearPendingDispatch(BOOKING_ID);
+      await repositories.bookingNotetakerRepository.setRejoinBlocked(BOOKING_ID, true);
+
+      const state = await getState();
+
+      expect(state.eligibility.reason).toBe("REJOIN_BLOCKED");
+      expect(state.canToggle).toBe(false);
+      expect(state.choice?.enabled).toBe(true);
+    });
+
+    it("keeps canStop for a live session on a blocked booking", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      await repositories.bookingNotetakerRepository.clearPendingDispatch(BOOKING_ID);
+      await repositories.bookingNotetakerRepository.setRejoinBlocked(BOOKING_ID, true);
+      await createSession("TRANSCRIBING");
+
+      const state = await getState();
+
+      expect(state.eligibility.reason).toBe("REJOIN_BLOCKED");
+      expect(state.canStop).toBe(true);
+    });
+
+    it("reports REJOIN_BLOCKED before MEETING_ENDED", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockEnabledChoice();
+      vi.setSystemTime(AFTER_END);
+
+      const state = await getState();
+
+      expect(state.eligibility.reason).toBe("REJOIN_BLOCKED");
+      expect(state.canToggle).toBe(false);
+    });
+
+    it("disallows toggling a blocked, enabled choice when the feature is off", async () => {
+      repositories.store.addBooking(buildBooking());
+      await blockEnabledChoice();
+      checkIfUserHasFeature.mockResolvedValue(false);
+
+      const state = await getState();
+
+      expect(state.eligibility.reason).toBe("FEATURE_DISABLED");
+      expect(state.canToggle).toBe(false);
     });
   });
 });
