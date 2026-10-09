@@ -71,3 +71,16 @@ export type NotetakerStateDto = {
   summary: NotetakerSummaryDto | null;
   sharedWithAttendees: boolean;
 };
+
+export type NotetakerEventTypeDefaultDto = {
+  enabledByDefault: boolean;
+  available: boolean;
+  /** Only FEATURE_DISABLED, UNSUPPORTED_PLATFORM or CAL_VIDEO apply to an event type. */
+  unavailableReason: NotetakerIneligibilityReasonDto | null;
+};
+
+export type NotetakerDisclosureDto = {
+  enabledByDefault: boolean;
+  onBehalfOf: string | null;
+  supportedLocationTypes: string[];
+};

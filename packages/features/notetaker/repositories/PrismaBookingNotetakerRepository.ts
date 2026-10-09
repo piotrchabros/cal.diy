@@ -7,6 +7,7 @@ import type {
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingStatus,
+  NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
 } from "./interfaces/IBookingNotetakerRepository";
@@ -261,21 +262,28 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
   async findByRecurringEventIdFromStartTime(params: {
     recurringEventId: string;
     startTimeGte: Date;
-  }): Promise<
-    { bookingId: number; bookingUid: string; startTime: Date; choice: BookingNotetakerRecord | null }[]
-  > {
+  }): Promise<NotetakerSeriesBookingRecord[]> {
     const rows = await this.prismaClient.booking.findMany({
       where: {
         recurringEventId: params.recurringEventId,
         startTime: { gte: params.startTimeGte },
       },
-      select: { id: true, uid: true, startTime: true, notetaker: { select: choiceSelect } },
-      orderBy: { startTime: "asc" },
+      select: {
+        id: true,
+        uid: true,
+        startTime: true,
+        endTime: true,
+        status: true,
+        notetaker: { select: choiceSelect },
+      },
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
     });
     return rows.map((row) => ({
       bookingId: row.id,
       bookingUid: row.uid,
       startTime: row.startTime,
+      endTime: row.endTime,
+      status: row.status,
       choice: row.notetaker,
     }));
   }
@@ -361,5 +369,12 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       if (latest) result.push(latest);
     });
     return result;
+  }
+
+  async setAppliedToSeries(bookingId: number, appliedToSeries: boolean): Promise<void> {
+    await this.prismaClient.bookingNotetaker.updateMany({
+      where: { bookingId },
+      data: { appliedToSeries },
+    });
   }
 }

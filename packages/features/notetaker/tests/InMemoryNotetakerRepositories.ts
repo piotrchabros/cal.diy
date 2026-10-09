@@ -7,6 +7,7 @@ import type {
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingStatus,
+  NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
@@ -377,9 +378,7 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
   async findByRecurringEventIdFromStartTime(params: {
     recurringEventId: string;
     startTimeGte: Date;
-  }): Promise<
-    { bookingId: number; bookingUid: string; startTime: Date; choice: BookingNotetakerRecord | null }[]
-  > {
+  }): Promise<NotetakerSeriesBookingRecord[]> {
     return this.bookingsByRecurringEventId(params.recurringEventId)
       .filter((booking) => booking.startTime.getTime() >= params.startTimeGte.getTime())
       .sort(
@@ -391,6 +390,8 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
           bookingId: booking.id,
           bookingUid: booking.uid,
           startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: booking.status,
           choice: choice ? copyChoice(choice) : null,
         };
       });
@@ -462,6 +463,12 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
       result.push({ userId, subscription: subscriptions[subscriptions.length - 1] });
     });
     return result;
+  }
+
+  async setAppliedToSeries(bookingId: number, appliedToSeries: boolean): Promise<void> {
+    const choice = this.store.choices.get(bookingId);
+    if (!choice) return;
+    choice.appliedToSeries = appliedToSeries;
   }
 }
 
