@@ -1,11 +1,17 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
-import type { NotetakerSessionStatusDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type {
+  NotetakerDisclosureDto,
+  NotetakerEventTypeDefaultDto,
+  NotetakerSessionStatusDto,
+  NotetakerStateDto,
+} from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerTranscriptDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
-import { getBookingNotetakerEligibility } from "../lib/eligibility";
+import { getBookingNotetakerEligibility, getEventTypeNotetakerAvailability } from "../lib/eligibility";
+import { parseEventTypeLocations } from "../lib/eventTypeLocations";
 import { getDisplayedStatus } from "../lib/sessionStateMachine";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
@@ -14,8 +20,12 @@ import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
   NotetakerBookingContext,
+  NotetakerSeriesBookingRecord,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
-import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type {
+  IEventTypeNotetakerSettingsRepository,
+  NotetakerEventTypeContext,
+} from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
 import type {
   INotetakerSessionRepository,
@@ -66,7 +76,6 @@ function toTranscriptDto(transcript: NotetakerTranscriptRecord): NotetakerTransc
 
 export interface INotetakerChoiceServiceDeps {
   bookingNotetakerRepository: IBookingNotetakerRepository;
-  // Unused until event type defaults are applied; present so the constructor does not change then.
   eventTypeNotetakerSettingsRepository: IEventTypeNotetakerSettingsRepository;
   sessionRepository: INotetakerSessionRepository;
   transcriptRepository: INotetakerTranscriptRepository;
@@ -91,16 +100,33 @@ export class NotetakerChoiceService {
     scope: NotetakerChoiceScope;
     userId: number;
   }): Promise<void> {
-    const { bookingUid, enabled, userId } = params;
+    const { bookingUid, enabled, scope, userId } = params;
 
     const booking = await this.deps.accessService.assertHost({ bookingUid, userId });
     const now = new Date();
     const existing = booking.choice;
+    // Non-null only for a series-wide change: on a non-recurring booking the wider scope means this booking.
+    const recurringEventId = scope === "ALL_FUTURE_OCCURRENCES" ? booking.recurringEventId : null;
 
     if (!enabled) {
       // Turning off stays possible after the end time and on an ineligible booking.
-      if (!existing?.enabled) return;
-      await this.writeDisabledChoice({ booking, userId, now });
+      if (!existing?.enabled && recurringEventId === null) return;
+
+      // Looked up before the write: the two writes share no transaction, so nothing that can fail sits between them.
+      const actorName = await this.findUserName(userId);
+
+      if (existing?.enabled) {
+        await this.writeDisabledChoice({
+          bookingId: booking.id,
+          userId,
+          actorName,
+          now,
+          appliedToSeries: recurringEventId !== null,
+        });
+      }
+      if (recurringEventId !== null) {
+        await this.disableLaterOccurrences({ booking, recurringEventId, userId, actorName, now });
+      }
       return;
     }
 
@@ -111,7 +137,12 @@ export class NotetakerChoiceService {
       throw ErrorWithCode.Factory.BadRequest(eligibility.reason, { reason: eligibility.reason });
     }
 
-    if (existing?.enabled) return;
+    if (existing?.enabled) {
+      if (recurringEventId === null) return;
+      const actorName = await this.findUserName(userId);
+      await this.extendEnabledChoiceToSeries({ booking, recurringEventId, userId, actorName, now });
+      return;
+    }
 
     // Looked up before the write: the two writes share no transaction, so nothing that can fail sits between them.
     const actorName = await this.findUserName(userId);
@@ -119,7 +150,7 @@ export class NotetakerChoiceService {
     const won = await this.deps.bookingNotetakerRepository.enableIfDisabled({
       bookingId: booking.id,
       source: "HOST",
-      appliedToSeries: false,
+      appliedToSeries: recurringEventId !== null,
       setByUserId: userId,
       setAt: now,
     });
@@ -129,19 +160,18 @@ export class NotetakerChoiceService {
         throw ErrorWithCode.Factory.BadRequest("REJOIN_BLOCKED", { reason: "REJOIN_BLOCKED" });
       }
       // Another host enabled it first, so this call records no activity and sends no notice.
+      if (recurringEventId !== null) {
+        await this.extendEnabledChoiceToSeries({ booking, recurringEventId, userId, actorName, now });
+      }
       return;
     }
 
     await this.createActivity({ bookingId: booking.id, action: "ENABLED", userId, actorName });
+    // Enqueued before the later occurrences are written, so a failure there cannot lose the notice.
+    await this.enqueueAttendeeNotice(booking.id);
 
-    const result = await this.deps.notetakerTasker.sendNotification({
-      kind: "ATTENDEE_NOTICE",
-      bookingId: booking.id,
-      sessionId: null,
-    });
-    if (result.runId === "task-failed") {
-      // The choice is stored, and the notice sent at dispatch time is the catch-all, so the host is not failed.
-      this.deps.logger.error("Failed to enqueue the notetaker attendee notice", { bookingId: booking.id });
+    if (recurringEventId !== null) {
+      await this.enableLaterOccurrences({ booking, recurringEventId, userId, actorName, now });
     }
   }
 
@@ -209,6 +239,178 @@ export class NotetakerChoiceService {
     };
   }
 
+  async getEventTypeDefault(params: {
+    eventTypeId: number;
+    userId: number;
+  }): Promise<NotetakerEventTypeDefaultDto> {
+    const { eventTypeId, userId } = params;
+
+    const context = await this.findEventTypeContext(eventTypeId);
+    const featureEnabled = await this.isFeatureEnabled(userId);
+    const availability = this.getEventTypeAvailability(context);
+
+    return {
+      enabledByDefault: context.settings?.enabledByDefault ?? false,
+      available: featureEnabled && availability.available,
+      unavailableReason: featureEnabled ? availability.unavailableReason : "FEATURE_DISABLED",
+    };
+  }
+
+  async setEventTypeDefault(params: {
+    eventTypeId: number;
+    enabledByDefault: boolean;
+    userId: number;
+  }): Promise<NotetakerEventTypeDefaultDto> {
+    const { eventTypeId, enabledByDefault, userId } = params;
+
+    const current = await this.getEventTypeDefault({ eventTypeId, userId });
+    if (enabledByDefault && current.unavailableReason !== null) {
+      // Only the message reaches the client, so it carries the reason code itself.
+      throw ErrorWithCode.Factory.BadRequest(current.unavailableReason, {
+        reason: current.unavailableReason,
+      });
+    }
+
+    await this.deps.eventTypeNotetakerSettingsRepository.upsert({ eventTypeId, enabledByDefault });
+    return this.getEventTypeDefault({ eventTypeId, userId });
+  }
+
+  async getDisclosure(params: { eventTypeId: number }): Promise<NotetakerDisclosureDto> {
+    const context = await this.findEventTypeContext(params.eventTypeId);
+    const availability = this.getEventTypeAvailability(context);
+
+    return {
+      // No per-user flag here: the booker is anonymous and a team event type has no single owner to check.
+      enabledByDefault:
+        (context.settings?.enabledByDefault ?? false) && isNotetakerBotProviderUsable(this.deps.config),
+      onBehalfOf: context.ownerName,
+      supportedLocationTypes: availability.supportedLocationTypes,
+    };
+  }
+
+  async onBookingCreated(params: { bookingUid: string }): Promise<void> {
+    const { bookingUid } = params;
+
+    const booking = await this.deps.bookingNotetakerRepository.findByBookingUidIncludeBooking(bookingUid);
+    if (!booking) {
+      this.deps.logger.warn("Notetaker booking-created hook found no booking", { bookingUid });
+      return;
+    }
+
+    const created = await this.applyEventTypeDefault(booking, new Date());
+    if (created) await this.enqueueAttendeeNotice(booking.id);
+  }
+
+  async onRecurringOccurrenceCreated(params: { bookingUid: string }): Promise<void> {
+    const { bookingUid } = params;
+
+    const booking = await this.deps.bookingNotetakerRepository.findByBookingUidIncludeBooking(bookingUid);
+    if (!booking) {
+      this.deps.logger.warn("Notetaker recurring-occurrence hook found no booking", { bookingUid });
+      return;
+    }
+
+    const created = await this.applyEventTypeDefault(booking, new Date());
+    if (!created) return;
+
+    if (booking.recurringEventId === null) {
+      await this.enqueueAttendeeNotice(booking.id);
+      return;
+    }
+
+    // Occurrences are created one after another, so the first to inherit sends the one notice for the series.
+    const rows = await this.deps.bookingNotetakerRepository.findByRecurringEventIdFromStartTime({
+      recurringEventId: booking.recurringEventId,
+      startTimeGte: new Date(0),
+    });
+    if (rows.every((row) => row.bookingId === booking.id || row.choice === null)) {
+      await this.enqueueAttendeeNotice(booking.id);
+    }
+  }
+
+  async onBookingRescheduled(params: { bookingUid: string; oldBookingUid: string }): Promise<void> {
+    const { bookingUid, oldBookingUid } = params;
+
+    const booking = await this.deps.bookingNotetakerRepository.findByBookingUidIncludeBooking(bookingUid);
+    if (!booking) {
+      this.deps.logger.warn("Notetaker booking-rescheduled hook found no booking", { bookingUid });
+      return;
+    }
+    if (booking.choice !== null) return;
+
+    const old = await this.deps.bookingNotetakerRepository.findByBookingUidIncludeBooking(oldBookingUid);
+    if (!old?.choice) {
+      const created = await this.applyEventTypeDefault(booking, new Date());
+      if (created) await this.enqueueAttendeeNotice(booking.id);
+      return;
+    }
+
+    // rejoinBlocked is left behind: the rescheduled booking is a new meeting. The notified list travels
+    // with the row, so no notice is enqueued here and dispatch tells only the people not yet told.
+    await this.deps.bookingNotetakerRepository.upsert({
+      bookingId: booking.id,
+      enabled: old.choice.enabled,
+      pendingDispatch: old.choice.enabled,
+      source: old.choice.source,
+      appliedToSeries: old.choice.appliedToSeries,
+      setByUserId: old.choice.setByUserId,
+      setAt: old.choice.setAt,
+      notifiedAttendeeEmails: old.choice.notifiedAttendeeEmails,
+    });
+    if (!old.choice.enabled) return;
+
+    await this.createSystemActivity({
+      bookingId: booking.id,
+      action: "ENABLED",
+      detail: { source: "RESCHEDULE", fromBookingUid: oldBookingUid },
+    });
+  }
+
+  async onBookingLocationChanged(params: { bookingId: number }): Promise<{ turnedOff: boolean }> {
+    const { bookingId } = params;
+
+    const booking = await this.deps.bookingNotetakerRepository.findByBookingIdIncludeBooking(bookingId);
+    if (!booking) {
+      this.deps.logger.warn("Notetaker location-changed hook found no booking", { bookingId });
+      return { turnedOff: false };
+    }
+    if (booking.choice?.enabled !== true) return { turnedOff: false };
+
+    // Not resolveEligibility: the feature flag and the end time are not facts about the location.
+    const eligibility = getBookingNotetakerEligibility({
+      location: booking.location,
+      metadata: booking.metadata,
+      references: booking.references,
+      bookingStatus: booking.status,
+      enabledPlatforms: this.deps.config.enabledPlatforms,
+    });
+    if (eligibility.eligible) return { turnedOff: false };
+    // A pending link is still a supported location, and an inactive booking is voided by the sweep.
+    if (eligibility.reason === "NO_MEETING_LINK" || eligibility.reason === "BOOKING_NOT_ACTIVE") {
+      return { turnedOff: false };
+    }
+
+    const flipped = await this.deps.bookingNotetakerRepository.disableIfEnabled(booking.id);
+    if (!flipped) return { turnedOff: false };
+
+    await this.createSystemActivity({
+      bookingId: booking.id,
+      action: "DISABLED",
+      detail: { reason: "UNSUPPORTED_LOCATION" },
+    });
+
+    const result = await this.deps.notetakerTasker.sendNotification({
+      kind: "TURNED_OFF",
+      bookingId: booking.id,
+      sessionId: null,
+    });
+    if (result.runId === "task-failed") {
+      // The choice is already off and the activity recorded; only the organizer's email is lost.
+      this.deps.logger.error("Failed to enqueue the notetaker turned-off notice", { bookingId: booking.id });
+    }
+    return { turnedOff: true };
+  }
+
   private async isFeatureEnabled(userId: number): Promise<boolean> {
     const hasFeature = await this.deps.featuresRepository.checkIfUserHasFeature(
       userId,
@@ -261,28 +463,27 @@ export class NotetakerChoiceService {
   }
 
   private async writeDisabledChoice(params: {
-    booking: NotetakerBookingContext;
+    bookingId: number;
     userId: number;
+    actorName: string | null;
     now: Date;
+    appliedToSeries: boolean;
   }): Promise<void> {
-    const { booking, userId, now } = params;
-
-    // Looked up before the write: the two writes share no transaction, so nothing that can fail sits between them.
-    const actorName = await this.findUserName(userId);
+    const { bookingId, userId, actorName, now, appliedToSeries } = params;
 
     // upsert rather than disable(): disable() cannot record who turned it off. Omitting
     // notifiedAttendeeEmails keeps the list, so people already told are not notified again.
     await this.deps.bookingNotetakerRepository.upsert({
-      bookingId: booking.id,
+      bookingId,
       enabled: false,
       pendingDispatch: false,
       source: "HOST",
-      appliedToSeries: false,
+      appliedToSeries,
       setByUserId: userId,
       setAt: now,
     });
 
-    await this.createActivity({ bookingId: booking.id, action: "DISABLED", userId, actorName });
+    await this.createActivity({ bookingId, action: "DISABLED", userId, actorName });
   }
 
   private async createActivity(params: {
@@ -302,5 +503,166 @@ export class NotetakerChoiceService {
       actorName,
       detail: null,
     });
+  }
+
+  private async createSystemActivity(params: {
+    bookingId: number;
+    action: "ENABLED" | "DISABLED";
+    detail: Record<string, unknown>;
+  }): Promise<void> {
+    const { bookingId, action, detail } = params;
+
+    await this.deps.activityRepository.create({
+      bookingId,
+      sessionId: null,
+      action,
+      actorType: "SYSTEM",
+      actorUserId: null,
+      actorName: null,
+      detail,
+    });
+  }
+
+  private async enqueueAttendeeNotice(bookingId: number): Promise<void> {
+    const result = await this.deps.notetakerTasker.sendNotification({
+      kind: "ATTENDEE_NOTICE",
+      bookingId,
+      sessionId: null,
+    });
+    if (result.runId === "task-failed") {
+      // The choice is stored, and the notice sent at dispatch time is the catch-all, so the host is not failed.
+      this.deps.logger.error("Failed to enqueue the notetaker attendee notice", { bookingId });
+    }
+  }
+
+  private async findEventTypeContext(eventTypeId: number): Promise<NotetakerEventTypeContext> {
+    const context =
+      await this.deps.eventTypeNotetakerSettingsRepository.findByEventTypeIdIncludeEventType(eventTypeId);
+    if (!context) throw ErrorWithCode.Factory.NotFound("EVENT_TYPE_NOT_FOUND");
+    return context;
+  }
+
+  private getEventTypeAvailability(
+    context: NotetakerEventTypeContext
+  ): ReturnType<typeof getEventTypeNotetakerAvailability> {
+    return getEventTypeNotetakerAvailability({
+      locations: parseEventTypeLocations(context.locations),
+      enabledPlatforms: this.deps.config.enabledPlatforms,
+    });
+  }
+
+  private async applyEventTypeDefault(booking: NotetakerBookingContext, now: Date): Promise<boolean> {
+    if (booking.eventTypeId === null) return false;
+    // A replayed hook or an earlier host choice must not be overridden.
+    if (booking.choice !== null) return false;
+
+    const settings = await this.deps.eventTypeNotetakerSettingsRepository.findByEventTypeId(
+      booking.eventTypeId
+    );
+    if (settings?.enabledByDefault !== true) return false;
+
+    if (booking.userId === null) return false;
+    // The flag may have been turned off since the default was set.
+    if (!(await this.isFeatureEnabled(booking.userId))) return false;
+    if (!this.resolveEligibility(booking, true, now).eligible) return false;
+
+    const won = await this.deps.bookingNotetakerRepository.enableIfDisabled({
+      bookingId: booking.id,
+      source: "EVENT_TYPE_DEFAULT",
+      appliedToSeries: false,
+      setByUserId: null,
+      setAt: now,
+    });
+    if (!won) return false;
+
+    await this.createSystemActivity({
+      bookingId: booking.id,
+      action: "ENABLED",
+      detail: { source: "EVENT_TYPE_DEFAULT" },
+    });
+    return true;
+  }
+
+  private async findLaterOccurrences(params: {
+    booking: NotetakerBookingContext;
+    recurringEventId: string;
+    now: Date;
+  }): Promise<NotetakerSeriesBookingRecord[]> {
+    const { booking, recurringEventId, now } = params;
+
+    const rows = await this.deps.bookingNotetakerRepository.findByRecurringEventIdFromStartTime({
+      recurringEventId,
+      startTimeGte: booking.startTime,
+    });
+    // The repository returns every status; what counts as a live occurrence is decided here.
+    return rows.filter(
+      (row) =>
+        row.bookingId !== booking.id &&
+        row.status !== "CANCELLED" &&
+        row.status !== "REJECTED" &&
+        row.endTime.getTime() > now.getTime()
+    );
+  }
+
+  // For a booking whose choice is already on: no activity and no notice for it, only the series flag.
+  private async extendEnabledChoiceToSeries(params: {
+    booking: NotetakerBookingContext;
+    recurringEventId: string;
+    userId: number;
+    actorName: string | null;
+    now: Date;
+  }): Promise<void> {
+    await this.deps.bookingNotetakerRepository.setAppliedToSeries(params.booking.id, true);
+    await this.enableLaterOccurrences(params);
+  }
+
+  private async enableLaterOccurrences(params: {
+    booking: NotetakerBookingContext;
+    recurringEventId: string;
+    userId: number;
+    actorName: string | null;
+    now: Date;
+  }): Promise<void> {
+    const { booking, recurringEventId, userId, actorName, now } = params;
+
+    const rows = await this.findLaterOccurrences({ booking, recurringEventId, now });
+    for (const row of rows) {
+      if (row.choice?.rejoinBlocked === true) continue;
+      if (row.choice?.enabled === true) {
+        await this.deps.bookingNotetakerRepository.setAppliedToSeries(row.bookingId, true);
+        continue;
+      }
+
+      const won = await this.deps.bookingNotetakerRepository.enableIfDisabled({
+        bookingId: row.bookingId,
+        source: "HOST",
+        appliedToSeries: true,
+        setByUserId: userId,
+        setAt: now,
+      });
+      if (won) await this.createActivity({ bookingId: row.bookingId, action: "ENABLED", userId, actorName });
+    }
+  }
+
+  private async disableLaterOccurrences(params: {
+    booking: NotetakerBookingContext;
+    recurringEventId: string;
+    userId: number;
+    actorName: string | null;
+    now: Date;
+  }): Promise<void> {
+    const { booking, recurringEventId, userId, actorName, now } = params;
+
+    const rows = await this.findLaterOccurrences({ booking, recurringEventId, now });
+    for (const row of rows) {
+      if (row.choice?.enabled !== true) continue;
+      await this.writeDisabledChoice({
+        bookingId: row.bookingId,
+        userId,
+        actorName,
+        now,
+        appliedToSeries: true,
+      });
+    }
   }
 }
