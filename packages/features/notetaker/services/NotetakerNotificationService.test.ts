@@ -3,6 +3,7 @@ import {
   sendNotetakerAttendeeNoticeEmail,
   sendNotetakerFailedEmail,
   sendNotetakerResultsReadyEmail,
+  sendNotetakerSharedEmail,
   sendNotetakerTurnedOffEmail,
 } from "@calcom/emails/notetaker-email-service";
 import { sendNotification } from "@calcom/features/notifications/sendNotification";
@@ -32,6 +33,7 @@ vi.mock("@calcom/emails/notetaker-email-service", () => ({
   sendNotetakerAttendeeNoticeEmail: vi.fn(),
   sendNotetakerFailedEmail: vi.fn(),
   sendNotetakerResultsReadyEmail: vi.fn(),
+  sendNotetakerSharedEmail: vi.fn(),
   sendNotetakerTurnedOffEmail: vi.fn(),
 }));
 // The real module configures web push at import time.
@@ -103,6 +105,17 @@ const TURNED_OFF_INPUT_FIELDS: string[] = [
   "bookingTitle",
   "locale",
   "notetakerUrl",
+  "t",
+  "timeZone",
+  "to",
+];
+
+const SHARED_INPUT_FIELDS: string[] = [
+  "bookingStartTime",
+  "bookingTitle",
+  "locale",
+  "notetakerUrl",
+  "sharedByName",
   "t",
   "timeZone",
   "to",
@@ -210,6 +223,7 @@ describe("NotetakerNotificationService", () => {
   const admitMock = vi.mocked(sendNotetakerAdmitPromptEmail);
   const failedMock = vi.mocked(sendNotetakerFailedEmail);
   const turnedOffMock = vi.mocked(sendNotetakerTurnedOffEmail);
+  const sharedMock = vi.mocked(sendNotetakerSharedEmail);
   const pushMock = vi.mocked(sendNotification);
   const logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
 
@@ -225,6 +239,7 @@ describe("NotetakerNotificationService", () => {
     admitMock.mockResolvedValue(undefined);
     failedMock.mockResolvedValue(undefined);
     turnedOffMock.mockResolvedValue(undefined);
+    sharedMock.mockResolvedValue(undefined);
     pushMock.mockResolvedValue(undefined);
 
     repositories = createInMemoryNotetakerRepositories();
@@ -597,16 +612,20 @@ describe("NotetakerNotificationService", () => {
   });
 
   describe("other notification kinds", () => {
-    it.each(["SHARED_WITH_ATTENDEES"] as const)("rejects %s as having no handler", async (kind) => {
-      const promise = service.send({ kind, bookingId: BOOKING_ID, sessionId: null });
+    it("rejects a kind outside the enum as having no handler", async () => {
+      const payload = JSON.parse(`{"kind":"NOT_A_KIND","bookingId":${BOOKING_ID},"sessionId":null}`);
+
+      const promise = service.send(payload);
 
       await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
       await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
-      await expect(promise).rejects.toThrow(kind);
+      await expect(promise).rejects.toThrow("NOT_A_KIND");
       expect(sendMock).not.toHaveBeenCalled();
       expect(noticeMock).not.toHaveBeenCalled();
       expect(admitMock).not.toHaveBeenCalled();
       expect(failedMock).not.toHaveBeenCalled();
+      expect(turnedOffMock).not.toHaveBeenCalled();
+      expect(sharedMock).not.toHaveBeenCalled();
       expect(pushMock).not.toHaveBeenCalled();
     });
   });
@@ -2001,6 +2020,379 @@ describe("NotetakerNotificationService", () => {
 
           expect(turnedOffMock).not.toHaveBeenCalled();
           expect(logger.warn).toHaveBeenCalled();
+          SECRET_TEXTS.forEach((secret) => {
+            expect(loggedText()).not.toContain(secret);
+          });
+        });
+      });
+    });
+  });
+
+  describe("SHARED_WITH_ATTENDEES", () => {
+    const SECRET_TEXTS = [
+      "SECRET-MEETING-TITLE",
+      "SECRET-ORGANIZER-NAME",
+      "secret-organizer@example.org",
+      "SECRET-GUEST-1",
+      "SECRET-GUEST-2",
+      "secret-guest1@example.org",
+      "secret-guest2@example.org",
+      "SECRET-GRANTER-NAME",
+    ];
+
+    function buildAttendee(
+      email: string,
+      overrides: Partial<NotetakerAttendeeRecord> = {}
+    ): NotetakerAttendeeRecord {
+      return { email, name: "Guest Person", locale: "en", timeZone: "UTC", ...overrides };
+    }
+
+    function setAttendees(attendees: NotetakerAttendeeRecord[], bookingId: number = BOOKING_ID): void {
+      repositories.store.setAttendees(bookingId, attendees);
+    }
+
+    function sendShared(bookingId: number = BOOKING_ID): Promise<void> {
+      return service.send({ kind: "SHARED_WITH_ATTENDEES", bookingId, sessionId: null });
+    }
+
+    function sharedEmails(): string[] {
+      return sharedMock.mock.calls.map(([input]) => input.to.email);
+    }
+
+    function expectOtherEmailsUntouched(): void {
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(noticeMock).not.toHaveBeenCalled();
+      expect(admitMock).not.toHaveBeenCalled();
+      expect(failedMock).not.toHaveBeenCalled();
+      expect(turnedOffMock).not.toHaveBeenCalled();
+      expect(pushMock).not.toHaveBeenCalled();
+    }
+
+    let sessionId: string;
+
+    beforeEach(async () => {
+      sessionId = await seedReadySession();
+      await repositories.bookingNotetakerRepository.createSharingGrant({
+        bookingId: BOOKING_ID,
+        grantedByUserId: null,
+      });
+    });
+
+    describe("recipients", () => {
+      it("emails every attendee once and no other email", async () => {
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB), buildAttendee(CY)]);
+
+        await sendShared();
+
+        expect(sharedEmails()).toEqual([ANN, BOB, CY]);
+        expectOtherEmailsUntouched();
+      });
+
+      it("emails a trimmed, differently cased duplicate address once, in the first row's spelling", async () => {
+        setAttendees([
+          buildAttendee("Ann@Example.com"),
+          buildAttendee(BOB),
+          buildAttendee("  ann@example.com "),
+        ]);
+
+        await sendShared();
+
+        expect(sharedEmails()).toEqual(["Ann@Example.com", BOB]);
+      });
+
+      it("still emails attendees already on the notified list", async () => {
+        await seedChoice({ notifiedAttendeeEmails: [ANN] });
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await sendShared();
+
+        expect(sharedEmails()).toEqual([ANN, BOB]);
+      });
+
+      it("sends nothing and resolves for a booking with no attendees", async () => {
+        setAttendees([]);
+
+        await expect(sendShared()).resolves.toBeUndefined();
+
+        expect(sharedMock).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalled();
+      });
+    });
+
+    describe("content", () => {
+      it("uses each attendee's locale and time zone, with an English fallback", async () => {
+        setAttendees([
+          buildAttendee(ANN, { locale: "de", timeZone: "Europe/Berlin" }),
+          buildAttendee(BOB, { locale: null, timeZone: "America/New_York" }),
+        ]);
+
+        await sendShared();
+
+        const ann = sharedMock.mock.calls[0][0];
+        const bob = sharedMock.mock.calls[1][0];
+        expect(ann.locale).toBe("de");
+        expect(ann.timeZone).toBe("Europe/Berlin");
+        expect(ann.t).toBe(translatorFor("de"));
+        expect(bob.locale).toBe("en");
+        expect(bob.timeZone).toBe("America/New_York");
+        expect(bob.t).toBe(translatorFor("en"));
+        expect(getTranslation).toHaveBeenCalledWith("de", "common");
+        expect(getTranslation).toHaveBeenCalledWith("en", "common");
+      });
+
+      it("passes the meeting, the recipient and the notetaker page link", async () => {
+        setAttendees([buildAttendee(ANN, { name: "Ann Guest" })]);
+
+        await sendShared();
+
+        const input = sharedMock.mock.calls[0][0];
+        expect(input.bookingTitle).toBe("Planning call");
+        expect(input.bookingStartTime).toEqual(new Date("2026-10-12T10:00:00.000Z"));
+        expect(input.to).toEqual({ email: ANN, name: "Ann Guest" });
+        expect(input.notetakerUrl).toBe(`${WEBAPP_URL}/booking/${BOOKING_UID}/notetaker`);
+      });
+
+      it.each(["", "   "])("gives a blank attendee name (%j) a null recipient name", async (name) => {
+        setAttendees([buildAttendee(ANN, { name })]);
+
+        await sendShared();
+
+        expect(sharedMock.mock.calls[0][0].to).toEqual({ email: ANN, name: null });
+      });
+
+      it("names the granting user, trimmed", async () => {
+        await repositories.bookingNotetakerRepository.deleteSharingGrant(BOOKING_ID);
+        await repositories.bookingNotetakerRepository.createSharingGrant({
+          bookingId: BOOKING_ID,
+          grantedByUserId: SECOND_HOST_ID,
+        });
+        userLookup.users = [buildUser(SECOND_HOST_ID, { name: "  Grace Granter  " })];
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendShared();
+
+        expect(sharedMock.mock.calls[0][0].sharedByName).toBe("Grace Granter");
+        expect(userLookup.calls).toEqual([[SECOND_HOST_ID]]);
+      });
+
+      it("names the organizer when the grant has no user", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendShared();
+
+        expect(sharedMock.mock.calls[0][0].sharedByName).toBe("Organizer");
+        expect(userLookup.calls).toEqual([]);
+      });
+
+      describe("when the granting user cannot be named", () => {
+        beforeEach(async () => {
+          await repositories.bookingNotetakerRepository.deleteSharingGrant(BOOKING_ID);
+          await repositories.bookingNotetakerRepository.createSharingGrant({
+            bookingId: BOOKING_ID,
+            grantedByUserId: SECOND_HOST_ID,
+          });
+          setAttendees([buildAttendee(ANN)]);
+        });
+
+        it("names the organizer when the lookup returns nobody", async () => {
+          userLookup.users = [];
+
+          await sendShared();
+
+          expect(sharedMock.mock.calls[0][0].sharedByName).toBe("Organizer");
+        });
+
+        it.each([null, "", "   "])("names the organizer when the user's name is %j", async (name) => {
+          userLookup.users = [buildUser(SECOND_HOST_ID, { name })];
+
+          await sendShared();
+
+          expect(sharedMock.mock.calls[0][0].sharedByName).toBe("Organizer");
+        });
+      });
+
+      it("falls back to the app name without an organizer or a granting user", async () => {
+        repositories.store.removeBooking(BOOKING_ID);
+        repositories.store.addBooking(buildBooking({ userId: null, organizer: null }));
+        // removeBooking also drops the booking's session and transcript.
+        sessionId = await seedReadySession();
+        await repositories.bookingNotetakerRepository.createSharingGrant({
+          bookingId: BOOKING_ID,
+          grantedByUserId: null,
+        });
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendShared();
+
+        expect(sharedMock.mock.calls[0][0].sharedByName).toBe(APP_NAME);
+      });
+
+      it("passes exactly the pinned input fields", async () => {
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendShared();
+
+        expect(Object.keys(sharedMock.mock.calls[0][0]).sort()).toEqual(SHARED_INPUT_FIELDS);
+      });
+
+      it("never passes passage or summary text to the email or the logger", async () => {
+        const transcriptId = await seedTranscript(sessionId);
+        await seedSummary(transcriptId, "READY");
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+
+        await sendShared();
+
+        expect(sharedMock).toHaveBeenCalledTimes(2);
+        // JSON.stringify drops the translator function, which is not part of the data under test.
+        const sent = JSON.stringify(sharedMock.mock.calls);
+        SECRETS.forEach((secret) => {
+          expect(sent).not.toContain(secret);
+          expect(loggedText()).not.toContain(secret);
+        });
+      });
+
+      it("leaves the notified list alone and sends no attendee notice", async () => {
+        await seedChoice();
+        setAttendees([buildAttendee(ANN)]);
+
+        await sendShared();
+
+        const choice = await repositories.bookingNotetakerRepository.findByBookingId(BOOKING_ID);
+        expect(choice?.notifiedAttendeeEmails).toEqual([]);
+        expect(noticeMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("skipped targets", () => {
+      beforeEach(() => {
+        setAttendees([buildAttendee(ANN)]);
+      });
+
+      it("warns and sends nothing for an unknown booking", async () => {
+        await expect(sendShared(999)).resolves.toBeUndefined();
+
+        expect(sharedMock).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalled();
+      });
+
+      it("skips without a warning when the grant is gone", async () => {
+        await repositories.bookingNotetakerRepository.deleteSharingGrant(BOOKING_ID);
+
+        await expect(sendShared()).resolves.toBeUndefined();
+
+        expect(sharedMock).not.toHaveBeenCalled();
+        expect(logger.info).toHaveBeenCalled();
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+
+      it("skips without a warning when there is no session with a transcript", async () => {
+        repositories = createInMemoryNotetakerRepositories();
+        repositories.store.addBooking(buildBooking());
+        repositories.store.setAttendees(BOOKING_ID, [buildAttendee(ANN)]);
+        await repositories.bookingNotetakerRepository.createSharingGrant({
+          bookingId: BOOKING_ID,
+          grantedByUserId: null,
+        });
+        service = new NotetakerNotificationService({
+          bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+          activityRepository: repositories.activityRepository,
+          sessionRepository: repositories.sessionRepository,
+          transcriptRepository: repositories.transcriptRepository,
+          summaryRepository: repositories.summaryRepository,
+          userRepository: userLookup,
+          logger,
+        });
+        await seedSession();
+
+        await expect(sendShared()).resolves.toBeUndefined();
+
+        expect(sharedMock).not.toHaveBeenCalled();
+        expect(logger.info).toHaveBeenCalled();
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+
+      it("skips without a warning when the results were deleted", async () => {
+        await repositories.sessionRepository.setResultsDeletedAtByIds([sessionId], new Date(NOW));
+
+        await expect(sendShared()).resolves.toBeUndefined();
+
+        expect(sharedMock).not.toHaveBeenCalled();
+        expect(logger.info).toHaveBeenCalled();
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("failures", () => {
+      it("keeps emailing the other attendee when one send fails, then rejects", async () => {
+        setAttendees([buildAttendee(ANN), buildAttendee(BOB)]);
+        sharedMock.mockRejectedValueOnce(new Error("render failed"));
+
+        const promise = sendShared();
+
+        await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+        await expect(promise).rejects.toMatchObject({ code: ErrorCode.InternalServerError });
+        await expect(promise).rejects.toThrow("SHARED_WITH_ATTENDEES");
+        await expect(promise).rejects.toThrow(String(BOOKING_ID));
+        await expect(promise).rejects.toThrow("1 of 2");
+        expect(sharedMock).toHaveBeenCalledTimes(2);
+        expect(logger.error).toHaveBeenCalledTimes(1);
+      });
+
+      describe("with identifying details in the data", () => {
+        beforeEach(async () => {
+          repositories.store.removeBooking(BOOKING_ID);
+          repositories.store.addBooking(
+            buildBooking({
+              title: "SECRET-MEETING-TITLE",
+              organizer: {
+                id: ORGANIZER_ID,
+                name: "SECRET-ORGANIZER-NAME",
+                email: "secret-organizer@example.org",
+                locale: "en",
+              },
+            })
+          );
+          // removeBooking also drops the booking's session and transcript.
+          sessionId = await seedReadySession();
+          await repositories.bookingNotetakerRepository.createSharingGrant({
+            bookingId: BOOKING_ID,
+            grantedByUserId: SECOND_HOST_ID,
+          });
+          userLookup.users = [buildUser(SECOND_HOST_ID, { name: "SECRET-GRANTER-NAME" })];
+          setAttendees([
+            buildAttendee("secret-guest1@example.org", { name: "SECRET-GUEST-1" }),
+            buildAttendee("secret-guest2@example.org", { name: "SECRET-GUEST-2" }),
+          ]);
+        });
+
+        it("keeps them out of logs and errors on a partial failure", async () => {
+          sharedMock.mockImplementation(async (input) => {
+            if (input.to.email === "secret-guest1@example.org") throw new Error("render failed");
+          });
+
+          const error = await sendShared().then(
+            () => null,
+            (caught: unknown) => caught
+          );
+
+          if (!(error instanceof Error)) throw new Error("Expected the partial failure to reject");
+          const text = `${loggedText()}${error.message}`;
+          SECRET_TEXTS.forEach((secret) => {
+            expect(text).not.toContain(secret);
+          });
+        });
+
+        it("keeps them out of the logs on every skip path", async () => {
+          await sendShared(999);
+          setAttendees([]);
+          await sendShared();
+          setAttendees([buildAttendee("secret-guest1@example.org", { name: "SECRET-GUEST-1" })]);
+          await repositories.sessionRepository.setResultsDeletedAtByIds([sessionId], new Date(NOW));
+          await sendShared();
+          await repositories.bookingNotetakerRepository.deleteSharingGrant(BOOKING_ID);
+          await sendShared();
+
+          expect(sharedMock).not.toHaveBeenCalled();
           SECRET_TEXTS.forEach((secret) => {
             expect(loggedText()).not.toContain(secret);
           });
