@@ -1,13 +1,17 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { getTranslation } from "@calcom/i18n/server";
 import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerBotJoinRequest } from "@calcom/lib/notetaker/botContract";
 import type { INotetakerBotGatewayResolver, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "../bot/INotetakerBotGateway";
 import type { NotetakerConfig } from "../lib/config";
 import { NOTETAKER_SWEEP_BATCH_SIZE } from "../lib/config";
 import { getBookingNotetakerEligibility, resolveMeetingLink } from "../lib/eligibility";
-import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
+import { getNotetakerHostName } from "../lib/hostName";
+import { getProcessingOutcomeReason, NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
+import type { INotetakerTasker } from "../lib/tasker/types";
+import type { INotetakerUserLookup } from "../lib/userLookup";
 import type {
   IBookingNotetakerRepository,
   NotetakerBookingContext,
@@ -17,10 +21,23 @@ import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
 } from "../repositories/interfaces/INotetakerSessionRepository";
+import type { NotetakerAccessService } from "./NotetakerAccessService";
 
 const STARTED_LATE_THRESHOLD_MS = 60_000;
 
+// Enabling inside the join-lead window enqueues the enable-time notice and this one milliseconds
+// apart; without a delay both tasks would read the same recipient list and both would send.
+const ATTENDEE_NOTICE_DELAY = "30s";
+
 type PreparedSession = { session: NotetakerSessionRecord; joinRequest: NotetakerBotJoinRequest };
+
+type HostStop = {
+  bookingId: number;
+  session: NotetakerSessionRecord;
+  binding: NotetakerBotGatewayBinding | null;
+  userId: number;
+  actorName: string | null;
+};
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
@@ -33,6 +50,9 @@ export interface INotetakerDispatchServiceDeps {
   botGatewayResolver: INotetakerBotGatewayResolver;
   config: NotetakerConfig;
   logger: ISimpleLogger;
+  accessService: NotetakerAccessService;
+  userRepository: INotetakerUserLookup;
+  notetakerTasker: INotetakerTasker;
 }
 
 export class NotetakerDispatchService {
@@ -89,7 +109,15 @@ export class NotetakerDispatchService {
     await this.dispatchBooking(booking, binding);
   }
 
-  async stopForBooking(params: { bookingUid: string; reason: "DISABLED" }): Promise<void> {
+  async stopForBooking(
+    params:
+      | { bookingUid: string; reason: "DISABLED" }
+      | { bookingUid: string; reason: "STOPPED_BY_HOST"; userId: number }
+  ): Promise<void> {
+    if (params.reason === "STOPPED_BY_HOST") {
+      return this.stopByHost({ bookingUid: params.bookingUid, userId: params.userId });
+    }
+
     const { bookingNotetakerRepository, sessionRepository, botGatewayResolver, logger } = this.deps;
 
     const booking = await bookingNotetakerRepository.findByBookingUidIncludeBooking(params.bookingUid);
@@ -117,6 +145,152 @@ export class NotetakerDispatchService {
     // Deleted even when the bot could not be reached: a pre-admission row has no results to keep,
     // and leaving it would block the next dispatch for this booking.
     await sessionRepository.deleteById(session.id);
+  }
+
+  private async stopByHost(params: { bookingUid: string; userId: number }): Promise<void> {
+    const { accessService, sessionRepository, botGatewayResolver } = this.deps;
+
+    const booking = await accessService.assertHost(params);
+
+    const session = await sessionRepository.findByBookingIdAndStatusIn(booking.id, [
+      "SCHEDULED",
+      "WAITING_TO_BE_ADMITTED",
+      "TRANSCRIBING",
+    ]);
+    if (!session) throw ErrorWithCode.Factory.BadRequest("NO_ACTIVE_SESSION");
+
+    const binding = botGatewayResolver.resolve();
+    const actorName = await this.findUserName(params.userId);
+    const stop = { bookingId: booking.id, session, binding, userId: params.userId, actorName };
+
+    if (session.status === "TRANSCRIBING") return this.stopAfterAdmission(stop);
+    return this.stopBeforeAdmission(stop);
+  }
+
+  private async stopBeforeAdmission(params: HostStop): Promise<void> {
+    const { bookingNotetakerRepository, sessionRepository, activityRepository, logger } = this.deps;
+    const { bookingId, session, binding, userId, actorName } = params;
+
+    if (binding) {
+      try {
+        await binding.gateway.requestStop({ sessionId: session.id, reason: "STOPPED_BY_HOST" });
+      } catch (error) {
+        logger.warn("Notetaker stop request failed", {
+          bookingId,
+          sessionId: session.id,
+          message: getErrorMessage(error),
+        });
+      }
+    }
+
+    // A false result means a concurrent stop already removed the row and recorded the act.
+    const deleted = await sessionRepository.deleteById(session.id);
+    if (!deleted) return;
+
+    // Without this the booking would read as scheduled for ever, and the host could not turn the
+    // notetaker on again because enabling an enabled choice is a no-op.
+    await bookingNotetakerRepository.disable(bookingId);
+    await activityRepository.create({
+      bookingId,
+      sessionId: null,
+      action: "STOPPED",
+      actorType: "USER",
+      actorUserId: userId,
+      actorName,
+      detail: null,
+    });
+  }
+
+  private async stopAfterAdmission(params: HostStop): Promise<void> {
+    const { bookingNotetakerRepository, sessionRepository, activityRepository } = this.deps;
+    const { bookingId, session, binding, userId, actorName } = params;
+    const now = new Date();
+
+    if (session.stopRequestedAt === null) {
+      const marked = await sessionRepository.updateIfStatusIn(session.id, ["TRANSCRIBING"], {
+        stopRequestedAt: now,
+        stopRequestedByUserId: userId,
+      });
+      // The session ended by itself between the read and the mark; there is nothing left to stop.
+      if (!marked) return;
+
+      await activityRepository.create({
+        bookingId,
+        sessionId: session.id,
+        action: "STOPPED",
+        actorType: "USER",
+        actorUserId: userId,
+        actorName,
+        detail: null,
+      });
+    }
+
+    // Not caught: the host has to see that the bot was not reached, and presses Stop again. The
+    // mark above keeps that repeat from writing a second activity.
+    if (binding) {
+      await binding.gateway.requestStop({ sessionId: session.id, reason: "STOPPED_BY_HOST" });
+    }
+
+    if (await this.isSessionKnownToBot(binding, session.id)) return;
+
+    // Both before the status write, so no sweep can pass the live-session precondition in between
+    // and send a second bot.
+    await bookingNotetakerRepository.setRejoinBlocked(bookingId, true);
+    await bookingNotetakerRepository.setPendingDispatch(bookingId, false);
+
+    const won = await sessionRepository.updateIfStatusIn(session.id, ["TRANSCRIBING"], {
+      status: "PROCESSING",
+      outcomeReason: getProcessingOutcomeReason("STOP_REQUESTED"),
+      endedAt: now,
+    });
+    if (!won) return;
+
+    await this.enqueueFinalize(session.id);
+  }
+
+  // requestStop resolves for a session the bot does not know as well, so asking for the state is
+  // the only way to see that the bot lost the session and will never report its end.
+  private async isSessionKnownToBot(
+    binding: NotetakerBotGatewayBinding | null,
+    sessionId: string
+  ): Promise<boolean> {
+    if (!binding) return false;
+
+    try {
+      return (await binding.gateway.getState(sessionId)) !== null;
+    } catch (error) {
+      this.deps.logger.warn("Notetaker state request failed; the session is left to the bot", {
+        sessionId,
+        message: getErrorMessage(error),
+      });
+      return true;
+    }
+  }
+
+  private async findUserName(userId: number): Promise<string | null> {
+    const users = await this.deps.userRepository.findByIds({ ids: [userId] });
+    return users.find((user) => user.id === userId)?.name ?? null;
+  }
+
+  private async enqueueFinalize(sessionId: string): Promise<void> {
+    const { runId } = await this.deps.notetakerTasker.finalizeSession({ sessionId });
+    if (runId !== "task-failed") return;
+
+    this.deps.logger.error("Failed to enqueue notetaker session finalize", { sessionId });
+    throw ErrorWithCode.Factory.InternalServerError(
+      `Unable to enqueue finalize for notetaker session ${sessionId}`
+    );
+  }
+
+  private async enqueueAttendeeNotice(bookingId: number, sessionId: string): Promise<void> {
+    const { runId } = await this.deps.notetakerTasker.sendNotification(
+      { kind: "ATTENDEE_NOTICE", bookingId, sessionId },
+      { delay: ATTENDEE_NOTICE_DELAY }
+    );
+    if (runId !== "task-failed") return;
+
+    // Not thrown: the bot is already joining, and its own notice in the meeting still appears.
+    this.deps.logger.error("Failed to enqueue notetaker attendee notice", { bookingId, sessionId });
   }
 
   private async dispatchBooking(
@@ -157,6 +331,8 @@ export class NotetakerDispatchService {
     // re-arming with a live session would dispatch a second bot once that session ends. The bot's
     // events can already be changing the row, so this is the only column written after the join.
     await sessionRepository.update(prepared.session.id, { externalRef });
+
+    await this.enqueueAttendeeNotice(booking.id, prepared.session.id);
   }
 
   private async prepareSession(
@@ -193,7 +369,7 @@ export class NotetakerDispatchService {
 
     const now = new Date();
     const t = await getTranslation(booking.organizer?.locale ?? "en", "common");
-    const hostName = booking.organizer?.name ?? APP_NAME;
+    const hostName = getNotetakerHostName(booking.organizer);
     const displayName = t("notetaker_display_name", { appName: APP_NAME, hostName });
     const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
 
