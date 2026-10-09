@@ -13,6 +13,8 @@ export function useNotetakerState(bookingUid: string) {
       refetchInterval: (query) => {
         // After an error, `data` can still hold the last good value; stop polling instead of hammering a failing endpoint.
         if (query.state.status === "error") return false;
+        // The summary is generated after the session is terminal, so the status check alone would stop polling too early.
+        if (query.state.data?.summary?.status === "PENDING") return NOTETAKER_STATE_POLL_INTERVAL_MS;
         const status = query.state.data?.status;
         if (!status) return false;
         return NOTETAKER_LIVE_SESSION_STATUSES.includes(status) ? NOTETAKER_STATE_POLL_INTERVAL_MS : false;
