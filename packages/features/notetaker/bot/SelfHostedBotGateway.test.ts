@@ -146,6 +146,44 @@ describe("SelfHostedBotGateway", () => {
       expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
     });
 
+    it.each([
+      ["the meeting_url_unusable code", () => jsonResponse({ error: "meeting_url_unusable" }, 422)],
+      ["an unknown code", () => jsonResponse({ error: "something_else" }, 422)],
+      ["a non-JSON body", () => textResponse("not json", 422)],
+      ["a non-string error field", () => jsonResponse({ error: 42 }, 422)],
+    ])("maps a 422 with %s to LINK_UNUSABLE", async (_name, buildResponse) => {
+      fetchFn.mockResolvedValueOnce(buildResponse());
+
+      const error = await captureError(buildGateway().requestJoin(buildJoinRequest()));
+
+      expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    });
+
+    it("maps a 422 with the invalid_request code to TRANSIENT", async () => {
+      fetchFn.mockResolvedValueOnce(jsonResponse({ error: "invalid_request" }, 422));
+
+      const error = await captureError(buildGateway().requestJoin(buildJoinRequest()));
+
+      expect(getNotetakerBotGatewayFailure(error)).toBe("TRANSIENT");
+    });
+
+    it("names the code but not the body, the secret or the signature when a 422 is transient", async () => {
+      fetchFn.mockResolvedValueOnce(
+        jsonResponse({ error: "invalid_request", detail: "body-marker-7f3a" }, 422)
+      );
+
+      const error = await captureError(buildGateway().requestJoin(buildJoinRequest()));
+
+      if (!(error instanceof Error)) throw new Error("expected an Error");
+      const signature = new Headers(fetchFn.mock.calls[0][1]?.headers).get(NOTETAKER_SIGNATURE_HEADER);
+      expect(signature).toBeTruthy();
+      expect(error.message).toBe("Bot rejected POST /v1/sessions as invalid_request (status 422)");
+      expect(error.message).not.toContain("body-marker-7f3a");
+      expect(error.message).not.toContain(SECRET);
+      expect(error.message).not.toContain("meet.example.test");
+      expect(error.message).not.toContain(signature ?? "");
+    });
+
     it.each([500, 502, 503, 401])("maps %i to TRANSIENT", async (status) => {
       fetchFn.mockResolvedValueOnce(textResponse("", status));
 

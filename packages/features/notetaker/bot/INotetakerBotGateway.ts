@@ -11,7 +11,9 @@ import type {
 export interface INotetakerBotGateway {
   /**
    * Rejects with an `ErrorWithCode` built by `createNotetakerBotGatewayError`:
-   * `LINK_UNUSABLE` for HTTP 422, `TRANSIENT` for timeout, network error, 5xx or 503.
+   * `LINK_UNUSABLE` for HTTP 422 (except body `{ error: "invalid_request" }`, which is `TRANSIENT`:
+   * the bot could not read the request, so the next sweep retries until the give-up deadline),
+   * `TRANSIENT` for timeout, network error, 5xx or 503.
    */
   requestJoin(input: NotetakerBotJoinRequest): Promise<{ externalRef: string }>;
   /** Resolves, without throwing, on 404. */

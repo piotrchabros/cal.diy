@@ -10,10 +10,13 @@ import {
   notetakerBotStateSchema,
   signNotetakerPayload,
 } from "@calcom/lib/notetaker/botContract";
+import { z } from "zod";
 import type { INotetakerBotGateway } from "./INotetakerBotGateway";
 import { createNotetakerBotGatewayError } from "./INotetakerBotGateway";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+const botErrorBodySchema = z.object({ error: z.string() });
 
 function parseJson(text: string): unknown {
   try {
@@ -41,6 +44,16 @@ export class SelfHostedBotGateway implements INotetakerBotGateway {
     const { status, text } = await this.send({ method: "POST", path, rawBody: JSON.stringify(input) });
 
     if (status === 422) {
+      const errorBody = botErrorBodySchema.safeParse(parseJson(text));
+      // The bot also answers 422 when it cannot read the request. That is a version mismatch, not a
+      // bad link, so it is retried until the give-up deadline. A 422 without this code (the contract
+      // allows an empty body) stays a link failure.
+      if (errorBody.success && errorBody.data.error === "invalid_request") {
+        throw createNotetakerBotGatewayError(
+          "TRANSIENT",
+          `Bot rejected POST ${path} as invalid_request (status 422)`
+        );
+      }
       throw createNotetakerBotGatewayError("LINK_UNUSABLE", `Bot rejected POST ${path} with status 422`);
     }
     if (status < 200 || status >= 300) {
