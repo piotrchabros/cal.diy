@@ -1,3 +1,4 @@
+import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import type { NotetakerSessionStatusDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
@@ -7,6 +8,7 @@ import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { getBookingNotetakerEligibility } from "../lib/eligibility";
 import { getDisplayedStatus } from "../lib/sessionStateMachine";
+import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import type {
   BookingNotetakerRecord,
@@ -89,6 +91,8 @@ export interface INotetakerChoiceServiceDeps {
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   userRepository: INotetakerUserLookup;
   config: NotetakerConfig;
+  notetakerTasker: INotetakerTasker;
+  logger: ISimpleLogger;
 }
 
 export type NotetakerChoiceScope = "THIS_BOOKING" | "ALL_FUTURE_OCCURRENCES";
@@ -111,7 +115,7 @@ export class NotetakerChoiceService {
     if (!enabled) {
       // Turning off stays possible after the end time and on an ineligible booking.
       if (!existing?.enabled) return;
-      await this.writeChoice({ booking, enabled: false, userId, now });
+      await this.writeDisabledChoice({ booking, userId, now });
       return;
     }
 
@@ -122,10 +126,38 @@ export class NotetakerChoiceService {
       throw ErrorWithCode.Factory.BadRequest(eligibility.reason, { reason: eligibility.reason });
     }
 
-    // Writing again would re-arm pendingDispatch after a dispatch and send a second bot.
     if (existing?.enabled) return;
 
-    await this.writeChoice({ booking, enabled: true, userId, now });
+    // Looked up before the write: the two writes share no transaction, so nothing that can fail sits between them.
+    const actorName = await this.findUserName(userId);
+
+    const won = await this.deps.bookingNotetakerRepository.enableIfDisabled({
+      bookingId: booking.id,
+      source: "HOST",
+      appliedToSeries: false,
+      setByUserId: userId,
+      setAt: now,
+    });
+    if (!won) {
+      const current = await this.deps.bookingNotetakerRepository.findByBookingId(booking.id);
+      if (current?.rejoinBlocked === true) {
+        throw ErrorWithCode.Factory.BadRequest("REJOIN_BLOCKED", { reason: "REJOIN_BLOCKED" });
+      }
+      // Another host enabled it first, so this call records no activity and sends no notice.
+      return;
+    }
+
+    await this.createActivity({ bookingId: booking.id, action: "ENABLED", userId, actorName });
+
+    const result = await this.deps.notetakerTasker.sendNotification({
+      kind: "ATTENDEE_NOTICE",
+      bookingId: booking.id,
+      sessionId: null,
+    });
+    if (result.runId === "task-failed") {
+      // The choice is stored, and the notice sent at dispatch time is the catch-all, so the host is not failed.
+      this.deps.logger.error("Failed to enqueue the notetaker attendee notice", { bookingId: booking.id });
+    }
   }
 
   async getState(params: { bookingUid: string; userId: number }): Promise<NotetakerStateDto> {
@@ -176,8 +208,13 @@ export class NotetakerChoiceService {
       eligibility,
       choice: choiceDto,
       status,
-      // An enabled choice can always be turned off before the end, even once the booking is ineligible.
-      canToggle: isHost && !this.hasEnded(booking, now) && (choice?.enabled === true || eligibility.eligible),
+      // An enabled choice can be turned off before the end even when ineligible, except once rejoin is
+      // blocked: there the explanation replaces the toggle.
+      canToggle:
+        isHost &&
+        !this.hasEnded(booking, now) &&
+        booking.choice?.rejoinBlocked !== true &&
+        (choice?.enabled === true || eligibility.eligible),
       canStop: isHost && latestSession !== null && STOPPABLE_SESSION_STATUSES.includes(latestSession.status),
       isRecurring: booking.recurringEventId !== null,
       session: latestSession ? toSessionDto(latestSession) : null,
@@ -215,6 +252,10 @@ export class NotetakerChoiceService {
     });
     if (!eligibility.eligible) return eligibility;
 
+    if (booking.choice?.rejoinBlocked === true) {
+      return { eligible: false, platform: eligibility.platform, reason: "REJOIN_BLOCKED" };
+    }
+
     if (this.hasEnded(booking, now)) {
       return { eligible: false, platform: eligibility.platform, reason: "MEETING_ENDED" };
     }
@@ -234,13 +275,12 @@ export class NotetakerChoiceService {
     return users.find((user) => user.id === userId)?.name ?? null;
   }
 
-  private async writeChoice(params: {
+  private async writeDisabledChoice(params: {
     booking: NotetakerBookingContext;
-    enabled: boolean;
     userId: number;
     now: Date;
   }): Promise<void> {
-    const { booking, enabled, userId, now } = params;
+    const { booking, userId, now } = params;
 
     // Looked up before the write: the two writes share no transaction, so nothing that can fail sits between them.
     const actorName = await this.findUserName(userId);
@@ -249,18 +289,29 @@ export class NotetakerChoiceService {
     // notifiedAttendeeEmails keeps the list, so people already told are not notified again.
     await this.deps.bookingNotetakerRepository.upsert({
       bookingId: booking.id,
-      enabled,
-      pendingDispatch: enabled,
+      enabled: false,
+      pendingDispatch: false,
       source: "HOST",
       appliedToSeries: false,
       setByUserId: userId,
       setAt: now,
     });
 
+    await this.createActivity({ bookingId: booking.id, action: "DISABLED", userId, actorName });
+  }
+
+  private async createActivity(params: {
+    bookingId: number;
+    action: "ENABLED" | "DISABLED";
+    userId: number;
+    actorName: string | null;
+  }): Promise<void> {
+    const { bookingId, action, userId, actorName } = params;
+
     await this.deps.activityRepository.create({
-      bookingId: booking.id,
+      bookingId,
       sessionId: null,
-      action: enabled ? "ENABLED" : "DISABLED",
+      action,
       actorType: "USER",
       actorUserId: userId,
       actorName,
