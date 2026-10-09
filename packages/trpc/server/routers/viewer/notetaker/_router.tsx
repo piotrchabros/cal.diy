@@ -1,12 +1,16 @@
 import authedProcedure from "../../../procedures/authedProcedure";
 import { router } from "../../../trpc";
 import { eventOwnerProcedure } from "../eventTypes/util";
+import { ZDeleteResultsInputSchema } from "./deleteResults.schema";
+import { ZExportInputSchema } from "./export.schema";
+import { ZGetActivityInputSchema } from "./getActivity.schema";
 import { ZGetEventTypeDefaultInputSchema } from "./getEventTypeDefault.schema";
 import { ZGetStateInputSchema } from "./getState.schema";
 import { ZListPassagesInputSchema } from "./listPassages.schema";
 import { ZRegenerateSummaryInputSchema } from "./regenerateSummary.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
 import { ZSetEventTypeDefaultInputSchema } from "./setEventTypeDefault.schema";
+import { ZSetSharingInputSchema } from "./setSharing.schema";
 import { ZStopInputSchema } from "./stop.schema";
 
 export const notetakerRouter = router({
@@ -51,4 +55,24 @@ export const notetakerRouter = router({
         input: { eventTypeId: input.eventTypeId, enabledByDefault: input.enabledByDefault },
       });
     }),
+
+  setSharing: authedProcedure.input(ZSetSharingInputSchema).mutation(async ({ ctx, input }) => {
+    const { setSharingHandler } = await import("./setSharing.handler");
+    return setSharingHandler({ ctx, input });
+  }),
+
+  deleteResults: authedProcedure.input(ZDeleteResultsInputSchema).mutation(async ({ ctx, input }) => {
+    const { deleteResultsHandler } = await import("./deleteResults.handler");
+    return deleteResultsHandler({ ctx, input });
+  }),
+
+  export: authedProcedure.input(ZExportInputSchema).mutation(async ({ ctx, input }) => {
+    const { exportHandler } = await import("./export.handler");
+    return exportHandler({ ctx, input });
+  }),
+
+  getActivity: authedProcedure.input(ZGetActivityInputSchema).query(async ({ ctx, input }) => {
+    const { getActivityHandler } = await import("./getActivity.handler");
+    return getActivityHandler({ ctx, input });
+  }),
 });
