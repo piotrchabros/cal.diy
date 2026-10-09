@@ -6,6 +6,7 @@ import type {
   IBookingNotetakerRepository,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
+  NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
@@ -63,6 +64,10 @@ function copyGrant(grant: NotetakerSharingGrantRecord): NotetakerSharingGrantRec
 
 function copyAttendee(attendee: NotetakerAttendeeRecord): NotetakerAttendeeRecord {
   return { ...attendee };
+}
+
+function copyReference(reference: NotetakerBookingReferenceRecord): NotetakerBookingReferenceRecord {
+  return { ...reference };
 }
 
 function copySettings(settings: EventTypeNotetakerSettingsRecord): EventTypeNotetakerSettingsRecord {
@@ -130,6 +135,7 @@ export class InMemoryNotetakerStore {
   readonly eventTypes = new Map<number, InMemoryEventTypeSeed>();
   readonly verifiedEmails = new Map<number, string[]>();
   readonly attendees = new Map<number, NotetakerAttendeeRecord[]>();
+  readonly references = new Map<number, NotetakerBookingReferenceRecord[]>();
   readonly webPushSubscriptions = new Map<number, string[]>();
   readonly choices = new Map<number, BookingNotetakerRecord>();
   readonly sharingGrants = new Map<number, NotetakerSharingGrantRecord>();
@@ -158,6 +164,7 @@ export class InMemoryNotetakerStore {
     this.choices.delete(bookingId);
     this.sharingGrants.delete(bookingId);
     this.attendees.delete(bookingId);
+    this.references.delete(bookingId);
 
     const sessionIds = new Set<string>();
     for (const session of Array.from(this.sessions.values())) {
@@ -192,6 +199,10 @@ export class InMemoryNotetakerStore {
 
   setAttendees(bookingId: number, attendees: NotetakerAttendeeRecord[]): void {
     this.attendees.set(bookingId, attendees.map(copyAttendee));
+  }
+
+  setReferences(bookingId: number, references: NotetakerBookingReferenceRecord[]): void {
+    this.references.set(bookingId, references.map(copyReference));
   }
 
   setWebPushSubscriptions(userId: number, subscriptions: string[]): void {
@@ -420,6 +431,14 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     const given = this.store.attendees.get(bookingId);
     if (given) return given.map(copyAttendee);
     return seed.attendeeEmails.map((email) => ({ email, name: email, locale: null, timeZone: "UTC" }));
+  }
+
+  async findReferencesByBookingIdAndType(params: {
+    bookingId: number;
+    type: string;
+  }): Promise<NotetakerBookingReferenceRecord[]> {
+    const given = this.store.references.get(params.bookingId) ?? [];
+    return given.filter((reference) => reference.type === params.type).map(copyReference);
   }
 
   async findSharingGrant(bookingId: number): Promise<NotetakerSharingGrantRecord | null> {
