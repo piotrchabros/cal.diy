@@ -10,6 +10,7 @@ import type { FakePageAction } from "./browser/FakeMeetingPage";
 import { FakeMeetingBrowserLauncher, FakeMeetingPage } from "./browser/FakeMeetingPage";
 import {
   GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS,
+  GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS,
   GOOGLE_MEET_JOIN_SCREEN_TIMEOUT_MS,
   GOOGLE_MEET_SELECTORS,
   GOOGLE_SIGN_IN_STEP_TIMEOUT_MS,
@@ -57,9 +58,12 @@ const ALL_KEYS = [
   "dialogDismiss",
   "turnOffMicrophone",
   "turnOffCamera",
+  "microphoneSettled",
+  "cameraSettled",
   "guestNameInput",
   "askToJoinButton",
   "joinNowButton",
+  "switchHereButton",
   "joinScreenOrVerdict",
   "inMeetingMarker",
   "waitingText",
@@ -88,6 +92,7 @@ const CLICKABLE_KEYS: SelectorKey[] = [
   "turnOffCamera",
   "askToJoinButton",
   "joinNowButton",
+  "switchHereButton",
   "chatButton",
   "chatSendButton",
   "leaveCallButton",
@@ -114,12 +119,15 @@ const FORBIDDEN_CONTROL_WORDS = [
   "setting",
   "more options",
   "effects",
+  "here too",
+  "companion",
 ];
 
 const PRE_JOIN_KEYS: SelectorKey[] = [
   "joinScreenOrVerdict",
   "askToJoinButton",
   "joinNowButton",
+  "switchHereButton",
   "guestNameInput",
   "turnOffMicrophone",
   "turnOffCamera",
@@ -150,6 +158,7 @@ const SINGLE_MARKERS: [SelectorKey, MeetingPageState][] = [
   ["linkInvalidText", "LINK_INVALID"],
   ["askToJoinButton", "PRE_JOIN"],
   ["joinNowButton", "PRE_JOIN"],
+  ["switchHereButton", "PRE_JOIN"],
   ["guestNameInput", "PRE_JOIN"],
 ];
 const PRECEDENCE: [MeetingPageState, SelectorKey[]][] = [
@@ -228,7 +237,14 @@ function onClick(page: FakeMeetingPage, key: SelectorKey, effect: () => void): v
 }
 
 function showPreJoin(page: FakeMeetingPage, options: { guest: boolean }): void {
-  show(page, ["joinScreenOrVerdict", "askToJoinButton", "turnOffMicrophone", "turnOffCamera"]);
+  show(page, [
+    "joinScreenOrVerdict",
+    "askToJoinButton",
+    "turnOffMicrophone",
+    "turnOffCamera",
+    "microphoneSettled",
+    "cameraSettled",
+  ]);
   if (options.guest) show(page, ["guestNameInput"]);
 }
 
@@ -250,6 +266,7 @@ function wireJoin(page: FakeMeetingPage, next: MeetingPageState): void {
   };
   onClick(page, "askToJoinButton", enter);
   onClick(page, "joinNowButton", enter);
+  onClick(page, "switchHereButton", enter);
 }
 
 function wireDialog(page: FakeMeetingPage, key: SelectorKey): void {
@@ -402,6 +419,10 @@ describe("selectors", () => {
     }
   });
 
+  it("counts the Switch here control as a settled join screen", () => {
+    expect(splitAlternatives(S.joinScreenOrVerdict)).toContain(S.switchHereButton);
+  });
+
   it("limits every alternative to visible elements", () => {
     for (const value of Object.values(S)) {
       const alternatives = splitAlternatives(value);
@@ -527,6 +548,53 @@ describe("guest join", () => {
     expect(clicks(ctx.page)).not.toContain(S.askToJoinButton);
   });
 
+  it("waits out Meet's transient turn-off controls and joins once they settle", async () => {
+    const ctx = setupAdapter();
+    prepareJoin(ctx.page, { guest: true, next: "WAITING" });
+    show(ctx.page, ["microphoneSettled", "cameraSettled"], false);
+
+    const joining = track(ctx.adapter.join(INPUT, ctx.handlers));
+    await advance(1000);
+    expect(joining.settled).toBe(false);
+    expect(clicks(ctx.page)).toEqual([]);
+    show(ctx.page, ["turnOffMicrophone", "turnOffCamera"], false);
+    show(ctx.page, ["microphoneSettled", "cameraSettled"]);
+    await advance(1);
+
+    expect(joining.settled).toBe(true);
+    expect(joining.error).toBeUndefined();
+    expect(clicks(ctx.page)).toEqual([S.askToJoinButton]);
+  });
+
+  it("adds no delay when the device controls have already settled", async () => {
+    const ctx = setupAdapter();
+    prepareJoin(ctx.page, { guest: true, next: "WAITING" });
+    show(ctx.page, ["turnOffMicrophone", "turnOffCamera"], false);
+    const waitForVisible = vi.spyOn(ctx.page, "waitForVisible");
+    const startedAt = Date.now();
+
+    await ctx.adapter.join(INPUT, ctx.handlers);
+
+    expect(Date.now()).toBe(startedAt);
+    expect(waitForVisible).toHaveBeenCalledWith(S.microphoneSettled, GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS);
+    expect(waitForVisible).toHaveBeenCalledWith(S.cameraSettled, GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS);
+    expect(clicks(ctx.page)).toEqual([S.askToJoinButton]);
+  });
+
+  it("after a settle timeout still turns live devices off and joins", async () => {
+    const ctx = setupAdapter();
+    prepareJoin(ctx.page, { guest: true, next: "WAITING" });
+    show(ctx.page, ["microphoneSettled", "cameraSettled"], false);
+
+    const joining = track(ctx.adapter.join(INPUT, ctx.handlers));
+    await advance(GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS);
+    await advance(GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS);
+
+    expect(joining.settled).toBe(true);
+    expect(joining.error).toBeUndefined();
+    expect(clicks(ctx.page)).toEqual([S.turnOffMicrophone, S.turnOffCamera, S.askToJoinButton]);
+  });
+
   it("emits waiting on the first poll", async () => {
     const { events } = await joinedAs(GUEST, "WAITING");
     expect(events).toEqual([]);
@@ -585,6 +653,25 @@ describe("join refusals", () => {
     expect(clicks(ctx.page)).not.toContain(S.joinNowButton);
   });
 
+  it("still refuses to join when the controls never settle and the microphone stays on", async () => {
+    const ctx = setupAdapter();
+    showPreJoin(ctx.page, { guest: true });
+    show(ctx.page, ["microphoneSettled", "cameraSettled"], false);
+    wireJoin(ctx.page, "WAITING");
+
+    const joining = track(ctx.adapter.join(INPUT, ctx.handlers));
+    await advance(GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS - 1);
+    expect(joining.settled).toBe(false);
+    expect(clicks(ctx.page)).toEqual([]);
+    await advance(1);
+
+    expect(joining.settled).toBe(true);
+    expect(joining.error).toBeInstanceOf(Error);
+    const message = joining.error instanceof Error ? joining.error.message : "";
+    expect(message).toContain("microphone could not be turned off");
+    expect(clicks(ctx.page)).toEqual([S.turnOffMicrophone]);
+  });
+
   it("does not ask to join when the camera stays on", async () => {
     const ctx = setupAdapter();
     showPreJoin(ctx.page, { guest: true });
@@ -610,7 +697,7 @@ describe("join refusals", () => {
 
   it("does not join when no join control is shown", async () => {
     const ctx = setupAdapter();
-    show(ctx.page, ["joinScreenOrVerdict", "guestNameInput"]);
+    show(ctx.page, ["joinScreenOrVerdict", "guestNameInput", "microphoneSettled", "cameraSettled"]);
 
     await expect(ctx.adapter.join(INPUT, ctx.handlers)).rejects.toThrow("no control to ask to join");
 
@@ -677,6 +764,33 @@ describe("account join", () => {
     );
     expect(warnings.length).toBe(1);
     expect(lines.filter((line) => line.includes(INPUT.displayName))).toEqual([]);
+  });
+
+  it("joins by switching here when that is the only join control, and logs it", async () => {
+    const { logger, lines } = createCapturingLogger();
+    const ctx = setupAdapter(ACCOUNT_WITH_STATE, { logger });
+    prepareJoin(ctx.page, { guest: false, next: "IN_MEETING" });
+    show(ctx.page, ["askToJoinButton"], false);
+    show(ctx.page, ["switchHereButton"]);
+
+    await ctx.adapter.join(INPUT, ctx.handlers);
+    await advance(POLL);
+
+    expect(clicks(ctx.page)).toEqual([S.turnOffMicrophone, S.turnOffCamera, S.switchHereButton]);
+    expect(eventTypes(ctx.events)).toContain("admitted");
+    expect(lines.some((line) => line.includes('"control":"switch_here"'))).toBe(true);
+  });
+
+  it.each(["askToJoinButton", "joinNowButton"] as const)("prefers %s over Switch here", async (key) => {
+    const ctx = setupAdapter(ACCOUNT_WITH_STATE);
+    prepareJoin(ctx.page, { guest: false, next: "WAITING" });
+    show(ctx.page, ["askToJoinButton"], false);
+    show(ctx.page, [key, "switchHereButton"]);
+
+    await ctx.adapter.join(INPUT, ctx.handlers);
+
+    expect(clicks(ctx.page).at(-1)).toBe(S[key]);
+    expect(clicks(ctx.page)).not.toContain(S.switchHereButton);
   });
 
   it("refuses to join when the page shows the guest name field", async () => {
@@ -990,6 +1104,22 @@ describe("reconnect", () => {
       { type: "fill", selector: S.guestNameInput, value: INPUT.displayName },
     ]);
     expect(eventTypes(ctx.events)).toEqual(["waiting", "admitted", "connection_lost"]);
+  });
+
+  it("rejoins through Switch here when the lost connection still lingers in the call", async () => {
+    const ctx = await joinedAs(ACCOUNT_WITH_STATE, "IN_MEETING");
+    await advance(POLL);
+    expect(eventTypes(ctx.events)).toContain("admitted");
+    ctx.page.triggerClosed();
+    const second = createPage();
+    prepareJoin(second, { guest: false, next: "IN_MEETING" });
+    show(second, ["askToJoinButton", "turnOffMicrophone", "turnOffCamera"], false);
+    show(second, ["switchHereButton"]);
+    ctx.launcher.enqueuePage(second);
+
+    expect(await ctx.adapter.reconnect()).toBe(true);
+
+    expect(clicks(second)).toEqual([S.switchHereButton]);
   });
 
   it("resolves false when the meeting refuses the bot", async () => {
