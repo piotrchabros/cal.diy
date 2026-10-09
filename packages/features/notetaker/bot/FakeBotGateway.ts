@@ -24,7 +24,7 @@ const PASSAGE_ALEX: NotetakerBotPassage = {
   unknownSpeakerNumber: null,
   startMs: 0,
   endMs: 4000,
-  text: "Welcome everyone, let's get started.",
+  text: "Welcome everyone, let's get started. Today we need to decide when the new booking page goes live.",
   language: "en",
 };
 
@@ -35,7 +35,7 @@ const PASSAGE_SAM: NotetakerBotPassage = {
   unknownSpeakerNumber: null,
   startMs: 4500,
   endMs: 9000,
-  text: "Thanks Alex, I have an update on the project.",
+  text: "Thanks Alex, I have an update on the project. Testing is finished, so we agreed to launch on Monday, and I will send the release notes to the team today.",
   language: "en",
 };
 

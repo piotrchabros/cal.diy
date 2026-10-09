@@ -4,6 +4,9 @@ import type { NotetakerBotEvent, NotetakerBotJoinRequest } from "@calcom/lib/not
 import { notetakerBotEventSchema, notetakerBotJoinRequestSchema } from "@calcom/lib/notetaker/botContract";
 import { describe, expect, it } from "vitest";
 import type { NotetakerFakeScenario } from "../lib/config";
+import { getNotetakerConfig } from "../lib/config";
+import { countTranscriptWords } from "../lib/transcriptWords";
+import { StubSummaryGenerator } from "../summary/StubSummaryGenerator";
 import { FakeBotGateway } from "./FakeBotGateway";
 import type { NotetakerBotEventSink } from "./INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "./INotetakerBotGateway";
@@ -283,5 +286,27 @@ describe("FakeBotGateway", () => {
     expect(gateway.scriptErrors).toEqual([failure]);
     expect(calls).toBe(2);
     expect(unhandled).toHaveLength(0);
+  });
+
+  it("the happy script carries at least the default minimum of words", async () => {
+    const { events } = await run("happy");
+    const passages = passageEvents(events).flatMap((event) => event.data.passages);
+
+    expect(countTranscriptWords(passages)).toBeGreaterThanOrEqual(
+      getNotetakerConfig({ NODE_ENV: "test" }).limits.summaryMinWords
+    );
+  });
+
+  it("the stub summary of the happy script has all four sections", async () => {
+    const { events } = await run("happy");
+    const passages = passageEvents(events).flatMap((event) => event.data.passages);
+
+    const result = await new StubSummaryGenerator().generate({ passages, languageHint: null });
+
+    if (!result.ok) throw new Error(`stub summary failed: ${result.failureCode}`);
+    expect(result.content.overview.length).toBeGreaterThan(0);
+    expect(result.content.keyPoints.length).toBeGreaterThan(0);
+    expect(result.content.decisions.length).toBeGreaterThan(0);
+    expect(result.content.actionItems.length).toBeGreaterThan(0);
   });
 });
