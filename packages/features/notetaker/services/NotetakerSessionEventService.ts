@@ -2,8 +2,15 @@ import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.s
 import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerBotEvent } from "@calcom/lib/notetaker/botContract";
-import { canTransition, getProcessingOutcomeReason, mapOutcome } from "../lib/sessionStateMachine";
+import {
+  canTransition,
+  getProcessingOutcomeReason,
+  mapOutcome,
+  shouldBlockRejoin,
+} from "../lib/sessionStateMachine";
 import type { INotetakerTasker } from "../lib/tasker/types";
+import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
+import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
 import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
@@ -25,6 +32,8 @@ export type NotetakerSessionEventResult = "ACCEPTED" | "DUPLICATE" | "GONE";
 export interface INotetakerSessionEventServiceDeps {
   sessionRepository: INotetakerSessionRepository;
   transcriptRepository: INotetakerTranscriptRepository;
+  bookingNotetakerRepository: IBookingNotetakerRepository;
+  activityRepository: INotetakerActivityRepository;
   notetakerTasker: INotetakerTasker;
   logger: ISimpleLogger;
 }
@@ -120,6 +129,10 @@ export class NotetakerSessionEventService {
   ): Promise<NotetakerSessionEventResult> {
     const { endReason, durationMs, interruptedAtMs, passageCount } = event.data;
 
+    if (shouldBlockRejoin({ cause: endReason, admitted: true })) {
+      await this.blockRejoin(session.bookingId);
+    }
+
     const updated = await this.deps.sessionRepository.updateIfStatusIn(
       session.id,
       fromStatusesFor("PROCESSING"),
@@ -132,6 +145,12 @@ export class NotetakerSessionEventService {
       }
     );
     if (!updated) return "GONE";
+
+    // Written before the transcript update and the enqueue: a failed enqueue is retried by the bot
+    // down the duplicate path, which never comes back here, so the activity is written exactly once.
+    if (endReason === "REMOVED_BY_PARTICIPANT") {
+      await this.recordParticipantStop(session);
+    }
 
     const transcript = await this.deps.transcriptRepository.findBySessionId(session.id);
     if (transcript) {
@@ -165,6 +184,10 @@ export class NotetakerSessionEventService {
       return "ACCEPTED";
     }
 
+    if (shouldBlockRejoin({ cause: endReason, admitted: false })) {
+      await this.blockRejoin(session.bookingId);
+    }
+
     const updated = await this.deps.sessionRepository.updateIfStatusIn(
       session.id,
       fromStatusesFor("FAILED"),
@@ -177,6 +200,10 @@ export class NotetakerSessionEventService {
     );
     if (!updated) return "GONE";
 
+    if (endReason === "REMOVED_BY_PARTICIPANT") {
+      await this.recordParticipantStop(session);
+    }
+
     if (outcome.normalised) {
       this.deps.logger.warn("Notetaker session ended with an end reason unexpected before admission", {
         sessionId: session.id,
@@ -187,6 +214,26 @@ export class NotetakerSessionEventService {
     }
 
     return "ACCEPTED";
+  }
+
+  // Both writes happen before the sequence is claimed so a crash in between is repaired by the bot's
+  // retry (a retry after the claim is a duplicate and writes nothing). pendingDispatch is cleared
+  // because a choice re-armed during a live session would otherwise be dispatched by the next sweep.
+  private async blockRejoin(bookingId: number): Promise<void> {
+    await this.deps.bookingNotetakerRepository.setRejoinBlocked(bookingId, true);
+    await this.deps.bookingNotetakerRepository.setPendingDispatch(bookingId, false);
+  }
+
+  private async recordParticipantStop(session: NotetakerSessionRecord): Promise<void> {
+    await this.deps.activityRepository.create({
+      bookingId: session.bookingId,
+      sessionId: session.id,
+      action: "STOPPED",
+      actorType: "PARTICIPANT",
+      actorUserId: null,
+      actorName: null,
+      detail: null,
+    });
   }
 
   private async enqueueFinalize(sessionId: string): Promise<void> {

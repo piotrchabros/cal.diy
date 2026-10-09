@@ -177,6 +177,8 @@ describe("NotetakerSessionEventService", () => {
     service = new NotetakerSessionEventService({
       sessionRepository: repositories.sessionRepository,
       transcriptRepository: repositories.transcriptRepository,
+      bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+      activityRepository: repositories.activityRepository,
       notetakerTasker: tasker,
       logger,
     });
@@ -213,6 +215,83 @@ describe("NotetakerSessionEventService", () => {
     const session = repositories.store.sessions.get(sessionId);
     if (!session) throw new Error(`Session ${sessionId} is missing from the store`);
     return { ...session };
+  }
+
+  function seedChoice(overrides: Partial<{ enabled: boolean; pendingDispatch: boolean }> = {}) {
+    return repositories.bookingNotetakerRepository.upsert({
+      bookingId: BOOKING_ID,
+      enabled: true,
+      pendingDispatch: false,
+      source: "HOST",
+      appliedToSeries: false,
+      setByUserId: ORGANIZER_ID,
+      setAt: NOW,
+      ...overrides,
+    });
+  }
+
+  function choiceOf() {
+    const choice = repositories.store.choices.get(BOOKING_ID);
+    if (!choice) throw new Error(`Choice for booking ${BOOKING_ID} is missing from the store`);
+    return { ...choice };
+  }
+
+  function activities() {
+    return repositories.store.activities.map((activity) => ({ ...activity }));
+  }
+
+  function expectedStoppedActivity(sessionId: string) {
+    return expect.objectContaining({
+      bookingId: BOOKING_ID,
+      sessionId,
+      action: "STOPPED",
+      actorType: "PARTICIPANT",
+      actorUserId: null,
+      actorName: null,
+      detail: null,
+    });
+  }
+
+  function recordCallOrder(sessionId: string): { order: string[]; statusAtBlock: string[] } {
+    const order: string[] = [];
+    const statusAtBlock: string[] = [];
+    const choices = repositories.bookingNotetakerRepository;
+    const sessions = repositories.sessionRepository;
+    const activityRepo = repositories.activityRepository;
+    const transcripts = repositories.transcriptRepository;
+
+    const setRejoinBlocked = choices.setRejoinBlocked.bind(choices);
+    vi.spyOn(choices, "setRejoinBlocked").mockImplementation((...args) => {
+      order.push("setRejoinBlocked");
+      statusAtBlock.push(sessionOf(sessionId).status);
+      return setRejoinBlocked(...args);
+    });
+    const setPendingDispatch = choices.setPendingDispatch.bind(choices);
+    vi.spyOn(choices, "setPendingDispatch").mockImplementation((...args) => {
+      order.push("setPendingDispatch");
+      return setPendingDispatch(...args);
+    });
+    const updateIfStatusIn = sessions.updateIfStatusIn.bind(sessions);
+    vi.spyOn(sessions, "updateIfStatusIn").mockImplementation((...args) => {
+      order.push("updateIfStatusIn");
+      return updateIfStatusIn(...args);
+    });
+    const createActivity = activityRepo.create.bind(activityRepo);
+    vi.spyOn(activityRepo, "create").mockImplementation((...args) => {
+      order.push("activity");
+      return createActivity(...args);
+    });
+    const updateTranscript = transcripts.update.bind(transcripts);
+    vi.spyOn(transcripts, "update").mockImplementation((...args) => {
+      order.push("transcript.update");
+      return updateTranscript(...args);
+    });
+    const finalizeSession = tasker.finalizeSession.bind(tasker);
+    vi.spyOn(tasker, "finalizeSession").mockImplementation((...args) => {
+      order.push("finalize");
+      return finalizeSession(...args);
+    });
+    return { order, statusAtBlock };
   }
 
   function transcriptOf(sessionId: string) {
@@ -634,6 +713,289 @@ describe("NotetakerSessionEventService", () => {
       expect(result).toBe("GONE");
       expect(transcriptOf(sessionId)).toEqual(transcriptBefore);
       expectNoTaskerCalls();
+    });
+  });
+
+  describe("rejoin block and participant stop", () => {
+    describe("REMOVED_BY_PARTICIPANT after admission", () => {
+      const removed = () => ended(FRESH_SEQUENCE, { endReason: "REMOVED_BY_PARTICIPANT" });
+
+      it("blocks rejoin, clears the pending dispatch and records one STOPPED activity", async () => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("ACCEPTED");
+        const choice = choiceOf();
+        expect(choice.rejoinBlocked).toBe(true);
+        expect(choice.pendingDispatch).toBe(false);
+        expect(choice.enabled).toBe(true);
+        const session = sessionOf(sessionId);
+        expect(session.status).toBe("PROCESSING");
+        expect(session.outcomeReason).toBe("REMOVED_BY_PARTICIPANT");
+        expect(activities()).toEqual([expectedStoppedActivity(sessionId)]);
+        expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+        expect(tasker.notificationCalls).toEqual([]);
+      });
+
+      it("blocks and clears before the status write, then records the activity before the transcript and finalize", async () => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+        await repositories.transcriptRepository.createIfMissing({ sessionId, bookingId: BOOKING_ID });
+        const { order, statusAtBlock } = recordCallOrder(sessionId);
+
+        await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(order).toEqual([
+          "setRejoinBlocked",
+          "setPendingDispatch",
+          "updateIfStatusIn",
+          "activity",
+          "transcript.update",
+          "finalize",
+        ]);
+        expect(statusAtBlock).toEqual(["TRANSCRIBING"]);
+      });
+
+      it("keeps the block but records no activity and enqueues nothing when the status write loses", async () => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+        const before = sessionOf(sessionId);
+        vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("GONE");
+        const choice = choiceOf();
+        expect(choice.rejoinBlocked).toBe(true);
+        expect(choice.pendingDispatch).toBe(false);
+        expect(activities()).toEqual([]);
+        expectNoTaskerCalls();
+        expect(sessionOf(sessionId)).toEqual(before);
+      });
+
+      it("records the activity once when a failed finalize enqueue is retried by the bot", async () => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+        tasker.finalizeResult = { runId: "task-failed" };
+
+        await expect(service.handleEvent(withSession(sessionId, removed()))).rejects.toBeInstanceOf(
+          ErrorWithCode
+        );
+        expect(activities()).toHaveLength(1);
+        tasker.finalizeResult = { runId: "run-2" };
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("DUPLICATE");
+        expect(tasker.finalizeCalls).toEqual([{ sessionId }, { sessionId }]);
+        expect(activities()).toHaveLength(1);
+        expect(choiceOf().rejoinBlocked).toBe(true);
+      });
+
+      it("still records the activity when the booking has no notetaker choice row", async () => {
+        const sessionId = await seedTranscribing();
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("ACCEPTED");
+        expect(repositories.store.choices.size).toBe(0);
+        expect(activities()).toEqual([expectedStoppedActivity(sessionId)]);
+      });
+    });
+
+    describe("STOP_REQUESTED after admission", () => {
+      const stopped = () => ended(FRESH_SEQUENCE, { endReason: "STOP_REQUESTED" });
+      const stopRequestedAt = new Date("2026-10-12T10:04:00.000Z");
+
+      it("blocks rejoin without an activity and keeps the stop request fields", async () => {
+        const sessionId = await seedTranscribing({
+          stopRequestedAt,
+          stopRequestedByUserId: ORGANIZER_ID,
+        });
+        await seedChoice({ pendingDispatch: true });
+
+        const result = await service.handleEvent(withSession(sessionId, stopped()));
+
+        expect(result).toBe("ACCEPTED");
+        const choice = choiceOf();
+        expect(choice.rejoinBlocked).toBe(true);
+        expect(choice.pendingDispatch).toBe(false);
+        const session = sessionOf(sessionId);
+        expect(session.status).toBe("PROCESSING");
+        expect(session.outcomeReason).toBe("STOPPED_BY_HOST");
+        expect(session.stopRequestedAt).toEqual(stopRequestedAt);
+        expect(session.stopRequestedByUserId).toBe(ORGANIZER_ID);
+        expect(activities()).toEqual([]);
+        expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+      });
+
+      it("keeps the block but enqueues nothing when the status write loses", async () => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+        vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+        const result = await service.handleEvent(withSession(sessionId, stopped()));
+
+        expect(result).toBe("GONE");
+        expect(choiceOf().rejoinBlocked).toBe(true);
+        expect(activities()).toEqual([]);
+        expectNoTaskerCalls();
+      });
+    });
+
+    describe("REMOVED_BY_PARTICIPANT before admission", () => {
+      const removed = () => ended(FRESH_SEQUENCE, { endReason: "REMOVED_BY_PARTICIPANT", passageCount: 0 });
+
+      it.each<NotetakerSessionStatusDto>([
+        "SCHEDULED",
+        "WAITING_TO_BE_ADMITTED",
+      ])("fails a %s session, blocks rejoin and records the activity", async (status) => {
+        const sessionId = await seedSession({ status });
+        await seedChoice({ pendingDispatch: true });
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("ACCEPTED");
+        const session = sessionOf(sessionId);
+        expect(session.status).toBe("FAILED");
+        expect(session.outcomeReason).toBe("REMOVED_BY_PARTICIPANT");
+        const choice = choiceOf();
+        expect(choice.rejoinBlocked).toBe(true);
+        expect(choice.pendingDispatch).toBe(false);
+        expect(activities()).toEqual([expectedStoppedActivity(sessionId)]);
+        expectNoTaskerCalls();
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+
+      it("blocks and clears before the status write, then records the activity", async () => {
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+        await seedChoice({ pendingDispatch: true });
+        const { order } = recordCallOrder(sessionId);
+
+        await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(order).toEqual(["setRejoinBlocked", "setPendingDispatch", "updateIfStatusIn", "activity"]);
+      });
+
+      it("keeps the block but records no activity when the status write loses", async () => {
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+        await seedChoice({ pendingDispatch: true });
+        vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+
+        const result = await service.handleEvent(withSession(sessionId, removed()));
+
+        expect(result).toBe("GONE");
+        expect(choiceOf().rejoinBlocked).toBe(true);
+        expect(activities()).toEqual([]);
+      });
+    });
+
+    describe("STOP_REQUESTED before admission", () => {
+      const stopped = () => ended(FRESH_SEQUENCE, { endReason: "STOP_REQUESTED", passageCount: 0 });
+
+      it.each<NotetakerSessionStatusDto>([
+        "SCHEDULED",
+        "WAITING_TO_BE_ADMITTED",
+      ])("deletes a %s session row and leaves the choice and activity log alone", async (status) => {
+        const sessionId = await seedSession({ status });
+        await seedChoice({ pendingDispatch: true });
+        const choiceBefore = choiceOf();
+
+        const result = await service.handleEvent(withSession(sessionId, stopped()));
+
+        expect(result).toBe("ACCEPTED");
+        expect(repositories.store.sessions.has(sessionId)).toBe(false);
+        expect(choiceOf()).toEqual(choiceBefore);
+        expect(activities()).toEqual([]);
+        expectNoTaskerCalls();
+      });
+
+      it("answers ACCEPTED when the row is already gone by the time it is deleted", async () => {
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+        await seedChoice({ pendingDispatch: true });
+        const choiceBefore = choiceOf();
+        const findById = repositories.sessionRepository.findById.bind(repositories.sessionRepository);
+        vi.spyOn(repositories.sessionRepository, "findById").mockImplementationOnce(async (id) => {
+          const found = await findById(id);
+          repositories.store.sessions.delete(id);
+          return found;
+        });
+
+        const result = await service.handleEvent(withSession(sessionId, stopped()));
+
+        expect(result).toBe("ACCEPTED");
+        expect(choiceOf()).toEqual(choiceBefore);
+        expect(activities()).toEqual([]);
+        expectNoTaskerCalls();
+      });
+
+      it("answers GONE to later events after the row is deleted", async () => {
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+        await seedChoice({ pendingDispatch: true });
+        const choiceBefore = choiceOf();
+        await service.handleEvent(withSession(sessionId, stopped()));
+
+        expect(await service.handleEvent(withSession(sessionId, heartbeat(FRESH_SEQUENCE + 1)))).toBe("GONE");
+        expect(await service.handleEvent(withSession(sessionId, stopped()))).toBe("GONE");
+
+        expect(choiceOf()).toEqual(choiceBefore);
+      });
+    });
+
+    describe("end reasons that never touch the choice", () => {
+      const reasons: NotetakerBotEndReason[] = [
+        "MEETING_ENDED",
+        "ALONE_TIMEOUT",
+        "NOT_ADMITTED",
+        "MEETING_DID_NOT_START",
+        "INTERRUPTED",
+        "LENGTH_LIMIT_REACHED",
+        "MEETING_LINK_UNUSABLE",
+      ];
+
+      it.each(
+        reasons
+      )("leaves the choice and activity log alone after admission for %s", async (endReason) => {
+        const sessionId = await seedTranscribing();
+        await seedChoice({ pendingDispatch: true });
+        const choiceBefore = choiceOf();
+
+        await service.handleEvent(withSession(sessionId, ended(FRESH_SEQUENCE, { endReason })));
+
+        expect(choiceOf()).toEqual(choiceBefore);
+        expect(activities()).toEqual([]);
+      });
+
+      it.each(
+        reasons
+      )("leaves the choice and activity log alone before admission for %s", async (endReason) => {
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+        await seedChoice({ pendingDispatch: true });
+        const choiceBefore = choiceOf();
+
+        await service.handleEvent(
+          withSession(sessionId, ended(FRESH_SEQUENCE, { endReason, passageCount: 0 }))
+        );
+
+        expect(choiceOf()).toEqual(choiceBefore);
+        expect(activities()).toEqual([]);
+      });
+    });
+
+    it("leaves the choice and activity log alone for a duplicate REMOVED_BY_PARTICIPANT ended event", async () => {
+      const sessionId = await seedTranscribing();
+      await seedChoice({ pendingDispatch: true });
+      const choiceBefore = choiceOf();
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(SEEDED_SEQUENCE, { endReason: "REMOVED_BY_PARTICIPANT" }))
+      );
+
+      expect(result).toBe("DUPLICATE");
+      expect(choiceOf()).toEqual(choiceBefore);
+      expect(activities()).toEqual([]);
     });
   });
 
