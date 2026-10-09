@@ -1,12 +1,17 @@
-import { sendNotetakerResultsReadyEmail } from "@calcom/emails/notetaker-email-service";
+import {
+  sendNotetakerAttendeeNoticeEmail,
+  sendNotetakerResultsReadyEmail,
+} from "@calcom/emails/notetaker-email-service";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { getTranslation } from "@calcom/i18n/server";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { getNotetakerHostName } from "../lib/hostName";
 import type { NotetakerSendNotificationPayload } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type {
   IBookingNotetakerRepository,
+  NotetakerAttendeeRecord,
   NotetakerBookingContext,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
@@ -17,6 +22,10 @@ import type { INotetakerTranscriptRepository } from "../repositories/interfaces/
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "Unknown error";
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export interface INotetakerNotificationServiceDeps {
@@ -38,6 +47,8 @@ export class NotetakerNotificationService {
     switch (params.kind) {
       case "RESULTS_READY":
         return this.sendResultsReady(params);
+      case "ATTENDEE_NOTICE":
+        return this.sendAttendeeNotice(params.bookingId);
       default:
         // Thrown rather than skipped so a kind enqueued without a handler fails its task visibly.
         throw ErrorWithCode.Factory.InternalServerError(
@@ -140,6 +151,103 @@ export class NotetakerNotificationService {
         `NotetakerNotificationService: RESULTS_READY for booking ${bookingId} session ${sessionId} failed for ${failureCount} of ${recipients.length} recipients`
       );
     }
+  }
+
+  // A booking that no longer qualifies is logged and dropped instead of thrown:
+  // retrying the task would never make it sendable.
+  private async sendAttendeeNotice(bookingId: number): Promise<void> {
+    const { bookingNotetakerRepository, logger } = this.deps;
+
+    const booking = await bookingNotetakerRepository.findByBookingIdIncludeBooking(bookingId);
+    if (!booking) {
+      logger.warn("Notetaker attendee notice skipped: booking not found", { bookingId });
+      return;
+    }
+    if (booking.choice === null || !booking.choice.enabled) {
+      logger.warn("Notetaker attendee notice skipped: notetaker is not enabled", { bookingId });
+      return;
+    }
+    if (booking.status === "CANCELLED" || booking.status === "REJECTED") {
+      logger.warn("Notetaker attendee notice skipped: booking is not active", {
+        bookingId,
+        status: booking.status,
+      });
+      return;
+    }
+
+    const attendees = await bookingNotetakerRepository.findAttendeesByBookingId(booking.id);
+    const recipients = await this.resolveNoticeRecipients(booking, attendees);
+    if (recipients.length === 0) return;
+
+    const hostName = getNotetakerHostName(booking.organizer);
+    const isPending = booking.status !== "ACCEPTED";
+
+    // Sent whatever the event type's email settings are, because it is a transparency notice.
+    const sentEmails: string[] = [];
+    let failureCount = 0;
+    for (let i = 0; i < recipients.length; i++) {
+      const attendee = recipients[i];
+      try {
+        const locale = attendee.locale ?? "en";
+        const t = await getTranslation(locale, "common");
+        await sendNotetakerAttendeeNoticeEmail({
+          t,
+          locale,
+          timeZone: attendee.timeZone,
+          to: { email: attendee.email, name: attendee.name.trim() === "" ? null : attendee.name },
+          bookingTitle: booking.title,
+          bookingStartTime: booking.startTime,
+          hostName,
+          isPending,
+        });
+        sentEmails.push(attendee.email);
+      } catch (error) {
+        failureCount++;
+        logger.error("Failed to send the notetaker attendee notice", {
+          bookingId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    // Recorded after the send and before the throw so a retry reaches only the people not yet told.
+    if (sentEmails.length > 0) {
+      await bookingNotetakerRepository.appendNotifiedAttendeeEmails(booking.id, sentEmails, new Date());
+    }
+
+    if (failureCount > 0) {
+      throw ErrorWithCode.Factory.InternalServerError(
+        `NotetakerNotificationService: ATTENDEE_NOTICE for booking ${bookingId} failed for ${failureCount} of ${recipients.length} recipients`
+      );
+    }
+  }
+
+  private async resolveNoticeRecipients(
+    booking: NotetakerBookingContext,
+    attendees: NotetakerAttendeeRecord[]
+  ): Promise<NotetakerAttendeeRecord[]> {
+    if (booking.choice === null) return [];
+
+    const seen = new Set<string>();
+    const own = booking.choice.notifiedAttendeeEmails;
+    for (let i = 0; i < own.length; i++) seen.add(normalizeEmail(own[i]));
+
+    if (booking.recurringEventId !== null) {
+      const series = await this.deps.bookingNotetakerRepository.findNotifiedAttendeeEmailsByRecurringEventId(
+        booking.recurringEventId
+      );
+      for (let i = 0; i < series.length; i++) seen.add(normalizeEmail(series[i]));
+    }
+
+    const recipients: NotetakerAttendeeRecord[] = [];
+    for (let i = 0; i < attendees.length; i++) {
+      const attendee = attendees[i];
+      const key = normalizeEmail(attendee.email);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      recipients.push(attendee);
+    }
+    return recipients;
   }
 
   private async resolveHostRecipients(booking: NotetakerBookingContext): Promise<NotetakerUserRecord[]> {
