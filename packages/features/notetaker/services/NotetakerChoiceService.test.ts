@@ -89,6 +89,7 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
     summaryModel: "test-model",
     anthropicApiKey: null,
     fakeScenario: "happy",
+    googleAccountEmail: null,
     ...overrides,
   };
 }
