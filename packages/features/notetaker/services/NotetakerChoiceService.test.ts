@@ -2223,4 +2223,98 @@ describe("NotetakerChoiceService", () => {
       expect(snapshot()).toEqual(expected);
     });
   });
+
+  describe("getState for a granted attendee", () => {
+    async function seedSharedResults(): Promise<{ transcriptId: string }> {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      const session = await createSession("READY");
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.summaryRepository.upsertPending(transcript.id);
+      await repositories.bookingNotetakerRepository.createSharingGrant({
+        bookingId: BOOKING_ID,
+        grantedByUserId: ORGANIZER_ID,
+      });
+      checkIfUserHasFeature.mockReset();
+      checkIfUserHasFeature.mockResolvedValue(false);
+      return { transcriptId: transcript.id };
+    }
+
+    it("returns the shared results although the feature is off for everyone", async () => {
+      const { transcriptId } = await seedSharedResults();
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      const state = await getState(ATTENDEE_USER_ID);
+
+      expect(state.viewerRole).toBe("ATTENDEE");
+      expect(state.featureEnabled).toBe(true);
+      expect(state.eligibility).toEqual({ eligible: true, platform: "GOOGLE_MEET", reason: null });
+      expect(state.transcript?.id).toBe(transcriptId);
+      expect(state.summary?.status).toBe("PENDING");
+      expect(state.choice).toBeNull();
+      expect(state.canToggle).toBe(false);
+      expect(state.canStop).toBe(false);
+      expect(state.sharedWithAttendees).toBe(true);
+    });
+
+    it("does not evaluate the attendee's feature flag", async () => {
+      await seedSharedResults();
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      await getState(ATTENDEE_USER_ID);
+
+      expect(checkIfUserHasFeature).not.toHaveBeenCalled();
+    });
+
+    it("reports the feature as off when the bot provider is unusable but still returns the results", async () => {
+      await seedSharedResults();
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+      service = buildService(buildConfig({ botProvider: null }));
+
+      const state = await getState(ATTENDEE_USER_ID);
+
+      expect(state.viewerRole).toBe("ATTENDEE");
+      expect(state.featureEnabled).toBe(false);
+      expect(state.transcript).not.toBeNull();
+      expect(state.summary).not.toBeNull();
+      expect(checkIfUserHasFeature).not.toHaveBeenCalled();
+    });
+
+    it("still gates a host on their own feature flag", async () => {
+      const { transcriptId } = await seedSharedResults();
+
+      const state = await getState();
+
+      expect(state.viewerRole).toBe("HOST");
+      expect(state.featureEnabled).toBe(false);
+      expect(state.eligibility.reason).toBe("FEATURE_DISABLED");
+      expect(checkIfUserHasFeature).toHaveBeenCalledWith(ORGANIZER_ID, "notetaker");
+      expect(state.transcript?.id).toBe(transcriptId);
+    });
+
+    it("rejects an attendee when the host did not share the results", async () => {
+      await seedSharedResults();
+      await repositories.bookingNotetakerRepository.deleteSharingGrant(BOOKING_ID);
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      const error = await captureError(getState(ATTENDEE_USER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+    });
+
+    it.each([
+      { name: "has no verified email", emails: null },
+      { name: "has only a verified email that is not on the booking", emails: ["someone-else@example.com"] },
+    ])("rejects a granted attendee who $name", async ({ emails }) => {
+      await seedSharedResults();
+      if (emails) repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, emails);
+
+      const error = await captureError(getState(ATTENDEE_USER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+    });
+  });
 });
