@@ -146,6 +146,32 @@ function getProvisionalOutcomeReason(cause: NotetakerEndCause): NotetakerOutcome
   return OUTCOME_MAPPING[cause].withPassages.outcomeReason;
 }
 
+// The reason stored while PROCESSING is the only record of the bot's endReason that finalize has.
+// The at-least-1-passage reason identifies the outcome row for every cause except
+// MEETING_DID_NOT_START: its null would be read back as MEETING_ENDED and a session without
+// passages would end as NO_SPEECH_DETECTED.
+function getProcessingOutcomeReason(cause: NotetakerEndCause): NotetakerOutcomeReasonDto | null {
+  if (cause === "MEETING_DID_NOT_START") return "MEETING_DID_NOT_START";
+  return getProvisionalOutcomeReason(cause);
+}
+
+// Inverse of getProcessingOutcomeReason up to outcome equivalence: the returned cause gives the
+// same status, reason and completeness as the original one, in both passage columns.
+function getEndCauseFromProcessingOutcomeReason(reason: NotetakerOutcomeReasonDto | null): NotetakerEndCause {
+  switch (reason) {
+    case null:
+      return "MEETING_ENDED";
+    case "LENGTH_LIMIT_REACHED":
+    case "MEETING_DID_NOT_START":
+    case "REMOVED_BY_PARTICIPANT":
+      return reason;
+    case "STOPPED_BY_HOST":
+      return "STOP_REQUESTED";
+    default:
+      return "INTERRUPTED";
+  }
+}
+
 function shouldBlockRejoin(input: { cause: NotetakerEndCause; admitted: boolean }): boolean {
   if (input.cause === "REMOVED_BY_PARTICIPANT") return true;
   return input.cause === "STOP_REQUESTED" && input.admitted;
@@ -165,6 +191,8 @@ export {
   canTransition,
   mapOutcome,
   getProvisionalOutcomeReason,
+  getProcessingOutcomeReason,
+  getEndCauseFromProcessingOutcomeReason,
   shouldBlockRejoin,
   getDisplayedStatus,
 };

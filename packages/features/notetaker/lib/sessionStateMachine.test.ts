@@ -5,6 +5,8 @@ import type { NotetakerEndCause, NotetakerOutcome } from "./sessionStateMachine"
 import {
   canTransition,
   getDisplayedStatus,
+  getEndCauseFromProcessingOutcomeReason,
+  getProcessingOutcomeReason,
   getProvisionalOutcomeReason,
   mapOutcome,
   NOTETAKER_LIVE_SESSION_STATUSES,
@@ -226,6 +228,78 @@ describe("getProvisionalOutcomeReason", () => {
     if (result.kind === "OUTCOME") {
       expect(getProvisionalOutcomeReason(cause)).toBe(result.outcomeReason);
     }
+  });
+});
+
+const PROCESSING_REASONS: [NotetakerEndCause, NotetakerOutcomeReasonDto | null][] = [
+  ["MEETING_ENDED", null],
+  ["ALONE_TIMEOUT", null],
+  ["NOT_ADMITTED", "INTERRUPTED"],
+  ["MEETING_DID_NOT_START", "MEETING_DID_NOT_START"],
+  ["REMOVED_BY_PARTICIPANT", "REMOVED_BY_PARTICIPANT"],
+  ["STOP_REQUESTED", "STOPPED_BY_HOST"],
+  ["INTERRUPTED", "INTERRUPTED"],
+  ["LENGTH_LIMIT_REACHED", "LENGTH_LIMIT_REACHED"],
+  ["MEETING_LINK_UNUSABLE", "INTERRUPTED"],
+  ["WATCHDOG_HEARTBEAT_LOSS", "INTERRUPTED"],
+];
+
+describe("getProcessingOutcomeReason", () => {
+  it("covers every end cause", () => {
+    expect(PROCESSING_REASONS.map(([cause]) => cause)).toEqual(ALL_CAUSES);
+  });
+
+  it.each(PROCESSING_REASONS)("%s gives %s", (cause, expected) => {
+    expect(getProcessingOutcomeReason(cause)).toBe(expected);
+  });
+
+  it("differs from the provisional reason only for MEETING_DID_NOT_START", () => {
+    const differing = ALL_CAUSES.filter(
+      (cause) => getProcessingOutcomeReason(cause) !== getProvisionalOutcomeReason(cause)
+    );
+    expect(differing).toEqual(["MEETING_DID_NOT_START"]);
+  });
+});
+
+const END_CAUSE_BY_STORED_REASON: [NotetakerOutcomeReasonDto | null, NotetakerEndCause][] = [
+  [null, "MEETING_ENDED"],
+  ["LENGTH_LIMIT_REACHED", "LENGTH_LIMIT_REACHED"],
+  ["MEETING_DID_NOT_START", "MEETING_DID_NOT_START"],
+  ["REMOVED_BY_PARTICIPANT", "REMOVED_BY_PARTICIPANT"],
+  ["STOPPED_BY_HOST", "STOP_REQUESTED"],
+  ["INTERRUPTED", "INTERRUPTED"],
+  // never written by getProcessingOutcomeReason
+  ["NOT_ADMITTED", "INTERRUPTED"],
+  ["NO_SPEECH_DETECTED", "INTERRUPTED"],
+  ["MEETING_LINK_UNUSABLE", "INTERRUPTED"],
+];
+
+describe("getEndCauseFromProcessingOutcomeReason", () => {
+  it("covers null and all eight outcome reasons", () => {
+    expect(END_CAUSE_BY_STORED_REASON).toHaveLength(9);
+  });
+
+  it.each(END_CAUSE_BY_STORED_REASON)("%s gives %s", (reason, expected) => {
+    expect(getEndCauseFromProcessingOutcomeReason(reason)).toBe(expected);
+  });
+
+  const ROUND_TRIPS = ALL_CAUSES.flatMap((cause): [NotetakerEndCause, number][] => [
+    [cause, 0],
+    [cause, 1],
+  ]);
+
+  it.each(ROUND_TRIPS)("round-trips %s with %s passages to the same outcome", (cause, passageCount) => {
+    const recovered = getEndCauseFromProcessingOutcomeReason(getProcessingOutcomeReason(cause));
+    const expected = mapOutcome({ cause, admitted: true, passageCount });
+    const actual = mapOutcome({ cause: recovered, admitted: true, passageCount });
+
+    expect(expected.kind).toBe("OUTCOME");
+    expect(actual.kind).toBe("OUTCOME");
+    if (expected.kind !== "OUTCOME" || actual.kind !== "OUTCOME") return;
+    // `normalised` may differ: the recovered cause is an equivalent one, not always the original.
+    expect(actual.status).toBe(expected.status);
+    expect(actual.outcomeReason).toBe(expected.outcomeReason);
+    expect(actual.completeness).toBe(expected.completeness);
   });
 });
 

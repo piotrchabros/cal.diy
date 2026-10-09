@@ -1,3 +1,4 @@
+import type { NotetakerBotProviderDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type {
@@ -39,4 +40,14 @@ export function getNotetakerBotGatewayFailure(error: unknown): NotetakerBotGatew
   if (failure === "LINK_UNUSABLE") return "LINK_UNUSABLE";
   if (failure === "TRANSIENT") return "TRANSIENT";
   return null;
+}
+
+export type NotetakerBotGatewayBinding = {
+  gateway: INotetakerBotGateway;
+  provider: Extract<NotetakerBotProviderDto, "SELF_HOSTED" | "FAKE">;
+};
+
+export interface INotetakerBotGatewayResolver {
+  /** Null means the provider is unusable; never throws. */
+  resolve(): NotetakerBotGatewayBinding | null;
 }
