@@ -23,6 +23,7 @@ Each registered file starts with an "UNVERIFIED AGAINST THE REAL SERVICE" marker
 | `Dockerfile` | nothing: not built, no instruction executed | the whole build (including the skip-build install and esbuild without its build script), the Chrome install on `node:20-bookworm-slim`, the Xvfb entrypoint and SIGTERM delivery to node, the non-root user (Chrome runs without its own sandbox, see `deployment.md` section 7), the bundle on Node 20, image size | |
 | `scripts/spike-speaker-attribution.ts` | the type-checker only; not executed | everything, selectors included | |
 | `scripts/capture-smoke.ts` | the type-checker only; not run | everything; it is itself the manual check of `captureScript.ts` | |
+| `scripts/capture-google-storage-state.ts` | the unit test of `scripts/captureGoogleStatePlan.ts` (argument parsing, the signed-in decision, the encoding, the refusal messages) and the type-checker; the script itself was not executed | everything at run time: launching Chrome headed through channel `chrome`; whether Google accepts a sign-in in a Chrome window started by Playwright; the signed-in check (the account page redirecting when signed out, the cookie names `SID`, `__Secure-1PSID`, `__Secure-3PSID`, Meet staying on `meet.google.com`, the `signedInMarker` and sign-in link selectors); whether a session captured on one machine is accepted from the bot's machine; how long a session lasts; the wording of Playwright's launch errors that the Chrome-missing message relies on | |
 
 ## Manual checks
 
@@ -35,6 +36,7 @@ Each registered file starts with an "UNVERIFIED AGAINST THE REAL SERVICE" marker
 | `src/speakers/SpeakerAttributor.ts` | attribution rules of T175 | [`speaker-attribution-spike.md`](speaker-attribution-spike.md) |
 | `src/runner/launcher/DockerEngineClient.ts`, `src/runner/launcher/DockerMeetingRunnerLauncher.ts`, `Dockerfile` | Docker Engine API and the image build | [`deployment.md`](deployment.md#8-manual-check) |
 | `scripts/spike-speaker-attribution.ts`, `scripts/capture-smoke.ts` | Google Meet in Chrome; Chrome WebRTC and WebAudio | the header comment of each script |
+| `scripts/capture-google-storage-state.ts` | Google sign-in and Google Meet in Chrome | [`smoke-test-google-meet.md`](smoke-test-google-meet.md), section 8 |
 
 ## Recording a check
 

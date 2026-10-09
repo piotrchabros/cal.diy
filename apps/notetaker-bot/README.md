@@ -43,6 +43,7 @@ Run from the repository root.
 | `yarn workspace @calcom/notetaker-bot build` | Bundle of the controller and the runner into `dist/` |
 | `yarn workspace @calcom/notetaker-bot start` | Controller from the bundle |
 | `yarn workspace @calcom/notetaker-bot fake-events --help` | CLI that posts signed events to the app without a meeting |
+| `yarn workspace @calcom/notetaker-bot capture-google-state --help` | CLI that opens Chrome for a person to sign in to the bot's Google account and prints the value for `NOTETAKER_GOOGLE_STORAGE_STATE_B64` (not run by its authors) |
 
 The root `yarn test` also collects this workspace's tests, under the root Vitest config.
 
@@ -50,6 +51,11 @@ The root `yarn test` also collects this workspace's tests, under the root Vitest
 
 Every variable is listed with its default in [.env.example](.env.example). Secrets come from
 environment variables only and are never logged.
+
+Google Meet can refuse an anonymous guest. The signed-in route is `NOTETAKER_GOOGLE_JOIN_MODE=account`
+with a session captured by `scripts/capture-google-storage-state.ts`; account preparation, the capture
+and inviting the bot's email are in [docs/smoke-test-google-meet.md](docs/smoke-test-google-meet.md),
+section 8. None of it has been run against Google.
 
 ## Fake-meeting mode
 

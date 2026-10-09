@@ -12,7 +12,8 @@
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "test": "TZ=UTC vitest run",
-    "fake-events": "tsx scripts/fake-events.ts"
+    "fake-events": "tsx scripts/fake-events.ts",
+    "capture-google-state": "tsx scripts/capture-google-storage-state.ts"
   },
   "dependencies": {
     "@calcom/lib": "workspace:*",
