@@ -73,10 +73,19 @@ function storageStateFor(google: GoogleConfig): unknown | null {
   return google.storageState;
 }
 
+// An emptied contenteditable composer can keep a line break or a zero-width character.
+function isBlank(value: string): boolean {
+  return value.replace(/[\s\u200B\uFEFF]/g, "") === "";
+}
+
 export const GOOGLE_SIGN_IN_URL =
   "https://accounts.google.com/ServiceLogin?hl=en&continue=https%3A%2F%2Fmeet.google.com%2F";
 export const GOOGLE_MEET_JOIN_SCREEN_TIMEOUT_MS = 30000;
-export const GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS = 5000;
+// Seen 2026-10-10: the embedded chat takes about 3-4 s to render after the toggle click.
+export const GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS = 15000;
+export const GOOGLE_MEET_CHAT_SEND_READY_TIMEOUT_MS = 3000;
+export const GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS = 5000;
+export const GOOGLE_MEET_CHAT_SENT_POLL_MS = 250;
 export const GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS = 5000;
 export const GOOGLE_SIGN_IN_STEP_TIMEOUT_MS = 30000;
 
@@ -145,8 +154,20 @@ export const GOOGLE_MEET_SELECTORS = {
   participantTile: visible("[data-participant-id]:not([data-participant-id] [data-participant-id])"),
   activeSpeakerName: visible('[data-participant-id]:has([aria-label*="speaking" i]) span.notranslate'),
   chatButton: visible('button[aria-label*="Chat with everyone" i]'),
-  chatInput: visible('textarea[aria-label*="Send a message" i]'),
-  chatSendButton: visible('button[aria-label*="Send a message" i]'),
+  // Read, never clicked: the toggle's aria-expanded tells an open panel from a closed one.
+  chatPanelOpen: visible('button[aria-label*="Chat with everyone" i][aria-expanded="true"]'),
+  // Seen 2026-10-10: for an invited calendar guest Meet hosts an embedded Google Chat in a child iframe, with a
+  // contenteditable composer and its own send control. The composer's aria-label reflects a history setting, so
+  // it is matched by role. The first alternative of each pair is the classic in-page chat.
+  chatInput: visible(
+    'textarea[aria-label*="Send a message" i]',
+    'div[role="textbox"][contenteditable="true"]'
+  ),
+  // The embedded send control stays disabled while the composer is empty, so only an enabled one counts.
+  chatSendButton: visible(
+    'button[aria-label*="Send a message" i]:not([disabled]):not([aria-disabled="true"])',
+    'button[aria-label="Send message"]:not([disabled]):not([aria-disabled="true"])'
+  ),
   leaveCallButton: visible('button[aria-label*="Leave call" i]'),
   // Google's identifier field is type="text" (seen 2026-10-09); type="email" stays as a fallback.
   signInEmailInput: visible('input[name="identifier"]', 'input[type="email"]'),
@@ -165,6 +186,8 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
   private readonly logger: Logger;
   // Sign-in and join run again on every reconnect; the warning must not.
   private displayNameWarningLogged = false;
+  // A notice that was sent but not seen to leave the composer; the next attempt must not post it a second time.
+  private readonly unconfirmedNotices = new WeakMap<MeetingPage, string>();
 
   constructor(deps: { google: GoogleConfig; logger: Logger }) {
     this.google = deps.google;
@@ -251,20 +274,49 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
   }
 
   async postChatMessage(page: MeetingPage, text: string): Promise<void> {
-    // The chat button toggles the panel, so it is only clicked while the input is not showing.
-    if (!(await page.isVisible(GOOGLE_MEET_SELECTORS.chatInput))) {
-      await page.click(GOOGLE_MEET_SELECTORS.chatButton);
-    }
-    const shown = await page.waitForVisible(
+    await this.openChatPanel(page);
+    const shown = await page.waitForVisibleInAnyFrame(
       GOOGLE_MEET_SELECTORS.chatInput,
       GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS
     );
     if (!shown) throw new Error("Google Meet chat input did not appear; the notice was not posted");
 
-    await page.fill(GOOGLE_MEET_SELECTORS.chatInput, text);
-    // Sent with a click instead of a keypress: a wrong selector then fails loudly and the runner retries, where
-    // a keypress on the wrong focus could resolve without the notice being posted.
-    await page.click(GOOGLE_MEET_SELECTORS.chatSendButton);
+    if (this.unconfirmedNotices.get(page) === text) {
+      const leftover = await page.readValueInAnyFrame(GOOGLE_MEET_SELECTORS.chatInput);
+      if (leftover !== null && isBlank(leftover)) {
+        this.unconfirmedNotices.delete(page);
+        this.logger.info("notice sent to the meeting chat", { confirmed: "late" });
+        return;
+      }
+    }
+
+    // Filled rather than typed, so a retry replaces the text instead of doubling it.
+    await page.fillInAnyFrame(GOOGLE_MEET_SELECTORS.chatInput, text);
+    const filled = await page.readValueInAnyFrame(GOOGLE_MEET_SELECTORS.chatInput);
+    if (filled === null || isBlank(filled)) {
+      throw new Error("Google Meet chat input did not take the text; the notice was not posted");
+    }
+
+    const sendReady = await page.waitForVisibleInAnyFrame(
+      GOOGLE_MEET_SELECTORS.chatSendButton,
+      GOOGLE_MEET_CHAT_SEND_READY_TIMEOUT_MS
+    );
+    this.unconfirmedNotices.set(page, text);
+    if (sendReady) {
+      await page.clickInAnyFrame(GOOGLE_MEET_SELECTORS.chatSendButton);
+    } else {
+      // The send control's label is the least certain selector here. The fill left focus in the composer, where
+      // Enter sends, and the emptied-composer check below still catches a keypress that went nowhere.
+      this.logger.warn("chat send control not visible; sending with the Enter key", {
+        selectorKey: "chatSendButton",
+      });
+      await page.pressKey("Enter");
+    }
+
+    if (!(await this.awaitComposerEmptied(page))) {
+      throw new Error("Google Meet chat still holds the text; the notice was not confirmed as posted");
+    }
+    this.unconfirmedNotices.delete(page);
     this.logger.info("notice sent to the meeting chat");
   }
 
@@ -277,6 +329,35 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
     }
     await page.click(GOOGLE_MEET_SELECTORS.leaveCallButton);
     this.logger.info("clicked the leave control");
+  }
+
+  // The chat button is a toggle, so clicking it with the panel open would close the panel. aria-expanded says the
+  // panel is open even while the embedded composer is still rendering, which is when a retry arrives.
+  private async openChatPanel(page: MeetingPage): Promise<void> {
+    if (await page.isVisible(GOOGLE_MEET_SELECTORS.chatPanelOpen)) return;
+    if (await page.waitForVisibleInAnyFrame(GOOGLE_MEET_SELECTORS.chatInput, 0)) return;
+    await page.click(GOOGLE_MEET_SELECTORS.chatButton);
+  }
+
+  // Meet gives no other readable sign that a message went out. A composer that vanished is not that sign.
+  private async awaitComposerEmptied(page: MeetingPage): Promise<boolean> {
+    const attempts = Math.ceil(GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS / GOOGLE_MEET_CHAT_SENT_POLL_MS);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (await this.isComposerEmpty(page)) return true;
+      await this.sleep(GOOGLE_MEET_CHAT_SENT_POLL_MS);
+    }
+    return this.isComposerEmpty(page);
+  }
+
+  private async isComposerEmpty(page: MeetingPage): Promise<boolean> {
+    const value = await page.readValueInAnyFrame(GOOGLE_MEET_SELECTORS.chatInput);
+    return value !== null && isBlank(value);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 
   private async awaitSignInStep(page: MeetingPage, key: SelectorKey, step: SignInStep): Promise<void> {

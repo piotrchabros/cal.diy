@@ -141,6 +141,10 @@ export type RecordedPageMethod =
   | "pressKey"
   | "readText"
   | "readTexts"
+  | "waitForVisibleInAnyFrame"
+  | "clickInAnyFrame"
+  | "fillInAnyFrame"
+  | "readValueInAnyFrame"
   | "addInitScript"
   | "exposeBinding"
   | "onClosed"
@@ -151,7 +155,7 @@ export type RecordedPageResult =
   | { kind: "void" }
   | { kind: "boolean"; value: boolean }
   | { kind: "count"; value: number }
-  // readText: whether the first match existed.
+  // readText and readValueInAnyFrame: whether the first match existed.
   | { kind: "found"; value: boolean };
 
 export type RecordedPageCall = {

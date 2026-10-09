@@ -204,6 +204,53 @@ describe("RecordingMeetingPage", () => {
     ]);
   });
 
+  it("forwards the any-frame methods and records the selector key, never the value", async () => {
+    const { inner, recorder, page } = setupPage();
+    inner.setVisibleInChildFrame(S.chatInput);
+    inner.setVisibleInChildFrame(S.chatSendButton);
+
+    expect(await page.waitForVisibleInAnyFrame(S.chatInput, 1000)).toBe(true);
+    expect(await page.readValueInAnyFrame(S.chatInput)).toBe("");
+    await page.fillInAnyFrame(S.chatInput, FAKE_FILL);
+    expect(await page.readValueInAnyFrame(S.chatInput)).toBe(FAKE_FILL);
+    await page.clickInAnyFrame(S.chatSendButton);
+    expect(await page.readValueInAnyFrame(S.chatButton)).toBeNull();
+
+    expect(inner.actions).toEqual([
+      { type: "fillInAnyFrame", selector: S.chatInput, value: FAKE_FILL },
+      { type: "clickInAnyFrame", selector: S.chatSendButton },
+    ]);
+    expect(recorder.pageCalls().map(shape)).toEqual([
+      {
+        method: "waitForVisibleInAnyFrame",
+        selectorKey: "chatInput",
+        result: { kind: "boolean", value: true },
+        errorName: null,
+      },
+      {
+        method: "readValueInAnyFrame",
+        selectorKey: "chatInput",
+        result: { kind: "found", value: true },
+        errorName: null,
+      },
+      { method: "fillInAnyFrame", selectorKey: "chatInput", result: { kind: "void" }, errorName: null },
+      {
+        method: "readValueInAnyFrame",
+        selectorKey: "chatInput",
+        result: { kind: "found", value: true },
+        errorName: null,
+      },
+      { method: "clickInAnyFrame", selectorKey: "chatSendButton", result: { kind: "void" }, errorName: null },
+      {
+        method: "readValueInAnyFrame",
+        selectorKey: "chatButton",
+        result: { kind: "found", value: false },
+        errorName: null,
+      },
+    ]);
+    expect(JSON.stringify(recorder.pageCalls())).not.toContain(FAKE_FILL);
+  });
+
   it("records the start time and the duration of a call", async () => {
     const { inner, recorder, page } = setupPage();
     await advance(700);

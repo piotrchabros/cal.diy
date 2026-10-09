@@ -2,6 +2,7 @@ import type { MeetingBrowserLauncher, MeetingBrowserOptions, MeetingPage } from 
 
 type PendingWaiter = {
   selector: string;
+  anyFrame: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   resolve: (visible: boolean) => void;
   reject: (error: Error) => void;
@@ -19,6 +20,8 @@ export type FakePageAction =
   | { type: "goto"; url: string }
   | { type: "click"; selector: string }
   | { type: "fill"; selector: string; value: string }
+  | { type: "clickInAnyFrame"; selector: string }
+  | { type: "fillInAnyFrame"; selector: string; value: string }
   | { type: "pressKey"; key: string }
   | { type: "addInitScript"; source: string }
   | { type: "exposeBinding"; name: string }
@@ -28,8 +31,12 @@ export type FakePageMethod =
   | "goto"
   | "isVisible"
   | "waitForVisible"
+  | "waitForVisibleInAnyFrame"
   | "click"
+  | "clickInAnyFrame"
   | "fill"
+  | "fillInAnyFrame"
+  | "readValueInAnyFrame"
   | "pressKey"
   | "readText"
   | "readTexts"
@@ -45,6 +52,8 @@ export class FakeMeetingPage implements MeetingPage {
   private url: string;
   private isClosed = false;
   private readonly visible = new Map<string, boolean>();
+  private readonly childFrameVisible = new Map<string, boolean>();
+  private readonly values = new Map<string, string>();
   private readonly texts = new Map<string, string | null>();
   private readonly textLists = new Map<string, string[]>();
   private readonly methodErrors = new Map<FakePageMethod, Error>();
@@ -72,14 +81,16 @@ export class FakeMeetingPage implements MeetingPage {
 
   setVisible(selector: string, visible = true): void {
     this.visible.set(selector, visible);
-    if (!visible) return;
+    if (visible) this.releaseWaiters(selector, true);
+  }
 
-    const released = this.waiters.filter((waiter) => waiter.selector === selector);
-    this.waiters = this.waiters.filter((waiter) => waiter.selector !== selector);
-    for (const waiter of released) {
-      if (waiter.timer) clearTimeout(waiter.timer);
-      waiter.resolve(true);
-    }
+  setVisibleInChildFrame(selector: string, visible = true): void {
+    this.childFrameVisible.set(selector, visible);
+    if (visible) this.releaseWaiters(selector, false);
+  }
+
+  setValue(selector: string, value: string): void {
+    this.values.set(selector, value);
   }
 
   setText(selector: string, text: string | null): void {
@@ -134,12 +145,26 @@ export class FakeMeetingPage implements MeetingPage {
     } catch (error) {
       return Promise.reject(error);
     }
-    const current = this.visible.get(selector) ?? false;
+    return this.waitFor(selector, timeoutMs, false);
+  }
+
+  waitForVisibleInAnyFrame(selector: string, timeoutMs: number): Promise<boolean> {
+    try {
+      this.beginRead("waitForVisibleInAnyFrame", selector);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.waitFor(selector, timeoutMs, true);
+  }
+
+  private waitFor(selector: string, timeoutMs: number, anyFrame: boolean): Promise<boolean> {
+    const current = this.isShowing(selector, anyFrame);
     if (current || timeoutMs <= 0) return Promise.resolve(current);
 
     return new Promise<boolean>((resolve, reject) => {
       const waiter: PendingWaiter = {
         selector,
+        anyFrame,
         timer: null,
         resolve,
         reject,
@@ -158,6 +183,26 @@ export class FakeMeetingPage implements MeetingPage {
 
   async fill(selector: string, value: string): Promise<void> {
     this.beginMutation({ type: "fill", selector, value }, "fill", selector);
+  }
+
+  async clickInAnyFrame(selector: string): Promise<void> {
+    this.requireInAnyFrame(selector);
+    this.beginMutation({ type: "clickInAnyFrame", selector }, "clickInAnyFrame", selector);
+  }
+
+  async fillInAnyFrame(selector: string, value: string): Promise<void> {
+    this.requireInAnyFrame(selector);
+    // Stored before the action is recorded so an onAction listener can overwrite it; a scripted error stores nothing.
+    const scripted = this.scriptedError("fillInAnyFrame", selector);
+    if (!scripted) this.values.set(selector, value);
+    this.record({ type: "fillInAnyFrame", selector, value });
+    if (scripted) throw scripted;
+  }
+
+  async readValueInAnyFrame(selector: string): Promise<string | null> {
+    this.beginRead("readValueInAnyFrame", selector);
+    if (!this.isShowing(selector, true)) return null;
+    return this.values.get(selector) ?? "";
   }
 
   async pressKey(key: string): Promise<void> {
@@ -215,12 +260,37 @@ export class FakeMeetingPage implements MeetingPage {
   }
 
   private throwScriptedError(method: FakePageMethod, selector: string | undefined): void {
-    const methodError = this.methodErrors.get(method);
-    if (methodError) throw methodError;
-    if (selector === undefined) return;
+    const error = this.scriptedError(method, selector);
+    if (error) throw error;
+  }
 
-    const selectorError = this.selectorErrors.get(selector);
-    if (selectorError) throw selectorError;
+  private scriptedError(method: FakePageMethod, selector: string | undefined): Error | null {
+    const methodError = this.methodErrors.get(method);
+    if (methodError) return methodError;
+    if (selector === undefined) return null;
+
+    return this.selectorErrors.get(selector) ?? null;
+  }
+
+  private isShowing(selector: string, anyFrame: boolean): boolean {
+    if (this.visible.get(selector)) return true;
+    return anyFrame && (this.childFrameVisible.get(selector) ?? false);
+  }
+
+  private requireInAnyFrame(selector: string): void {
+    if (this.isClosed) throw new Error(CLOSED_MESSAGE);
+    if (!this.isShowing(selector, true)) throw new Error(`FakeMeetingPage: no frame shows ${selector}`);
+  }
+
+  private releaseWaiters(selector: string, includeMainFrame: boolean): void {
+    const matches = (waiter: PendingWaiter) =>
+      waiter.selector === selector && (waiter.anyFrame || includeMainFrame);
+    const released = this.waiters.filter(matches);
+    this.waiters = this.waiters.filter((waiter) => !matches(waiter));
+    for (const waiter of released) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.resolve(true);
+    }
   }
 
   private markClosed(): void {

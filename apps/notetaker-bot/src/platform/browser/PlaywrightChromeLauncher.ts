@@ -1,7 +1,7 @@
 // UNVERIFIED AGAINST THE REAL SERVICE (Google Meet in Chrome): written from documentation and memory and
 // exercised only against fakes. Run the manual check in docs/smoke-test-google-meet.md and record the result in
 // docs/verification-status.md before relying on it, then remove this notice.
-import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
+import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page } from "playwright";
 import { chromium, errors } from "playwright";
 import type { Logger } from "../../logger";
 import { buildChromeLaunchOptions, sanitizeBrowserError } from "./chromeLaunch";
@@ -9,6 +9,7 @@ import type { MeetingBrowserLauncher, MeetingBrowserOptions, MeetingPage } from 
 
 const NAVIGATION_TIMEOUT_MS = 45000;
 const ACTION_TIMEOUT_MS = 10000;
+const FRAME_POLL_INTERVAL_MS = 150;
 
 type StorageState = Exclude<NonNullable<BrowserContextOptions["storageState"]>, string>;
 
@@ -100,6 +101,58 @@ class PlaywrightMeetingPage implements MeetingPage {
 
   readTexts(selector: string): Promise<string[]> {
     return this.run("readTexts", () => this.page.locator(selector).allTextContents());
+  }
+
+  // page.frames() lists the main frame first, then child frames, so the main frame wins when several match.
+  private async firstVisibleInAnyFrame(selector: string): Promise<Locator | null> {
+    for (const frame of this.page.frames()) {
+      const locator = frame.locator(selector).first();
+      if (await locator.isVisible()) return locator;
+    }
+    return null;
+  }
+
+  private async anyFrameVisible(selector: string): Promise<boolean> {
+    return (await this.firstVisibleInAnyFrame(selector)) !== null;
+  }
+
+  async waitForVisibleInAnyFrame(selector: string, timeoutMs: number): Promise<boolean> {
+    if (timeoutMs <= 0) return this.run("waitForVisibleInAnyFrame", () => this.anyFrameVisible(selector));
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (await this.run("waitForVisibleInAnyFrame", () => this.anyFrameVisible(selector))) return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(FRAME_POLL_INTERVAL_MS, remaining)));
+    }
+  }
+
+  async clickInAnyFrame(selector: string): Promise<void> {
+    await this.run("clickInAnyFrame", async () => {
+      const locator = await this.firstVisibleInAnyFrame(selector);
+      if (!locator) throw new Error("no frame shows the selector");
+      await locator.click({ timeout: ACTION_TIMEOUT_MS });
+    });
+  }
+
+  async fillInAnyFrame(selector: string, value: string): Promise<void> {
+    await this.run("fillInAnyFrame", async () => {
+      const locator = await this.firstVisibleInAnyFrame(selector);
+      if (!locator) throw new Error("no frame shows the selector");
+      await locator.fill(value, { timeout: ACTION_TIMEOUT_MS });
+    });
+  }
+
+  async readValueInAnyFrame(selector: string): Promise<string | null> {
+    return this.run("readValueInAnyFrame", async () => {
+      const locator = await this.firstVisibleInAnyFrame(selector);
+      if (!locator) return null;
+      return locator.evaluate((element) => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+          return element.value;
+        return element.textContent ?? "";
+      });
+    });
   }
 
   async addInitScript(source: string): Promise<void> {
