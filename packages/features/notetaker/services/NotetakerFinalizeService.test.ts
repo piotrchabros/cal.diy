@@ -109,7 +109,7 @@ describe("NotetakerFinalizeService", () => {
   let service: NotetakerFinalizeService;
 
   beforeEach(() => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
     repositories = createInMemoryNotetakerRepositories();
     repositories.store.addBooking(buildBooking());
     tasker = new RecordingNotetakerTasker();
@@ -283,7 +283,7 @@ describe("NotetakerFinalizeService", () => {
 
     it.each(
       zeroPassageCases
-    )("fails with $expected and removes the empty transcript when the stored reason is $stored", async ({
+    )("fails with $expected, removes the empty transcript and enqueues one FAILED notice when the stored reason is $stored", async ({
       stored,
       expected,
     }) => {
@@ -295,7 +295,16 @@ describe("NotetakerFinalizeService", () => {
       expect(session?.status).toBe("FAILED");
       expect(session?.outcomeReason).toBe(expected);
       expect(await readTranscript(sessionId)).toBeNull();
-      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      expect(tasker.sendNotificationCalls[0].payload).toEqual({
+        kind: "FAILED",
+        bookingId: BOOKING_ID,
+        sessionId,
+      });
+      expect(tasker.sendNotificationCalls[0].options).toEqual({
+        idempotencyKey: `notetaker:FAILED:${sessionId}`,
+      });
+      expect(tasker.generateSummaryCalls).toHaveLength(0);
     });
 
     it("fails a session that never had a transcript row without deleting anything", async () => {
@@ -308,7 +317,15 @@ describe("NotetakerFinalizeService", () => {
       expect(session?.status).toBe("FAILED");
       expect(session?.outcomeReason).toBe("NO_SPEECH_DETECTED");
       expect(deleteSpy).not.toHaveBeenCalled();
-      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      expect(tasker.sendNotificationCalls[0].payload).toEqual({
+        kind: "FAILED",
+        bookingId: BOOKING_ID,
+        sessionId,
+      });
+      expect(tasker.sendNotificationCalls[0].options).toEqual({
+        idempotencyKey: `notetaker:FAILED:${sessionId}`,
+      });
       expect(tasker.finalizeSessionCalls).toHaveLength(0);
       expect(tasker.generateSummaryCalls).toHaveLength(0);
     });
@@ -338,12 +355,15 @@ describe("NotetakerFinalizeService", () => {
 
       expect((await readSession(sessionId))?.status).toBe("PROCESSING");
       expect(await readTranscript(sessionId)).toBeNull();
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
 
       await service.finalize({ sessionId });
 
       const session = await readSession(sessionId);
       expect(session?.status).toBe("FAILED");
       expect(session?.outcomeReason).toBe("NO_SPEECH_DETECTED");
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      expect(tasker.sendNotificationCalls[0].payload.kind).toBe("FAILED");
     });
   });
 
@@ -435,6 +455,126 @@ describe("NotetakerFinalizeService", () => {
     });
   });
 
+  describe("interruptedAtMs", () => {
+    it("is set to the largest passage end for an INTERRUPTED session that has none recorded", async () => {
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: "INTERRUPTED",
+        passages: [
+          buildPassage({ index: 0, startMs: 0, endMs: 9000 }),
+          buildPassage({ index: 1, startMs: 2000, endMs: 5000 }),
+        ],
+      });
+
+      await service.finalize({ sessionId });
+
+      const session = await readSession(sessionId);
+      expect(session?.status).toBe("ENDED_EARLY");
+      expect(session?.outcomeReason).toBe("INTERRUPTED");
+      expect(session?.interruptedAtMs).toBe(9000);
+    });
+
+    it("is 0 for an INTERRUPTED session without passages", async () => {
+      const { sessionId } = await seedProcessingSession({ outcomeReason: "INTERRUPTED" });
+
+      await service.finalize({ sessionId });
+
+      const session = await readSession(sessionId);
+      expect(session?.status).toBe("FAILED");
+      expect(session?.interruptedAtMs).toBe(0);
+    });
+
+    it("is 0 for an INTERRUPTED session that never had a transcript row", async () => {
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: "INTERRUPTED",
+        withTranscript: false,
+      });
+
+      await service.finalize({ sessionId });
+
+      const session = await readSession(sessionId);
+      expect(session?.status).toBe("FAILED");
+      expect(session?.interruptedAtMs).toBe(0);
+    });
+
+    it("uses the last passage end, not the reported duration", async () => {
+      const passages = buildTwoPassages();
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: "INTERRUPTED",
+        passages,
+        reportedDurationMs: 600000,
+      });
+
+      await service.finalize({ sessionId });
+
+      expect((await readSession(sessionId))?.interruptedAtMs).toBe(
+        Math.max(...passages.map((passage) => passage.endMs))
+      );
+      expect((await readTranscript(sessionId))?.durationMs).toBe(600000);
+    });
+
+    it("keeps a point recorded by session.reconnecting", async () => {
+      const withPassages = await seedProcessingSession({
+        outcomeReason: "INTERRUPTED",
+        passages: buildTwoPassages(),
+      });
+      await repositories.sessionRepository.update(withPassages.sessionId, { interruptedAtMs: 4200 });
+
+      await service.finalize({ sessionId: withPassages.sessionId });
+
+      const endedEarly = await readSession(withPassages.sessionId);
+      expect(endedEarly?.status).toBe("ENDED_EARLY");
+      expect(endedEarly?.interruptedAtMs).toBe(4200);
+
+      const withoutPassages = await seedProcessingSession({ outcomeReason: "INTERRUPTED" });
+      await repositories.sessionRepository.update(withoutPassages.sessionId, { interruptedAtMs: 4200 });
+
+      await service.finalize({ sessionId: withoutPassages.sessionId });
+
+      const failed = await readSession(withoutPassages.sessionId);
+      expect(failed?.status).toBe("FAILED");
+      expect(failed?.interruptedAtMs).toBe(4200);
+    });
+
+    it("stays null for a READY outcome", async () => {
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: null,
+        passages: buildTwoPassages(),
+      });
+
+      await service.finalize({ sessionId });
+
+      const session = await readSession(sessionId);
+      expect(session?.status).toBe("READY");
+      expect(session?.interruptedAtMs).toBeNull();
+    });
+
+    it("stays null for a REMOVED_BY_PARTICIPANT outcome", async () => {
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: "REMOVED_BY_PARTICIPANT",
+        passages: buildTwoPassages(),
+      });
+
+      await service.finalize({ sessionId });
+
+      const session = await readSession(sessionId);
+      expect(session?.status).toBe("ENDED_EARLY");
+      expect(session?.interruptedAtMs).toBeNull();
+    });
+
+    it("is not written when another worker already moved the session", async () => {
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+      const { sessionId } = await seedProcessingSession({
+        outcomeReason: "INTERRUPTED",
+        passages: buildTwoPassages(),
+      });
+
+      await service.finalize({ sessionId });
+
+      expect((await readSession(sessionId))?.interruptedAtMs).toBeNull();
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+    });
+  });
+
   describe("idempotency", () => {
     it("changes nothing and notifies once when run twice on a session with passages", async () => {
       const { sessionId } = await seedProcessingSession({
@@ -452,7 +592,7 @@ describe("NotetakerFinalizeService", () => {
       expect(tasker.sendNotificationCalls).toHaveLength(1);
     });
 
-    it("stays FAILED without notifying when run twice on a session without passages", async () => {
+    it("stays FAILED and enqueues the FAILED notice once when run twice on a session without passages", async () => {
       const { sessionId } = await seedProcessingSession({ outcomeReason: null });
 
       await service.finalize({ sessionId });
@@ -461,7 +601,8 @@ describe("NotetakerFinalizeService", () => {
 
       expect(await readSession(sessionId)).toEqual(sessionAfterFirst);
       expect((await readSession(sessionId))?.status).toBe("FAILED");
-      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls).toHaveLength(1);
+      expect(tasker.sendNotificationCalls[0].payload.kind).toBe("FAILED");
     });
   });
 
@@ -537,6 +678,56 @@ describe("NotetakerFinalizeService", () => {
 
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect((await readSession(sessionId))?.status).toBe("READY");
+    });
+  });
+
+  describe("FAILED notification", () => {
+    it("is enqueued only after the FAILED status was written", async () => {
+      const updateSpy = vi.spyOn(repositories.sessionRepository, "updateIfStatusIn");
+      const sendSpy = vi.spyOn(tasker, "sendNotification");
+      const { sessionId } = await seedProcessingSession({ outcomeReason: null });
+
+      await service.finalize({ sessionId });
+
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy.mock.invocationCallOrder[0]).toBeLessThan(sendSpy.mock.invocationCallOrder[0]);
+    });
+
+    it("is not enqueued when another worker already moved the session", async () => {
+      vi.spyOn(repositories.sessionRepository, "updateIfStatusIn").mockResolvedValueOnce(false);
+      const { sessionId } = await seedProcessingSession({ outcomeReason: null });
+
+      await expect(service.finalize({ sessionId })).resolves.toBeUndefined();
+
+      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it("logs a task-failed run instead of throwing", async () => {
+      tasker.sendNotificationRunId = "task-failed";
+      const { sessionId } = await seedProcessingSession({ outcomeReason: null });
+
+      await expect(service.finalize({ sessionId })).resolves.toBeUndefined();
+
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith("Failed to enqueue the notetaker failed notification", {
+        sessionId,
+        bookingId: BOOKING_ID,
+      });
+      expect((await readSession(sessionId))?.status).toBe("FAILED");
+      expect(await readTranscript(sessionId)).toBeNull();
+    });
+
+    const storedReasons: (NotetakerOutcomeReasonDto | null)[] = [null, "INTERRUPTED"];
+
+    it.each(
+      storedReasons
+    )("is not enqueued for a session that ends with passages and stored reason %s", async (outcomeReason) => {
+      const { sessionId } = await seedProcessingSession({ outcomeReason, passages: buildTwoPassages() });
+
+      await service.finalize({ sessionId });
+
+      expect(tasker.sendNotificationCalls.filter((call) => call.payload.kind === "FAILED")).toHaveLength(0);
     });
   });
 
@@ -640,13 +831,13 @@ describe("NotetakerFinalizeService", () => {
       expect(tasker.generateSummaryCalls).toHaveLength(1);
     });
 
-    it("enqueues neither for a session without passages", async () => {
+    it("enqueues no summary and no RESULTS_READY for a session without passages", async () => {
       const { sessionId } = await seedProcessingSession();
 
       await service.finalize({ sessionId });
 
       expect(tasker.generateSummaryCalls).toHaveLength(0);
-      expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(tasker.sendNotificationCalls.map((call) => call.payload.kind)).toEqual(["FAILED"]);
     });
   });
 

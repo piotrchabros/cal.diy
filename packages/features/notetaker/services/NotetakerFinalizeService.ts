@@ -69,23 +69,40 @@ export class NotetakerFinalizeService {
     if (outcome.kind !== "OUTCOME") return;
 
     const endedAt = session.endedAt ?? new Date();
-    const finalState = { status: outcome.status, outcomeReason: outcome.outcomeReason, endedAt };
+    // Finalize cannot tell a watchdog interruption from a bot-reported one, so every INTERRUPTED outcome
+    // without a recorded point gets one; a point recorded by session.reconnecting is kept.
+    const needsInterruptedAtMs = outcome.outcomeReason === "INTERRUPTED" && session.interruptedAtMs === null;
+    const baseFinalState = { status: outcome.status, outcomeReason: outcome.outcomeReason, endedAt };
 
     if (!transcript || passageCount === 0) {
       // Deleting first: the other order can leave a FAILED session with an empty transcript after a crash,
       // whereas a retry after this order still finds the session in PROCESSING.
       if (transcript) await transcriptRepository.deleteById(transcript.id);
-      await sessionRepository.updateIfStatusIn(session.id, ["PROCESSING"], finalState);
+      const failed = await sessionRepository.updateIfStatusIn(session.id, ["PROCESSING"], {
+        ...baseFinalState,
+        interruptedAtMs: needsInterruptedAtMs ? 0 : undefined,
+      });
+      if (!failed) return;
+
+      const failedNotice = await notetakerTasker.sendNotification(
+        { kind: "FAILED", bookingId: session.bookingId, sessionId },
+        { idempotencyKey: `notetaker:FAILED:${sessionId}` }
+      );
+      if (failedNotice.runId === "task-failed") {
+        logger.error("Failed to enqueue the notetaker failed notification", {
+          sessionId,
+          bookingId: session.bookingId,
+        });
+      }
       return;
     }
 
     const passages = await transcriptRepository.findAllPassages(transcript.id);
     const language = getDurationWeightedLanguage(passages);
+    const lastPassageEndMs = await transcriptRepository.findLastPassageEndMs(transcript.id);
     // A positive stored duration is the one carried by the end event; 0 means none was reported.
     let durationMs = transcript.durationMs;
-    if (durationMs <= 0) {
-      durationMs = (await transcriptRepository.findLastPassageEndMs(transcript.id)) ?? 0;
-    }
+    if (durationMs <= 0) durationMs = lastPassageEndMs ?? 0;
     await transcriptRepository.update(transcript.id, {
       language,
       passageCount,
@@ -93,7 +110,10 @@ export class NotetakerFinalizeService {
       completeness: outcome.completeness ?? transcript.completeness,
     });
 
-    const updated = await sessionRepository.updateIfStatusIn(session.id, ["PROCESSING"], finalState);
+    const updated = await sessionRepository.updateIfStatusIn(session.id, ["PROCESSING"], {
+      ...baseFinalState,
+      interruptedAtMs: needsInterruptedAtMs ? (lastPassageEndMs ?? 0) : undefined,
+    });
     if (!updated) return;
 
     if (outcome.status !== "READY" && outcome.status !== "ENDED_EARLY") return;
