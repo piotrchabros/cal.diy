@@ -10,7 +10,11 @@ import { NotetakerSessionEventService } from "@calcom/features/notetaker/service
 import type { InMemoryBookingSeed } from "@calcom/features/notetaker/tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "@calcom/features/notetaker/tests/InMemoryNotetakerRepositories";
 import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
-import type { NotetakerBotEvent, NotetakerBotPassage } from "@calcom/lib/notetaker/botContract";
+import type {
+  NotetakerBotEndReason,
+  NotetakerBotEvent,
+  NotetakerBotPassage,
+} from "@calcom/lib/notetaker/botContract";
 import {
   NOTETAKER_SIGNATURE_HEADER,
   NOTETAKER_TIMESTAMP_HEADER,
@@ -140,11 +144,26 @@ function passagesEvent(
   };
 }
 
-function ended(sessionId: string, sequence: number): NotetakerBotEvent {
+function ended(
+  sessionId: string,
+  sequence: number,
+  overrides: Partial<{
+    endReason: NotetakerBotEndReason;
+    durationMs: number;
+    interruptedAtMs: number | null;
+    passageCount: number;
+  }> = {}
+): NotetakerBotEvent {
   return {
     ...envelope(sessionId, sequence),
     type: "session.ended",
-    data: { endReason: "MEETING_ENDED", durationMs: 60_000, interruptedAtMs: null, passageCount: 3 },
+    data: {
+      endReason: "MEETING_ENDED",
+      durationMs: 60_000,
+      interruptedAtMs: null,
+      passageCount: 3,
+      ...overrides,
+    },
   };
 }
 
@@ -209,6 +228,8 @@ describe("POST /api/notetaker/events", () => {
       new NotetakerSessionEventService({
         sessionRepository: repositories.sessionRepository,
         transcriptRepository: repositories.transcriptRepository,
+        bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+        activityRepository: repositories.activityRepository,
         notetakerTasker: tasker,
         logger,
       })
@@ -242,6 +263,18 @@ describe("POST /api/notetaker/events", () => {
       admittedAt: ADMITTED_AT,
       lastEventSequence: SEEDED_SEQUENCE,
       ...patch,
+    });
+  }
+
+  function seedChoice() {
+    return repositories.bookingNotetakerRepository.upsert({
+      bookingId: BOOKING_ID,
+      enabled: true,
+      pendingDispatch: false,
+      source: "HOST",
+      appliedToSeries: false,
+      setByUserId: ORGANIZER_ID,
+      setAt: NOW,
     });
   }
 
@@ -545,6 +578,59 @@ describe("POST /api/notetaker/events", () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual(OK_BODY);
       expect(sessionOf(sessionId).status).toBe("WAITING_TO_BE_ADMITTED");
+    });
+  });
+
+  describe("session end (rejoin block)", () => {
+    it("blocks rejoining and records a participant stop when the bot is removed before admission", async () => {
+      const sessionId = await seedSession({
+        status: "WAITING_TO_BE_ADMITTED",
+        lastEventSequence: SEEDED_SEQUENCE,
+      });
+      await seedChoice();
+
+      const response = await readResponse(
+        await postEvent(
+          ended(sessionId, FRESH_SEQUENCE, { endReason: "REMOVED_BY_PARTICIPANT", passageCount: 0 })
+        )
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(OK_BODY);
+      expect(sessionOf(sessionId)).toMatchObject({
+        status: "FAILED",
+        outcomeReason: "REMOVED_BY_PARTICIPANT",
+      });
+      expect(repositories.store.choices.get(BOOKING_ID)?.rejoinBlocked).toBe(true);
+      expect(repositories.store.activities).toHaveLength(1);
+      expect(repositories.store.activities[0]).toMatchObject({
+        action: "STOPPED",
+        actorType: "PARTICIPANT",
+        sessionId,
+      });
+      expect(tasker.finalizeCalls).toEqual([]);
+    });
+
+    it("blocks rejoining without an activity when the host stopped an admitted bot", async () => {
+      const sessionId = await seedTranscribing({
+        stopRequestedAt: new Date("2026-10-12T10:04:00.000Z"),
+        stopRequestedByUserId: ORGANIZER_ID,
+      });
+      await seedChoice();
+
+      const response = await readResponse(
+        await postEvent(ended(sessionId, FRESH_SEQUENCE, { endReason: "STOP_REQUESTED" }))
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(OK_BODY);
+      expect(sessionOf(sessionId)).toMatchObject({
+        status: "PROCESSING",
+        outcomeReason: "STOPPED_BY_HOST",
+      });
+      expect(repositories.store.choices.get(BOOKING_ID)?.rejoinBlocked).toBe(true);
+      expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+      expect(repositories.store.activities).toHaveLength(0);
     });
   });
 
