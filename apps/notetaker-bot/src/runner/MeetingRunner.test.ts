@@ -13,7 +13,12 @@ import { createLogger, createSilentLogger } from "../logger";
 import { FakePlatformAdapter } from "../platform/FakePlatformAdapter";
 import type { PlatformEvent, PlatformHandlers } from "../platform/PlatformAdapter";
 import { PlatformLinkUnusableError } from "../platform/PlatformAdapter";
-import type { ISpeakerAttributor, SpeakerAttribution } from "../speakers/SpeakerAttribution";
+import type {
+  ISpeakerAttributor,
+  ParticipantSample,
+  SpeakerAttribution,
+  SpeakerResolution,
+} from "../speakers/SpeakerAttribution";
 import { FakeSpeechToTextProvider } from "../stt/FakeSpeechToTextProvider";
 import type { SttUtterance } from "../stt/SpeechToTextProvider";
 import { buildJoinRequest } from "../testing/httpTestKit";
@@ -23,6 +28,7 @@ import {
   ENDED_DELIVERY_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   LEAVE_TIMEOUT_MS,
+  MAX_SPEAKER_RESOLUTIONS_PER_EVENT,
   MeetingRunner,
   NOTICE_DEADLINE_MS,
   NOTICE_RETRY_INTERVAL_MS,
@@ -35,6 +41,7 @@ import { MAX_PASSAGE_DURATION_MS, MAX_PASSAGE_TEXT_LENGTH } from "./PassageBuild
 
 type DraftOf<T extends NotetakerBotEventDraft["type"]> = Extract<NotetakerBotEventDraft, { type: T }>;
 type EndedData = DraftOf<"session.ended">["data"];
+type SpeakerField = "speakerNamesAvailable" | "speakerResolutions";
 
 class RecordingEventSender implements IEventSender {
   readonly drafts: NotetakerBotEventDraft[] = [];
@@ -75,6 +82,7 @@ class RecordingEventSender implements IEventSender {
 
 class StubSpeakerAttributor implements ISpeakerAttributor {
   readonly speakerSamples: { atMs: number; participantId: string; name: string; speaking: boolean }[] = [];
+  readonly participantSamples: { atMs: number; participants: ParticipantSample[] }[] = [];
   readonly activitySamples: { atMs: number; sourceKey: string; level: number }[] = [];
   readonly identities: { sourceKey: string; participantId: string; name: string }[] = [];
   readonly attributeCalls: { startMs: number; endMs: number; diarizationLabel: string | null }[] = [];
@@ -83,9 +91,15 @@ class StubSpeakerAttributor implements ISpeakerAttributor {
     speakerName: "Example Person",
     unknownSpeakerNumber: null,
   };
+  nextResolutions: SpeakerResolution[] = [];
+  nextNamesAvailable = false;
 
   recordSpeaker(sample: { atMs: number; participantId: string; name: string; speaking: boolean }): void {
     this.speakerSamples.push(sample);
+  }
+
+  recordParticipants(sample: { atMs: number; participants: ParticipantSample[] }): void {
+    this.participantSamples.push(sample);
   }
 
   recordSourceActivity(sample: { atMs: number; sourceKey: string; level: number }): void {
@@ -103,6 +117,14 @@ class StubSpeakerAttributor implements ISpeakerAttributor {
   }): SpeakerAttribution {
     this.attributeCalls.push({ ...utterance });
     return this.next;
+  }
+
+  resolutions(): SpeakerResolution[] {
+    return this.nextResolutions;
+  }
+
+  namesAvailable(): boolean {
+    return this.nextNamesAvailable;
   }
 }
 
@@ -212,13 +234,23 @@ function endedCount(sender: RecordingEventSender): number {
   return draftsOf(sender, "session.ended").length;
 }
 
-function ended(sender: RecordingEventSender): EndedData {
+function endedData(sender: RecordingEventSender): EndedData {
   const list = draftsOf(sender, "session.ended");
   expect(list).toHaveLength(1);
   expect(sender.drafts[sender.drafts.length - 1]?.type).toBe("session.ended");
   const first = list[0];
   if (!first) throw new Error("no session.ended draft");
   return first.data;
+}
+
+function ended(sender: RecordingEventSender): Omit<EndedData, SpeakerField> {
+  const { speakerNamesAvailable: _available, speakerResolutions: _resolutions, ...rest } = endedData(sender);
+  return rest;
+}
+
+function endedSpeakers(sender: RecordingEventSender): Pick<EndedData, SpeakerField> {
+  const { speakerNamesAvailable, speakerResolutions } = endedData(sender);
+  return { speakerNamesAvailable, speakerResolutions };
 }
 
 function allPassages(sender: RecordingEventSender): NotetakerBotPassage[] {
@@ -278,6 +310,11 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+const endingEvents: { event: PlatformEvent; endReason: NotetakerBotEndReason }[] = [
+  { event: { type: "removed" }, endReason: "REMOVED_BY_PARTICIPANT" },
+  { event: { type: "meeting_ended" }, endReason: "MEETING_ENDED" },
+];
 
 describe("notice gate", () => {
   it("sends held passages in order once a late notice is posted", async () => {
@@ -399,11 +436,6 @@ describe("notice gate", () => {
     expect(draftsOf(t.sender, "transcript.passages")).toHaveLength(0);
     expect(draftsOf(t.sender, "session.notice_posted")).toHaveLength(0);
   });
-
-  const endingEvents: { event: PlatformEvent; endReason: NotetakerBotEndReason }[] = [
-    { event: { type: "removed" }, endReason: "REMOVED_BY_PARTICIPANT" },
-    { event: { type: "meeting_ended" }, endReason: "MEETING_ENDED" },
-  ];
 
   it.each(endingEvents)("discards held passages on $event.type before the notice was posted", async ({
     event,
@@ -1415,6 +1447,322 @@ describe("transcript", () => {
       passageCount: 1,
     });
     expect(draftsOf(t.sender, "session.reconnecting")).toHaveLength(0);
+  });
+});
+
+describe("speaker names", () => {
+  const NO_NAMES = { speakerNamesAvailable: false, speakerResolutions: [] };
+
+  function unknown(number: number): SpeakerAttribution {
+    return { speakerKey: `unknown:${number}`, speakerName: null, unknownSpeakerNumber: number };
+  }
+
+  function resolution(number: number): SpeakerResolution {
+    return {
+      speakerKey: `unknown:${number}`,
+      resolvedSpeakerKey: `participant:${number.toString(16).padStart(16, "0")}`,
+      speakerName: `Person ${number}`,
+    };
+  }
+
+  function speakUnknown(ctx: Ctx, number: number): void {
+    ctx.attributor.next = unknown(number);
+    ctx.stt.emitUtterance(utterance(number * 100, number * 100 + 50, `word${number}`, `S${number}`));
+  }
+
+  it("records a participants reading with the transcript clock, and none before admission", async () => {
+    const t = setup();
+    t.runner.start();
+    await settle();
+
+    t.platform.emit({
+      type: "participants",
+      participants: [{ participantId: "p1", name: "Early Person", isSelf: false, speakingNow: true }],
+    });
+    expect(t.attributor.participantSamples).toEqual([]);
+
+    t.platform.emit({ type: "admitted" });
+    t.platform.emit({ type: "participant_count", count: 2 });
+    await advance(2500);
+    const participants = [
+      { participantId: "p2", name: "Later Person", isSelf: false, speakingNow: true },
+      { participantId: "p0", name: "You", isSelf: true, speakingNow: false },
+    ];
+    t.platform.emit({ type: "participants", participants });
+    t.platform.emit({ type: "participants", participants: [] });
+
+    expect(t.attributor.participantSamples).toEqual([
+      { atMs: 2500, participants },
+      { atMs: 2500, participants: [] },
+    ]);
+  });
+
+  const endPaths: {
+    name: string;
+    endReason: NotetakerBotEndReason;
+    options?: SetupOptions;
+    run: (ctx: Ctx) => Promise<void>;
+  }[] = [
+    ...endingEvents.map(({ event, endReason }) => ({
+      name: event.type,
+      endReason,
+      run: async (ctx: Ctx) => {
+        await startAndAdmit(ctx);
+        ctx.platform.emit(event);
+      },
+    })),
+    {
+      name: "a stop request",
+      endReason: "STOP_REQUESTED",
+      run: async (ctx) => {
+        await startAndAdmit(ctx);
+        ctx.runner.requestStop();
+      },
+    },
+    {
+      name: "a denied entry",
+      endReason: "NOT_ADMITTED",
+      run: async (ctx) => {
+        ctx.runner.start();
+        await settle();
+        ctx.platform.emit({ type: "denied" });
+      },
+    },
+    {
+      name: "an unusable link",
+      endReason: "MEETING_LINK_UNUSABLE",
+      options: { platform: { joinError: new PlatformLinkUnusableError("bad link") } },
+      run: async (ctx) => ctx.runner.start(),
+    },
+    {
+      name: "a meeting that did not start",
+      endReason: "MEETING_DID_NOT_START",
+      options: { request: limitsFor({ admissionTimeoutSeconds: 6000, noShowTimeoutSeconds: 900 }) },
+      run: async (ctx) => {
+        ctx.runner.start();
+        await advance(960000);
+      },
+    },
+    {
+      name: "being left alone",
+      endReason: "ALONE_TIMEOUT",
+      run: async (ctx) => {
+        await startAndAdmit(ctx);
+        ctx.platform.emit({ type: "participant_count", count: 1 });
+        await advance(120000);
+      },
+    },
+    {
+      name: "the length limit",
+      endReason: "LENGTH_LIMIT_REACHED",
+      options: { request: limitsFor({ maxDurationSeconds: 60 }) },
+      run: async (ctx) => {
+        await startAndAdmit(ctx);
+        await advance(60000);
+      },
+    },
+    {
+      name: "a lost connection before admission",
+      endReason: "INTERRUPTED",
+      run: async (ctx) => {
+        ctx.runner.start();
+        await settle();
+        ctx.platform.emit({ type: "connection_lost" });
+      },
+    },
+    {
+      name: "a speech-service failure",
+      endReason: "INTERRUPTED",
+      run: async (ctx) => {
+        await startAndAdmit(ctx);
+        ctx.stt.emitError(new Error("x"));
+      },
+    },
+    {
+      name: "the notice deadline",
+      endReason: "INTERRUPTED",
+      options: { platform: { postChatError: new Error("chat closed") } },
+      run: async (ctx) => {
+        await startAndAdmit(ctx);
+        await advance(NOTICE_DEADLINE_MS);
+      },
+    },
+  ];
+
+  it.each(endPaths)("session.ended after $name says no names and carries no resolutions", async ({
+    endReason,
+    options,
+    run,
+  }) => {
+    const t = setup(options);
+
+    await run(t);
+    await settle();
+
+    expect(ended(t.sender).endReason).toBe(endReason);
+    expect(endedSpeakers(t.sender)).toEqual(NO_NAMES);
+  });
+
+  it("sends the resolutions whose unknown key was sent in a passage and drops the others", async () => {
+    const t = setup();
+    await startAndAdmit(t);
+
+    speakUnknown(t, 1);
+    speakUnknown(t, 3);
+    await advance(PASSAGE_FLUSH_INTERVAL_MS);
+    t.attributor.nextResolutions = [resolution(1), resolution(2), resolution(3)];
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    expect(endedSpeakers(t.sender).speakerResolutions).toEqual([resolution(1), resolution(3)]);
+  });
+
+  it("counts a key sent only by the final flush", async () => {
+    const t = setup({ stt: { utterancesOnClose: [utterance(0, 1000, "last words")] } });
+    await startAndAdmit(t);
+    t.attributor.next = unknown(4);
+    t.attributor.nextResolutions = [resolution(4)];
+
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    expect(allPassages(t.sender).map((passage) => passage.speakerKey)).toEqual(["unknown:4"]);
+    expect(endedSpeakers(t.sender).speakerResolutions).toEqual([resolution(4)]);
+  });
+
+  it("cuts the resolutions to the first 64", async () => {
+    const t = setup();
+    await startAndAdmit(t);
+    const numbers = range(70).map((index) => index + 1);
+
+    for (const number of numbers) speakUnknown(t, number);
+    t.attributor.nextResolutions = numbers.map(resolution);
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    expect(MAX_SPEAKER_RESOLUTIONS_PER_EVENT).toBe(64);
+    expect(new Set(allPassages(t.sender).map((passage) => passage.speakerKey)).size).toBe(70);
+    expect(endedSpeakers(t.sender).speakerResolutions).toEqual(numbers.slice(0, 64).map(resolution));
+  });
+
+  it("sends no resolutions when the notice was never posted", async () => {
+    const t = setup({ platform: { postChatError: new Error("chat closed") } });
+    await startAndAdmit(t);
+
+    speakUnknown(t, 1);
+    t.attributor.nextResolutions = [resolution(1)];
+    await advance(9000);
+    t.runner.requestStop();
+    await settle();
+
+    expect(draftsOf(t.sender, "transcript.passages")).toHaveLength(0);
+    expect(endedSpeakers(t.sender).speakerResolutions).toEqual([]);
+  });
+
+  it("passes on that names were available", async () => {
+    const t = setup();
+    await startAndAdmit(t);
+    t.attributor.nextNamesAvailable = true;
+
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    expect(endedSpeakers(t.sender)).toEqual({ speakerNamesAvailable: true, speakerResolutions: [] });
+  });
+
+  it("sends no session.ended after a sender stop although resolutions exist", async () => {
+    const t = setup();
+    await startAndAdmit(t);
+    speakUnknown(t, 1);
+    await advance(PASSAGE_FLUSH_INTERVAL_MS);
+    t.attributor.nextResolutions = [resolution(1)];
+    t.attributor.nextNamesAvailable = true;
+
+    t.runner.handleSenderStopped("GONE");
+    await advance(10000);
+
+    expect(endedCount(t.sender)).toBe(0);
+  });
+
+  it("builds a session.ended event the contract schema accepts with both speaker fields", async () => {
+    const t = setup();
+    await startAndAdmit(t);
+    speakUnknown(t, 1);
+    t.attributor.nextResolutions = [resolution(1)];
+    t.attributor.nextNamesAvailable = true;
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    const draft = draftsOf(t.sender, "session.ended")[0];
+    const parsed = notetakerBotEventSchema.parse({
+      eventId: "00000000-0000-4000-8000-000000000000",
+      sessionId: "s",
+      sequence: 1,
+      occurredAt: "2030-01-01T00:00:00.000Z",
+      ...draft,
+    });
+
+    expect(parsed.data).toEqual({
+      endReason: "MEETING_ENDED",
+      durationMs: 0,
+      interruptedAtMs: null,
+      passageCount: 1,
+      speakerNamesAvailable: true,
+      speakerResolutions: [resolution(1)],
+    });
+  });
+
+  it("logs whether names were available and how many resolutions, never a name or a key", async () => {
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const t = setup({ logger });
+    await startAndAdmit(t);
+
+    t.platform.emit({
+      type: "participants",
+      participants: [
+        { participantId: "tile-77", name: "Zelda Fitzgerald", isSelf: false, speakingNow: true },
+      ],
+    });
+    speakUnknown(t, 1);
+    speakUnknown(t, 2);
+    await advance(PASSAGE_FLUSH_INTERVAL_MS);
+    const resolutions: SpeakerResolution[] = [
+      {
+        speakerKey: "unknown:1",
+        resolvedSpeakerKey: "participant:0123456789abcdef",
+        speakerName: "Zelda Fitzgerald",
+      },
+      {
+        speakerKey: "unknown:2",
+        resolvedSpeakerKey: "participant:fedcba9876543210",
+        speakerName: "Scott Key",
+      },
+    ];
+    t.attributor.nextResolutions = resolutions;
+    t.attributor.nextNamesAvailable = true;
+    t.platform.emit({ type: "meeting_ended" });
+    await settle();
+
+    expect(endedSpeakers(t.sender).speakerResolutions).toEqual(resolutions);
+    const summaries = lines
+      .map((line): Record<string, unknown> => JSON.parse(line))
+      .filter((entry) => "speakerNamesAvailable" in entry);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ level: "info", speakerNamesAvailable: true, speakerResolutions: 2 });
+
+    const output = lines.join("\n");
+    for (const secret of [
+      "Zelda Fitzgerald",
+      "Scott Key",
+      "tile-77",
+      "0123456789abcdef",
+      "fedcba9876543210",
+      "unknown:1",
+      "unknown:2",
+    ]) {
+      expect(output).not.toContain(secret);
+    }
   });
 });
 

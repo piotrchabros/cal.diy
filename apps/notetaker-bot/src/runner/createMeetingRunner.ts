@@ -6,6 +6,7 @@ import { PlaywrightChromeLauncher } from "../platform/browser/PlaywrightChromeLa
 import { GoogleMeetAdapter } from "../platform/GoogleMeetAdapter";
 import { MicrosoftTeamsAdapter } from "../platform/MicrosoftTeamsAdapter";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
+import type { AttributionSignal } from "../speakers/SpeakerAttribution";
 import { SpeakerAttributor } from "../speakers/SpeakerAttributor";
 import { SonioxRealtimeProvider } from "../stt/SonioxRealtimeProvider";
 import type { SpeechToTextProvider } from "../stt/SpeechToTextProvider";
@@ -47,6 +48,12 @@ function createCollaborators(
   }
 }
 
+// Microsoft Teams has no contributing source: nothing there can link an audio source to a participant.
+export const SIGNAL_ORDER_BY_PLATFORM: Record<NotetakerBotJoinRequest["platform"], AttributionSignal[]> = {
+  GOOGLE_MEET: ["CONTRIBUTING_SOURCE", "UI_ACTIVE_SPEAKER"],
+  MICROSOFT_TEAMS: ["UI_ACTIVE_SPEAKER"],
+};
+
 export function createMeetingRunner(input: {
   request: NotetakerBotJoinRequest;
   config: RunnerConfig;
@@ -68,6 +75,7 @@ export function createMeetingRunner(input: {
     fetchFn: input.fetchFn,
   });
 
-  runner = new MeetingRunner({ request, platform, stt, attributor: new SpeakerAttributor(), sender, logger });
+  const attributor = new SpeakerAttributor({ signalOrder: SIGNAL_ORDER_BY_PLATFORM[request.platform] });
+  runner = new MeetingRunner({ request, platform, stt, attributor, sender, logger });
   return runner;
 }
