@@ -5,7 +5,6 @@ import { useTypedQuery } from "@calcom/lib/hooks/useTypedQuery";
 import type { EventType } from "@calcom/prisma/client";
 import type { MembershipRole } from "@calcom/prisma/enums";
 import { SchedulingType } from "@calcom/prisma/enums";
-import { trpc } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
 import { DialogClose, DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
 import { showToast } from "@calcom/ui/components/toast";
@@ -13,6 +12,8 @@ import { isValidPhoneNumber } from "libphonenumber-js/max";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { useCreateEventType } from "~/event-types/hooks/useCreateEventType";
+import { findCreatableTeamProfile } from "../lib/createEventTypeDialogUtils";
+import { TeamSchedulingTypeField } from "./TeamSchedulingTypeField";
 
 const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL ?? "";
 
@@ -72,12 +73,10 @@ export function CreateEventTypeDialog({ profileOptions }: { profileOptions: Prof
     data: { teamId, eventPage: pageSlug },
   } = useTypedQuery(querySchema);
 
-  const teamProfile = profileOptions.find((profile) => profile.teamId === teamId);
-
-  const permissions = teamProfile?.permissions ?? { canCreateEventType: false };
+  const teamProfile = findCreatableTeamProfile(profileOptions, teamId);
 
   const onSuccessMutation = (eventType: EventType) => {
-    router.replace(`/event-types/${eventType.id}${teamId ? "?tabName=team" : ""}`);
+    router.replace(`/event-types/${eventType.id}`);
     showToast(
       t("event_type_created_successfully", {
         eventTypeTitle: eventType.title,
@@ -114,7 +113,11 @@ export function CreateEventTypeDialog({ profileOptions }: { profileOptions: Prof
         enableOverflow
         title={teamId ? t("add_new_team_event_type") : t("add_new_event_type")}
         description={t("new_event_type_to_book_description")}>
-        {teamId ? null : (
+        {teamId && !teamProfile ? (
+          <p data-testid="team-event-type-not-allowed" className="text-subtle text-sm">
+            {t("error_event_type_unauthorized_create")}
+          </p>
+        ) : (
           <CreateEventTypeForm
             urlPrefix={urlPrefix}
             isPending={createMutation.isPending}
@@ -124,7 +127,10 @@ export function CreateEventTypeDialog({ profileOptions }: { profileOptions: Prof
               createMutation.mutate(values);
             }}
             SubmitButton={SubmitButton}
-            pageSlug={pageSlug}
+            pageSlug={teamProfile?.slug ?? pageSlug}
+            extraFields={
+              teamProfile && teamId ? <TeamSchedulingTypeField form={form} teamId={teamId} /> : undefined
+            }
           />
         )}
       </DialogContent>
