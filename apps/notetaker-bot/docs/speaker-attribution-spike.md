@@ -182,3 +182,87 @@ When the protocol has actually been run, the human who ran it does the following
 - It sees only connections that the page creates after the probe code was installed, so a connection made earlier would be missed.
 - Whether Meet's Content Security Policy or its Trusted Types handling lets the injected code run at all is unknown.
 - Q4 has no tool here; step 10 depends on other work.
+
+## 11. Two-minute speech measurement (meet-probe, research A1)
+
+### Status
+
+This measurement has NOT been run. Task T004 of `specs/002-speaker-names-team-sharing/tasks.md` runs it. The questions here are Q1, Q2 and Q3 of Decision A1 in `specs/002-speaker-names-team-sharing/research.md`. They are not the Q1 to Q4 of section 2 above, which belong to the first spike. Nothing below is a result, and the results table at the end is empty on purpose.
+
+The three questions:
+
+- Q1. Does a participant tile carry a source id (the `data-ssrc` attribute) that equals the id of a receiver audio source whose level rises above 0.05 while that tile is the only one active?
+- Q2. Does some per-tile class token or attribute toggle with speech at least twice as often as in silence?
+- Q3. Are the timestamps of the receiver sources within 1000 ms of the page clock?
+
+### Who is needed
+
+- The owner, person A.
+- A second person, person B.
+- The notetaker Google account, invited to the event or ready to be admitted.
+- Microphones on. Cameras are optional. Nobody else speaks, and there is no music or screen share with sound.
+
+### What to tell the participants before the call
+
+Say this word for word:
+
+"A diagnostic tool joins this call for two minutes. It records the structure of the Meet page and audio levels as numbers. It records no audio, no video, no screenshots, no chat and no names; participant and audio-source ids are stored only as one-way scrambled values."
+
+### Command
+
+Load the bot environment of section 12 of [smoke-test-google-meet.md](smoke-test-google-meet.md), then run from the repository root:
+
+```
+yarn workspace @calcom/notetaker-bot meet-probe "<meeting url>" --out /root/meet-probe-speech.json --duration 120
+```
+
+The out file must not exist yet.
+
+### Schedule
+
+Count from the chat notice, which is posted at admission, or from admission when `--no-notice` is used.
+
+| Seconds | Who speaks |
+|---|---|
+| 0 to 10 | nobody |
+| 10 to 30 | person A alone |
+| 30 to 50 | person B alone |
+| 50 to 60 | nobody |
+| 60 to 80 | person A alone |
+| 80 to 100 | person B alone |
+| 100 to 120 | nobody |
+
+Rules while speaking:
+
+- Talk continuously, for example by reading a text aloud.
+- Do not overlap.
+- The other person stays unmuted but silent.
+- Do not change the layout, pin a tile or resize the window.
+
+### What comes out
+
+The terminal prints a `Speech measurement` block after the "Speakers" block. The file holds the same verdicts under `measurements`. Each verdict is supported, excluded or inconclusive, with counts.
+
+- Q1 supported: two different tiles were each the only active tile for at least 3 samples, and their source ids equal receiver source ids. Q1 excluded: no tile carried a source id, or the tile source ids never equalled a receiver source id. If tiles did carry a source id but the verdict is excluded, check the format of the `data-ssrc` value before taking it as final; the probe only matches a decimal number.
+- Q2 supported: at least one class token or attribute toggled, or was present, with speech at least twice as often as in silence, in at least 3 samples. The report names up to 5 such indicators and says whether each was a toggle or a presence. Q2 excluded: no candidate qualified.
+- Q3 supported: at least 90% of the judged source timestamps were within 1000 ms of the page clock. Q3 excluded: at most 10% were; the median age in the evidence shows the offset or scale.
+
+An inconclusive verdict usually means too little speech (fewer than 3 samples with audible speech), only one person spoke so telling speakers apart was not tested, too few quiet samples for Q2, or a sample interval above 1000 ms, which can make Q3 read inconclusive.
+
+### What the file holds about identity
+
+Tiles are `tile-N`. Participant ids and audio source ids are 16-character hashes, and event source keys are `csrc:<hash>` or `ssrc:<hash>`. The salt is random for each run and is never written, so files from two runs cannot be joined and a hash cannot be turned back into an id.
+
+### Results
+
+Fill this in by hand after the run. Every cell is empty on purpose.
+
+| Item | Value |
+|---|---|
+| Date | |
+| Operator | |
+| Chrome version (see `chrome://version`) | |
+| Q1 verdict and counts | |
+| Q2 verdict and counts | |
+| Q3 verdict and counts | |
+| Chosen signal order | |

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   aliasLabel,
   findLeaks,
+  type LeakSecret,
   MEET_UI_VOCABULARY,
   NameRedactor,
   UNKNOWN_WORD_PLACEHOLDER,
@@ -469,5 +470,72 @@ describe("findLeaks", () => {
       expect(findLeaks(json, [{ label: "host", value: "google" }])).toEqual(["host"]);
       expect(findLeaks(json, [{ label: "part", value: "articipant A" }])).toEqual(["part"]);
     });
+  });
+});
+
+describe("findLeaks for hashed identifiers", () => {
+  const SALT = "ab".repeat(32);
+  const PARTICIPANT_ID = "spaces/q1/devices/111";
+  const SOURCE_ID = "2718281828";
+  const secrets: LeakSecret[] = [
+    { label: "probe salt", value: SALT },
+    { label: "participant id", value: PARTICIPANT_ID },
+    { label: "audio source id", value: SOURCE_ID, match: "token" },
+  ];
+
+  it("reports the label of a raw participant id inside a JSON string", () => {
+    const json = JSON.stringify({ note: `tile for ${PARTICIPANT_ID} is active` });
+    expect(findLeaks(json, secrets)).toEqual(["participant id"]);
+  });
+
+  it("reports the label of the salt", () => {
+    const json = JSON.stringify({ note: `salt ${SALT}` });
+    expect(findLeaks(json, secrets)).toEqual(["probe salt"]);
+  });
+
+  it("reports a source id written as a JSON number and inside a csrc key", () => {
+    expect(findLeaks(JSON.stringify({ source: Number(SOURCE_ID) }), secrets)).toEqual(["audio source id"]);
+    expect(findLeaks(JSON.stringify({ sourceKey: `csrc:${SOURCE_ID}` }), secrets)).toEqual([
+      "audio source id",
+    ]);
+  });
+
+  it("never puts the secret value in its answer", () => {
+    const json = JSON.stringify({ a: PARTICIPANT_ID, b: SOURCE_ID, c: SALT });
+    const labels = findLeaks(json, secrets);
+    expect(labels).toEqual(["probe salt", "participant id", "audio source id"]);
+    for (const secret of secrets) {
+      for (const label of labels) expect(label).not.toContain(secret.value);
+    }
+  });
+
+  it("does not report a source id that is only part of a longer number", () => {
+    expect(findLeaks(JSON.stringify({ n: 12718281828 }), secrets)).toEqual([]);
+    expect(findLeaks(JSON.stringify({ n: 27182818281 }), secrets)).toEqual([]);
+  });
+
+  it("does not report a source id that is part of a 16-hex hash", () => {
+    const json = JSON.stringify({ sourceHash: "2718281828ab12cd", other: "ab122718281828cd" });
+    expect(findLeaks(json, secrets)).toEqual([]);
+  });
+
+  it("reports the digits of a float's fraction, because a decimal point is a token boundary", () => {
+    expect(findLeaks(JSON.stringify({ audioLevel: 0.2718281828 }), secrets)).toEqual(["audio source id"]);
+  });
+
+  it("finds no leak in a report holding only hashes, tile keys and hashed source keys", () => {
+    const report = {
+      schemaVersion: 2,
+      tiles: [
+        {
+          tileKey: "tile-1",
+          participantIdHash: "0f1e2d3c4b5a6978",
+          sourceHashes: ["a1b2c3d4e5f60718"],
+        },
+      ],
+      events: [{ kind: "source_activity", sourceKey: "csrc:a1b2c3d4e5f60718", participantId: "tile-1" }],
+      rtc: { contributingSources: [{ sourceHash: "a1b2c3d4e5f60718", audioLevel: 0.31, ageMs: 40 }] },
+    };
+    expect(findLeaks(JSON.stringify(report), secrets)).toEqual([]);
   });
 });

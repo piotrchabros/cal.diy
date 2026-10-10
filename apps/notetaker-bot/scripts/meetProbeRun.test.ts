@@ -7,7 +7,9 @@ import { findLeaks } from "./meetProbeRedaction";
 import {
   afterLeaveStep,
   buildSecrets,
+  collectRawIdentifiers,
   collectRawNames,
+  MIN_IDENTIFIER_SECRET_LENGTH,
   meetingCodeOf,
   PROBE_DISPLAY_NAME,
   type ProbeSecretSources,
@@ -25,6 +27,7 @@ import type {
 } from "./meetProbeTypes";
 
 const MEETING_URL = "https://meet.google.com/abc-defg-hij";
+const SALT = "ab".repeat(32);
 
 const located = (value: string, isNotranslateSpan: boolean): RawLocatedString => ({
   value,
@@ -37,9 +40,11 @@ const sample = (strings: RawLocatedString[][]): RawPageSample => ({
   sequence: 1,
   pageTimeMs: 0,
   leaveControls: [],
-  tiles: strings.map((tileStrings, index) => ({
-    participantId: `raw-${index}`,
+  tiles: strings.map((tileStrings) => ({
+    participantIdHash: "0123456789abcdef",
+    sourceHashes: [],
     classTokens: [],
+    classTokenChanges: { added: [], removed: [] },
     strings: tileStrings,
     dataAttributeNames: [],
     ariaStates: {},
@@ -71,6 +76,9 @@ const sources = (overrides: Partial<ProbeSecretSources> = {}): ProbeSecretSource
   storageStateValue: undefined,
   redactNames: true,
   rawNames: [],
+  salt: SALT,
+  rawParticipantIds: [],
+  rawSourceIds: [],
   ...overrides,
 });
 
@@ -203,6 +211,44 @@ describe("collectRawNames", () => {
   });
 });
 
+describe("collectRawIdentifiers", () => {
+  it("takes participant ids of speaker and source_identity events and skips the name form", () => {
+    const list = events(
+      speaker("Ada Lovelace"),
+      { type: "speaker", participantId: "spaces/q1/devices/111", name: "Ada", speaking: true },
+      { type: "source_identity", sourceKey: "ssrc-1", participantId: "spaces/q1/devices/222", name: "Bo" },
+      { type: "admitted" }
+    );
+
+    expect(collectRawIdentifiers(list).participantIds).toEqual([
+      "spaces/q1/devices/111",
+      "spaces/q1/devices/222",
+    ]);
+  });
+
+  it("takes the canonical number of csrc and ssrc keys and ignores other keys", () => {
+    const list = events(
+      { type: "source_activity", sourceKey: "csrc:2718281828", level: 0.4 },
+      { type: "source_identity", sourceKey: "ssrc:0314", participantId: "p", name: "Bo" },
+      { type: "source_activity", sourceKey: "ssrc-1", level: 0.4 },
+      { type: "source_activity", sourceKey: "csrc:abc", level: 0.4 }
+    );
+
+    expect(collectRawIdentifiers(list).sourceIds).toEqual(["2718281828", "314"]);
+  });
+
+  it("deduplicates", () => {
+    const list = events(
+      { type: "source_activity", sourceKey: "csrc:2718281828", level: 0.1 },
+      { type: "source_activity", sourceKey: "ssrc:2718281828", level: 0.2 },
+      { type: "source_identity", sourceKey: "csrc:2718281828", participantId: "p-long-1", name: "Bo" },
+      { type: "source_identity", sourceKey: "csrc:2718281828", participantId: "p-long-1", name: "Bo" }
+    );
+
+    expect(collectRawIdentifiers(list)).toEqual({ participantIds: ["p-long-1"], sourceIds: ["2718281828"] });
+  });
+});
+
 describe("meetingCodeOf", () => {
   it("takes the last path segment of the meeting URL", () => {
     expect(meetingCodeOf(MEETING_URL)).toBe("abc-defg-hij");
@@ -222,6 +268,7 @@ describe("buildSecrets", () => {
     expect(buildSecrets(sources())).toEqual([
       { label: "meeting URL", value: MEETING_URL },
       { label: "meeting code", value: "abc-defg-hij" },
+      { label: "probe salt", value: SALT },
     ]);
   });
 
@@ -240,6 +287,7 @@ describe("buildSecrets", () => {
       { label: "account email", value: "bot@example.test" },
       { label: "account password", value: "pw-not-real" },
       { label: "storage state", value: "c3RhdGU=" },
+      { label: "probe salt", value: SALT },
     ]);
     for (const secret of secrets) expect("match" in secret).toBe(false);
   });
@@ -247,7 +295,7 @@ describe("buildSecrets", () => {
   it("adds every raw name as a whole-token secret when names are redacted", () => {
     const secrets = buildSecrets(sources({ rawNames: ["Ada Lovelace", "Grzegorz"] }));
 
-    expect(secrets.slice(2)).toEqual([
+    expect(secrets.slice(2, 4)).toEqual([
       { label: "participant name", value: "Ada Lovelace", match: "token" },
       { label: "participant name", value: "Grzegorz", match: "token" },
     ]);
@@ -256,12 +304,69 @@ describe("buildSecrets", () => {
   it("adds no name when names are kept raw on purpose", () => {
     const secrets = buildSecrets(sources({ redactNames: false, rawNames: ["Ada Lovelace"] }));
 
-    expect(secrets.map((secret) => secret.label)).toEqual(["meeting URL", "meeting code"]);
+    expect(secrets.map((secret) => secret.label)).toEqual(["meeting URL", "meeting code", "probe salt"]);
+  });
+
+  it("adds raw participant ids as substring secrets and numeric source ids as token secrets", () => {
+    const secrets = buildSecrets(
+      sources({
+        rawParticipantIds: ["spaces/q1/devices/111"],
+        rawSourceIds: ["2718281828", "src-abcdef12"],
+      })
+    );
+
+    expect(secrets.slice(3)).toEqual([
+      { label: "participant id", value: "spaces/q1/devices/111" },
+      { label: "audio source id", value: "2718281828", match: "token" },
+      { label: "audio source id", value: "src-abcdef12" },
+    ]);
+  });
+
+  it("skips identifiers shorter than the minimum length", () => {
+    const short = "1".repeat(MIN_IDENTIFIER_SECRET_LENGTH - 1);
+    const exact = "2".repeat(MIN_IDENTIFIER_SECRET_LENGTH);
+    const secrets = buildSecrets(
+      sources({ rawParticipantIds: [short, exact], rawSourceIds: [short, exact] })
+    );
+
+    expect(secrets.slice(3)).toEqual([
+      { label: "participant id", value: exact },
+      { label: "audio source id", value: exact, match: "token" },
+    ]);
+  });
+
+  it("adds identifier secrets when names are kept raw as well", () => {
+    const secrets = buildSecrets(
+      sources({
+        redactNames: false,
+        rawParticipantIds: ["spaces/q1/devices/111"],
+        rawSourceIds: ["2718281828"],
+      })
+    );
+
+    expect(secrets.map((secret) => secret.label)).toEqual([
+      "meeting URL",
+      "meeting code",
+      "probe salt",
+      "participant id",
+      "audio source id",
+    ]);
+  });
+
+  it("finds a raw id, a raw source number and the salt in a written report", () => {
+    const secrets = buildSecrets(
+      sources({ rawParticipantIds: ["spaces/q1/devices/111"], rawSourceIds: ["2718281828"] })
+    );
+    const json = JSON.stringify({ a: "spaces/q1/devices/111", b: 2718281828, c: "csrc:2718281828", d: SALT });
+
+    expect(findLeaks(json, secrets)).toEqual(["probe salt", "participant id", "audio source id"]);
+    expect(findLeaks(JSON.stringify({ k: "csrc:0123456789abcdef", n: 27182818289 }), secrets)).toEqual([]);
   });
 
   it("leaves the code out when the URL has none", () => {
     expect(buildSecrets(sources({ meetingUrl: "https://meet.google.com/" }))).toEqual([
       { label: "meeting URL", value: "https://meet.google.com/" },
+      { label: "probe salt", value: SALT },
     ]);
   });
 });

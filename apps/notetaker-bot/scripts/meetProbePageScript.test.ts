@@ -1,6 +1,7 @@
 // @vitest-environment node
 import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { hashProbeValue } from "./meetProbeHash";
 import {
   buildMeetProbeInitScript,
   decodeProbeSamplePayload,
@@ -9,8 +10,11 @@ import {
 } from "./meetProbePageScript";
 import type { MeetProbePageOptions, RawPageSample } from "./meetProbeTypes";
 
+const SALT = "ab".repeat(32);
+
 const OPTIONS: MeetProbePageOptions = {
   intervalMs: 1000,
+  salt: SALT,
   maxLeaveControls: 8,
   maxTiles: 8,
   maxStringsPerTile: 16,
@@ -219,6 +223,9 @@ type StubReceiver = {
   getSynchronizationSources: () => SourceEntry[];
 };
 
+const pid = (id: string): string => hashProbeValue(SALT, "pid", id);
+const src = (id: string): string => hashProbeValue(SALT, "src", id);
+
 function el(
   tag: string,
   attrs: Record<string, string> = {},
@@ -402,8 +409,10 @@ function validSample(): Record<string, unknown> {
     ],
     tiles: [
       {
-        participantId: "p1",
+        participantIdHash: "0123456789abcdef",
+        sourceHashes: ["fedcba9876543210"],
         classTokens: ["a"],
+        classTokenChanges: { added: ["on"], removed: ["off"] },
         strings: [{ value: "Ada", where: "text", visible: true, isNotranslateSpan: true }],
         dataAttributeNames: ["data-participant-id"],
         ariaStates: {},
@@ -418,8 +427,12 @@ function validSample(): Record<string, unknown> {
         {
           readyState: "live",
           muted: false,
-          contributingSources: [{ source: 7, audioLevel: 0.5, ageMs: 12, timestampRaw: 1000 }],
-          synchronizationSources: [{ source: 9, audioLevel: null, ageMs: null, timestampRaw: null }],
+          contributingSources: [
+            { sourceHash: "00112233445566ff", audioLevel: 0.5, ageMs: 12, timestampRaw: 1000 },
+          ],
+          synchronizationSources: [
+            { sourceHash: "ff66554433221100", audioLevel: null, ageMs: null, timestampRaw: null },
+          ],
         },
       ],
     },
@@ -751,7 +764,10 @@ describe("participant tiles", () => {
     harness.body
       .add(el("div", { "data-participant-id": "outer-1" }, [el("div", { "data-participant-id": "inner" })]))
       .add(el("div", { "data-participant-id": "outer-2" }));
-    expect(harness.sample().tiles.map((tile) => tile.participantId)).toEqual(["outer-1", "outer-2"]);
+    expect(harness.sample().tiles.map((tile) => tile.participantIdHash)).toEqual([
+      pid("outer-1"),
+      pid("outer-2"),
+    ]);
   });
 
   it("locates each string and flags visibility and the notranslate span", () => {
@@ -851,6 +867,343 @@ describe("participant tiles", () => {
     harness.body.add(tile).add(listItem);
     harness.observer().callback([attributeRecord(listItem, "class", "a")]);
     expect(harness.sample().tiles.map((facts) => facts.mutationCount)).toEqual([0, 1]);
+  });
+});
+
+function keysDeep(value: unknown, into: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) keysDeep(item, into);
+  } else if (typeof value === "object" && value !== null) {
+    for (const [key, item] of Object.entries(value)) {
+      into.add(key);
+      keysDeep(item, into);
+    }
+  }
+  return into;
+}
+
+const LONG_ID = `spaces/q1/devices/${"x".repeat(60)}`;
+const ACCENTED_ID = "spaces/q1/devices/Zoë-日本-😀";
+
+describe("identifier hashing", () => {
+  it("hashes the participant id and the receiver source exactly as Node does", () => {
+    const harness = createHarness();
+    harness.body
+      .add(el("div", { "data-participant-id": "spaces/q1/devices/111" }))
+      .add(el("div", { "data-participant-id": LONG_ID }))
+      .add(el("div", { "data-participant-id": ACCENTED_ID }));
+    harness.createConnection().receivers = [
+      receiver(
+        { kind: "audio", readyState: "live", muted: false },
+        [{ source: 2718281828, timestamp: 1, audioLevel: 0.2 }],
+        [{ source: 4294967295, timestamp: 1, audioLevel: 0.2 }]
+      ),
+    ];
+    const sample = harness.sample();
+    expect(sample.tiles.map((tile) => tile.participantIdHash)).toEqual([
+      pid("spaces/q1/devices/111"),
+      pid(LONG_ID),
+      pid(ACCENTED_ID),
+    ]);
+    const first = sample.rtc.receivers[0];
+    expect(first?.contributingSources[0]?.sourceHash).toBe(src("2718281828"));
+    expect(first?.synchronizationSources[0]?.sourceHash).toBe(src("4294967295"));
+  });
+
+  it("joins a tile data-ssrc to a contributing and a synchronization receiver source", () => {
+    const harness = createHarness();
+    harness.body
+      .add(el("div", { "data-participant-id": "a", "data-ssrc": "3141592653" }))
+      .add(el("div", { "data-participant-id": "b", "data-ssrc": "2718281828" }));
+    harness.createConnection().receivers = [
+      receiver(
+        { kind: "audio", readyState: "live", muted: false },
+        [{ source: 3141592653, timestamp: 1, audioLevel: 0.2 }],
+        [{ source: 2718281828, timestamp: 1, audioLevel: 0.2 }]
+      ),
+    ];
+    const sample = harness.sample();
+    const [a, b] = sample.tiles;
+    const contributing = sample.rtc.receivers[0]?.contributingSources[0];
+    const synchronization = sample.rtc.receivers[0]?.synchronizationSources[0];
+    expect(a?.sourceHashes).toEqual([contributing?.sourceHash]);
+    expect(b?.sourceHashes).toEqual([synchronization?.sourceHash]);
+  });
+
+  it("finds data-ssrc on a descendant and ignores leading zeros", () => {
+    const harness = createHarness();
+    harness.body.add(
+      el("div", { "data-participant-id": "a" }, [el("div", {}, [el("i", { "data-ssrc": "0314" })])])
+    );
+    harness.createConnection().receivers = [
+      receiver({ kind: "audio", readyState: "live", muted: false }, [
+        { source: 314, timestamp: 1, audioLevel: 0.2 },
+      ]),
+    ];
+    const sample = harness.sample();
+    expect(sample.tiles[0]?.sourceHashes).toEqual([
+      sample.rtc.receivers[0]?.contributingSources[0]?.sourceHash,
+    ]);
+    expect(sample.tiles[0]?.sourceHashes).toEqual([src("314")]);
+  });
+
+  it("hashes a non-numeric data-ssrc as trimmed text", () => {
+    const harness = createHarness();
+    harness.body.add(el("div", { "data-participant-id": "a", "data-ssrc": "  abc-def  " }));
+    expect(harness.sample().tiles[0]?.sourceHashes).toEqual([src("abc-def")]);
+  });
+
+  it("lists distinct source hashes, the tile element first, at most 8", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", "data-ssrc": "100" });
+    tile.add(el("i", { "data-ssrc": "200" }));
+    tile.add(el("i", { "data-ssrc": "100" }));
+    tile.add(el("i", { "data-ssrc": "" }));
+    tile.add(el("i", { "data-ssrc": "   " }));
+    for (let i = 0; i < 12; i += 1) tile.add(el("i", { "data-ssrc": `${300 + i}` }));
+    harness.body.add(tile);
+    expect(harness.sample().tiles[0]?.sourceHashes).toEqual(
+      [100, 200, 300, 301, 302, 303, 304, 305].map((id) => src(String(id)))
+    );
+  });
+
+  it("has no source hashes without data-ssrc and still names the attribute", () => {
+    const harness = createHarness();
+    harness.body.add(el("div", { "data-participant-id": "a" }, [el("i", { "data-ssrc": "7" })]));
+    harness.body.add(el("div", { "data-participant-id": "b" }));
+    const [a, b] = harness.sample().tiles;
+    expect(a?.dataAttributeNames).toContain("data-ssrc");
+    expect(b?.sourceHashes).toEqual([]);
+    expect(b?.dataAttributeNames).not.toContain("data-ssrc");
+  });
+
+  it("posts no raw identifier, no salt and no participantId or source key", () => {
+    const harness = createHarness();
+    harness.body.add(
+      el("div", { "data-participant-id": "spaces/q1/devices/111", "data-ssrc": "3141592653" }, [
+        el("i", { "data-ssrc": "5551234567" }),
+      ])
+    );
+    harness.createConnection().receivers = [
+      receiver(
+        { kind: "audio", readyState: "live", muted: false },
+        [{ source: 2718281828, timestamp: 1, audioLevel: 0.2 }],
+        [{ source: 3141592653, timestamp: 1, audioLevel: 0.2 }]
+      ),
+    ];
+    harness.sample();
+    const payload = harness.lastPayload();
+    const text = JSON.stringify(payload);
+    for (const raw of ["spaces/q1/devices/111", "3141592653", "5551234567", "2718281828", SALT]) {
+      expect(text).not.toContain(raw);
+    }
+    const keys = keysDeep(payload);
+    expect(keys.has("participantId")).toBe(false);
+    expect(keys.has("source")).toBe(false);
+  });
+
+  it("leaves a tile out when its id cannot be hashed and keeps the others", () => {
+    const harness = createHarness();
+    harness.body
+      .add(el("div", { "data-participant-id": "good-1" }))
+      .add(el("div", { "data-participant-id": "bad\ud800" }))
+      .add(el("div", { "data-participant-id": "good-2" }));
+    expect(harness.sample().tiles.map((tile) => tile.participantIdHash)).toEqual([
+      pid("good-1"),
+      pid("good-2"),
+    ]);
+  });
+
+  it("skips an unhashable data-ssrc and a tile without an id", () => {
+    const harness = createHarness();
+    harness.body
+      .add(
+        el("div", { "data-participant-id": "a", "data-ssrc": "bad\ud800" }, [el("i", { "data-ssrc": "7" })])
+      )
+      .add(el("div", { "data-participant-id": "   " }));
+    const tiles = harness.sample().tiles;
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]?.sourceHashes).toEqual([src("7")]);
+  });
+
+  it("never emits a receiver entry without a usable source", () => {
+    const harness = createHarness();
+    harness.createConnection().receivers = [
+      receiver({ kind: "audio", readyState: "live", muted: false }, [
+        { source: Number.NaN, timestamp: 1 },
+        { source: 2 ** 32, timestamp: 1 },
+        { source: 5, timestamp: 1 },
+      ]),
+    ];
+    const entries = harness.sample().rtc.receivers[0]?.contributingSources ?? [];
+    expect(entries.map((entry) => entry.sourceHash)).toEqual([src("5")]);
+  });
+
+  it("computes the same hash for the same value on every sample", () => {
+    const harness = createHarness();
+    harness.body.add(el("div", { "data-participant-id": "a", "data-ssrc": "42" }));
+    const first = harness.sample().tiles[0];
+    const second = harness.sample().tiles[0];
+    expect(second?.participantIdHash).toBe(first?.participantIdHash);
+    expect(second?.sourceHashes).toEqual(first?.sourceHashes);
+  });
+
+  it("keeps hashing correctly after the cache has been cleared", () => {
+    const harness = createHarness({ options: { ...OPTIONS, maxTiles: 64 } });
+    const ids = Array.from({ length: 64 }, (_, i) => `p${i}`);
+    for (const id of ids)
+      harness.body.add(el("div", { "data-participant-id": id, "data-ssrc": id.slice(1) }));
+    const connection = harness.createConnection();
+    for (let round = 0; round < 12; round += 1) {
+      const entries = Array.from({ length: 32 }, (_, i) => ({
+        source: round * 32 + i,
+        timestamp: 1,
+        audioLevel: 0.1,
+      }));
+      connection.receivers = [receiver({ kind: "audio", readyState: "live", muted: false }, entries)];
+      const sample = harness.sample();
+      expect(sample.tiles.map((tile) => tile.participantIdHash)).toEqual(ids.map(pid));
+      expect(sample.rtc.receivers[0]?.contributingSources.map((entry) => entry.sourceHash)).toEqual(
+        entries.map((entry) => src(String(entry.source)))
+      );
+    }
+  });
+});
+
+describe("class token changes", () => {
+  it("is empty on first sight and reports added and removed tokens afterwards", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", class: "base on" }, [el("i", { class: "ring" })]);
+    harness.body.add(tile);
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: [], removed: [] });
+
+    tile.attrs.set("class", "base loud");
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: ["loud"], removed: ["on"] });
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: [], removed: [] });
+  });
+
+  it("sees a token that appears or disappears in a descendant", () => {
+    const harness = createHarness();
+    const inner = el("i", { class: "ring" });
+    harness.body.add(el("div", { "data-participant-id": "a" }, [inner]));
+    harness.sample();
+    inner.attrs.set("class", "ring speaking");
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: ["speaking"], removed: [] });
+    inner.attrs.set("class", "ring");
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: [], removed: ["speaking"] });
+  });
+
+  it("misses a token toggled on and off inside one interval but keeps it in the mutations", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", class: "base" });
+    harness.body.add(tile);
+    harness.sample();
+    harness
+      .observer()
+      .callback([attributeRecord(tile, "class", "base on"), attributeRecord(tile, "class", "base")]);
+    const facts = harness.sample().tiles[0];
+    expect(facts?.classTokenChanges).toEqual({ added: [], removed: [] });
+    expect(facts?.mutations).toEqual([{ attribute: "class", count: 2, toggledClassTokens: ["on"] }]);
+  });
+
+  it("starts empty again for a tile that left and came back", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", class: "base" });
+    harness.body.add(tile);
+    harness.sample();
+    const index = harness.body.childNodes.indexOf(tile);
+    harness.body.childNodes.splice(index, 1);
+    expect(harness.sample().tiles).toEqual([]);
+    tile.attrs.set("class", "base on");
+    harness.body.childNodes.push(tile);
+    expect(harness.sample().tiles[0]?.classTokenChanges).toEqual({ added: [], removed: [] });
+  });
+
+  it("tracks two elements with one participant id separately", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", class: "x" });
+    const listItem = el("div", { "data-participant-id": "a", class: "y" });
+    harness.body.add(tile).add(listItem);
+    harness.sample();
+    listItem.attrs.set("class", "y z");
+    expect(harness.sample().tiles.map((facts) => facts.classTokenChanges)).toEqual([
+      { added: [], removed: [] },
+      { added: ["z"], removed: [] },
+    ]);
+  });
+
+  it("caps each list at 64 tokens", () => {
+    const harness = createHarness();
+    const tile = el("div", { "data-participant-id": "a", class: "old" });
+    harness.body.add(tile);
+    harness.sample();
+    tile.attrs.set("class", Array.from({ length: 100 }, (_, i) => `t${i}`).join(" "));
+    const grown = harness.sample().tiles[0]?.classTokenChanges;
+    expect(grown?.added).toHaveLength(64);
+    expect(grown?.removed).toEqual(["old"]);
+    tile.attrs.set("class", "new");
+    const shrunk = harness.sample().tiles[0]?.classTokenChanges;
+    expect(shrunk?.removed).toHaveLength(64);
+    expect(shrunk?.added).toEqual(["new"]);
+  });
+});
+
+describe("a missing or malformed salt", () => {
+  const ABSENT = Symbol("absent");
+
+  function harnessWithSalt(salt: unknown) {
+    // The options type demands a string, so the broken value is built on an untyped record.
+    const options: Record<string, unknown> = { ...OPTIONS };
+    if (salt === ABSENT) delete options.salt;
+    else options.salt = salt;
+    const sandbox: Record<string, unknown> = {
+      document: { querySelectorAll: () => [], visibilityState: "visible", hasFocus: () => true },
+      setInterval: vi.fn(),
+      MutationObserver: vi.fn(),
+      RTCPeerConnection: class {},
+    };
+    const binding = vi.fn();
+    sandbox[PROBE_SAMPLE_BINDING] = binding;
+    const originalConnection = sandbox.RTCPeerConnection;
+    vm.runInContext(
+      `(() => { const __name = (target) => target; (${installMeetProbe.toString()})(${JSON.stringify(options)}); })();`,
+      vm.createContext(sandbox)
+    );
+    return { sandbox, binding, originalConnection };
+  }
+
+  it.each([
+    ["missing", ABSENT],
+    ["empty", ""],
+    ["short", "ab".repeat(31)],
+    ["too long", "ab".repeat(33)],
+    ["upper-case", "AB".repeat(32)],
+    ["not hex", "zz".repeat(32)],
+    ["a number", 7],
+  ])("installs nothing when the salt is %s", (_label, salt) => {
+    const { sandbox, binding, originalConnection } = harnessWithSalt(salt);
+    expect(sandbox.setInterval).not.toHaveBeenCalled();
+    expect(sandbox.MutationObserver).not.toHaveBeenCalled();
+    expect(sandbox.RTCPeerConnection).toBe(originalConnection);
+    expect(binding).not.toHaveBeenCalled();
+  });
+
+  it("installs with a valid salt", () => {
+    const { sandbox } = harnessWithSalt(SALT);
+    expect(sandbox.setInterval).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the init script", () => {
+  it("holds the salt only in the options argument, never in the function body", () => {
+    expect(installMeetProbe.toString()).not.toContain(SALT);
+    const script = buildMeetProbeInitScript(OPTIONS);
+    expect(script.split(SALT)).toHaveLength(2);
+    expect(script).toContain(`"salt":"${SALT}"`);
+  });
+
+  it("does not hash asynchronously", () => {
+    expect(installMeetProbe.toString()).not.toMatch(/crypto|subtle|await|TextEncoder/);
   });
 });
 
@@ -955,21 +1308,21 @@ describe("WebRTC", () => {
     const first = rtc.receivers[0];
     expect(first).toMatchObject({ readyState: "live", muted: false });
     expect(first?.contributingSources[0]).toMatchObject({
-      source: 7,
+      sourceHash: src("7"),
       audioLevel: 0.5,
       timestampRaw: now - 50,
     });
     expect(first?.contributingSources[0]?.ageMs).toBeGreaterThanOrEqual(50);
     expect(first?.contributingSources[0]?.ageMs).toBeLessThan(5000);
     expect(first?.contributingSources[1]).toMatchObject({
-      source: 8,
+      sourceHash: src("8"),
       audioLevel: null,
       timestampRaw: 1234.5,
     });
     // A timestamp on another clock shows up as an implausible age rather than being hidden.
     expect(first?.contributingSources[1]?.ageMs).toBeGreaterThan(1_000_000_000);
     expect(first?.synchronizationSources).toEqual([
-      { source: 9, audioLevel: 0, ageMs: expect.any(Number), timestampRaw: now },
+      { sourceHash: src("9"), audioLevel: 0, ageMs: expect.any(Number), timestampRaw: now },
     ]);
     expect(rtc.receivers[1]).toEqual({
       readyState: "ended",
@@ -997,8 +1350,8 @@ describe("WebRTC", () => {
       ]),
     ];
     expect(harness.sample().rtc.receivers[0]?.contributingSources).toEqual([
-      { source: 3, audioLevel: null, ageMs: null, timestampRaw: null },
-      { source: 4, audioLevel: 1, ageMs: null, timestampRaw: null },
+      { sourceHash: src("3"), audioLevel: null, ageMs: null, timestampRaw: null },
+      { sourceHash: src("4"), audioLevel: 1, ageMs: null, timestampRaw: null },
     ]);
   });
 
@@ -1015,6 +1368,7 @@ describe("bounds", () => {
   it("honours the option bounds", () => {
     const options: MeetProbePageOptions = {
       intervalMs: 1000,
+      salt: SALT,
       maxLeaveControls: 2,
       maxTiles: 3,
       maxStringsPerTile: 4,
@@ -1055,6 +1409,7 @@ describe("bounds", () => {
   it("clamps oversized options to hard caps the decoder accepts", () => {
     const huge: MeetProbePageOptions = {
       intervalMs: 1000,
+      salt: SALT,
       maxLeaveControls: 10_000,
       maxTiles: 10_000,
       maxStringsPerTile: 10_000,
@@ -1241,6 +1596,7 @@ describe("decodeProbeSamplePayload", () => {
       ["leaveControls", 0, "style"],
       ["leaveControls", 0, "coveredBy"],
       ["tiles", 0],
+      ["tiles", 0, "classTokenChanges"],
       ["tiles", 0, "strings", 0],
       ["tiles", 0, "mutations", 0],
       ["selectorChecks", 0],
@@ -1258,6 +1614,21 @@ describe("decodeProbeSamplePayload", () => {
     const decoded = decodeProbeSamplePayload(input);
     expect(decoded).toEqual(validSample());
     expect(JSON.stringify(decoded)).not.toMatch(/private message|abc-defg-hij/);
+  });
+
+  it("drops a raw participantId or source that rides along in a payload", () => {
+    const input: unknown = JSON.parse(JSON.stringify(validSample()));
+    const tile: unknown = Reflect.get(Object(Reflect.get(Object(input), "tiles")), 0);
+    Reflect.set(Object(tile), "participantId", "spaces/q1/devices/111");
+    const rtcReceiver: unknown = Reflect.get(
+      Object(Reflect.get(Object(Reflect.get(Object(input), "rtc")), "receivers")),
+      0
+    );
+    const entry: unknown = Reflect.get(Object(Reflect.get(Object(rtcReceiver), "contributingSources")), 0);
+    Reflect.set(Object(entry), "source", 2718281828);
+    const decoded = decodeProbeSamplePayload(input);
+    expect(decoded).toEqual(validSample());
+    expect(JSON.stringify(decoded)).not.toMatch(/spaces\/q1|2718281828/);
   });
 
   it("rejects payloads that are not a sample object", () => {
@@ -1305,8 +1676,22 @@ describe("decodeProbeSamplePayload", () => {
       [["leaveControls", 0, "inDialog"], 0],
       [["leaveControls", 0, "matchedBy"], ["aria-label*=anything"]],
       [["leaveControls", 0, "matchedBy"], "text:leave"],
-      [["tiles", 0, "participantId"], ""],
-      [["tiles", 0, "participantId"], 7],
+      [["tiles", 0, "participantIdHash"], ""],
+      [["tiles", 0, "participantIdHash"], 7],
+      [["tiles", 0, "participantIdHash"], undefined],
+      [["tiles", 0, "participantIdHash"], "0123456789abcde"],
+      [["tiles", 0, "participantIdHash"], "0123456789abcdef0"],
+      [["tiles", 0, "participantIdHash"], "0123456789ABCDEF"],
+      [["tiles", 0, "sourceHashes"], undefined],
+      [["tiles", 0, "sourceHashes"], "0123456789abcdef"],
+      [["tiles", 0, "sourceHashes"], ["0123456789abcde"]],
+      [["tiles", 0, "sourceHashes"], [7]],
+      [["tiles", 0, "classTokenChanges"], undefined],
+      [["tiles", 0, "classTokenChanges"], []],
+      [["tiles", 0, "classTokenChanges"], { added: [] }],
+      [["tiles", 0, "classTokenChanges"], { added: [], removed: "off" }],
+      [["tiles", 0, "classTokenChanges", "added"], ["two tokens"]],
+      [["tiles", 0, "classTokenChanges", "removed"], [""]],
       [["tiles", 0, "classTokens"], ["two tokens"]],
       [["tiles", 0, "classTokens"], [""]],
       [["tiles", 0, "strings", 0, "value"], ""],
@@ -1326,8 +1711,11 @@ describe("decodeProbeSamplePayload", () => {
       [["rtc", "receivers", 0, "readyState"], 1],
       [["rtc", "receivers", 0, "muted"], "no"],
       [["rtc", "receivers", 0, "contributingSources"], null],
-      [["rtc", "receivers", 0, "contributingSources", 0, "source"], -1],
-      [["rtc", "receivers", 0, "contributingSources", 0, "source"], 2 ** 32],
+      [["rtc", "receivers", 0, "contributingSources", 0, "sourceHash"], undefined],
+      [["rtc", "receivers", 0, "contributingSources", 0, "sourceHash"], 7],
+      [["rtc", "receivers", 0, "contributingSources", 0, "sourceHash"], "0123456789abcde"],
+      [["rtc", "receivers", 0, "contributingSources", 0, "sourceHash"], "0123456789abcdef0"],
+      [["rtc", "receivers", 0, "synchronizationSources", 0, "sourceHash"], "0123456789ABCDEF"],
       [["rtc", "receivers", 0, "contributingSources", 0, "audioLevel"], 1.1],
       [["rtc", "receivers", 0, "contributingSources", 0, "audioLevel"], "0.5"],
       [["rtc", "receivers", 0, "contributingSources", 0, "ageMs"], "12"],
@@ -1358,7 +1746,7 @@ describe("decodeProbeSamplePayload", () => {
     const tile = validSample().tiles;
     const firstOf = (list: unknown): unknown => (Array.isArray(list) ? list[0] : undefined);
     const repeat = (item: unknown, length: number): unknown[] => Array.from({ length }, () => item);
-    const source = { source: 1, audioLevel: 0.1, ageMs: 1, timestampRaw: 1 };
+    const source = { sourceHash: "0123456789abcdef", audioLevel: 0.1, ageMs: 1, timestampRaw: 1 };
     const audioReceiver = {
       readyState: "live",
       muted: false,
@@ -1385,7 +1773,9 @@ describe("decodeProbeSamplePayload", () => {
       [["leaveControls", 0, "matchedBy"], repeat("text:leave", 17)],
       [["leaveControls", 0, "coveredBy", "ariaLabel"], "x".repeat(513)],
       [["tiles"], repeat(firstOf(tile), 65)],
-      [["tiles", 0, "participantId"], "x".repeat(257)],
+      [["tiles", 0, "sourceHashes"], repeat("0123456789abcdef", 9)],
+      [["tiles", 0, "classTokenChanges", "added"], repeat("a", 65)],
+      [["tiles", 0, "classTokenChanges", "removed"], repeat("a", 65)],
       [["tiles", 0, "classTokens"], repeat("a", 257)],
       [["tiles", 0, "classTokens"], ["x".repeat(65)]],
       [
@@ -1420,7 +1810,18 @@ describe("decodeProbeSamplePayload", () => {
     expect(decodeProbeSamplePayload(withChange(["rtc", "peerConnectionCount"], 16))).not.toBeNull();
     expect(
       decodeProbeSamplePayload(
-        withChange(["rtc", "receivers", 0, "contributingSources", 0, "source"], 2 ** 32 - 1)
+        withChange(
+          ["tiles", 0, "sourceHashes"],
+          Array.from({ length: 8 }, () => "0123456789abcdef")
+        )
+      )
+    ).not.toBeNull();
+    expect(
+      decodeProbeSamplePayload(
+        withChange(
+          ["tiles", 0, "classTokenChanges", "added"],
+          Array.from({ length: 64 }, () => "a")
+        )
       )
     ).not.toBeNull();
     expect(

@@ -4,29 +4,38 @@
 import { DRIVER_LEAVE_TIMEOUT_MS } from "../src/platform/browser/BrowserPlatformAdapter";
 import { GOOGLE_MEET_SELECTORS } from "../src/platform/GoogleMeetAdapter";
 import type { PlatformEvent } from "../src/platform/PlatformAdapter";
+import { hashProbeValue, hashSourceKey } from "./meetProbeHash";
 import { NameRedactor } from "./meetProbeRedaction";
 import type {
   HypothesisId,
   HypothesisVerdict,
+  MeasurementVerdict,
   MeetSelectorKey,
   ProbeOutcome,
   ProbeReport,
+  Q1Counts,
+  Q2Counts,
+  Q2Indicator,
+  Q3Counts,
   RawAdapterLogLine,
   RawElementFacts,
   RawLocatedString,
   RawPageSample,
   RawProbeRun,
+  RawRtcFacts,
   RawRtcSourceEntry,
   RawSelectorCheck,
   RecordedPageCall,
   ReportElementFacts,
   ReportPlatformEvent,
   ReportSample,
+  ReportTileFacts,
   ReportTimelineEntry,
   SelectorSweepResult,
+  SourceKind,
 } from "./meetProbeTypes";
 
-export const MEET_PROBE_REPORT_VERSION = 1;
+export const MEET_PROBE_REPORT_VERSION = 2;
 
 // The floor SpeakerAttributor uses for a source to count as talking (minSourceLevel); below it the bot itself
 // would ignore the entry, so the probe must not call it speech either.
@@ -49,6 +58,12 @@ export const MAX_SOURCE_AGE_MS = 10000;
 // The bot closes the page right after the click; an ended text that needs longer than a quarter of a second
 // shows Meet had not finished leaving when the page went away.
 export const LEAVE_REGISTER_FAST_MS = 250;
+// Q3: the receiver's source timestamps are read as being on the page clock when a source that just spoke is
+// no more than this far from it.
+export const SOURCE_CLOCK_TOLERANCE_MS = 1000;
+// Share of judged source entries that must agree (or disagree) before the clock question is settled.
+export const CLOCK_AGREEMENT_SHARE = 0.9;
+export const MAX_REPORTED_INDICATORS = 5;
 
 const HYPOTHESES: readonly { id: HypothesisId; title: string }[] = [
   { id: "L1", title: "browser closed by the stop signal" },
@@ -102,26 +117,32 @@ const REPORT_LIMITS: readonly string[] = [
   "The hit-test is taken at the centre of the element box only.",
   "source_activity events are left out of the timeline; they are all in platformEvents.",
   "Leave hypothesis L1 can only be judged indirectly because the probe sends no stop signal.",
+  "Tile and source identifiers are the first 16 hex characters of a salted SHA-256; the salt is random per run and is never written, so hashes cannot be compared between runs or turned back into ids.",
+  "Q3 compares source timestamps with the page clock within 1000 ms; at a sample interval above 1000 ms it can read inconclusive.",
 ];
 const SAMPLE_CLOCK_LIMIT =
   "Sample tMs is the time the sample was received; after-leave samples and samples without a receipt carry pageTimeMs instead, which restarts in each new document.";
 
 export type ProbeSampleReceipt = { tMs: number; sequence: number };
-export type BuildProbeReportOptions = { redactNames: boolean; sampleReceipts: readonly ProbeSampleReceipt[] };
+export type BuildProbeReportOptions = {
+  redactNames: boolean;
+  sampleReceipts: readonly ProbeSampleReceipt[];
+  salt: string;
+};
 
-type TileKeys = { keyOf(participantId: string): string; has(participantId: string): boolean };
+type TileKeys = { keyOf(participantIdHash: string): string; has(participantIdHash: string): boolean };
 
 function createTileKeys(): TileKeys {
   const keys = new Map<string, string>();
   return {
-    keyOf(participantId) {
-      const known = keys.get(participantId);
+    keyOf(participantIdHash) {
+      const known = keys.get(participantIdHash);
       if (known) return known;
       const key = `tile-${keys.size + 1}`;
-      keys.set(participantId, key);
+      keys.set(participantIdHash, key);
       return key;
     },
-    has: (participantId) => keys.has(participantId),
+    has: (participantIdHash) => keys.has(participantIdHash),
   };
 }
 
@@ -152,6 +173,24 @@ function toReportElement(element: RawElementFacts, redactor: NameRedactor): Repo
   };
 }
 
+// Rebuilt field by field so nothing unknown in a page payload can ride along into the file.
+const toReportSourceEntry = (entry: RawRtcSourceEntry): RawRtcSourceEntry => ({
+  sourceHash: entry.sourceHash,
+  audioLevel: entry.audioLevel,
+  ageMs: entry.ageMs,
+  timestampRaw: entry.timestampRaw,
+});
+
+const toReportRtc = (rtc: RawRtcFacts): RawRtcFacts => ({
+  peerConnectionCount: rtc.peerConnectionCount,
+  receivers: rtc.receivers.map((receiver) => ({
+    readyState: receiver.readyState,
+    muted: receiver.muted,
+    contributingSources: receiver.contributingSources.map(toReportSourceEntry),
+    synchronizationSources: receiver.synchronizationSources.map(toReportSourceEntry),
+  })),
+});
+
 function toReportSample(
   sample: RawPageSample,
   tMs: number,
@@ -164,8 +203,14 @@ function toReportSample(
     pageTimeMs: sample.pageTimeMs,
     leaveControls: sample.leaveControls.map((element) => toReportElement(element, redactor)),
     tiles: sample.tiles.map((tile) => ({
-      tileKey: tileKeys.keyOf(tile.participantId),
+      tileKey: tileKeys.keyOf(tile.participantIdHash),
+      participantIdHash: tile.participantIdHash,
+      sourceHashes: [...tile.sourceHashes],
       classTokens: tile.classTokens.map(capMarkup),
+      classTokenChanges: {
+        added: tile.classTokenChanges.added.map(capMarkup),
+        removed: tile.classTokenChanges.removed.map(capMarkup),
+      },
       strings: tile.strings.map((entry) => ({ ...entry, value: redactor.redactTileString(entry.value) })),
       dataAttributeNames: tile.dataAttributeNames.map(capMarkup),
       ariaStates: capStates(tile.ariaStates),
@@ -177,7 +222,7 @@ function toReportSample(
       mutationCount: tile.mutationCount,
     })),
     selectorChecks: sample.selectorChecks,
-    rtc: sample.rtc,
+    rtc: toReportRtc(sample.rtc),
     visibilityState: sample.visibilityState,
     hasFocus: sample.hasFocus,
     dialogCount: sample.dialogCount,
@@ -206,7 +251,7 @@ function learnNames(raw: RawProbeRun, samples: RawPageSample[], tileKeys: TileKe
   }
   for (const sample of samples) {
     for (const tile of sample.tiles) {
-      const tileKey = tileKeys.keyOf(tile.participantId);
+      const tileKey = tileKeys.keyOf(tile.participantIdHash);
       for (const entry of tile.strings) {
         if (isLearnedWhole(entry)) redactor.learnName(entry.value, entry.where, tileKey);
       }
@@ -214,7 +259,7 @@ function learnNames(raw: RawProbeRun, samples: RawPageSample[], tileKeys: TileKe
   }
   for (const sample of samples) {
     for (const tile of sample.tiles) {
-      const tileKey = tileKeys.keyOf(tile.participantId);
+      const tileKey = tileKeys.keyOf(tile.participantIdHash);
       for (const entry of tile.strings) {
         if (!isLearnedWhole(entry)) redactor.learnTileString(entry.value, entry.where, tileKey);
       }
@@ -224,13 +269,15 @@ function learnNames(raw: RawProbeRun, samples: RawPageSample[], tileKeys: TileKe
 
 function createParticipantIdMapper(
   tileKeys: TileKeys,
-  redactor: NameRedactor
+  redactor: NameRedactor,
+  salt: string
 ): (participantId: string) => string {
   const otherKeys = new Map<string, string>();
   return (participantId) => {
     const idName = nameOfParticipantId(participantId);
     if (idName !== null) return `${NAME_ID_PREFIX}${redactor.redactOtherString(idName)}`;
-    if (tileKeys.has(participantId)) return tileKeys.keyOf(participantId);
+    const participantIdHash = hashProbeValue(salt, "pid", participantId);
+    if (tileKeys.has(participantIdHash)) return tileKeys.keyOf(participantIdHash);
     const known = otherKeys.get(participantId);
     if (known) return known;
     const key = `participant-${otherKeys.size + 1}`;
@@ -243,7 +290,8 @@ function flattenEvent(
   tMs: number,
   event: PlatformEvent,
   mapParticipantId: (participantId: string) => string,
-  redactor: NameRedactor
+  redactor: NameRedactor,
+  salt: string
 ): ReportPlatformEvent {
   switch (event.type) {
     case "participant_count":
@@ -257,12 +305,12 @@ function flattenEvent(
         speaking: event.speaking,
       };
     case "source_activity":
-      return { tMs, type: event.type, sourceKey: event.sourceKey, level: event.level };
+      return { tMs, type: event.type, sourceKey: hashSourceKey(salt, event.sourceKey), level: event.level };
     case "source_identity":
       return {
         tMs,
         type: event.type,
-        sourceKey: event.sourceKey,
+        sourceKey: hashSourceKey(salt, event.sourceKey),
         participantId: mapParticipantId(event.participantId),
         name: redactor.redactOtherString(event.name),
       };
@@ -310,7 +358,9 @@ function describeCall(call: RecordedPageCall): string {
   return `${call.method}${target} ${outcome} in ${Math.round(call.durationMs)} ms`;
 }
 
-function buildTimeline(report: Omit<ProbeReport, "timeline" | "hypotheses">): ReportTimelineEntry[] {
+function buildTimeline(
+  report: Omit<ProbeReport, "timeline" | "hypotheses" | "measurements">
+): ReportTimelineEntry[] {
   const entries: ReportTimelineEntry[] = [];
   for (const event of report.platformEvents) {
     if (event.type === "source_activity") continue;
@@ -361,17 +411,17 @@ export function buildProbeReport(raw: RawProbeRun, options: BuildProbeReportOpti
   ];
   // Keys are fixed before anything is learned so they follow first sight, not the learning order.
   for (const sample of everySample) {
-    for (const tile of sample.tiles) tileKeys.keyOf(tile.participantId);
+    for (const tile of sample.tiles) tileKeys.keyOf(tile.participantIdHash);
   }
   learnNames(raw, everySample, tileKeys, redactor);
 
   // The page clock restarts in each new document, so a sample's time on the probe clock is its receipt time.
   const toSample = (sample: RawPageSample, tMs: number = sample.pageTimeMs): ReportSample =>
     toReportSample(sample, tMs, tileKeys, redactor);
-  const mapParticipantId = createParticipantIdMapper(tileKeys, redactor);
+  const mapParticipantId = createParticipantIdMapper(tileKeys, redactor, options.salt);
 
-  const withoutVerdicts: Omit<ProbeReport, "timeline" | "hypotheses"> = {
-    schemaVersion: 1,
+  const withoutVerdicts: Omit<ProbeReport, "timeline" | "hypotheses" | "measurements"> = {
+    schemaVersion: 2,
     tool: { name: "meet-probe", version: MEET_PROBE_REPORT_VERSION },
     run: {
       startedAt: raw.run.startedAt,
@@ -396,7 +446,7 @@ export function buildProbeReport(raw: RawProbeRun, options: BuildProbeReportOpti
     samples: raw.samples.map((sample, index) => toSample(sample, options.sampleReceipts[index]?.tMs)),
     selectorSweeps: raw.selectorSweeps,
     platformEvents: raw.platformEvents.map(({ tMs, event }) =>
-      flattenEvent(tMs, event, mapParticipantId, redactor)
+      flattenEvent(tMs, event, mapParticipantId, redactor, options.salt)
     ),
     audio: { frames: raw.audio.frames, nonSilentFrames: raw.audio.nonSilentFrames },
     pageCalls: raw.pageCalls,
@@ -419,8 +469,10 @@ export function buildProbeReport(raw: RawProbeRun, options: BuildProbeReportOpti
     ...withoutVerdicts,
     timeline: buildTimeline(withoutVerdicts),
     hypotheses: [],
+    measurements: [],
   };
   report.hypotheses = evaluateHypotheses(report);
+  report.measurements = evaluateMeasurements(report.samples);
   return report;
 }
 
@@ -930,7 +982,7 @@ function judgeS7(report: ProbeReport, facts: SpeakerFacts): Verdict {
   const offClock = withLevel.filter(
     (entry) => entry.ageMs === null || Math.abs(entry.ageMs) > MAX_SOURCE_AGE_MS
   ).length;
-  const activeSources = new Set(entries.filter(isActiveEntry).map((entry) => entry.source)).size;
+  const activeSources = new Set(entries.filter(isActiveEntry).map((entry) => entry.sourceHash)).size;
   const receivers = maxOf(facts.samples.map((sample) => sample.rtc.receivers.length));
   const others = otherParticipants(report);
   const numbers = `at most ${receivers} audio receivers for ${others ?? "an unknown number of"} other participants, ${entries.length} source entries of which ${withLevel.length} carried a level, ${offClock} of those had an age outside ${MAX_SOURCE_AGE_MS} ms, ${activeSources} distinct sources rose above ${AUDIO_ACTIVE_LEVEL}, and ${report.audio.nonSilentFrames} of ${report.audio.frames} captured audio frames were non-silent`;
@@ -976,7 +1028,357 @@ export function evaluateHypotheses(report: ProbeReport): HypothesisVerdict[] {
   return HYPOTHESES.map(({ id }) => ({ id, ...verdicts[id] }));
 }
 
+// ---- Speech measurements ----
+
+const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+const share = (count: number, total: number): number => (total === 0 ? 0 : count / total);
+
+type KindedEntry = { kind: SourceKind; entry: RawRtcSourceEntry; speech: boolean };
+type SpeechSample = { sample: ReportSample; entries: KindedEntry[]; active: boolean };
+
+// A browser keeps a source entry, with its last level, for ten seconds after the last packet. An entry whose
+// timestamp has not moved since the previous sample therefore says nothing about who talks now.
+function toSpeechSamples(samples: readonly ReportSample[]): SpeechSample[] {
+  let previousStamps = new Set<string>();
+  return samples.map((sample) => {
+    const stamps = new Set<string>();
+    const entries: KindedEntry[] = [];
+    for (const receiver of sample.rtc.receivers) {
+      const lists: [SourceKind, RawRtcSourceEntry[]][] = [
+        ["csrc", receiver.contributingSources],
+        ["ssrc", receiver.synchronizationSources],
+      ];
+      for (const [kind, list] of lists) {
+        for (const entry of list) {
+          const stamp = entry.timestampRaw === null ? null : `${entry.sourceHash}|${entry.timestampRaw}`;
+          if (stamp !== null) stamps.add(stamp);
+          const stale = stamp !== null && previousStamps.has(stamp);
+          entries.push({ kind, entry, speech: !stale && isActiveEntry(entry) });
+        }
+      }
+    }
+    previousStamps = stamps;
+    return { sample, entries, active: entries.some((item) => item.speech) };
+  });
+}
+
+// Two elements of one participant (a video tile and a people-list entry) share a tile key and count once.
+function tilesByKey(sample: ReportSample): Map<string, ReportTileFacts[]> {
+  const byKey = new Map<string, ReportTileFacts[]>();
+  for (const tile of sample.tiles) {
+    const list = byKey.get(tile.tileKey) ?? [];
+    list.push(tile);
+    byKey.set(tile.tileKey, list);
+  }
+  return byKey;
+}
+
+function judgeQ1(speechSamples: SpeechSample[]): MeasurementVerdict {
+  const counts: Q1Counts = {
+    samples: speechSamples.length,
+    activeSamples: 0,
+    activeSamplesWithTiles: 0,
+    tilesSeen: 0,
+    tilesWithSource: 0,
+    receiverSources: { csrc: 0, ssrc: 0 },
+    linkedTiles: 0,
+    matchedEntries: { csrc: 0, ssrc: 0 },
+    soloSamplesByTile: {},
+    tilesWithSoloSpeech: 0,
+    multiActiveSamples: 0,
+    unlinkedActiveSamples: 0,
+  };
+  const tilesSeen = new Set<string>();
+  const tilesWithSource = new Set<string>();
+  const linked = new Set<string>();
+  const receiverSources: Record<SourceKind, Set<string>> = { csrc: new Set(), ssrc: new Set() };
+
+  for (const { sample, entries, active } of speechSamples) {
+    const tiles = tilesByKey(sample);
+    const sourcesOfTile = new Map<string, Set<string>>();
+    for (const [tileKey, elements] of tiles) {
+      tilesSeen.add(tileKey);
+      const hashes = new Set(elements.flatMap((element) => element.sourceHashes));
+      sourcesOfTile.set(tileKey, hashes);
+      if (hashes.size > 0) tilesWithSource.add(tileKey);
+    }
+    const speechHashes = new Set<string>();
+    for (const { kind, entry, speech } of entries) {
+      receiverSources[kind].add(entry.sourceHash);
+      if (speech) speechHashes.add(entry.sourceHash);
+      for (const [tileKey, hashes] of sourcesOfTile) {
+        if (hashes.has(entry.sourceHash)) linked.add(tileKey);
+      }
+    }
+    const activeTiles = new Set<string>();
+    for (const [tileKey, hashes] of sourcesOfTile) {
+      if (Array.from(hashes).some((hash) => speechHashes.has(hash))) activeTiles.add(tileKey);
+    }
+    for (const { kind, entry, speech } of entries) {
+      if (!speech) continue;
+      if (Array.from(sourcesOfTile.values()).some((hashes) => hashes.has(entry.sourceHash))) {
+        counts.matchedEntries[kind] += 1;
+      }
+    }
+    if (!active) continue;
+    counts.activeSamples += 1;
+    if (tiles.size === 0) continue;
+    counts.activeSamplesWithTiles += 1;
+    if (activeTiles.size === 1) {
+      const [only] = activeTiles;
+      if (only !== undefined) counts.soloSamplesByTile[only] = (counts.soloSamplesByTile[only] ?? 0) + 1;
+    } else if (activeTiles.size >= 2) counts.multiActiveSamples += 1;
+    else counts.unlinkedActiveSamples += 1;
+  }
+  counts.tilesSeen = tilesSeen.size;
+  counts.tilesWithSource = tilesWithSource.size;
+  counts.linkedTiles = linked.size;
+  counts.receiverSources = { csrc: receiverSources.csrc.size, ssrc: receiverSources.ssrc.size };
+  counts.tilesWithSoloSpeech = Object.values(counts.soloSamplesByTile).filter(
+    (solo) => solo >= MIN_AUDIO_ACTIVE_SAMPLES
+  ).length;
+
+  const solo = Object.entries(counts.soloSamplesByTile)
+    .map(([tileKey, value]) => `${tileKey} ${value}`)
+    .join(", ");
+  const numbers = `${counts.activeSamples} samples with speech (${counts.activeSamplesWithTiles} with a tile), ${counts.tilesWithSource} of ${counts.tilesSeen} tiles carried a source, ${counts.linkedTiles} tiles matched a receiver source, solo samples per tile ${solo === "" ? "none" : solo}, ${counts.multiActiveSamples} samples with several matching tiles, ${counts.unlinkedActiveSamples} with speech and no matching tile, matched speech entries ${counts.matchedEntries.csrc} csrc and ${counts.matchedEntries.ssrc} ssrc`;
+  const verdict = (kind: MeasurementVerdict["verdict"], evidence: string): MeasurementVerdict => ({
+    id: "Q1",
+    verdict: kind,
+    evidence,
+    counts,
+  });
+
+  if (counts.samples === 0) return verdict("inconclusive", "Not judged: no page samples were collected.");
+  if (counts.activeSamples < MIN_AUDIO_ACTIVE_SAMPLES) {
+    return verdict(
+      "inconclusive",
+      `Not judged, nobody verifiably spoke: only ${counts.activeSamples} of ${counts.samples} samples had a source level above ${AUDIO_ACTIVE_LEVEL} (${MIN_AUDIO_ACTIVE_SAMPLES} needed).`
+    );
+  }
+  if (counts.activeSamplesWithTiles < MIN_AUDIO_ACTIVE_SAMPLES) {
+    return verdict(
+      "inconclusive",
+      `Not judged: only ${counts.activeSamplesWithTiles} samples with speech held a tile to compare with (${MIN_AUDIO_ACTIVE_SAMPLES} needed).`
+    );
+  }
+  if (counts.tilesWithSource === 0) {
+    return verdict("excluded", `No tile carried a data-ssrc value: ${numbers}.`);
+  }
+  if (counts.linkedTiles === 0) {
+    return verdict(
+      "excluded",
+      `Tile source hashes never equalled a receiver source (the data-ssrc value may have another format): ${numbers}.`
+    );
+  }
+  if (counts.tilesWithSoloSpeech >= 2) {
+    return verdict(
+      "supported",
+      `Each of ${counts.tilesWithSoloSpeech} tiles was the only matching one for at least ${MIN_AUDIO_ACTIVE_SAMPLES} samples: ${numbers}.`
+    );
+  }
+  const missing =
+    Object.keys(counts.soloSamplesByTile).length <= 1
+      ? "only one tile was ever the single matching one, so telling speakers apart was not tested"
+      : `fewer than ${MIN_AUDIO_ACTIVE_SAMPLES} solo samples for the second tile`;
+  return verdict("inconclusive", `Not settled, ${missing}: ${numbers}.`);
+}
+
+type IndicatorTally = {
+  name: string;
+  kind: Q2Indicator["kind"];
+  measure: Q2Indicator["measure"];
+  speech: number;
+  silence: number;
+  tiles: Set<string>;
+};
+
+const describeIndicators = (indicators: Q2Indicator[]): string =>
+  indicators
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `${item.name} (${item.kind}, ${item.measure}, ${item.speechRate} per speech sample against ${item.silenceRate} per quiet one)`
+    )
+    .join("; ");
+
+function judgeQ2(speechSamples: SpeechSample[]): MeasurementVerdict {
+  const tallies = new Map<string, IndicatorTally>();
+  const candidates = new Set<string>();
+  const count = (
+    name: string,
+    kind: Q2Indicator["kind"],
+    measure: Q2Indicator["measure"],
+    active: boolean,
+    tileKey: string
+  ): void => {
+    candidates.add(name);
+    const id = `${measure}|${name}`;
+    const tally = tallies.get(id) ?? { name, kind, measure, speech: 0, silence: 0, tiles: new Set() };
+    tallies.set(id, tally);
+    if (active) {
+      tally.speech += 1;
+      tally.tiles.add(tileKey);
+    } else tally.silence += 1;
+  };
+  let activeSamplesWithTiles = 0;
+  let quietSamplesWithTiles = 0;
+  let activeTileSamples = 0;
+  let quietTileSamples = 0;
+
+  for (const { sample, active } of speechSamples) {
+    const tiles = tilesByKey(sample);
+    if (tiles.size === 0) continue;
+    if (active) {
+      activeSamplesWithTiles += 1;
+      activeTileSamples += tiles.size;
+    } else {
+      quietSamplesWithTiles += 1;
+      quietTileSamples += tiles.size;
+    }
+    for (const [tileKey, elements] of tiles) {
+      const toggledClasses = new Set<string>();
+      const toggledAttributes = new Set<string>();
+      const present = new Set<string>();
+      for (const element of elements) {
+        for (const token of element.classTokens) present.add(token);
+        for (const token of [...element.classTokenChanges.added, ...element.classTokenChanges.removed]) {
+          toggledClasses.add(token);
+        }
+        for (const mutation of element.mutations) {
+          if (mutation.attribute === "class") {
+            for (const token of mutation.toggledClassTokens) toggledClasses.add(token);
+          } else if (mutation.count > 0) toggledAttributes.add(mutation.attribute);
+        }
+      }
+      for (const token of toggledClasses)
+        count(capMarkup(`class:${token}`), "class", "toggle", active, tileKey);
+      for (const name of toggledAttributes)
+        count(capMarkup(`attr:${name}`), "attribute", "toggle", active, tileKey);
+      for (const token of present) count(capMarkup(`class:${token}`), "class", "presence", active, tileKey);
+    }
+  }
+
+  const qualifying: Q2Indicator[] = [];
+  for (const tally of tallies.values()) {
+    const speechBase = tally.measure === "toggle" ? activeSamplesWithTiles : activeTileSamples;
+    const silenceBase = tally.measure === "toggle" ? quietSamplesWithTiles : quietTileSamples;
+    const speechRate = share(tally.speech, speechBase);
+    const silenceRate = share(tally.silence, silenceBase);
+    if (tally.speech < MIN_AUDIO_ACTIVE_SAMPLES || speechRate < SPEAKING_TOGGLE_RATIO * silenceRate) continue;
+    qualifying.push({
+      name: tally.name,
+      kind: tally.kind,
+      measure: tally.measure,
+      speech: tally.speech,
+      silence: tally.silence,
+      speechRate: round3(speechRate),
+      silenceRate: round3(silenceRate),
+      tiles: tally.tiles.size,
+    });
+  }
+  qualifying.sort(
+    (a, b) =>
+      b.tiles - a.tiles ||
+      b.speechRate - b.silenceRate - (a.speechRate - a.silenceRate) ||
+      a.name.localeCompare(b.name)
+  );
+  const counts: Q2Counts = {
+    activeSamplesWithTiles,
+    quietSamplesWithTiles,
+    activeTileSamples,
+    quietTileSamples,
+    candidates: candidates.size,
+    qualifying: qualifying.length,
+    indicators: qualifying.slice(0, MAX_REPORTED_INDICATORS),
+  };
+  const verdict = (kind: MeasurementVerdict["verdict"], evidence: string): MeasurementVerdict => ({
+    id: "Q2",
+    verdict: kind,
+    evidence,
+    counts,
+  });
+
+  if (speechSamples.length === 0)
+    return verdict("inconclusive", "Not judged: no page samples were collected.");
+  if (activeSamplesWithTiles < MIN_AUDIO_ACTIVE_SAMPLES || quietSamplesWithTiles < MIN_AUDIO_ACTIVE_SAMPLES) {
+    return verdict(
+      "inconclusive",
+      `Not judged: ${activeSamplesWithTiles} samples with speech and ${quietSamplesWithTiles} quiet samples held a tile (${MIN_AUDIO_ACTIVE_SAMPLES} of each needed to compare).`
+    );
+  }
+  if (counts.qualifying > 0) {
+    return verdict(
+      "supported",
+      `${counts.qualifying} of ${counts.candidates} tile indicators follow speech at least ${SPEAKING_TOGGLE_RATIO} times as often as silence: ${describeIndicators(counts.indicators)}.`
+    );
+  }
+  return verdict(
+    "excluded",
+    `None of ${counts.candidates} class tokens and attributes followed speech at least ${SPEAKING_TOGGLE_RATIO} times as often as silence, over ${activeSamplesWithTiles} samples with speech and ${quietSamplesWithTiles} quiet samples.`
+  );
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const low = sorted[middle - 1] ?? 0;
+  const high = sorted[middle] ?? 0;
+  return Math.round(sorted.length % 2 === 1 ? high : (low + high) / 2);
+}
+
+function judgeQ3(speechSamples: SpeechSample[]): MeasurementVerdict {
+  const entries = speechSamples.flatMap((item) => item.entries);
+  const judged = entries.filter((item) => item.speech);
+  const ages = judged.flatMap((item) => (item.entry.ageMs === null ? [] : [Math.round(item.entry.ageMs)]));
+  const withinTolerance = judged.filter(
+    (item) => item.entry.ageMs !== null && Math.abs(item.entry.ageMs) <= SOURCE_CLOCK_TOLERANCE_MS
+  ).length;
+  const counts: Q3Counts = {
+    entriesWithTimestamp: entries.filter((item) => item.entry.timestampRaw !== null).length,
+    judgedEntries: judged.length,
+    withinTolerance,
+    outsideTolerance: judged.length - withinTolerance,
+    medianAgeMs: median(ages),
+    minAgeMs: ages.length === 0 ? null : Math.min(...ages),
+    maxAgeMs: ages.length === 0 ? null : Math.max(...ages),
+  };
+  const verdict = (kind: MeasurementVerdict["verdict"], evidence: string): MeasurementVerdict => ({
+    id: "Q3",
+    verdict: kind,
+    evidence,
+    counts,
+  });
+  const agreement = share(withinTolerance, judged.length);
+  const numbers = `${withinTolerance} of ${judged.length} entries that carried speech were within ${SOURCE_CLOCK_TOLERANCE_MS} ms of the page clock, median age ${counts.medianAgeMs === null ? "unknown" : ms(counts.medianAgeMs)}`;
+
+  if (speechSamples.length === 0)
+    return verdict("inconclusive", "Not judged: no page samples were collected.");
+  if (judged.length < MIN_AUDIO_ACTIVE_SAMPLES) {
+    return verdict(
+      "inconclusive",
+      `Not judged: only ${judged.length} source entries carried fresh speech (${MIN_AUDIO_ACTIVE_SAMPLES} needed).`
+    );
+  }
+  if (agreement >= CLOCK_AGREEMENT_SHARE) return verdict("supported", `${capitalise(numbers)}.`);
+  if (agreement <= 1 - CLOCK_AGREEMENT_SHARE) return verdict("excluded", `${capitalise(numbers)}.`);
+  return verdict("inconclusive", `Mixed: ${numbers}.`);
+}
+
+// Only observation samples are judged; the pre-leave and after-leave samples come after the speech schedule.
+export function evaluateMeasurements(samples: readonly ReportSample[]): MeasurementVerdict[] {
+  const speechSamples = toSpeechSamples(samples);
+  return [judgeQ1(speechSamples), judgeQ2(speechSamples), judgeQ3(speechSamples)];
+}
+
 // ---- Summary ----
+
+const MEASUREMENTS: readonly { id: MeasurementVerdict["id"]; title: string }[] = [
+  { id: "Q1", title: "tile source equals a receiver source that rises with speech" },
+  { id: "Q2", title: "a per-tile indicator follows speech" },
+  { id: "Q3", title: "source timestamps are on the page clock" },
+];
 
 function summaryLines(prefix: "L" | "S", verdicts: HypothesisVerdict[]): string[] {
   return HYPOTHESES.filter(({ id }) => id.startsWith(prefix)).map(({ id, title }) => {
@@ -986,7 +1388,19 @@ function summaryLines(prefix: "L" | "S", verdicts: HypothesisVerdict[]): string[
   });
 }
 
-export function formatSummary(verdicts: HypothesisVerdict[], outFile: string): string {
+function measurementLines(measurements: MeasurementVerdict[]): string[] {
+  return MEASUREMENTS.map(({ id, title }) => {
+    const measurement = measurements.find((entry) => entry.id === id);
+    const status = (measurement ? measurement.verdict : "not evaluated").padEnd(13);
+    return `  ${id}  ${status} ${title}${measurement ? `: ${measurement.evidence}` : ""}`;
+  });
+}
+
+export function formatSummary(
+  verdicts: HypothesisVerdict[],
+  outFile: string,
+  measurements: MeasurementVerdict[] = []
+): string {
   return [
     "Meet probe summary",
     "",
@@ -996,6 +1410,7 @@ export function formatSummary(verdicts: HypothesisVerdict[], outFile: string): s
     "Speakers",
     ...summaryLines("S", verdicts),
     "",
+    ...(measurements.length > 0 ? ["Speech measurement", ...measurementLines(measurements), ""] : []),
     `File to send back: ${outFile}`,
     "Before sending it, search the file for participant names and the meeting code; neither may be in it.",
     "",

@@ -3,8 +3,10 @@
 // result in docs/verification-status.md before relying on it, then remove this notice.
 import type {
   MeetProbePageOptions,
+  ProbeHash,
   RawAttributeMutation,
   RawBox,
+  RawClassTokenChanges,
   RawDialogFacts,
   RawElementFacts,
   RawHitTest,
@@ -38,7 +40,9 @@ const MAX_RECEIVERS = 64;
 const MAX_SOURCE_ENTRIES = 32;
 const MAX_DIALOGS = 16;
 const MAX_BOX_SIDE = 1_000_000;
-const MAX_SOURCE_ID = 0xffffffff;
+const MAX_TILE_SOURCES = 8;
+const MAX_CHANGED_TOKENS = 64;
+const HASH_PATTERN = /^[0-9a-f]{16}$/;
 
 const DECOMPOSED_SELECTORS = [
   "[data-participant-id]",
@@ -221,20 +225,45 @@ function decodeMutation(value: unknown): RawAttributeMutation | undefined {
   return { attribute, count, toggledClassTokens };
 }
 
+function decodeHash(value: unknown): ProbeHash | undefined {
+  return decodeText(value, 16, HASH_PATTERN);
+}
+
+function decodeClassTokenChanges(value: unknown): RawClassTokenChanges | undefined {
+  if (!isRecord(value)) return undefined;
+  const added = decodeNames(value.added, MAX_CHANGED_TOKENS, CLASS_TOKEN_PATTERN);
+  const removed = decodeNames(value.removed, MAX_CHANGED_TOKENS, CLASS_TOKEN_PATTERN);
+  if (added === undefined || removed === undefined) return undefined;
+  return { added, removed };
+}
+
 function decodeTile(value: unknown): RawTileFacts | undefined {
   if (!isRecord(value)) return undefined;
-  const participantId = decodeText(value.participantId, 256);
+  const participantIdHash = decodeHash(value.participantIdHash);
+  const sourceHashes = decodeList(value.sourceHashes, MAX_TILE_SOURCES, decodeHash);
+  const classTokenChanges = decodeClassTokenChanges(value.classTokenChanges);
   const classTokens = decodeNames(value.classTokens, MAX_CLASS_TOKENS, CLASS_TOKEN_PATTERN);
   const strings = decodeList(value.strings, MAX_STRINGS_PER_TILE, decodeLocatedString);
   const dataAttributeNames = decodeNames(value.dataAttributeNames, MAX_NAMES, DATA_NAME_PATTERN);
   const ariaStates = decodeAriaStates(value.ariaStates);
   const mutations = decodeList(value.mutations, MAX_MUTATED_ATTRIBUTES, decodeMutation);
   const mutationCount = decodeCount(value.mutationCount);
-  if (participantId === undefined || participantId.length === 0 || classTokens === undefined)
+  if (participantIdHash === undefined || sourceHashes === undefined || classTokens === undefined)
     return undefined;
+  if (classTokenChanges === undefined) return undefined;
   if (strings === undefined || dataAttributeNames === undefined || ariaStates === undefined) return undefined;
   if (mutations === undefined || mutationCount === undefined) return undefined;
-  return { participantId, classTokens, strings, dataAttributeNames, ariaStates, mutations, mutationCount };
+  return {
+    participantIdHash,
+    sourceHashes,
+    classTokens,
+    classTokenChanges,
+    strings,
+    dataAttributeNames,
+    ariaStates,
+    mutations,
+    mutationCount,
+  };
 }
 
 function decodeSelectorCheck(value: unknown): RawSelectorCheck | undefined {
@@ -250,15 +279,20 @@ function decodeSelectorCheck(value: unknown): RawSelectorCheck | undefined {
 
 function decodeSourceEntry(value: unknown): RawRtcSourceEntry | undefined {
   if (!isRecord(value)) return undefined;
-  const source = decodeCount(value.source, MAX_SOURCE_ID);
+  const sourceHash = decodeHash(value.sourceHash);
   const audioLevel = decodeNullableFinite(value.audioLevel);
   const ageMs = decodeNullableFinite(value.ageMs);
   const timestampRaw = decodeNullableFinite(value.timestampRaw);
-  if (source === undefined || audioLevel === undefined || ageMs === undefined || timestampRaw === undefined) {
+  if (
+    sourceHash === undefined ||
+    audioLevel === undefined ||
+    ageMs === undefined ||
+    timestampRaw === undefined
+  ) {
     return undefined;
   }
   if (audioLevel !== null && (audioLevel < 0 || audioLevel > 1)) return undefined;
-  return { source, audioLevel, ageMs, timestampRaw };
+  return { sourceHash, audioLevel, ageMs, timestampRaw };
 }
 
 function decodeReceiver(value: unknown): RawRtcReceiverFacts | undefined {
@@ -309,6 +343,9 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
     return topWindow !== undefined && topWindow !== null && topWindow !== globalThis;
   }, true);
   if (isSubframe) return;
+  // Without a valid salt a hash of a 32-bit source id could be enumerated, so nothing is collected at all.
+  const salt = typeof options.salt === "string" && /^[0-9a-f]{64}$/.test(options.salt) ? options.salt : null;
+  if (salt === null) return;
 
   const bound = (value: unknown, hardMax: number): number =>
     typeof value === "number" && Number.isFinite(value)
@@ -327,6 +364,9 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
   const maxClassTokens = 256;
   const maxMutatedAttributes = 32;
   const maxToggledTokens = 64;
+  const maxTileSources = 8;
+  const maxChangedTokens = 64;
+  const maxHashCacheEntries = 512;
   const maxConnections = 16;
   const maxReceivers = 64;
   const maxSourceEntries = 32;
@@ -403,6 +443,112 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility === "visible";
     }, false);
+
+  // SHA-256 is written out here, not taken from crypto.subtle: that is asynchronous and absent outside secure
+  // contexts, and a sample must hold ids and hashes of one instant, posted in order.
+  const sha256Constants: number[] = [];
+  const sha256Initial: number[] = [];
+  for (let candidate = 2; sha256Constants.length < 64; candidate += 1) {
+    let isPrime = true;
+    for (let divisor = 2; divisor * divisor <= candidate; divisor += 1) {
+      if (candidate % divisor === 0) {
+        isPrime = false;
+        break;
+      }
+    }
+    if (!isPrime) continue;
+    if (sha256Initial.length < 8) sha256Initial.push(((candidate ** 0.5 % 1) * 4294967296) | 0);
+    sha256Constants.push(((candidate ** (1 / 3) % 1) * 4294967296) | 0);
+  }
+  const wordAt = (words: number[], index: number): number => words[index] ?? 0;
+  const rotateRight = (word: number, bits: number): number => (word >>> bits) | (word << (32 - bits));
+  // UTF-8 bytes come from encodeURIComponent, which throws on a lone surrogate; the caller drops that one value.
+  const utf8Bytes = (text: string): number[] => {
+    const encoded = encodeURIComponent(text);
+    const bytes: number[] = [];
+    for (let i = 0; i < encoded.length; i += 1) {
+      if (encoded.charCodeAt(i) === 37) {
+        bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16));
+        i += 2;
+      } else {
+        bytes.push(encoded.charCodeAt(i));
+      }
+    }
+    return bytes;
+  };
+  const sha256Hex = (text: string): string => {
+    const bytes = utf8Bytes(text);
+    const bitLength = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const highBits = Math.floor(bitLength / 4294967296);
+    for (let shift = 24; shift >= 0; shift -= 8) bytes.push((highBits >>> shift) & 255);
+    for (let shift = 24; shift >= 0; shift -= 8) bytes.push((bitLength >>> shift) & 255);
+    const state = sha256Initial.slice();
+    const schedule: number[] = new Array<number>(64).fill(0);
+    for (let offset = 0; offset < bytes.length; offset += 64) {
+      for (let i = 0; i < 16; i += 1) {
+        const at = offset + i * 4;
+        schedule[i] =
+          (wordAt(bytes, at) << 24) |
+          (wordAt(bytes, at + 1) << 16) |
+          (wordAt(bytes, at + 2) << 8) |
+          wordAt(bytes, at + 3);
+      }
+      for (let i = 16; i < 64; i += 1) {
+        const early = wordAt(schedule, i - 15);
+        const late = wordAt(schedule, i - 2);
+        const small0 = rotateRight(early, 7) ^ rotateRight(early, 18) ^ (early >>> 3);
+        const small1 = rotateRight(late, 17) ^ rotateRight(late, 19) ^ (late >>> 10);
+        schedule[i] = (wordAt(schedule, i - 16) + small0 + wordAt(schedule, i - 7) + small1) | 0;
+      }
+      let a = wordAt(state, 0);
+      let b = wordAt(state, 1);
+      let c = wordAt(state, 2);
+      let d = wordAt(state, 3);
+      let e = wordAt(state, 4);
+      let f = wordAt(state, 5);
+      let g = wordAt(state, 6);
+      let h = wordAt(state, 7);
+      for (let i = 0; i < 64; i += 1) {
+        const big1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+        const choose = (e & f) ^ (~e & g);
+        const first = (h + big1 + choose + wordAt(sha256Constants, i) + wordAt(schedule, i)) | 0;
+        const big0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+        const majority = (a & b) ^ (a & c) ^ (b & c);
+        const second = (big0 + majority) | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = (d + first) | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = (first + second) | 0;
+      }
+      const sums = [a, b, c, d, e, f, g, h];
+      for (let i = 0; i < 8; i += 1) state[i] = (wordAt(state, i) + wordAt(sums, i)) | 0;
+    }
+    return state.map((word) => (word >>> 0).toString(16).padStart(8, "0")).join("");
+  };
+  // Mirrors hashProbeValue in meetProbeHash.ts, which the tests compare this against.
+  const hashCache = new Map<string, string>();
+  const hashOf = (domain: "pid" | "src", value: string): string => {
+    const key = `${domain}|${value}`;
+    const cached = hashCache.get(key);
+    if (cached !== undefined) return cached;
+    const hash = sha256Hex(`${salt}|${domain}|${value}`).slice(0, 16);
+    if (hashCache.size >= maxHashCacheEntries) hashCache.clear();
+    hashCache.set(key, hash);
+    return hash;
+  };
+  // Mirrors canonicalSourceId in meetProbeHash.ts: a tile's data-ssrc must hash like the receiver's number.
+  const canonicalSource = (value: string | null): string | null => {
+    const trimmed = (value ?? "").trim();
+    if (trimmed.length === 0) return null;
+    if (/^[0-9]{1,10}$/.test(trimmed)) return String(Number(trimmed));
+    return trimmed.slice(0, 256);
+  };
 
   const describeControl = (element: Element, matchedBy: string[]): RawElementFacts => {
     const rect = attempt(() => element.getBoundingClientRect(), null);
@@ -574,7 +720,15 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
     return created;
   }, null);
 
-  const describeTile = (tile: Element, mutations: TileMutations | undefined): RawTileFacts => {
+  const describeTile = (
+    tile: Element,
+    mutations: TileMutations | undefined,
+    previousTokens: Set<string> | undefined
+  ): RawTileFacts => {
+    // The raw id lives only in this scope; a tile whose id cannot be hashed is left out by the caller.
+    const rawParticipantId = clip(tile.getAttribute("data-participant-id"), 256);
+    if (rawParticipantId === null) throw new Error("tile without a participant id");
+    const participantIdHash = hashOf("pid", rawParticipantId);
     const elements: Element[] = [tile];
     attempt(() => {
       for (const element of tile.querySelectorAll("*")) {
@@ -584,9 +738,17 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
     }, undefined);
     const classTokens = new Set<string>();
     const dataNames = new Set<string>();
+    const sourceHashes: string[] = [];
     const strings: RawLocatedString[] = [];
     const seen = new Set<string>();
     for (const element of elements) {
+      attempt(() => {
+        const sourceId = canonicalSource(element.getAttribute("data-ssrc"));
+        if (sourceId !== null && sourceHashes.length < maxTileSources) {
+          const sourceHash = hashOf("src", sourceId);
+          if (!sourceHashes.includes(sourceHash)) sourceHashes.push(sourceHash);
+        }
+      }, undefined);
       attempt(() => {
         const tokens = classTokensOf(element.getAttribute("class"));
         for (const token of tokens) {
@@ -630,9 +792,21 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
         });
       }
     }
+    const added: string[] = [];
+    const removed: string[] = [];
+    if (previousTokens) {
+      for (const token of classTokens) {
+        if (added.length < maxChangedTokens && !previousTokens.has(token)) added.push(token);
+      }
+      for (const token of previousTokens) {
+        if (removed.length < maxChangedTokens && !classTokens.has(token)) removed.push(token);
+      }
+    }
     return {
-      participantId: clip(tile.getAttribute("data-participant-id"), 256) ?? "",
+      participantIdHash,
+      sourceHashes,
       classTokens: Array.from(classTokens),
+      classTokenChanges: { added, removed },
       strings,
       dataAttributeNames: Array.from(dataNames),
       ariaStates: attempt(() => ariaStatesOf(tile), {}),
@@ -641,19 +815,25 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
     };
   };
 
+  // Rebuilt on every sample, so a tile that left the page starts without a history when it returns.
+  let tokensBySample = new Map<Element, Set<string>>();
   const collectTiles = (): RawTileFacts[] => {
     if (observer) attempt(() => absorbRecords(observer.takeRecords()), undefined);
     const mutations = pendingMutations;
     pendingMutations = new Map<Element, TileMutations>();
+    const previous = tokensBySample;
+    const current = new Map<Element, Set<string>>();
     const tiles: RawTileFacts[] = [];
     for (const element of document.querySelectorAll(tileSelector)) {
       if (tiles.length >= maxTiles) break;
       attempt(() => {
         if (element.parentElement?.closest(tileSelector)) return;
-        const facts = describeTile(element, mutations.get(element));
-        if (facts.participantId.length > 0) tiles.push(facts);
+        const facts = describeTile(element, mutations.get(element), previous.get(element));
+        tiles.push(facts);
+        current.set(element, new Set(facts.classTokens));
       }, undefined);
     }
+    tokensBySample = current;
     return tiles;
   };
 
@@ -698,11 +878,12 @@ export function installMeetProbe(options: MeetProbePageOptions): void {
         const source: unknown = entry.source;
         if (typeof source !== "number" || !Number.isInteger(source) || source < 0 || source > 0xffffffff)
           return;
+        const sourceHash = hashOf("src", String(source));
         const level: unknown = entry.audioLevel;
         const timestamp: unknown = entry.timestamp;
         const timestampRaw = typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : null;
         entries.push({
-          source,
+          sourceHash,
           audioLevel:
             typeof level === "number" && Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : null,
           // Against Date.now(), the clock src/audio/captureScript.ts compares these timestamps with.

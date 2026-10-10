@@ -68,10 +68,22 @@ export type RawAttributeMutation = {
   toggledClassTokens: string[];
 };
 
-// An outermost [data-participant-id] element. The raw id stays inside the page and Node maps it to "tile-N".
+// 16 lower-case hex characters: a salted SHA-256 prefix made in the page. The raw value never leaves the page.
+export type ProbeHash = string;
+
+export type RawClassTokenChanges = {
+  added: string[];
+  removed: string[];
+};
+
+// An outermost [data-participant-id] element. The id is hashed in the page and Node maps the hash to "tile-N".
 export type RawTileFacts = {
-  participantId: string;
+  participantIdHash: ProbeHash;
+  // Hashes of the distinct data-ssrc values on the tile and its descendants.
+  sourceHashes: ProbeHash[];
   classTokens: string[];
+  // Class tokens gained or lost since the previous sample of the same element; empty on first sight.
+  classTokenChanges: RawClassTokenChanges;
   strings: RawLocatedString[];
   dataAttributeNames: string[];
   ariaStates: Record<string, string>;
@@ -88,7 +100,7 @@ export type RawSelectorCheck = {
 };
 
 export type RawRtcSourceEntry = {
-  source: number;
+  sourceHash: ProbeHash;
   // 0..1 as the browser reports it; null when the entry carries none.
   audioLevel: number | null;
   // Milliseconds between the entry's timestamp and the sample time; null when unusable.
@@ -195,6 +207,8 @@ export type NameAliasSummary = {
 // What the in-page collector needs to run.
 export type MeetProbePageOptions = {
   intervalMs: number;
+  // 64 lower-case hex characters, random per run; never written anywhere.
+  salt: string;
   // Redaction happens in Node; the page always sends raw strings.
   maxLeaveControls: number;
   maxTiles: number;
@@ -309,7 +323,7 @@ export type RawProbeRun = {
   leave: RawLeaveRecord;
 };
 
-// ---- Written report (schemaVersion 1) ----
+// ---- Written report (schemaVersion 2) ----
 
 export type HypothesisId =
   | "L1"
@@ -344,7 +358,10 @@ export type ReportElementFacts = Omit<RawElementFacts, "ariaLabel" | "title" | "
 export type ReportTileFacts = {
   // "tile-1", "tile-2", ... in order of first sight; the raw participant id is never written.
   tileKey: string;
+  participantIdHash: ProbeHash;
+  sourceHashes: ProbeHash[];
   classTokens: string[];
+  classTokenChanges: RawClassTokenChanges;
   strings: RawLocatedString[];
   dataAttributeNames: string[];
   ariaStates: Record<string, string>;
@@ -394,8 +411,63 @@ export type ReportSelectorInfo = {
   limits: string[];
 };
 
+export type MeasurementId = "Q1" | "Q2" | "Q3";
+export type SourceKind = "csrc" | "ssrc";
+
+export type Q1Counts = {
+  samples: number;
+  activeSamples: number;
+  activeSamplesWithTiles: number;
+  tilesSeen: number;
+  tilesWithSource: number;
+  receiverSources: Record<SourceKind, number>;
+  linkedTiles: number;
+  matchedEntries: Record<SourceKind, number>;
+  soloSamplesByTile: Record<string, number>;
+  tilesWithSoloSpeech: number;
+  multiActiveSamples: number;
+  unlinkedActiveSamples: number;
+};
+
+export type Q2Indicator = {
+  name: string;
+  kind: "class" | "attribute";
+  measure: "toggle" | "presence";
+  speech: number;
+  silence: number;
+  speechRate: number;
+  silenceRate: number;
+  tiles: number;
+};
+
+export type Q2Counts = {
+  activeSamplesWithTiles: number;
+  quietSamplesWithTiles: number;
+  activeTileSamples: number;
+  quietTileSamples: number;
+  candidates: number;
+  qualifying: number;
+  indicators: Q2Indicator[];
+};
+
+export type Q3Counts = {
+  entriesWithTimestamp: number;
+  judgedEntries: number;
+  withinTolerance: number;
+  outsideTolerance: number;
+  medianAgeMs: number | null;
+  minAgeMs: number | null;
+  maxAgeMs: number | null;
+};
+
+export type MeasurementBase = { verdict: HypothesisVerdict["verdict"]; evidence: string };
+export type MeasurementVerdict =
+  | (MeasurementBase & { id: "Q1"; counts: Q1Counts })
+  | (MeasurementBase & { id: "Q2"; counts: Q2Counts })
+  | (MeasurementBase & { id: "Q3"; counts: Q3Counts });
+
 export type ProbeReport = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   tool: { name: "meet-probe"; version: number };
   run: {
     startedAt: string;
@@ -437,4 +509,5 @@ export type ProbeReport = {
   };
   names: NameAliasSummary[];
   hypotheses: HypothesisVerdict[];
+  measurements: MeasurementVerdict[];
 };

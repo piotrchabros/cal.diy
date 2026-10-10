@@ -475,6 +475,7 @@ describe("textual guards over every probe file", () => {
   it("finds the script and its modules", () => {
     expect(probeFiles).toEqual([
       "meet-probe.ts",
+      "meetProbeHash.ts",
       "meetProbePageScript.ts",
       "meetProbePlan.ts",
       "meetProbeRecorder.ts",
