@@ -37,4 +37,10 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_CALENDAR_GUEST_GATEWAY_MODULE: Symbol("NotetakerCalendarGuestGatewayModule"),
   NOTETAKER_CALENDAR_INVITE_SERVICE: Symbol("NotetakerCalendarInviteService"),
   NOTETAKER_CALENDAR_INVITE_SERVICE_MODULE: Symbol("NotetakerCalendarInviteServiceModule"),
+  NOTETAKER_MEMBERSHIP_LOOKUP: Symbol("NotetakerMembershipLookup"),
+  NOTETAKER_MEMBERSHIP_LOOKUP_MODULE: Symbol("NotetakerMembershipLookupModule"),
+  NOTETAKER_SHARING_SETTINGS_SERVICE: Symbol("NotetakerSharingSettingsService"),
+  NOTETAKER_SHARING_SETTINGS_SERVICE_MODULE: Symbol("NotetakerSharingSettingsServiceModule"),
+  NOTETAKER_SHARED_RESULTS_SERVICE: Symbol("NotetakerSharedResultsService"),
+  NOTETAKER_SHARED_RESULTS_SERVICE_MODULE: Symbol("NotetakerSharedResultsServiceModule"),
 };

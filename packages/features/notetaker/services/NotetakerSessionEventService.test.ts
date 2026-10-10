@@ -6,6 +6,7 @@ import type {
   NotetakerBotEndReason,
   NotetakerBotEvent,
   NotetakerBotPassage,
+  NotetakerBotSpeakerResolution,
 } from "@calcom/lib/notetaker/botContract";
 import type { TriggerOptions } from "@trigger.dev/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -115,6 +116,8 @@ function ended(
     durationMs: number;
     interruptedAtMs: number | null;
     passageCount: number;
+    speakerNamesAvailable: boolean;
+    speakerResolutions: NotetakerBotSpeakerResolution[];
   }> = {}
 ): NotetakerBotEvent {
   return {
@@ -1171,6 +1174,209 @@ describe("NotetakerSessionEventService", () => {
       expect(result).toBe("DUPLICATE");
       expect(choiceOf()).toEqual(choiceBefore);
       expect(activities()).toEqual([]);
+    });
+  });
+
+  describe("speaker names on session.ended", () => {
+    const SPEAKER_NAME_SECRET = "Grace Hopper";
+
+    function unknownPassage(index: number, speakerKey: string, unknownSpeakerNumber: number) {
+      return {
+        index,
+        speakerKey,
+        speakerName: null,
+        unknownSpeakerNumber,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        text: PASSAGE_TEXT,
+        language: "en",
+      };
+    }
+
+    async function seedUnknownTranscript(sessionId: string) {
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.transcriptRepository.insertPassages(transcript.id, [
+        unknownPassage(0, "unknown:1", 1),
+        unknownPassage(1, "unknown:2", 2),
+        unknownPassage(2, "unknown:1", 1),
+        { ...unknownPassage(3, "participant:known", 1), speakerName: "Known", unknownSpeakerNumber: null },
+      ]);
+      return transcript;
+    }
+
+    function passagesOf(transcriptId: string) {
+      return Array.from(repositories.store.passages.get(transcriptId)?.values() ?? []).sort(
+        (a, b) => a.index - b.index
+      );
+    }
+
+    const resolution = (
+      overrides: Partial<NotetakerBotSpeakerResolution> = {}
+    ): NotetakerBotSpeakerResolution => ({
+      speakerKey: "unknown:1",
+      resolvedSpeakerKey: "participant:abc",
+      speakerName: SPEAKER_NAME_SECRET,
+      ...overrides,
+    });
+
+    it("rewrites every passage of the old key and leaves the others untouched", async () => {
+      const sessionId = await seedTranscribing();
+      const transcript = await seedUnknownTranscript(sessionId);
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { speakerResolutions: [resolution()] }))
+      );
+
+      expect(result).toBe("ACCEPTED");
+      const passages = passagesOf(transcript.id);
+      expect(passages[0]).toMatchObject({
+        speakerKey: "participant:abc",
+        speakerName: SPEAKER_NAME_SECRET,
+        unknownSpeakerNumber: null,
+      });
+      expect(passages[2]).toMatchObject({
+        speakerKey: "participant:abc",
+        speakerName: SPEAKER_NAME_SECRET,
+        unknownSpeakerNumber: null,
+      });
+      expect(passages[1]).toMatchObject({
+        speakerKey: "unknown:2",
+        speakerName: null,
+        unknownSpeakerNumber: 2,
+      });
+      expect(passages[3]).toMatchObject({ speakerKey: "participant:known", speakerName: "Known" });
+    });
+
+    it.each([
+      ["a speakerKey that is not unknown", { speakerKey: "participant:known" }],
+      ["a resolvedSpeakerKey that is not a participant", { resolvedSpeakerKey: "unknown:9" }],
+    ])("drops an entry with %s, warns without names or keys and still accepts", async (_label, patch) => {
+      const sessionId = await seedTranscribing();
+      const transcript = await seedUnknownTranscript(sessionId);
+      const before = passagesOf(transcript.id);
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { speakerResolutions: [resolution(patch)] }))
+      );
+
+      expect(result).toBe("ACCEPTED");
+      expect(passagesOf(transcript.id)).toEqual(before);
+      expect(logger.warn).toHaveBeenCalledWith(expect.any(String), { sessionId, dropped: 1 });
+      const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+      expect(logged).not.toContain(SPEAKER_NAME_SECRET);
+      expect(logged).not.toContain("participant:abc");
+      expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+    });
+
+    it("uses the first entry when a speakerKey is repeated", async () => {
+      const sessionId = await seedTranscribing();
+      const transcript = await seedUnknownTranscript(sessionId);
+
+      await service.handleEvent(
+        withSession(
+          sessionId,
+          ended(FRESH_SEQUENCE, {
+            speakerResolutions: [
+              resolution({ speakerName: "First" }),
+              resolution({ resolvedSpeakerKey: "participant:other", speakerName: "Second" }),
+            ],
+          })
+        )
+      );
+
+      expect(passagesOf(transcript.id)[0]).toMatchObject({
+        speakerKey: "participant:abc",
+        speakerName: "First",
+      });
+    });
+
+    it.each([
+      [true, true],
+      [false, false],
+      [undefined, null],
+    ])("stores speakerNamesAvailable %s as %s", async (sent, stored) => {
+      const sessionId = await seedTranscribing();
+      await seedUnknownTranscript(sessionId);
+
+      await service.handleEvent(
+        withSession(
+          sessionId,
+          ended(FRESH_SEQUENCE, sent === undefined ? {} : { speakerNamesAvailable: sent })
+        )
+      );
+
+      expect(transcriptOf(sessionId)?.speakerNamesAvailable).toBe(stored);
+    });
+
+    it("changes nothing when the same ended event arrives again", async () => {
+      const sessionId = await seedTranscribing();
+      const transcript = await seedUnknownTranscript(sessionId);
+      const event = withSession(
+        sessionId,
+        ended(FRESH_SEQUENCE, { speakerNamesAvailable: true, speakerResolutions: [resolution()] })
+      );
+      await service.handleEvent(event);
+      const afterFirst = { passages: passagesOf(transcript.id), transcript: transcriptOf(sessionId) };
+
+      const result = await service.handleEvent(event);
+
+      expect(result).toBe("DUPLICATE");
+      expect(passagesOf(transcript.id)).toEqual(afterFirst.passages);
+      expect(transcriptOf(sessionId)).toEqual(afterFirst.transcript);
+    });
+
+    it("accepts resolutions when no transcript exists", async () => {
+      const sessionId = await seedTranscribing();
+
+      const result = await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { passageCount: 0, speakerResolutions: [resolution()] }))
+      );
+
+      expect(result).toBe("ACCEPTED");
+      expect(repositories.store.transcripts.size).toBe(0);
+      expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+    });
+
+    it("applies the resolutions before the finalize is enqueued", async () => {
+      const sessionId = await seedTranscribing();
+      await seedUnknownTranscript(sessionId);
+      const order: string[] = [];
+      const transcripts = repositories.transcriptRepository;
+      const apply = transcripts.updatePassageSpeakersBySpeakerKey.bind(transcripts);
+      vi.spyOn(transcripts, "updatePassageSpeakersBySpeakerKey").mockImplementation((...args) => {
+        order.push("resolve");
+        return apply(...args);
+      });
+      const finalize = tasker.finalizeSession.bind(tasker);
+      vi.spyOn(tasker, "finalizeSession").mockImplementation((...args) => {
+        order.push("finalize");
+        return finalize(...args);
+      });
+
+      await service.handleEvent(
+        withSession(sessionId, ended(FRESH_SEQUENCE, { speakerResolutions: [resolution()] }))
+      );
+
+      expect(order).toEqual(["resolve", "finalize"]);
+    });
+
+    it("repairs the passages on a retry after the status write was never reached", async () => {
+      const sessionId = await seedTranscribing();
+      const transcript = await seedUnknownTranscript(sessionId);
+      const transcripts = repositories.transcriptRepository;
+      const apply = transcripts.updatePassageSpeakersBySpeakerKey.bind(transcripts);
+      vi.spyOn(transcripts, "updatePassageSpeakersBySpeakerKey").mockRejectedValueOnce(new Error("db down"));
+      vi.spyOn(transcripts, "updatePassageSpeakersBySpeakerKey").mockImplementation(apply);
+      const event = withSession(sessionId, ended(FRESH_SEQUENCE, { speakerResolutions: [resolution()] }));
+
+      await expect(service.handleEvent(event)).rejects.toThrow("db down");
+      expect(sessionOf(sessionId).status).toBe("TRANSCRIBING");
+
+      await expect(service.handleEvent(event)).resolves.toBe("ACCEPTED");
+      expect(passagesOf(transcript.id)[0].speakerKey).toBe("participant:abc");
     });
   });
 

@@ -1,7 +1,7 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import type { NotetakerBotEvent } from "@calcom/lib/notetaker/botContract";
+import type { NotetakerBotEvent, NotetakerBotSpeakerResolution } from "@calcom/lib/notetaker/botContract";
 import {
   canTransition,
   getProcessingOutcomeReason,
@@ -26,6 +26,9 @@ const ACTIVE: NotetakerSessionStatusDto[] = ["SCHEDULED", "WAITING_TO_BE_ADMITTE
 function fromStatusesFor(target: NotetakerSessionStatusDto): NotetakerSessionStatusDto[] {
   return ACTIVE.filter((status) => canTransition(status, target));
 }
+
+const UNKNOWN_SPEAKER_KEY_PREFIX = "unknown:";
+const PARTICIPANT_SPEAKER_KEY_PREFIX = "participant:";
 
 export type NotetakerSessionEventResult = "ACCEPTED" | "DUPLICATE" | "GONE";
 
@@ -138,6 +141,12 @@ export class NotetakerSessionEventService {
       await this.blockRejoin(session.bookingId);
     }
 
+    const transcript = await this.deps.transcriptRepository.findBySessionId(session.id);
+    // Before the status claim, like blockRejoin: a retry after a failed write is then not a duplicate.
+    if (transcript) {
+      await this.applySpeakerResolutions(transcript.id, event.data.speakerResolutions ?? [], session.id);
+    }
+
     const updated = await this.deps.sessionRepository.updateIfStatusIn(
       session.id,
       fromStatusesFor("PROCESSING"),
@@ -157,9 +166,12 @@ export class NotetakerSessionEventService {
       await this.recordParticipantStop(session);
     }
 
-    const transcript = await this.deps.transcriptRepository.findBySessionId(session.id);
     if (transcript) {
-      await this.deps.transcriptRepository.update(transcript.id, { durationMs, passageCount });
+      await this.deps.transcriptRepository.update(transcript.id, {
+        durationMs,
+        passageCount,
+        speakerNamesAvailable: event.data.speakerNamesAvailable ?? null,
+      });
     }
 
     const outcome = mapOutcome({ cause: endReason, admitted: true, passageCount });
@@ -174,6 +186,40 @@ export class NotetakerSessionEventService {
 
     await this.enqueueFinalize(session.id);
     return "ACCEPTED";
+  }
+
+  // The bot is not trusted to name a speaker it did not see: only an unknown key may be renamed, and
+  // only to a participant key, so a bad entry cannot overwrite an already named speaker.
+  private async applySpeakerResolutions(
+    transcriptId: string,
+    resolutions: NotetakerBotSpeakerResolution[],
+    sessionId: string
+  ): Promise<void> {
+    const kept = new Map<string, NotetakerBotSpeakerResolution>();
+    let dropped = 0;
+    for (const resolution of resolutions) {
+      const valid =
+        resolution.speakerKey.startsWith(UNKNOWN_SPEAKER_KEY_PREFIX) &&
+        resolution.resolvedSpeakerKey.startsWith(PARTICIPANT_SPEAKER_KEY_PREFIX);
+      if (!valid || kept.has(resolution.speakerKey)) {
+        dropped += 1;
+        continue;
+      }
+      kept.set(resolution.speakerKey, resolution);
+    }
+
+    if (dropped > 0) {
+      this.deps.logger.warn("Dropped invalid notetaker speaker resolutions", { sessionId, dropped });
+    }
+
+    for (const resolution of Array.from(kept.values())) {
+      await this.deps.transcriptRepository.updatePassageSpeakersBySpeakerKey({
+        transcriptId,
+        speakerKey: resolution.speakerKey,
+        resolvedSpeakerKey: resolution.resolvedSpeakerKey,
+        speakerName: resolution.speakerName,
+      });
+    }
   }
 
   private async handleEndedBeforeAdmission(

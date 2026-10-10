@@ -37,6 +37,7 @@ export type NotetakerTranscriptDto = {
   completeness: NotetakerTranscriptCompletenessDto;
   durationMs: number;
   passageCount: number;
+  speakerNamesAvailable?: boolean | null;
 };
 
 export const NotetakerTranscriptDtoSchema: z.ZodType<NotetakerTranscriptDto> = z.object({
@@ -45,6 +46,7 @@ export const NotetakerTranscriptDtoSchema: z.ZodType<NotetakerTranscriptDto> = z
   completeness: NotetakerTranscriptCompletenessDtoSchema,
   durationMs: z.number().int().nonnegative(),
   passageCount: z.number().int().nonnegative(),
+  speakerNamesAvailable: z.boolean().nullable().optional(),
 });
 
 export type NotetakerExportDto = { filename: string; mimeType: "text/markdown"; content: string };

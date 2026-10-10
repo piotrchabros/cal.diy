@@ -36,10 +36,20 @@ export type NotetakerIneligibilityReasonDto =
   | "MEETING_ENDED"
   | "REJOIN_BLOCKED";
 
+export type NotetakerViewerRoleDto = "HOST" | "ATTENDEE" | "SHARED_VIEWER";
+
+export type NotetakerAccessDto = {
+  attendees: boolean;
+  colleagues:
+    | null
+    | { route: "TEAM"; teamName: string }
+    | { route: "SELECTED_PEOPLE"; people: { name: string }[] };
+};
+
 export type NotetakerStateDto = {
   bookingUid: string;
   featureEnabled: boolean;
-  viewerRole: "HOST" | "ATTENDEE";
+  viewerRole: NotetakerViewerRoleDto;
   eligibility: {
     eligible: boolean;
     platform: NotetakerPlatformDto | null;
@@ -70,6 +80,7 @@ export type NotetakerStateDto = {
   transcript: NotetakerTranscriptDto | null;
   summary: NotetakerSummaryDto | null;
   sharedWithAttendees: boolean;
+  access?: NotetakerAccessDto;
 };
 
 export type NotetakerEventTypeDefaultDto = {
@@ -83,4 +94,5 @@ export type NotetakerDisclosureDto = {
   enabledByDefault: boolean;
   onBehalfOf: string | null;
   supportedLocationTypes: string[];
+  sharedWithColleagues?: boolean;
 };

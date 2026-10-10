@@ -18,6 +18,9 @@ const ACTION_KEYS: Record<NotetakerActivityActionDto, string> = {
   EXPORTED: "notetaker_activity_exported",
   DELETED: "notetaker_activity_deleted",
   SUMMARY_REQUESTED: "notetaker_activity_summary_requested",
+  SHARED_VIEWED: "notetaker_activity_shared_viewed",
+  SHARING_MODE_CHANGED: "notetaker_activity_sharing_mode_changed",
+  SHARING_PEOPLE_CHANGED: "notetaker_activity_sharing_people_changed",
 };
 const ALL_ACTIONS = Object.keys(ACTION_KEYS) as NotetakerActivityActionDto[];
 

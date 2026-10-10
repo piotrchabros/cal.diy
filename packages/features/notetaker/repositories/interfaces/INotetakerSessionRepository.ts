@@ -31,6 +31,8 @@ export type NotetakerSessionRecord = {
   stopRequestedAt: Date | null;
   stopRequestedByUserId: number | null;
   resultsDeletedAt: Date | null;
+  /** Set at dispatch and never changed: the participants were told that colleagues may read the notes. */
+  colleagueSharingDisclosed: boolean;
   createdAt: Date;
 };
 
@@ -39,11 +41,14 @@ export type NotetakerSessionCreateInput = Pick<
   "bookingId" | "platform" | "meetingUrl" | "botProvider" | "displayName" | "scheduledStartAt"
 > &
   Partial<
-    Pick<NotetakerSessionRecord, "status" | "outcomeReason" | "dispatchedAt" | "endedAt" | "startedLate">
+    Pick<
+      NotetakerSessionRecord,
+      "status" | "outcomeReason" | "dispatchedAt" | "endedAt" | "startedLate" | "colleagueSharingDisclosed"
+    >
   >;
 
 export type NotetakerSessionUpdateInput = Partial<
-  Omit<NotetakerSessionRecord, "id" | "bookingId" | "createdAt">
+  Omit<NotetakerSessionRecord, "id" | "bookingId" | "createdAt" | "colleagueSharingDisclosed">
 >;
 
 export interface INotetakerSessionRepository {
@@ -53,6 +58,8 @@ export interface INotetakerSessionRepository {
    * Ordered by dispatchedAt desc, then id desc.
    */
   findLatestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null>;
+  /** Ordered by createdAt asc, then id asc. */
+  findEarliestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null>;
   findLatestWithTranscriptByBookingId(
     bookingId: number
   ): Promise<{ session: NotetakerSessionRecord; transcript: NotetakerTranscriptRecord } | null>;

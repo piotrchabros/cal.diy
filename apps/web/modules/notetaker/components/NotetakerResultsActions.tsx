@@ -1,7 +1,7 @@
 "use client";
 
 import { NOTETAKER_LIVE_SESSION_STATUSES } from "@calcom/features/notetaker/lib/sessionStateMachine";
-import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { NotetakerSessionStatusDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
@@ -15,7 +15,7 @@ export function NotetakerResultsActions({
   sessionStatus,
 }: {
   bookingUid: string;
-  viewerRole: "HOST" | "ATTENDEE";
+  viewerRole: NotetakerStateDto["viewerRole"];
   sharedWithAttendees: boolean;
   sessionStatus: NotetakerSessionStatusDto | null;
 }) {
