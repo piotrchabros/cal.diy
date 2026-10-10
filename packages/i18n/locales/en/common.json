@@ -5009,5 +5009,7 @@
   "notetaker_shared_with_me_route_team": "Shared with {{teamName}}",
   "notetaker_shared_with_me_route_selected_people": "Shared with you by name",
   "notetaker_shared_with_me_load_more": "Load more",
+  "notetaker_transcript_and_summary": "Transcript and summary",
+  "team_event_type_creator_is_host": "You will be the host of this event type. Other team members cannot be added as hosts yet.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

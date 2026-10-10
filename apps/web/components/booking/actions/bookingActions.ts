@@ -31,6 +31,7 @@ export interface BookingActionContext {
     phoneNumber: string | null;
   }>;
   getSeatReferenceUid: () => string | undefined;
+  isNotetakerEnabled?: boolean;
   t: (key: string) => string;
 }
 
@@ -92,6 +93,19 @@ export function getVideoOptionsActions(context: BookingActionContext): ActionTyp
       disabled: !(isBookingInPast && isConfirmed && isCalVideoLocation),
     },
   ];
+}
+
+export function getNotetakerResultsAction(context: BookingActionContext): ActionType | null {
+  const { booking, isNotetakerEnabled, t } = context;
+  if (!isNotetakerEnabled) return null;
+
+  return {
+    id: "notetaker_results",
+    label: t("notetaker_transcript_and_summary"),
+    icon: "file-text",
+    href: `/booking/${booking.uid}/notetaker`,
+    disabled: false,
+  };
 }
 
 export function getEditEventActions(context: BookingActionContext): ActionType[] {
@@ -185,6 +199,7 @@ export function getAfterEventActions(context: BookingActionContext): ActionType[
 
   const actions: (ActionType | null)[] = [
     ...getVideoOptionsActions(context),
+    getNotetakerResultsAction(context),
     booking.status === BookingStatus.ACCEPTED && booking.paid && booking.payment[0]?.paymentOption === "HOLD"
       ? {
           id: "charge_card",
