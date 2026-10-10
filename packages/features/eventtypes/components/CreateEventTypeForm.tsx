@@ -26,6 +26,7 @@ export default function CreateEventTypeForm({
   isPending,
   urlPrefix,
   SubmitButton,
+  extraFields,
 }: {
   form: UseFormReturn<CreateEventTypeFormValues>;
   isManagedEventType: boolean;
@@ -34,6 +35,7 @@ export default function CreateEventTypeForm({
   isPending: boolean;
   urlPrefix?: string;
   SubmitButton: (isPending: boolean) => ReactNode;
+  extraFields?: ReactNode;
 }) {
   const isPlatform = useIsPlatform();
   const { t } = useLocale();
@@ -150,6 +152,7 @@ export default function CreateEventTypeForm({
               addOnSuffix={t("minutes").toLowerCase()}
             />
           </div>
+          {extraFields}
         </>
       </div>
       {SubmitButton(isPending)}

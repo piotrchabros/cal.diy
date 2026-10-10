@@ -47,6 +47,7 @@ import {
 } from "@calcom/web/modules/event-types/components/CreateEventTypeDialog";
 import { DuplicateDialog } from "@calcom/web/modules/event-types/components/DuplicateDialog";
 import { InfiniteSkeletonLoader } from "@calcom/web/modules/event-types/components/SkeletonLoader";
+import { getNewEventTypeHref } from "@calcom/web/modules/event-types/lib/createEventTypeDialogUtils";
 import { SearchIcon } from "@coss/ui/icons";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { TRPCClientError } from "@trpc/client";
@@ -913,6 +914,7 @@ const CreateFirstEventTypeView = ({ slug, searchTerm }: { slug: string; searchTe
 const CTA = ({ profileOptions }: { profileOptions: ProfileOption[] }) => {
   const { t } = useLocale();
   const { searchTerm, setSearchTerm } = useSearchContext();
+  const { data } = useTypedQuery(querySchema);
 
   if (!profileOptions.length) return null;
 
@@ -932,7 +934,7 @@ const CTA = ({ profileOptions }: { profileOptions: ProfileOption[] }) => {
       />
       <Button
         data-testid="new-event-type"
-        href={`?dialog=new&eventPage=${profileOptions[0]?.slug ?? ""}`}>
+        href={getNewEventTypeHref({ profileOptions, activeTeamId: data.teamId })}>
         {t("new")}
       </Button>
       <CreateEventTypeDialog profileOptions={profileOptions} />
