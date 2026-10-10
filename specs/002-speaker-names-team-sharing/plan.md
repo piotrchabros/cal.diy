@@ -72,6 +72,8 @@ Constitution requirements. Work on the affected groups does not start until each
 5. Deployment: applying the migration to the live database and an in-place rebuild of the live site (about 6 minutes of downtime), plus a bot restart.
 6. Two real meetings with the diagnostic or the notetaker present (the measurement run and the acceptance run), with the participants told beforehand.
 
+**Status (2026-10-10)**: all six were granted by Piotr Chabros after reading the plan summary. Approvals 5 and 6 still need a time agreed with him for each occurrence: the rebuild takes the live site down for about 6 minutes, and the meetings need the participants told beforehand.
+
 ### Post-design re-check
 
 All gates still pass after Phase 1. The design adds no dependency, no public endpoint and no new async task. The one behavioural widening (approval 4) is the purpose of the feature and is bounded by the access matrix in [contracts/trpc-notetaker-sharing.md](./contracts/trpc-notetaker-sharing.md). No violation needs justification.
