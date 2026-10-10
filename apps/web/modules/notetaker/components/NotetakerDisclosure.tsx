@@ -40,7 +40,15 @@ export function NotetakerDisclosure({
 
   return (
     <div className="mb-4" data-testid="notetaker-disclosure">
-      <Alert severity="info" message={t("notetaker_disclosure", { host: data.onBehalfOf ?? APP_NAME })} />
+      <Alert
+        severity="info"
+        message={t(
+          data.sharedWithColleagues === true ? "notetaker_disclosure_shared" : "notetaker_disclosure",
+          {
+            host: data.onBehalfOf ?? APP_NAME,
+          }
+        )}
+      />
     </div>
   );
 }

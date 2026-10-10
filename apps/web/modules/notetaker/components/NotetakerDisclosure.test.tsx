@@ -73,6 +73,23 @@ describe("NotetakerDisclosure", () => {
     );
   });
 
+  it("uses the colleague wording when the results are shared with colleagues", () => {
+    renderDisclosure(buildDisclosure({ sharedWithColleagues: true }));
+
+    expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
+      `notetaker_disclosure_shared:${JSON.stringify({ host: "Ada" })}`
+    );
+  });
+
+  it.each([[false], [undefined]])("keeps the plain wording when sharedWithColleagues is %s", (shared) => {
+    renderDisclosure(buildDisclosure({ sharedWithColleagues: shared }));
+
+    expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
+      `notetaker_disclosure:${JSON.stringify({ host: "Ada" })}`
+    );
+    expect(screen.getByTestId(DISCLOSURE_ID)).not.toHaveTextContent("notetaker_disclosure_shared");
+  });
+
   it("renders nothing when the notetaker is not enabled by default", () => {
     renderDisclosure(buildDisclosure({ enabledByDefault: false }));
 

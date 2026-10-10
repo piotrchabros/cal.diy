@@ -18,6 +18,7 @@ import type {
   NotetakerSendNotificationPayload,
 } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
+import type { NotetakerSharingChangeRecord } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 import type { NotetakerActivityRecord } from "../repositories/interfaces/INotetakerActivityRepository";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import type {
@@ -224,6 +225,7 @@ describe("NotetakerResultsService", () => {
       transcriptRepository,
       summaryRepository,
       activityRepository,
+      eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       userRepository,
       notetakerTasker: tasker,
       logger,
@@ -1914,6 +1916,211 @@ describe("NotetakerResultsService", () => {
 
       expect(result.map((activity) => activity.action)).toEqual(["DELETED", "EXPORTED", "SHARED"]);
       expect(repositories.store.activities).toHaveLength(3);
+    });
+
+    describe("sharing changes of the event type", () => {
+      const EVENT_TYPE_ID = 10;
+      const COLLEAGUE_NAME = "Cora Colleague";
+
+      function recordSharingChange(
+        overrides: Partial<Omit<NotetakerSharingChangeRecord, "id">> = {}
+      ): NotetakerSharingChangeRecord {
+        const change: NotetakerSharingChangeRecord = {
+          id: repositories.store.nextId(),
+          eventTypeId: EVENT_TYPE_ID,
+          actorUserId: ORGANIZER_ID,
+          actorName: ORGANIZER_NAME,
+          previousMode: "HOSTS_ONLY",
+          newMode: "TEAM",
+          addedUserNames: [],
+          removedUserNames: [],
+          createdAt: new Date(),
+          ...overrides,
+        };
+        repositories.store.sharingChanges.push(change);
+        return change;
+      }
+
+      function secondsAfterNow(seconds: number): Date {
+        return new Date(NOW.getTime() + seconds * 1000);
+      }
+
+      it("leaves out a change made before the first session and keeps one made at or after it", async () => {
+        recordSharingChange({ createdAt: secondsAfterNow(-1) });
+        await seedSessionWithoutTranscript();
+        const atCreation = recordSharingChange({ createdAt: NOW });
+        vi.setSystemTime(secondsAfterNow(60));
+        await seedSessionWithoutTranscript({ dispatchedAt: secondsAfterNow(60) });
+        const betweenSessions = recordSharingChange({ createdAt: secondsAfterNow(30) });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.id)).toEqual([
+          `sharing-change:${betweenSessions.id}`,
+          `sharing-change:${atCreation.id}`,
+        ]);
+      });
+
+      it("maps a mode change to exactly the six DTO fields", async () => {
+        await seedSessionWithoutTranscript();
+        const change = recordSharingChange({
+          previousMode: "TEAM",
+          newMode: "SELECTED_PEOPLE",
+          addedUserNames: ["Ada", "Ben"],
+          removedUserNames: ["Cy"],
+          createdAt: secondsAfterNow(5),
+        });
+
+        const result = await getActivityAs();
+
+        expect(result).toHaveLength(1);
+        expect(Object.keys(result[0]).sort()).toEqual([
+          "action",
+          "actorName",
+          "actorType",
+          "createdAt",
+          "detail",
+          "id",
+        ]);
+        expect(result[0]).toEqual({
+          id: `sharing-change:${change.id}`,
+          action: "SHARING_MODE_CHANGED",
+          actorType: "USER",
+          actorName: ORGANIZER_NAME,
+          createdAt: "2026-10-12T11:00:05.000Z",
+          detail: {
+            previousMode: "TEAM",
+            newMode: "SELECTED_PEOPLE",
+            addedUserNames: ["Ada", "Ben"],
+            removedUserNames: ["Cy"],
+          },
+        });
+      });
+
+      it("reports a change that kept the mode as a change of the selected people", async () => {
+        await seedSessionWithoutTranscript();
+        recordSharingChange({
+          actorName: null,
+          previousMode: "SELECTED_PEOPLE",
+          newMode: "SELECTED_PEOPLE",
+          addedUserNames: ["Ada"],
+        });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.action)).toEqual(["SHARING_PEOPLE_CHANGED"]);
+        expect(result[0].actorName).toBeNull();
+      });
+
+      it("orders the changes by time among the stored rows", async () => {
+        await seedSessionWithoutTranscript();
+        const first = await recordActivity({ action: "ENABLED" });
+        const second = recordSharingChange({ createdAt: secondsAfterNow(1) });
+        vi.setSystemTime(secondsAfterNow(2));
+        const third = await recordActivity({ action: "EXPORTED" });
+        const fourth = recordSharingChange({ createdAt: secondsAfterNow(3), newMode: "SELECTED_PEOPLE" });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.id)).toEqual([
+          `sharing-change:${fourth.id}`,
+          third.id,
+          `sharing-change:${second.id}`,
+          first.id,
+        ]);
+      });
+
+      it("does not return the changes of another event type", async () => {
+        await seedSessionWithoutTranscript();
+        recordSharingChange({ eventTypeId: EVENT_TYPE_ID + 1 });
+
+        await expect(getActivityAs()).resolves.toEqual([]);
+      });
+
+      it("merges nothing for a booking without a session", async () => {
+        recordSharingChange();
+        const stored = await recordActivity();
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.id)).toEqual([stored.id]);
+      });
+
+      it("merges nothing for a booking without an event type", async () => {
+        repositories.store.addBooking(buildBooking({ eventTypeId: null }));
+        await seedSessionWithoutTranscript();
+        recordSharingChange();
+        const find = vi.spyOn(
+          repositories.eventTypeNotetakerSettingsRepository,
+          "findSharingChangesByEventTypeIdSince"
+        );
+
+        await expect(getActivityAs()).resolves.toEqual([]);
+        expect(find).not.toHaveBeenCalled();
+      });
+
+      it("keeps the limit and the newest entries when changes are merged in", async () => {
+        await seedSessionWithoutTranscript();
+        const storedIds: string[] = [];
+        for (let i = 0; i < NOTETAKER_ACTIVITY_LIMIT; i += 1) {
+          vi.setSystemTime(secondsAfterNow(i));
+          const created = await recordActivity();
+          storedIds.push(created.id);
+        }
+        const changeIds: string[] = [];
+        for (let i = 0; i < 5; i += 1) {
+          const change = recordSharingChange({ createdAt: secondsAfterNow(NOTETAKER_ACTIVITY_LIMIT + i) });
+          changeIds.push(`sharing-change:${change.id}`);
+        }
+
+        const result = await getActivityAs();
+
+        expect(result).toHaveLength(NOTETAKER_ACTIVITY_LIMIT);
+        expect(result.map((activity) => activity.id)).toEqual([
+          ...changeIds.reverse(),
+          ...storedIds.slice(5).reverse(),
+        ]);
+      });
+
+      it("asks for no more changes than the limit", async () => {
+        const session = await seedSessionWithoutTranscript();
+        const find = vi.spyOn(
+          repositories.eventTypeNotetakerSettingsRepository,
+          "findSharingChangesByEventTypeIdSince"
+        );
+
+        await getActivityAs();
+
+        expect(find).toHaveBeenCalledWith({
+          eventTypeId: EVENT_TYPE_ID,
+          since: session.createdAt,
+          limit: NOTETAKER_ACTIVITY_LIMIT,
+        });
+      });
+
+      it("collapses repeated first views of one colleague to the earliest", async () => {
+        const viewed = { action: "SHARED_VIEWED", actorUserId: 7, actorName: COLLEAGUE_NAME } as const;
+        const earliest = await recordActivity(viewed);
+        vi.setSystemTime(secondsAfterNow(1));
+        await recordActivity(viewed);
+        const otherColleague = await recordActivity({ ...viewed, actorUserId: 8, actorName: "Dan" });
+        vi.setSystemTime(secondsAfterNow(2));
+        const exported = await recordActivity({ action: "EXPORTED", actorUserId: 7 });
+        await recordActivity(viewed);
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.id)).toEqual([exported.id, otherColleague.id, earliest.id]);
+      });
+
+      it("keeps repeated rows of other actions by one user", async () => {
+        const first = await recordActivity({ action: "EXPORTED" });
+        const second = await recordActivity({ action: "EXPORTED" });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.id)).toEqual([second.id, first.id]);
+      });
     });
   });
 });

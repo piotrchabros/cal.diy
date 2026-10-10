@@ -33,7 +33,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
-  useLocale: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
+  useLocale: () => ({
+    t: (key: string, options?: Record<string, string>) =>
+      options === undefined
+        ? key
+        : `${key}|${Object.entries(options)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("|")}`,
+    i18n: { language: "en" },
+  }),
 }));
 
 vi.mock("@calcom/trpc/react", () => ({
@@ -216,5 +224,142 @@ describe("NotetakerActivityList", () => {
     );
 
     expect(container.textContent).not.toContain("SECRET_REASON_CODE");
+  });
+
+  describe("sharing change detail", () => {
+    const DETAIL_ID = "notetaker-activity-detail";
+
+    function getDetailLines(): string[] {
+      return screen.queryAllByTestId(DETAIL_ID).map((line) => line.textContent ?? "");
+    }
+
+    it("shows the two mode labels for a mode change", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_MODE_CHANGED",
+          detail: { previousMode: "HOSTS_ONLY", newMode: "TEAM", addedUserNames: [], removedUserNames: [] },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        "notetaker_activity_sharing_mode_detail|previousMode=notetaker_sharing_mode_hosts_only|newMode=notetaker_sharing_mode_team",
+      ]);
+    });
+
+    it("shows added and removed names for a people change and no mode line", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_PEOPLE_CHANGED",
+          detail: {
+            previousMode: "SELECTED_PEOPLE",
+            newMode: "SELECTED_PEOPLE",
+            addedUserNames: ["Ann", "Bob"],
+            removedUserNames: ["Cy"],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        "notetaker_activity_sharing_people_added|names=Ann, Bob",
+        "notetaker_activity_sharing_people_removed|names=Cy",
+      ]);
+    });
+
+    it("omits the lines for empty name lists", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_PEOPLE_CHANGED",
+          detail: {
+            previousMode: "SELECTED_PEOPLE",
+            newMode: "SELECTED_PEOPLE",
+            addedUserNames: ["Ann"],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual(["notetaker_activity_sharing_people_added|names=Ann"]);
+    });
+
+    it("shows the names after the mode line when a mode change also changes the list", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_MODE_CHANGED",
+          detail: {
+            previousMode: "TEAM",
+            newMode: "SELECTED_PEOPLE",
+            addedUserNames: ["Ann"],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        "notetaker_activity_sharing_mode_detail|previousMode=notetaker_sharing_mode_team|newMode=notetaker_sharing_mode_selected_people",
+        "notetaker_activity_sharing_people_added|names=Ann",
+      ]);
+    });
+
+    it.each([
+      ["null", null],
+      ["an unrelated object", { reason: "x" }],
+      [
+        "an unknown mode",
+        { previousMode: "NOPE", newMode: "TEAM", addedUserNames: [], removedUserNames: [] },
+      ],
+    ])("shows the label only when the detail is %s", (_name, detail) => {
+      renderSingle(buildActivity({ action: "SHARING_MODE_CHANGED", detail }));
+
+      expect(getDetailLines()).toEqual([]);
+      expect(getSpans(getItems()[0])[0].textContent).toBe(ACTION_KEYS.SHARING_MODE_CHANGED);
+    });
+
+    it("keeps the three spans per item when a detail is shown", () => {
+      const spans = renderSingle(
+        buildActivity({
+          action: "SHARING_MODE_CHANGED",
+          detail: { previousMode: "TEAM", newMode: "HOSTS_ONLY", addedUserNames: [], removedUserNames: [] },
+        })
+      );
+
+      expect(spans).toHaveLength(3);
+    });
+
+    it("renders names as plain text, not markup", () => {
+      const { container } = renderList(
+        buildQuery({
+          data: [
+            buildActivity({
+              action: "SHARING_PEOPLE_CHANGED",
+              detail: {
+                previousMode: "SELECTED_PEOPLE",
+                newMode: "SELECTED_PEOPLE",
+                addedUserNames: ["<b>Eve</b>"],
+                removedUserNames: [],
+              },
+            }),
+          ],
+        })
+      );
+
+      expect(container.querySelector("b")).toBeNull();
+      expect(getDetailLines()[0]).toContain("<b>Eve</b>");
+    });
+
+    it("shows no detail line for other actions even with a matching payload", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARED",
+          detail: {
+            previousMode: "TEAM",
+            newMode: "HOSTS_ONLY",
+            addedUserNames: ["Ann"],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([]);
+    });
   });
 });

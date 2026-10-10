@@ -29,8 +29,8 @@ const INELIGIBILITY_REASON_KEYS: Record<NotetakerIneligibilityReasonDto, string>
   REJOIN_BLOCKED: "notetaker_unavailable_rejoin_blocked",
 };
 
-// An attendee reads shared results but cannot change the choice or stop the notetaker, so only the status and the link are shown
-function NotetakerAttendeeSection({
+// An attendee or a shared viewer reads results but cannot change the choice or stop the notetaker, so only the status and the link are shown
+function NotetakerReadOnlySection({
   bookingUid,
   state,
 }: {
@@ -72,8 +72,8 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
   if (isPending || isError || !state) return null;
   if (!state.featureEnabled) return null;
 
-  if (state.viewerRole === "ATTENDEE") {
-    return <NotetakerAttendeeSection bookingUid={bookingUid} state={state} />;
+  if (state.viewerRole !== "HOST") {
+    return <NotetakerReadOnlySection bookingUid={bookingUid} state={state} />;
   }
 
   const isRejoinBlocked = state.eligibility.reason === "REJOIN_BLOCKED";

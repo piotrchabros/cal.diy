@@ -1,6 +1,8 @@
 "use client";
 
 import type { NotetakerActivityActionDto, NotetakerActivityDto } from "@calcom/lib/dto/NotetakerActivityDto";
+import { NotetakerSharingChangeDetailDtoSchema } from "@calcom/lib/dto/NotetakerActivityDto";
+import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 
@@ -17,6 +19,38 @@ const ACTION_KEYS: Record<NotetakerActivityActionDto, string> = {
   SHARING_MODE_CHANGED: "notetaker_activity_sharing_mode_changed",
   SHARING_PEOPLE_CHANGED: "notetaker_activity_sharing_people_changed",
 };
+
+const MODE_KEYS: Record<NotetakerSharingModeDto, string> = {
+  HOSTS_ONLY: "notetaker_sharing_mode_hosts_only",
+  TEAM: "notetaker_sharing_mode_team",
+  SELECTED_PEOPLE: "notetaker_sharing_mode_selected_people",
+};
+
+type Translate = (key: string, options?: Record<string, string>) => string;
+
+function getDetailLines(activity: NotetakerActivityDto, t: Translate): string[] {
+  if (activity.action !== "SHARING_MODE_CHANGED" && activity.action !== "SHARING_PEOPLE_CHANGED") return [];
+  const parsed = NotetakerSharingChangeDetailDtoSchema.safeParse(activity.detail);
+  if (!parsed.success) return [];
+
+  const { previousMode, newMode, addedUserNames, removedUserNames } = parsed.data;
+  const lines: string[] = [];
+  if (activity.action === "SHARING_MODE_CHANGED") {
+    lines.push(
+      t("notetaker_activity_sharing_mode_detail", {
+        previousMode: t(MODE_KEYS[previousMode]),
+        newMode: t(MODE_KEYS[newMode]),
+      })
+    );
+  }
+  if (addedUserNames.length > 0) {
+    lines.push(t("notetaker_activity_sharing_people_added", { names: addedUserNames.join(", ") }));
+  }
+  if (removedUserNames.length > 0) {
+    lines.push(t("notetaker_activity_sharing_people_removed", { names: removedUserNames.join(", ") }));
+  }
+  return lines;
+}
 
 function getActorLabel(activity: NotetakerActivityDto, t: (key: string) => string): string {
   if (activity.actorType === "PARTICIPANT") return t("notetaker_activity_actor_participant");
@@ -52,6 +86,14 @@ export function NotetakerActivityList({ bookingUid }: { bookingUid: string }): J
               <span className="text-subtle text-xs">
                 <time dateTime={activity.createdAt}>{formatter.format(new Date(activity.createdAt))}</time>
               </span>
+              {getDetailLines(activity, t).map((line) => (
+                <p
+                  key={line}
+                  data-testid="notetaker-activity-detail"
+                  className="basis-full text-subtle text-xs">
+                  {line}
+                </p>
+              ))}
             </li>
           ))}
         </ol>

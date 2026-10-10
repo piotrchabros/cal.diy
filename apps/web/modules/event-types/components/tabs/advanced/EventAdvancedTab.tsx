@@ -130,6 +130,7 @@ export type EventAdvancedTabProps = EventAdvancedBaseProps & {
   localeOptions?: { value: string; label: string }[];
   verifiedEmails?: string[];
   notetakerDefaultSetting?: React.ReactNode;
+  notetakerSharingSetting?: React.ReactNode;
 };
 
 type CalendarSettingsProps = {
@@ -415,6 +416,7 @@ export const EventAdvancedTab = ({
   orgId,
   localeOptions,
   notetakerDefaultSetting,
+  notetakerSharingSetting,
 }: EventAdvancedTabProps) => {
   const isPlatform = useIsPlatform();
   const platformContext = useAtomsContext();
@@ -1345,6 +1347,7 @@ export const EventAdvancedTab = ({
         )}
       />
       {notetakerDefaultSetting}
+      {notetakerSharingSetting}
       <Controller
         name="eventTypeColor"
         render={() => (
