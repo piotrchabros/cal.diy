@@ -14,6 +14,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { notetakerSummaryContentSchema } from "@calcom/lib/dto/NotetakerSummaryDto";
+import { buildSpeakerRoster, getSpeakerLabel } from "../lib/speakerLabel";
 import type {
   INotetakerSummaryGenerator,
   NotetakerSummaryFailureCode,
@@ -111,13 +112,19 @@ export function buildSummaryPrompt(input: NotetakerSummaryGeneratorInput): { sys
   );
 
   const lines = input.passages.map((passage) => {
-    const label = passage.speakerName ?? `Speaker ${passage.unknownSpeakerNumber ?? "?"}`;
-    return `[${formatTimestamp(passage.startMs)}] ${label}: ${passage.text}`;
+    return `[${formatTimestamp(passage.startMs)}] ${getSpeakerLabel(passage)}: ${passage.text}`;
   });
+  const roster = buildSpeakerRoster(input.passages).map((names) => `- ${names}`);
 
   return {
     system: sentences.join(" "),
-    user: `Transcript (${input.passages.length} passages):\n${lines.join("\n")}`,
+    user: [
+      "Speakers (one line per person; several names on one line are the same person):",
+      ...roster,
+      "",
+      `Transcript (${input.passages.length} passages):`,
+      ...lines,
+    ].join("\n"),
   };
 }
 

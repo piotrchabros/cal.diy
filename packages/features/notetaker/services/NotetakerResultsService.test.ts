@@ -1335,6 +1335,16 @@ describe("NotetakerResultsService", () => {
       expect(logged).not.toContain("Planning call");
     });
 
+    it("adds the speaker names sentence only when the transcript says names were unavailable", async () => {
+      const seeded = await seedFinishedSession({ passages: buildPassages(1) });
+
+      expect((await exportAs()).content).not.toContain("notetaker_speaker_names_unavailable");
+
+      await repositories.transcriptRepository.update(seeded.transcript.id, { speakerNamesAvailable: false });
+
+      expect((await exportAs()).content).toContain("> notetaker_speaker_names_unavailable");
+    });
+
     it("records one EXPORTED row for every call", async () => {
       await seedFinishedSession({ passages: buildPassages(2) });
 

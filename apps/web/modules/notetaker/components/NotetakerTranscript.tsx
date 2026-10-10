@@ -34,10 +34,12 @@ export function NotetakerTranscript({
   bookingUid,
   sessionId,
   interruptedAtMs,
+  speakerNamesAvailable,
 }: {
   bookingUid: string;
   sessionId?: string;
   interruptedAtMs?: number | null;
+  speakerNamesAvailable?: boolean | null;
 }): JSX.Element {
   const { t } = useLocale();
   const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
@@ -62,6 +64,11 @@ export function NotetakerTranscript({
 
   return (
     <div className="flex flex-col gap-4" data-testid="notetaker-transcript">
+      {speakerNamesAvailable === false && (
+        <p className="text-sm text-subtle" data-testid="notetaker-speaker-names-unavailable">
+          {t("notetaker_speaker_names_unavailable")}
+        </p>
+      )}
       <ol className="flex flex-col gap-4">
         {passages.map((passage, position) => (
           <Fragment key={passage.index}>

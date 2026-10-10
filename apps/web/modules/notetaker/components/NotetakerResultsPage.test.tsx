@@ -40,12 +40,14 @@ vi.mock("@calcom/web/modules/notetaker/components/NotetakerTranscript", () => ({
     bookingUid: string;
     sessionId?: string;
     interruptedAtMs?: number | null;
+    speakerNamesAvailable?: boolean | null;
   }) => (
     <div
       data-testid="transcript-stub"
       data-booking-uid={props.bookingUid}
       data-session-id={String(props.sessionId)}
       data-interrupted-at-ms={String(props.interruptedAtMs)}
+      data-speaker-names-available={String(props.speakerNamesAvailable)}
     />
   ),
 }));
@@ -262,6 +264,24 @@ describe("NotetakerResultsPage", () => {
       );
 
       expect(screen.getByTestId("transcript-stub")).toHaveAttribute("data-interrupted-at-ms", "null");
+    });
+
+    it.each([true, false, null])("passes the speaker names flag %s to the transcript", (flag) => {
+      renderPage(buildState({ transcript: buildTranscript({ speakerNamesAvailable: flag }) }));
+
+      expect(screen.getByTestId("transcript-stub")).toHaveAttribute(
+        "data-speaker-names-available",
+        String(flag)
+      );
+    });
+
+    it("passes an absent speaker names flag as undefined", () => {
+      renderPage(buildState());
+
+      expect(screen.getByTestId("transcript-stub")).toHaveAttribute(
+        "data-speaker-names-available",
+        "undefined"
+      );
     });
 
     it("passes null for a partial transcript without an interruption offset", () => {

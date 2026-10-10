@@ -139,7 +139,7 @@ describe("StubSummaryGenerator", () => {
       buildPassage({ speakerName: null, unknownSpeakerNumber: 2, text: "who am i" }),
     ]);
 
-    expect(content.keyPoints).toEqual(["Speaker 2: who am i"]);
+    expect(content.keyPoints).toEqual(["Unknown speaker 2: who am i"]);
   });
 
   it("keeps at most three key points", async () => {

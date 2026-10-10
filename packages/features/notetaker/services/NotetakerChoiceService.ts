@@ -71,6 +71,7 @@ function toTranscriptDto(transcript: NotetakerTranscriptRecord): NotetakerTransc
     completeness: transcript.completeness,
     durationMs: transcript.durationMs,
     passageCount: transcript.passageCount,
+    speakerNamesAvailable: transcript.speakerNamesAvailable,
   };
 }
 
