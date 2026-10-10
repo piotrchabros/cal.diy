@@ -71,7 +71,9 @@ describe("NotetakerSummary", () => {
       expect(items.some((item) => item.includes(text))).toBe(true);
     }
 
-    expect(screen.getByText('notetaker_summary_owner {"name":"Ada"}')).toBeInTheDocument();
+    expect(
+      screen.getByText('notetaker_summary_owner {"name":"Ada","interpolation":{"escapeValue":false}}')
+    ).toBeInTheDocument();
     expect(screen.getAllByText(/notetaker_summary_owner/)).toHaveLength(1);
     expect(screen.queryByTestId("notetaker-summary-regenerate")).not.toBeInTheDocument();
     expect(screen.queryByTestId("notetaker-summary-failed")).not.toBeInTheDocument();

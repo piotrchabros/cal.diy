@@ -39,7 +39,20 @@ describe("NotetakerAccessSummary", () => {
       />
     );
 
-    expect(lines()).toEqual(["notetaker_access_hosts", 'notetaker_access_team:{"teamName":"Sales"}']);
+    expect(lines()).toEqual([
+      "notetaker_access_hosts",
+      'notetaker_access_team:{"teamName":"Sales","interpolation":{"escapeValue":false}}',
+    ]);
+  });
+
+  it("turns off i18n escaping for the team name, which React escapes on its own", () => {
+    const teamName = "user-id-17's Team";
+    render(<NotetakerAccessSummary access={{ attendees: false, colleagues: { route: "TEAM", teamName } }} />);
+
+    const teamLine = lines()[1] ?? "";
+    const options: unknown = JSON.parse(teamLine.replace("notetaker_access_team:", ""));
+
+    expect(options).toEqual({ teamName, interpolation: { escapeValue: false } });
   });
 
   it("lists the selected people joined with a comma", () => {
@@ -52,7 +65,7 @@ describe("NotetakerAccessSummary", () => {
     expect(lines()).toEqual([
       "notetaker_access_hosts",
       "notetaker_access_attendees",
-      'notetaker_access_selected_people:{"names":"Ada, Bo"}',
+      'notetaker_access_selected_people:{"names":"Ada, Bo","interpolation":{"escapeValue":false}}',
     ]);
   });
 

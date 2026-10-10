@@ -19,7 +19,10 @@ export function NotetakerSharedResultsList(): JSX.Element | null {
 
   const getRouteText = (item: NotetakerSharedResultDto): string =>
     item.route === "TEAM"
-      ? t("notetaker_shared_with_me_route_team", { teamName: item.teamName })
+      ? t("notetaker_shared_with_me_route_team", {
+          teamName: item.teamName,
+          interpolation: { escapeValue: false },
+        })
       : t("notetaker_shared_with_me_route_selected_people");
 
   // A page can be empty while a cursor is set, so the empty screen waits until the last page.
@@ -48,7 +51,10 @@ export function NotetakerSharedResultsList(): JSX.Element | null {
                 </span>
                 {item.hostName !== null ? (
                   <span className="text-sm text-subtle">
-                    {t("notetaker_shared_with_me_host", { name: item.hostName })}
+                    {t("notetaker_shared_with_me_host", {
+                      name: item.hostName,
+                      interpolation: { escapeValue: false },
+                    })}
                   </span>
                 ) : null}
                 <span className="text-subtle text-xs">{getRouteText(item)}</span>

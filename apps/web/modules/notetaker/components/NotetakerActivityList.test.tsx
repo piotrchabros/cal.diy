@@ -34,11 +34,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
   useLocale: () => ({
-    t: (key: string, options?: Record<string, string>) =>
+    t: (key: string, options?: Record<string, unknown>) =>
       options === undefined
         ? key
         : `${key}|${Object.entries(options)
-            .map(([k, v]) => `${k}=${v}`)
+            .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
             .join("|")}`,
     i18n: { language: "en" },
   }),
@@ -260,8 +260,8 @@ describe("NotetakerActivityList", () => {
       );
 
       expect(getDetailLines()).toEqual([
-        "notetaker_activity_sharing_people_added|names=Ann, Bob",
-        "notetaker_activity_sharing_people_removed|names=Cy",
+        'notetaker_activity_sharing_people_added|names=Ann, Bob|interpolation={"escapeValue":false}',
+        'notetaker_activity_sharing_people_removed|names=Cy|interpolation={"escapeValue":false}',
       ]);
     });
 
@@ -278,7 +278,9 @@ describe("NotetakerActivityList", () => {
         })
       );
 
-      expect(getDetailLines()).toEqual(["notetaker_activity_sharing_people_added|names=Ann"]);
+      expect(getDetailLines()).toEqual([
+        'notetaker_activity_sharing_people_added|names=Ann|interpolation={"escapeValue":false}',
+      ]);
     });
 
     it("shows the names after the mode line when a mode change also changes the list", () => {
@@ -296,7 +298,7 @@ describe("NotetakerActivityList", () => {
 
       expect(getDetailLines()).toEqual([
         "notetaker_activity_sharing_mode_detail|previousMode=notetaker_sharing_mode_team|newMode=notetaker_sharing_mode_selected_people",
-        "notetaker_activity_sharing_people_added|names=Ann",
+        'notetaker_activity_sharing_people_added|names=Ann|interpolation={"escapeValue":false}',
       ]);
     });
 

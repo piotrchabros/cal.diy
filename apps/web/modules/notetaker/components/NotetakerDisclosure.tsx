@@ -46,6 +46,7 @@ export function NotetakerDisclosure({
           data.sharedWithColleagues === true ? "notetaker_disclosure_shared" : "notetaker_disclosure",
           {
             host: data.onBehalfOf ?? APP_NAME,
+            interpolation: { escapeValue: false },
           }
         )}
       />

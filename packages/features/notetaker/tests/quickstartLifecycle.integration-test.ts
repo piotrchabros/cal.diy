@@ -21,18 +21,19 @@ import {
 
 // Inlined rather than calling applyQuickstartEnv: hoisted code runs before any import, and importing
 // the harness here would load packages/lib/constants.ts before ENABLE_ASYNC_TASKER is set.
+// globalThis.process because vi.hoisted runs above the imports, where an imported `process` is still uninitialised.
 vi.hoisted(() => {
-  if (process.env.NODE_ENV === "production") {
+  if (globalThis.process.env.NODE_ENV === "production") {
     throw new Error("The notetaker quickstart walk-through must not run with NODE_ENV=production");
   }
-  process.env.ENABLE_ASYNC_TASKER = "false";
-  process.env.NOTETAKER_BOT_PROVIDER = "fake";
-  process.env.NOTETAKER_BOT_SECRET = "quickstart-it-secret";
-  process.env.ANTHROPIC_API_KEY = "";
-  delete process.env.NOTETAKER_FAKE_SCENARIO;
-  delete process.env.NOTETAKER_SUMMARY_MIN_WORDS;
-  delete process.env.NOTETAKER_JOIN_LEAD_SECONDS;
-  delete process.env.NOTETAKER_ENABLED_PLATFORMS;
+  globalThis.process.env.ENABLE_ASYNC_TASKER = "false";
+  globalThis.process.env.NOTETAKER_BOT_PROVIDER = "fake";
+  globalThis.process.env.NOTETAKER_BOT_SECRET = "quickstart-it-secret";
+  globalThis.process.env.ANTHROPIC_API_KEY = "";
+  delete globalThis.process.env.NOTETAKER_FAKE_SCENARIO;
+  delete globalThis.process.env.NOTETAKER_SUMMARY_MIN_WORDS;
+  delete globalThis.process.env.NOTETAKER_JOIN_LEAD_SECONDS;
+  delete globalThis.process.env.NOTETAKER_ENABLED_PLATFORMS;
 });
 
 vi.mock("@calcom/emails/notetaker-email-service", () => ({
@@ -154,6 +155,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       expect(await choiceService.getDisclosure({ eventTypeId: eventType.id })).toEqual({
         enabledByDefault: true,
         onBehalfOf: host.name,
+        sharedWithColleagues: false,
         supportedLocationTypes: ["integrations:google:meet"],
       });
 

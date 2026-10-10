@@ -5,6 +5,7 @@ import { NotetakerSharingChangeDetailDtoSchema } from "@calcom/lib/dto/Notetaker
 import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
+import type { TFunction } from "i18next";
 
 const ACTION_KEYS: Record<NotetakerActivityActionDto, string> = {
   ENABLED: "notetaker_activity_enabled",
@@ -26,7 +27,7 @@ const MODE_KEYS: Record<NotetakerSharingModeDto, string> = {
   SELECTED_PEOPLE: "notetaker_sharing_mode_selected_people",
 };
 
-type Translate = (key: string, options?: Record<string, string>) => string;
+type Translate = TFunction;
 
 function getDetailLines(activity: NotetakerActivityDto, t: Translate): string[] {
   if (activity.action !== "SHARING_MODE_CHANGED" && activity.action !== "SHARING_PEOPLE_CHANGED") return [];
@@ -44,10 +45,20 @@ function getDetailLines(activity: NotetakerActivityDto, t: Translate): string[] 
     );
   }
   if (addedUserNames.length > 0) {
-    lines.push(t("notetaker_activity_sharing_people_added", { names: addedUserNames.join(", ") }));
+    lines.push(
+      t("notetaker_activity_sharing_people_added", {
+        names: addedUserNames.join(", "),
+        interpolation: { escapeValue: false },
+      })
+    );
   }
   if (removedUserNames.length > 0) {
-    lines.push(t("notetaker_activity_sharing_people_removed", { names: removedUserNames.join(", ") }));
+    lines.push(
+      t("notetaker_activity_sharing_people_removed", {
+        names: removedUserNames.join(", "),
+        interpolation: { escapeValue: false },
+      })
+    );
   }
   return lines;
 }

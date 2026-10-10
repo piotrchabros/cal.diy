@@ -67,7 +67,13 @@ export function NotetakerSummary({
                 <li key={`${item.text}|${item.owner ?? ""}`}>
                   {item.text}
                   {item.owner !== null && (
-                    <span className="text-subtle"> {t("notetaker_summary_owner", { name: item.owner })}</span>
+                    <span className="text-subtle">
+                      {" "}
+                      {t("notetaker_summary_owner", {
+                        name: item.owner,
+                        interpolation: { escapeValue: false },
+                      })}
+                    </span>
                   )}
                 </li>
               ))}

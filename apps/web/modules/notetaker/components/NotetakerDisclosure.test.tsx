@@ -61,7 +61,7 @@ describe("NotetakerDisclosure", () => {
     renderDisclosure(buildDisclosure());
 
     expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
-      `notetaker_disclosure:${JSON.stringify({ host: "Ada" })}`
+      `notetaker_disclosure:${JSON.stringify({ host: "Ada", interpolation: { escapeValue: false } })}`
     );
   });
 
@@ -69,7 +69,7 @@ describe("NotetakerDisclosure", () => {
     renderDisclosure(buildDisclosure({ onBehalfOf: null }));
 
     expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
-      `notetaker_disclosure:${JSON.stringify({ host: "Test App" })}`
+      `notetaker_disclosure:${JSON.stringify({ host: "Test App", interpolation: { escapeValue: false } })}`
     );
   });
 
@@ -77,7 +77,7 @@ describe("NotetakerDisclosure", () => {
     renderDisclosure(buildDisclosure({ sharedWithColleagues: true }));
 
     expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
-      `notetaker_disclosure_shared:${JSON.stringify({ host: "Ada" })}`
+      `notetaker_disclosure_shared:${JSON.stringify({ host: "Ada", interpolation: { escapeValue: false } })}`
     );
   });
 
@@ -85,7 +85,7 @@ describe("NotetakerDisclosure", () => {
     renderDisclosure(buildDisclosure({ sharedWithColleagues: shared }));
 
     expect(screen.getByTestId(DISCLOSURE_ID)).toHaveTextContent(
-      `notetaker_disclosure:${JSON.stringify({ host: "Ada" })}`
+      `notetaker_disclosure:${JSON.stringify({ host: "Ada", interpolation: { escapeValue: false } })}`
     );
     expect(screen.getByTestId(DISCLOSURE_ID)).not.toHaveTextContent("notetaker_disclosure_shared");
   });

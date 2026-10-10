@@ -22,7 +22,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
   useLocale: () => ({
     t: (key: string, vars?: Record<string, unknown>) =>
-      vars ? `${key}:${Object.values(vars).join("|")}` : key,
+      vars
+        ? `${key}:${Object.values(vars)
+            .map((value) => (typeof value === "object" ? JSON.stringify(value) : String(value)))
+            .join("|")}`
+        : key,
     i18n: { language: "en" },
   }),
 }));
@@ -124,7 +128,7 @@ describe("NotetakerEventTypeSharing", () => {
 
     expect(screen.getAllByText("notetaker_sharing_person_not_eligible")).toHaveLength(1);
 
-    fireEvent.click(screen.getByLabelText("notetaker_sharing_remove_person:Person 1"));
+    fireEvent.click(screen.getByLabelText('notetaker_sharing_remove_person:Person 1|{"escapeValue":false}'));
 
     expect(screen.queryByText("Person 1")).not.toBeInTheDocument();
     expect(screen.getByText("Person 2")).toBeInTheDocument();
@@ -197,7 +201,7 @@ describe("NotetakerEventTypeSharing", () => {
   it("saves selected people with their ids", () => {
     setup(buildDto({ mode: "SELECTED_PEOPLE", people: [person(1), person(2)] }));
 
-    fireEvent.click(screen.getByLabelText("notetaker_sharing_remove_person:Person 2"));
+    fireEvent.click(screen.getByLabelText('notetaker_sharing_remove_person:Person 2|{"escapeValue":false}'));
     fireEvent.click(saveButton());
 
     expect(mocks.mutate.mock.calls[0]?.[0]).toEqual({

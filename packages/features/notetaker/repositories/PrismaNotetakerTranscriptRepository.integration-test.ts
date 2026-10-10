@@ -1,9 +1,16 @@
 import { prisma } from "@calcom/prisma";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import type { NotetakerPassageRecord } from "./interfaces/INotetakerTranscriptRepository";
 import { PrismaNotetakerTranscriptRepository } from "./PrismaNotetakerTranscriptRepository";
 
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// The default DATABASE_URL of this checkout is a live site's database, so the file runs only
+// against the scratch database.
+const RUNS_ON_ISOLATED_DATABASE: boolean = isQuickstartIsolatedDatabase();
+
+const SUITE = "PrismaNotetakerTranscriptRepository (integration)";
 
 const repository = new PrismaNotetakerTranscriptRepository(prisma);
 
@@ -34,7 +41,11 @@ function requireIds() {
   return { bookingId, sessionId, transcriptId };
 }
 
-describe("PrismaNotetakerTranscriptRepository (integration)", () => {
+describe.runIf(!RUNS_ON_ISOLATED_DATABASE)(`${SUITE}: not run`, () => {
+  it.skip(QUICKSTART_SKIP_MESSAGE, () => {});
+});
+
+describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
       data: {
@@ -255,5 +266,173 @@ describe("PrismaNotetakerTranscriptRepository (integration)", () => {
       })
     ).toBeNull();
     expect(await prisma.notetakerActivity.count({ where: { bookingId: ids.bookingId } })).toBe(0);
+  });
+
+  it("updatePassageSpeakersBySpeakerKey resolves the matching passages and nothing else", async () => {
+    const ids = requireIds();
+    await repository.insertPassages(
+      ids.transcriptId,
+      [0, 1, 2, 3, 4].map((i) => makePassage(i))
+    );
+    const before = await repository.findAllPassages(ids.transcriptId);
+
+    const resolved = await repository.updatePassageSpeakersBySpeakerKey({
+      transcriptId: ids.transcriptId,
+      speakerKey: "speaker-unknown-1",
+      resolvedSpeakerKey: "participant-42",
+      speakerName: "Bob",
+    });
+
+    expect(resolved).toBe(2);
+    const after = await repository.findAllPassages(ids.transcriptId);
+    expect(after).toHaveLength(5);
+    for (const passage of after) {
+      const original = before.find((p) => p.index === passage.index);
+      expect(original).toBeDefined();
+      expect(passage.startMs).toBe(original?.startMs);
+      expect(passage.endMs).toBe(original?.endMs);
+      expect(passage.text).toBe(original?.text);
+      expect(passage.language).toBe(original?.language);
+      if (passage.index === 1 || passage.index === 3) {
+        expect(passage.speakerKey).toBe("participant-42");
+        expect(passage.speakerName).toBe("Bob");
+        expect(passage.unknownSpeakerNumber).toBeNull();
+      } else {
+        expect(passage).toEqual(original);
+      }
+    }
+  });
+
+  it("updatePassageSpeakersBySpeakerKey resolves to 0 and changes nothing when no passage has the key", async () => {
+    const ids = requireIds();
+    await repository.insertPassages(
+      ids.transcriptId,
+      [0, 1, 2].map((i) => makePassage(i))
+    );
+    const before = await repository.findAllPassages(ids.transcriptId);
+
+    const resolved = await repository.updatePassageSpeakersBySpeakerKey({
+      transcriptId: ids.transcriptId,
+      speakerKey: "speaker-unknown-9",
+      resolvedSpeakerKey: "participant-42",
+      speakerName: "Bob",
+    });
+
+    expect(resolved).toBe(0);
+    expect(await repository.findAllPassages(ids.transcriptId)).toEqual(before);
+  });
+
+  it("updatePassageSpeakersBySpeakerKey is scoped to one transcript", async () => {
+    const ids = requireIds();
+    await repository.insertPassages(
+      ids.transcriptId,
+      [1, 3].map((i) => makePassage(i))
+    );
+    if (userId === undefined) throw new Error("Test user was not created");
+    const startTime = new Date("2030-01-02T10:00:00.000Z");
+    const otherBooking = await prisma.booking.create({
+      data: {
+        uid: `notetaker-transcript-it-${runId}-other`,
+        title: "Notetaker transcript integration test, second booking",
+        startTime,
+        endTime: new Date(startTime.getTime() + 30 * 60 * 1000),
+        userId,
+      },
+      select: { id: true },
+    });
+
+    try {
+      const otherSession = await prisma.notetakerSession.create({
+        data: {
+          bookingId: otherBooking.id,
+          platform: "GOOGLE_MEET",
+          meetingUrl: "https://meet.google.com/abc-defg-hij",
+          botProvider: "FAKE",
+          displayName: "Notetaker",
+          scheduledStartAt: startTime,
+        },
+        select: { id: true },
+      });
+      const otherTranscript = await repository.createIfMissing({
+        sessionId: otherSession.id,
+        bookingId: otherBooking.id,
+      });
+      await repository.insertPassages(
+        otherTranscript.id,
+        [1, 3].map((i) => makePassage(i))
+      );
+
+      const resolved = await repository.updatePassageSpeakersBySpeakerKey({
+        transcriptId: ids.transcriptId,
+        speakerKey: "speaker-unknown-1",
+        resolvedSpeakerKey: "participant-42",
+        speakerName: "Bob",
+      });
+
+      expect(resolved).toBe(2);
+      const untouched = await repository.findAllPassages(otherTranscript.id);
+      expect(untouched.map((p) => p.speakerKey)).toEqual(["speaker-unknown-1", "speaker-unknown-1"]);
+      expect(untouched.map((p) => p.speakerName)).toEqual([null, null]);
+      expect(untouched.map((p) => p.unknownSpeakerNumber)).toEqual([1, 1]);
+    } finally {
+      await prisma.booking.deleteMany({ where: { id: otherBooking.id } });
+    }
+  });
+
+  it("updatePassageSpeakersBySpeakerKey can resolve onto a key that already exists in the transcript", async () => {
+    const ids = requireIds();
+    await repository.insertPassages(
+      ids.transcriptId,
+      [0, 1, 2, 3, 4].map((i) => makePassage(i))
+    );
+
+    const resolved = await repository.updatePassageSpeakersBySpeakerKey({
+      transcriptId: ids.transcriptId,
+      speakerKey: "speaker-unknown-1",
+      resolvedSpeakerKey: "speaker-known",
+      speakerName: "Alice",
+    });
+
+    expect(resolved).toBe(2);
+    const all = await repository.findAllPassages(ids.transcriptId);
+    expect(all.map((p) => p.speakerKey)).toEqual(Array(5).fill("speaker-known"));
+    expect(all.map((p) => p.speakerName)).toEqual(Array(5).fill("Alice"));
+  });
+
+  it("updatePassageSpeakersBySpeakerKey is idempotent", async () => {
+    const ids = requireIds();
+    await repository.insertPassages(
+      ids.transcriptId,
+      [0, 1, 2, 3, 4].map((i) => makePassage(i))
+    );
+    const params = {
+      transcriptId: ids.transcriptId,
+      speakerKey: "speaker-unknown-1",
+      resolvedSpeakerKey: "participant-42",
+      speakerName: "Bob",
+    };
+
+    expect(await repository.updatePassageSpeakersBySpeakerKey(params)).toBe(2);
+    expect(await repository.updatePassageSpeakersBySpeakerKey(params)).toBe(0);
+  });
+
+  it("stores speakerNamesAvailable through update without disturbing the other columns", async () => {
+    const ids = requireIds();
+    const created = await repository.findById(ids.transcriptId);
+    expect(created?.speakerNamesAvailable).toBeNull();
+
+    const markedUnavailable = await repository.update(ids.transcriptId, { speakerNamesAvailable: false });
+    expect(markedUnavailable.speakerNamesAvailable).toBe(false);
+
+    const afterOtherUpdate = await repository.update(ids.transcriptId, { passageCount: 3 });
+    expect(afterOtherUpdate.speakerNamesAvailable).toBe(false);
+    expect(afterOtherUpdate.passageCount).toBe(3);
+
+    const markedAvailable = await repository.update(ids.transcriptId, { speakerNamesAvailable: true });
+    expect(markedAvailable.speakerNamesAvailable).toBe(true);
+
+    expect(markedAvailable.language).toBe(created?.language);
+    expect(markedAvailable.completeness).toBe(created?.completeness);
+    expect(markedAvailable.durationMs).toBe(created?.durationMs);
   });
 });
