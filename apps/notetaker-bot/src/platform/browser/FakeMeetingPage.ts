@@ -1,4 +1,9 @@
-import type { MeetingBrowserLauncher, MeetingBrowserOptions, MeetingPage } from "./MeetingPage";
+import type {
+  ElementReading,
+  MeetingBrowserLauncher,
+  MeetingBrowserOptions,
+  MeetingPage,
+} from "./MeetingPage";
 
 type PendingWaiter = {
   selector: string;
@@ -15,6 +20,8 @@ type FakeMeetingBrowserLauncherOptions = {
   openError?: Error;
   openDelayMs?: number;
 };
+
+export type FakeElementRow = { attributes?: Record<string, string | null>; text?: string | null };
 
 export type FakePageAction =
   | { type: "goto"; url: string }
@@ -40,6 +47,7 @@ export type FakePageMethod =
   | "pressKey"
   | "readText"
   | "readTexts"
+  | "readElements"
   | "addInitScript"
   | "exposeBinding"
   | "close";
@@ -56,6 +64,7 @@ export class FakeMeetingPage implements MeetingPage {
   private readonly values = new Map<string, string>();
   private readonly texts = new Map<string, string | null>();
   private readonly textLists = new Map<string, string[]>();
+  private readonly elementRows = new Map<string, FakeElementRow[]>();
   private readonly methodErrors = new Map<FakePageMethod, Error>();
   private readonly selectorErrors = new Map<string, Error>();
   private readonly bindings = new Map<string, (payload: unknown) => void>();
@@ -99,6 +108,13 @@ export class FakeMeetingPage implements MeetingPage {
 
   setTexts(selector: string, texts: string[]): void {
     this.textLists.set(selector, [...texts]);
+  }
+
+  setElements(selector: string, rows: FakeElementRow[]): void {
+    this.elementRows.set(
+      selector,
+      rows.map((row) => ({ attributes: { ...row.attributes }, text: row.text }))
+    );
   }
 
   setError(method: FakePageMethod, error: Error | null): void {
@@ -217,6 +233,19 @@ export class FakeMeetingPage implements MeetingPage {
   async readTexts(selector: string): Promise<string[]> {
     this.beginRead("readTexts", selector);
     return [...(this.textLists.get(selector) ?? [])];
+  }
+
+  async readElements(
+    selector: string,
+    attributeNames: readonly string[],
+    innerTextSelector: string | null
+  ): Promise<ElementReading[]> {
+    this.beginRead("readElements", selector);
+    return (this.elementRows.get(selector) ?? []).map((row) => {
+      const attributes: Record<string, string | null> = {};
+      for (const name of attributeNames) attributes[name] = row.attributes?.[name] ?? null;
+      return { attributes, text: innerTextSelector === null ? null : (row.text ?? null) };
+    });
   }
 
   async addInitScript(source: string): Promise<void> {

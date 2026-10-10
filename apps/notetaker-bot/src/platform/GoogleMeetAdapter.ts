@@ -3,7 +3,11 @@
 // docs/verification-status.md before relying on it, then remove this notice.
 import type { RunnerConfig } from "../config";
 import type { Logger } from "../logger";
-import type { MeetingPageDriver, MeetingPageState } from "./browser/BrowserPlatformAdapter";
+import type {
+  MeetingPageDriver,
+  MeetingPageState,
+  ParticipantReading,
+} from "./browser/BrowserPlatformAdapter";
 import { BrowserPlatformAdapter } from "./browser/BrowserPlatformAdapter";
 import type { MeetingBrowserLauncher, MeetingPage } from "./browser/MeetingPage";
 import type { PlatformName } from "./PlatformAdapter";
@@ -17,6 +21,8 @@ type SignInStep = "email" | "password" | "completion";
 // control would be read or clicked instead. Every alternative is therefore limited to visible elements.
 const visible = (...alternatives: string[]): string =>
   alternatives.map((alternative) => `${alternative}:visible`).join(", ");
+
+const PARTICIPANT_TILE = "[data-participant-id]:not([data-participant-id] [data-participant-id])";
 
 const GUEST_NAME_INPUT = visible('input[aria-label="Your name"]');
 const ASK_TO_JOIN_BUTTON = visible('button:has-text("Ask to join")');
@@ -73,6 +79,14 @@ function storageStateFor(google: GoogleConfig): unknown | null {
   return google.storageState;
 }
 
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normaliseName(value: string): string {
+  return collapseWhitespace(value).toLowerCase();
+}
+
 // An emptied contenteditable composer can keep a line break or a zero-width character.
 function isBlank(value: string): boolean {
   return value.replace(/[\s\u200B\uFEFF]/g, "") === "";
@@ -88,6 +102,13 @@ export const GOOGLE_MEET_CHAT_SENT_TIMEOUT_MS = 5000;
 export const GOOGLE_MEET_CHAT_SENT_POLL_MS = 250;
 export const GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS = 5000;
 export const GOOGLE_SIGN_IN_STEP_TIMEOUT_MS = 30000;
+
+// Obfuscated Meet class names measured on 2026-10-10; see docs/speaker-attribution-spike.md section 11.
+export const GOOGLE_MEET_SPEAKING_INDICATORS = { sustained: "BlxGDf", instantaneous: "Oaajhc" } as const;
+export const GOOGLE_MEET_SELF_TILE_LABEL = "You";
+// Plain CSS, evaluated inside each tile by readElements, so it cannot carry :visible and is not in the selector table.
+export const GOOGLE_MEET_PARTICIPANT_NAME_SELECTOR = "span.notranslate";
+export const GOOGLE_MEET_TILE_ATTRIBUTES = ["data-participant-id", "class"] as const;
 
 // There is deliberately no selector here for any control the bot is not allowed to use (FR-016): what has no
 // selector cannot be clicked.
@@ -151,8 +172,12 @@ export const GOOGLE_MEET_SELECTORS = {
     'button[aria-label*="Show everyone" i] ~ div',
     'button[aria-label="People"] ~ div'
   ),
-  participantTile: visible("[data-participant-id]:not([data-participant-id] [data-participant-id])"),
-  activeSpeakerName: visible('[data-participant-id]:has([aria-label*="speaking" i]) span.notranslate'),
+  // Read through readElements with data-participant-id and class, not as text.
+  participantTile: visible(PARTICIPANT_TILE),
+  // Not read by the driver: the probe sweeps it, so a renamed class token shows as zero matches during speech.
+  activeSpeakerName: visible(
+    `${PARTICIPANT_TILE}.${GOOGLE_MEET_SPEAKING_INDICATORS.sustained} span.notranslate`
+  ),
   chatButton: visible('button[aria-label*="Chat with everyone" i]'),
   // Read, never clicked: the toggle's aria-expanded tells an open panel from a closed one.
   chatPanelOpen: visible('button[aria-label*="Chat with everyone" i][aria-expanded="true"]'),
@@ -186,6 +211,8 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
   private readonly logger: Logger;
   // Sign-in and join run again on every reconnect; the warning must not.
   private displayNameWarningLogged = false;
+  // Meet labels the bot's own tile with the name typed on the guest join screen; null in account mode.
+  private guestDisplayName: string | null = null;
   // A notice that was sent but not seen to leave the composer; the next attempt must not post it a second time.
   private readonly unconfirmedNotices = new WeakMap<MeetingPage, string>();
 
@@ -261,16 +288,41 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
     return null;
   }
 
-  // The id is derived from the displayed name because the page wrapper cannot read an attribute, so two
-  // participants with the same display name count as one.
-  async readActiveSpeakers(page: MeetingPage): Promise<{ participantId: string; name: string }[]> {
-    const texts = await page.readTexts(GOOGLE_MEET_SELECTORS.activeSpeakerName);
-    const names = new Set<string>();
-    for (const text of texts) {
-      const name = text.replace(/\s+/g, " ").trim();
-      if (name !== "") names.add(name);
+  async readParticipants(page: MeetingPage): Promise<ParticipantReading[]> {
+    const rows = await page.readElements(
+      GOOGLE_MEET_SELECTORS.participantTile,
+      GOOGLE_MEET_TILE_ATTRIBUTES,
+      GOOGLE_MEET_PARTICIPANT_NAME_SELECTOR
+    );
+    const ownNames = [GOOGLE_MEET_SELF_TILE_LABEL, this.guestDisplayName]
+      .filter((label): label is string => label !== null)
+      .map(normaliseName)
+      .filter((label) => label !== "");
+    const seen = new Set<string>();
+    const readings: ParticipantReading[] = [];
+    for (const row of rows) {
+      const participantId = row.attributes["data-participant-id"]?.trim() ?? "";
+      if (participantId === "" || seen.has(participantId)) continue;
+      seen.add(participantId);
+
+      const name = collapseWhitespace(row.text ?? "");
+      const tokens = (row.attributes.class ?? "").split(/\s+/);
+      readings.push({
+        participantId,
+        name,
+        speaking: tokens.includes(GOOGLE_MEET_SPEAKING_INDICATORS.sustained),
+        speakingNow: tokens.includes(GOOGLE_MEET_SPEAKING_INDICATORS.instantaneous),
+        isSelf: ownNames.includes(normaliseName(name)),
+      });
     }
-    return Array.from(names, (name) => ({ participantId: `name:${name}`, name }));
+    return readings;
+  }
+
+  async readActiveSpeakers(page: MeetingPage): Promise<{ participantId: string; name: string }[]> {
+    const readings = await this.readParticipants(page);
+    return readings
+      .filter((reading) => reading.speaking && !reading.isSelf)
+      .map(({ participantId, name }) => ({ participantId, name }));
   }
 
   async postChatMessage(page: MeetingPage, text: string): Promise<void> {
@@ -410,6 +462,7 @@ export class GoogleMeetPageDriver implements MeetingPageDriver {
         throw new Error("Google Meet did not offer a guest name field; not joining without the display name");
       }
       await page.fill(GOOGLE_MEET_SELECTORS.guestNameInput, displayName);
+      this.guestDisplayName = displayName;
       return;
     }
 

@@ -15,6 +15,11 @@ export type PlatformEvent =
   // Meeting UI signal.
   | { type: "speaker"; participantId: string; name: string; speaking: boolean }
   // Audio source signal, level in 0..1.
+  // One reading of every participant tile, sent on each poll by a driver that can read tiles, also when empty.
+  | {
+      type: "participants";
+      participants: { participantId: string; name: string; isSelf: boolean; speakingNow: boolean }[];
+    }
   | { type: "source_activity"; sourceKey: string; level: number }
   | { type: "source_identity"; sourceKey: string; participantId: string; name: string }
   | { type: "removed" }

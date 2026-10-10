@@ -4,6 +4,7 @@
 // never kept.
 
 import type {
+  ElementReading,
   MeetingBrowserLauncher,
   MeetingBrowserOptions,
   MeetingPage,
@@ -393,6 +394,19 @@ export class RecordingMeetingPage implements MeetingPage {
       selector,
       () => this.inner.readTexts(selector),
       (texts) => ({ kind: "count", value: texts.length })
+    );
+  }
+
+  readElements(
+    selector: string,
+    attributeNames: readonly string[],
+    innerTextSelector: string | null
+  ): Promise<ElementReading[]> {
+    return this.recorded(
+      "readElements",
+      selector,
+      () => this.inner.readElements(selector, attributeNames, innerTextSelector),
+      (rows) => ({ kind: "count", value: rows.length })
     );
   }
 

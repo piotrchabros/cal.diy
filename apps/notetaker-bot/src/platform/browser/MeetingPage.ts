@@ -12,8 +12,17 @@
 // - clickInAnyFrame and fillInAnyFrame do not wait for a match; they reject when no frame shows one.
 // - readValueInAnyFrame returns the value of an input or textarea, otherwise the element's text, untrimmed; null
 //   when no frame shows a match. It does not wait.
+// - readElements returns one entry per element matching `selector` in the main frame, in document order, and []
+//   when nothing matches. It does not wait.
+// - Its `attributes` hold exactly the requested names; a missing attribute is null. No other attribute is returned.
+// - Its `text` is the untrimmed text content of the first element inside the match that matches `innerTextSelector`
+//   and is rendered (has a layout box); null when there is none or when `innerTextSelector` is null.
+//   `innerTextSelector` is plain CSS because it is evaluated inside the page: no `:visible`, `:has-text` or `:text`.
+// - readElements never returns HTML.
 // - After the page closed, every async method except close rejects, so a lost browser surfaces as an error.
 //   This applies to the `InAnyFrame` methods too.
+export type ElementReading = { attributes: Record<string, string | null>; text: string | null };
+
 export interface MeetingPage {
   goto(url: string): Promise<void>;
   currentUrl(): string;
@@ -27,6 +36,11 @@ export interface MeetingPage {
   pressKey(key: string): Promise<void>;
   readText(selector: string): Promise<string | null>;
   readTexts(selector: string): Promise<string[]>;
+  readElements(
+    selector: string,
+    attributeNames: readonly string[],
+    innerTextSelector: string | null
+  ): Promise<ElementReading[]>;
   readValueInAnyFrame(selector: string): Promise<string | null>;
   addInitScript(source: string): Promise<void>;
   exposeBinding(name: string, handler: (payload: unknown) => void): Promise<void>;

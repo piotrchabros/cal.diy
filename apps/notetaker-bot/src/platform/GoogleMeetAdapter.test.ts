@@ -6,7 +6,7 @@ import type { Logger } from "../logger";
 import { createLogger, createSilentLogger } from "../logger";
 import type { MeetingPageState } from "./browser/BrowserPlatformAdapter";
 import { DEFAULT_POLL_INTERVAL_MS } from "./browser/BrowserPlatformAdapter";
-import type { FakePageAction } from "./browser/FakeMeetingPage";
+import type { FakeElementRow, FakePageAction } from "./browser/FakeMeetingPage";
 import { FakeMeetingBrowserLauncher, FakeMeetingPage } from "./browser/FakeMeetingPage";
 import {
   GOOGLE_MEET_CHAT_INPUT_TIMEOUT_MS,
@@ -16,6 +16,8 @@ import {
   GOOGLE_MEET_DEVICE_SETTLE_TIMEOUT_MS,
   GOOGLE_MEET_JOIN_SCREEN_TIMEOUT_MS,
   GOOGLE_MEET_SELECTORS,
+  GOOGLE_MEET_SPEAKING_INDICATORS,
+  GOOGLE_MEET_TILE_ATTRIBUTES,
   GOOGLE_SIGN_IN_STEP_TIMEOUT_MS,
   GOOGLE_SIGN_IN_URL,
   GoogleMeetAdapter,
@@ -37,6 +39,7 @@ const FAKE_EMAIL = "bot@fake.invalid";
 const FAKE_PASSWORD = "fake-password-not-real";
 const FAKE_STORAGE_STATE = { cookies: [], origins: [] };
 const FAKE_SPEAKER = "Ada Lovelace";
+const FAKE_ID = "spaces/fake/devices/fake-participant-id";
 
 const GUEST: GoogleConfig = { joinMode: "guest", storageState: null, email: null, password: null };
 const ACCOUNT_WITH_STATE: GoogleConfig = {
@@ -329,11 +332,19 @@ const speakerEvents = (events: PlatformEvent[]): PlatformEvent[] =>
   events.filter((event) => event.type === "speaker");
 const countEvents = (events: PlatformEvent[]): number[] =>
   events.flatMap((event) => (event.type === "participant_count" ? [event.count] : []));
-const speakerEvent = (name: string, speaking: boolean): PlatformEvent => ({
+const speakerEvent = (participantId: string, name: string, speaking: boolean): PlatformEvent => ({
   type: "speaker",
-  participantId: `name:${name}`,
+  participantId,
   name,
   speaking,
+});
+const participantsEvents = (events: PlatformEvent[]): PlatformEvent[] =>
+  events.filter((event) => event.type === "participants");
+const SUSTAINED = GOOGLE_MEET_SPEAKING_INDICATORS.sustained;
+const INSTANT = GOOGLE_MEET_SPEAKING_INDICATORS.instantaneous;
+const tile = (id: string | null, name: string | null, classes: string | null = "tile"): FakeElementRow => ({
+  attributes: { "data-participant-id": id, class: classes },
+  text: name,
 });
 
 // A comma inside quotes or brackets belongs to one alternative, as in :text-matches("...", "i").
@@ -447,6 +458,13 @@ describe("selectors", () => {
 
   it("counts the Switch here control as a settled join screen", () => {
     expect(splitAlternatives(S.joinScreenOrVerdict)).toContain(S.switchHereButton);
+  });
+
+  it("builds the active speaker selector from the sustained token and never from an aria-label", () => {
+    expect(S.activeSpeakerName).toContain(`.${SUSTAINED}`);
+    for (const value of Object.values(S)) {
+      expect(value.toLowerCase()).not.toContain('aria-label*="speaking"');
+    }
   });
 
   it("limits every alternative to visible elements", () => {
@@ -932,6 +950,7 @@ describe("state mapping", () => {
       { type: "waiting" },
       { type: "admitted" },
       { type: "participant_count", count: 3 },
+      { type: "participants", participants: [] },
       { type: "removed" },
     ]);
   });
@@ -990,14 +1009,115 @@ describe("participant count", () => {
   });
 });
 
-describe("active speakers", () => {
-  it("returns one entry per distinct normalised name", async () => {
+describe("participant tiles", () => {
+  const readTiles = async (rows: FakeElementRow[], driver = createDriver()) => {
     const page = createPage();
-    page.setTexts(S.activeSpeakerName, [" Ada  Lovelace ", "Bob", "", "Bob"]);
+    page.setElements(S.participantTile, rows);
+    return { page, readings: await driver.readParticipants(page) };
+  };
+
+  it("reads every tile with its id, name and indicator flags", async () => {
+    const { readings } = await readTiles([
+      tile("p1", "Ada Lovelace", `x ${SUSTAINED} y`),
+      tile("p2", "Bob", INSTANT),
+      tile("p3", "You"),
+    ]);
+
+    expect(readings).toEqual([
+      { participantId: "p1", name: "Ada Lovelace", speaking: true, speakingNow: false, isSelf: false },
+      { participantId: "p2", name: "Bob", speaking: false, speakingNow: true, isSelf: false },
+      { participantId: "p3", name: "You", speaking: false, speakingNow: false, isSelf: true },
+    ]);
+  });
+
+  it("matches whole class tokens only", async () => {
+    const { readings } = await readTiles([
+      tile("p1", "Ada", `${SUSTAINED}x`),
+      tile("p2", "Bob", `x${INSTANT}`),
+      tile("p3", "Cy", null),
+    ]);
+
+    expect(readings.map((reading) => [reading.speaking, reading.speakingNow])).toEqual([
+      [false, false],
+      [false, false],
+      [false, false],
+    ]);
+  });
+
+  it("skips tiles without an id and keeps a duplicate id once", async () => {
+    const { readings } = await readTiles([
+      tile(null, "No id"),
+      tile("  ", "Blank id"),
+      tile("p1", "Ada"),
+      tile("p1", "Ada again"),
+      tile(" p2 ", "Bob"),
+    ]);
+
+    expect(readings.map((reading) => [reading.participantId, reading.name])).toEqual([
+      ["p1", "Ada"],
+      ["p2", "Bob"],
+    ]);
+  });
+
+  it("normalises whitespace in names and reads a missing text as an empty name", async () => {
+    const { readings } = await readTiles([tile("p1", "  Ada \n  Lovelace "), tile("p2", null)]);
+
+    expect(readings.map((reading) => reading.name)).toEqual(["Ada Lovelace", ""]);
+  });
+
+  it("asks for the id and class attributes and the name span in one read, without any action", async () => {
+    const { page, readings } = await readTiles([tile("p1", "Ada")]);
+
+    expect(readings).toHaveLength(1);
+    expect(page.actions).toEqual([]);
+    expect(GOOGLE_MEET_TILE_ATTRIBUTES).toEqual(["data-participant-id", "class"]);
+  });
+
+  it.each(["You", "you ", " YOU"])("flags a tile named %j as the own tile", async (label) => {
+    const { readings } = await readTiles([tile("p1", label)]);
+
+    expect(readings[0]?.isSelf).toBe(true);
+  });
+
+  it("flags the tile with the typed guest display name as the own tile", async () => {
+    const driver = createDriver(GUEST);
+    const page = createPage();
+    prepareJoin(page, { guest: true, next: "WAITING" });
+    await driver.openAndAskToJoin(page, INPUT);
+    page.setElements(S.participantTile, [tile("p1", INPUT.displayName), tile("p2", "Bob")]);
+
+    const readings = await driver.readParticipants(page);
+
+    expect(readings.map((reading) => reading.isSelf)).toEqual([true, false]);
+  });
+
+  it("does not flag a tile with the request's display name in account mode", async () => {
+    const driver = createDriver(ACCOUNT_WITH_STATE);
+    const page = createPage();
+    prepareJoin(page, { guest: false, next: "WAITING" });
+    await driver.openAndAskToJoin(page, INPUT);
+    page.setElements(S.participantTile, [tile("p1", INPUT.displayName)]);
+
+    const readings = await driver.readParticipants(page);
+
+    expect(readings[0]?.isSelf).toBe(false);
+  });
+});
+
+describe("active speakers", () => {
+  it("returns the sustained, non-self tiles with their real ids", async () => {
+    const page = createPage();
+    page.setElements(S.participantTile, [
+      tile("p1", "Ada", SUSTAINED),
+      tile("p2", "Ada", SUSTAINED),
+      tile("p3", "Bob", INSTANT),
+      tile("p4", "You", SUSTAINED),
+      tile("p5", "Cy"),
+    ]);
 
     expect(await createDriver().readActiveSpeakers(page)).toEqual([
-      { participantId: "name:Ada Lovelace", name: "Ada Lovelace" },
-      { participantId: "name:Bob", name: "Bob" },
+      { participantId: "p1", name: "Ada" },
+      { participantId: "p2", name: "Ada" },
     ]);
   });
 
@@ -1005,20 +1125,47 @@ describe("active speakers", () => {
     expect(await createDriver().readActiveSpeakers(createPage())).toEqual([]);
   });
 
-  it("turns successive reads into speaker events", async () => {
+  it("turns successive tile readings into speaker events keyed by participant id", async () => {
     const { page, events } = await joinedAs(GUEST, "IN_MEETING");
 
-    for (const names of [[], ["Ada"], ["Bob"], []]) {
-      page.setTexts(S.activeSpeakerName, names);
+    for (const rows of [
+      [tile("p1", "Ada"), tile("p2", "Bob")],
+      [tile("p1", "Ada", SUSTAINED), tile("p2", "Bob")],
+      [tile("p1", "Ada"), tile("p2", "Bob", SUSTAINED)],
+      [tile("p1", "Ada"), tile("p2", "Bob")],
+    ]) {
+      page.setElements(S.participantTile, rows);
       await advance(POLL);
     }
 
     expect(speakerEvents(events)).toEqual([
-      speakerEvent("Ada", true),
-      speakerEvent("Ada", false),
-      speakerEvent("Bob", true),
-      speakerEvent("Bob", false),
+      speakerEvent("p1", "Ada", true),
+      speakerEvent("p1", "Ada", false),
+      speakerEvent("p2", "Bob", true),
+      speakerEvent("p2", "Bob", false),
     ]);
+  });
+
+  it("keeps two tiles with one name as two speakers", async () => {
+    const { page, events } = await joinedAs(GUEST, "IN_MEETING");
+
+    page.setElements(S.participantTile, [tile("p1", "Sam", SUSTAINED), tile("p2", "Sam", SUSTAINED)]);
+    await advance(POLL);
+
+    expect(speakerEvents(events)).toEqual([speakerEvent("p1", "Sam", true), speakerEvent("p2", "Sam", true)]);
+  });
+
+  it("sends one participants event per poll", async () => {
+    const { page, events } = await joinedAs(GUEST, "IN_MEETING");
+    page.setElements(S.participantTile, [tile("p1", "Ada", INSTANT)]);
+
+    await advance(POLL * 3);
+
+    expect(participantsEvents(events)).toHaveLength(3);
+    expect(participantsEvents(events)[0]).toEqual({
+      type: "participants",
+      participants: [{ participantId: "p1", name: "Ada", isSelf: false, speakingNow: true }],
+    });
   });
 });
 
@@ -1307,7 +1454,7 @@ describe("leave", () => {
 describe("reconnect", () => {
   it("opens a new page and repeats the whole join", async () => {
     const ctx = await lostGuest();
-    expect(eventTypes(ctx.events)).toEqual(["waiting", "admitted", "connection_lost"]);
+    expect(eventTypes(ctx.events)).toEqual(["waiting", "admitted", "participants", "connection_lost"]);
     const second = enqueueSecondPage(ctx, "IN_MEETING");
 
     expect(await ctx.adapter.reconnect()).toBe(true);
@@ -1320,7 +1467,15 @@ describe("reconnect", () => {
     expect(fillActions(second)).toEqual([
       { type: "fill", selector: S.guestNameInput, value: INPUT.displayName },
     ]);
-    expect(eventTypes(ctx.events)).toEqual(["waiting", "admitted", "connection_lost"]);
+    expect(eventTypes(ctx.events)).toEqual([
+      "waiting",
+      "admitted",
+      "participants",
+      "connection_lost",
+      "participants",
+      "participants",
+      "participants",
+    ]);
   });
 
   it("rejoins through Switch here when the lost connection still lingers in the call", async () => {
@@ -1376,7 +1531,7 @@ describe("only permitted actions", () => {
     showState(ctx.page, "IN_MEETING");
     show(ctx.page, ["leaveCallButton"]);
     ctx.page.setText(S.participantCountBadge, "3");
-    ctx.page.setTexts(S.activeSpeakerName, [FAKE_SPEAKER]);
+    ctx.page.setElements(S.participantTile, [tile("p1", FAKE_SPEAKER, SUSTAINED)]);
     await advance(POLL);
     await ctx.adapter.postChatMessage(NOTICE);
     await advance(POLL * 20);
@@ -1399,14 +1554,15 @@ describe("only permitted actions", () => {
   it("polling performs no action", async () => {
     const { page, events } = await joinedAs(GUEST, "IN_MEETING");
     page.setText(S.participantCountBadge, "3");
-    page.setTexts(S.participantTile, ["a", "b", "c"]);
-    page.setTexts(S.activeSpeakerName, [FAKE_SPEAKER]);
+    page.setElements(S.participantTile, [tile("p1", FAKE_SPEAKER, SUSTAINED)]);
     await advance(POLL);
     const actionsAfterAdmission = page.actions.length;
 
     await advance(POLL * 20);
 
-    expect(eventTypes(events)).toEqual(["admitted", "participant_count", "speaker"]);
+    expect(new Set(eventTypes(events))).toEqual(
+      new Set(["admitted", "participant_count", "participants", "speaker"])
+    );
     expect(page.actions.length).toBe(actionsAfterAdmission);
   });
 
@@ -1418,13 +1574,13 @@ describe("only permitted actions", () => {
     wireChat(ctx.page);
 
     await ctx.adapter.join(INPUT, ctx.handlers);
-    ctx.page.setTexts(S.activeSpeakerName, [FAKE_SPEAKER]);
+    ctx.page.setElements(S.participantTile, [tile(FAKE_ID, FAKE_SPEAKER, `${SUSTAINED} ${INSTANT}`)]);
     show(ctx.page, ["leaveCallButton"]);
     await advance(POLL);
     await ctx.adapter.postChatMessage(NOTICE);
     await ctx.adapter.leave();
 
-    expect(speakerEvents(ctx.events)).toContainEqual(speakerEvent(FAKE_SPEAKER, true));
+    expect(speakerEvents(ctx.events)).toContainEqual(speakerEvent(FAKE_ID, FAKE_SPEAKER, true));
     expect(lines.length).toBeGreaterThan(0);
     const output = lines.join("\n");
     for (const secret of [
@@ -1434,6 +1590,9 @@ describe("only permitted actions", () => {
       FAKE_EMAIL,
       FAKE_PASSWORD,
       FAKE_SPEAKER,
+      FAKE_ID,
+      SUSTAINED,
+      INSTANT,
     ]) {
       expect(output).not.toContain(secret);
     }
