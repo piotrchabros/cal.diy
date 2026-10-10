@@ -24,9 +24,10 @@ import type {
   NotetakerPassageRecord,
   NotetakerTranscriptRecord,
 } from "../repositories/interfaces/INotetakerTranscriptRepository";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
-import { NotetakerAccessService } from "./NotetakerAccessService";
+import { NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE, NotetakerAccessService } from "./NotetakerAccessService";
 import { NOTETAKER_ACTIVITY_LIMIT, NotetakerResultsService } from "./NotetakerResultsService";
 
 vi.mock("@calcom/i18n/server", () => ({
@@ -179,6 +180,7 @@ describe("NotetakerResultsService", () => {
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
   let service: NotetakerResultsService;
   let users: NotetakerUserRecord[];
+  let membershipLookup: InMemoryNotetakerMembershipLookup;
   let tasker: RecordingNotetakerTasker;
   let logger: ReturnType<typeof createLogger>;
 
@@ -205,7 +207,13 @@ describe("NotetakerResultsService", () => {
       summaryRepository,
       activityRepository,
     } = repositories;
-    const accessService = new NotetakerAccessService({ bookingNotetakerRepository });
+    membershipLookup = new InMemoryNotetakerMembershipLookup();
+    const accessService = new NotetakerAccessService({
+      bookingNotetakerRepository,
+      sessionRepository,
+      eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+      membershipLookup,
+    });
     const userRepository: INotetakerUserLookup = {
       findByIds: async ({ ids }) => users.filter((user) => ids.includes(user.id)),
     };
@@ -233,6 +241,7 @@ describe("NotetakerResultsService", () => {
       bookingId?: number;
       dispatchedAt?: Date;
       withTranscript?: boolean;
+      colleagueSharingDisclosed?: boolean;
       passages?: NotetakerPassageRecord[];
     } = {}
   ): Promise<{ session: NotetakerSessionRecord; transcript: NotetakerTranscriptRecord | null }> {
@@ -245,6 +254,7 @@ describe("NotetakerResultsService", () => {
       displayName: "Notetaker",
       scheduledStartAt: new Date("2026-10-12T10:00:00.000Z"),
       dispatchedAt: options.dispatchedAt ?? new Date("2026-10-12T09:55:00.000Z"),
+      colleagueSharingDisclosed: options.colleagueSharingDisclosed,
     });
     if (options.withTranscript === false) return { session, transcript: null };
 
@@ -266,6 +276,7 @@ describe("NotetakerResultsService", () => {
       dispatchedAt?: Date;
       status?: NotetakerSessionStatusDto;
       outcomeReason?: NotetakerOutcomeReasonDto | null;
+      colleagueSharingDisclosed?: boolean;
     } = {}
   ): Promise<NotetakerSessionRecord> {
     return repositories.sessionRepository.create({
@@ -278,6 +289,7 @@ describe("NotetakerResultsService", () => {
       dispatchedAt: options.dispatchedAt ?? new Date("2026-10-12T09:55:00.000Z"),
       status: options.status ?? "READY",
       outcomeReason: options.outcomeReason ?? null,
+      colleagueSharingDisclosed: options.colleagueSharingDisclosed,
     });
   }
 
@@ -288,6 +300,7 @@ describe("NotetakerResultsService", () => {
       status?: NotetakerSessionStatusDto;
       outcomeReason?: NotetakerOutcomeReasonDto | null;
       completeness?: NotetakerTranscriptCompletenessDto;
+      colleagueSharingDisclosed?: boolean;
       passages?: NotetakerPassageRecord[];
     } = {}
   ): Promise<{ session: NotetakerSessionRecord; transcript: NotetakerTranscriptRecord }> {
@@ -753,6 +766,93 @@ describe("NotetakerResultsService", () => {
         await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
         await expect(promise).rejects.toMatchObject({ code: ErrorCode.NotFound });
       });
+    });
+  });
+
+  const TEAM_ID = 50;
+  const COLLEAGUE_ID = 7;
+
+  function makeColleagueShared(): void {
+    repositories.store.addBooking(buildBooking({ teamId: TEAM_ID }));
+    repositories.store.setSharingMode(10, "TEAM");
+    membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+  }
+
+  function expectHostOnlyDenied(promise: Promise<unknown>): Promise<void> {
+    return expect(promise).rejects.toMatchObject({
+      code: ErrorCode.Forbidden,
+      message: "Only a host of this booking can perform this action",
+    });
+  }
+
+  describe("shared viewer", () => {
+    beforeEach(() => {
+      makeColleagueShared();
+    });
+
+    it("lists passages from the disclosed session", async () => {
+      await seedFinishedSession({ colleagueSharingDisclosed: true, passages: buildPassages(2) });
+
+      const result = await service.listPassages({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+      expect(indexesOf(result)).toEqual([0, 1]);
+    });
+
+    it("exports and records an EXPORTED row for the viewer", async () => {
+      const seeded = await seedFinishedSession({
+        colleagueSharingDisclosed: true,
+        passages: buildPassages(2),
+      });
+
+      const result = await service.export({
+        bookingUid: BOOKING_UID,
+        format: "markdown",
+        userId: COLLEAGUE_ID,
+      });
+
+      expect(result.mimeType).toBe("text/markdown");
+      expect(activitiesOf()).toHaveLength(1);
+      expect(activitiesOf()[0]).toMatchObject({
+        sessionId: seeded.session.id,
+        action: "EXPORTED",
+        actorUserId: COLLEAGUE_ID,
+      });
+    });
+
+    it("refuses an explicit sessionId of an undisclosed earlier session", async () => {
+      const earlier = await seedFinishedSession({
+        colleagueSharingDisclosed: false,
+        dispatchedAt: new Date("2026-10-12T08:00:00.000Z"),
+        passages: buildPassages(2),
+      });
+      await seedFinishedSession({
+        colleagueSharingDisclosed: true,
+        dispatchedAt: new Date("2026-10-12T09:55:00.000Z"),
+        passages: buildPassages(2),
+      });
+
+      const promise = service.listPassages({
+        bookingUid: BOOKING_UID,
+        sessionId: earlier.session.id,
+        userId: COLLEAGUE_ID,
+      });
+
+      await expect(promise).rejects.toMatchObject({
+        code: ErrorCode.Forbidden,
+        message: NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE,
+      });
+    });
+
+    it("refuses setSharing, deleteResults and getActivity with the host-only error", async () => {
+      await seedFinishedSession({ colleagueSharingDisclosed: true, passages: buildPassages(2) });
+      const before = snapshotWrites();
+
+      await expectHostOnlyDenied(
+        service.setSharing({ bookingUid: BOOKING_UID, shared: true, userId: COLLEAGUE_ID })
+      );
+      await expectHostOnlyDenied(service.deleteResults({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID }));
+      await expectHostOnlyDenied(service.getActivity({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID }));
+      expect(snapshotWrites()).toEqual(before);
     });
   });
 

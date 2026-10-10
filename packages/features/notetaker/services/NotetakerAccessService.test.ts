@@ -1,9 +1,10 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { beforeEach, describe, expect, it } from "vitest";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
-import { NotetakerAccessService } from "./NotetakerAccessService";
+import { NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE, NotetakerAccessService } from "./NotetakerAccessService";
 
 const BOOKING_ID = 100;
 const BOOKING_UID = "booking-uid-1";
@@ -12,6 +13,10 @@ const CO_HOST_ID = 2;
 const ATTENDEE_USER_ID = 3;
 const TEAM_ADMIN_ID = 4;
 const STRANGER_ID = 5;
+const COLLEAGUE_ID = 6;
+const EVENT_TYPE_ID = 10;
+const TEAM_ID = 20;
+const ORGANIZATION_ID = 30;
 
 const ORGANIZER_EMAIL = "organizer@example.com";
 const CO_HOST_EMAIL = "cohost@example.com";
@@ -32,7 +37,7 @@ function buildBooking(overrides: Partial<InMemoryBookingSeed> = {}): InMemoryBoo
     location: null,
     metadata: null,
     recurringEventId: null,
-    eventTypeId: 10,
+    eventTypeId: EVENT_TYPE_ID,
     attendeeEmails: [ATTENDEE_EMAIL],
     references: [],
     eventTypeHosts: [],
@@ -42,18 +47,57 @@ function buildBooking(overrides: Partial<InMemoryBookingSeed> = {}): InMemoryBoo
 }
 
 describe("NotetakerAccessService", () => {
+  let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
   let store: ReturnType<typeof createInMemoryNotetakerRepositories>["store"];
   let bookingNotetakerRepository: ReturnType<
     typeof createInMemoryNotetakerRepositories
   >["bookingNotetakerRepository"];
+  let membershipLookup: InMemoryNotetakerMembershipLookup;
   let service: NotetakerAccessService;
 
   beforeEach(() => {
-    const repositories = createInMemoryNotetakerRepositories();
+    repositories = createInMemoryNotetakerRepositories();
     store = repositories.store;
     bookingNotetakerRepository = repositories.bookingNotetakerRepository;
-    service = new NotetakerAccessService({ bookingNotetakerRepository });
+    membershipLookup = new InMemoryNotetakerMembershipLookup();
+    service = new NotetakerAccessService({
+      bookingNotetakerRepository,
+      sessionRepository: repositories.sessionRepository,
+      eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+      membershipLookup,
+    });
   });
+
+  async function addSession(
+    options: { disclosed?: boolean; withTranscript?: boolean; dispatchedAt?: Date } = {}
+  ): Promise<string> {
+    const session = await repositories.sessionRepository.create({
+      bookingId: BOOKING_ID,
+      platform: "GOOGLE_MEET",
+      meetingUrl: "https://meet.google.com/abc-defg-hij",
+      botProvider: "FAKE",
+      displayName: "Notetaker",
+      scheduledStartAt: new Date("2026-10-12T10:00:00.000Z"),
+      dispatchedAt: options.dispatchedAt ?? new Date("2026-10-12T09:55:00.000Z"),
+      colleagueSharingDisclosed: options.disclosed ?? true,
+    });
+    if (options.withTranscript !== false) {
+      await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+    }
+    return session.id;
+  }
+
+  async function expectDenied(userId: number): Promise<void> {
+    const promise = service.resolveViewerRole({ bookingUid: BOOKING_UID, userId });
+    await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+    await expect(promise).rejects.toMatchObject({
+      code: ErrorCode.Forbidden,
+      message: NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE,
+    });
+  }
 
   function grant(): Promise<unknown> {
     return bookingNotetakerRepository.createSharingGrant({
@@ -119,21 +163,17 @@ describe("NotetakerAccessService", () => {
       await expect(promise).rejects.toMatchObject({ code: ErrorCode.Forbidden });
     });
 
-    it("rejects a team or organization admin with no relation to the booking, with or without a grant", async () => {
-      // The service has no membership dependency, so an admin is simply a user
-      // with no relation in the booking context.
-      store.addBooking(buildBooking());
+    it("rejects a team admin who is not a host while the mode is HOSTS_ONLY, with or without a grant", async () => {
+      store.addBooking(buildBooking({ teamId: TEAM_ID }));
       store.setVerifiedEmails(TEAM_ADMIN_ID, [TEAM_ADMIN_EMAIL]);
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: TEAM_ADMIN_ID, email: TEAM_ADMIN_EMAIL });
+      await addSession();
 
-      const withoutGrant = service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: TEAM_ADMIN_ID });
-      await expect(withoutGrant).rejects.toBeInstanceOf(ErrorWithCode);
-      await expect(withoutGrant).rejects.toMatchObject({ code: ErrorCode.Forbidden });
+      await expectDenied(TEAM_ADMIN_ID);
 
       await grant();
 
-      const withGrant = service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: TEAM_ADMIN_ID });
-      await expect(withGrant).rejects.toBeInstanceOf(ErrorWithCode);
-      await expect(withGrant).rejects.toMatchObject({ code: ErrorCode.Forbidden });
+      await expectDenied(TEAM_ADMIN_ID);
     });
 
     it("treats an attendee matched by primary email as ATTENDEE once a grant exists", async () => {
@@ -233,6 +273,260 @@ describe("NotetakerAccessService", () => {
 
       const attendee = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ATTENDEE_USER_ID });
       expect(attendee.role).toBe("ATTENDEE");
+    });
+  });
+
+  describe("shared viewer", () => {
+    describe("mode TEAM", () => {
+      beforeEach(() => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      });
+
+      it("treats an accepted team member as SHARED_VIEWER without a grant", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+        expect(result.booking.uid).toBe(BOOKING_UID);
+      });
+
+      it("rejects a member who was removed from the team", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+        const before = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+        expect(before.role).toBe("SHARED_VIEWER");
+
+        membershipLookup.removeMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a member whose invitation is not accepted", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID, accepted: false });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a member of the organization who is not in the team", async () => {
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a listed person who is not a team member", async () => {
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects when the session was not disclosed", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession({ disclosed: false });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects when no session has a transcript", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession({ withTranscript: false });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects when the booking has no session", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects when the results were deleted", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        const sessionId = await addSession();
+        await repositories.sessionRepository.update(sessionId, {
+          resultsDeletedAt: new Date("2026-10-12T12:00:00.000Z"),
+        });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("lets a later undisclosed transcript session hide an earlier disclosed one", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession({ dispatchedAt: new Date("2026-10-12T09:55:00.000Z") });
+        await addSession({ disclosed: false, dispatchedAt: new Date("2026-10-12T10:10:00.000Z") });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("ignores a later undisclosed session that has no transcript", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession({ dispatchedAt: new Date("2026-10-12T09:55:00.000Z") });
+        await addSession({
+          disclosed: false,
+          withTranscript: false,
+          dispatchedAt: new Date("2026-10-12T10:10:00.000Z"),
+        });
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+      });
+
+      it("keeps the organizer a HOST", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: ORGANIZER_ID });
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+
+        expect(result.role).toBe("HOST");
+      });
+
+      it("keeps a granted attendee an ATTENDEE even when they are a team member", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: ATTENDEE_USER_ID });
+        store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+        await addSession();
+        await grant();
+
+        const result = await service.resolveViewerRole({
+          bookingUid: BOOKING_UID,
+          userId: ATTENDEE_USER_ID,
+        });
+
+        expect(result.role).toBe("ATTENDEE");
+      });
+
+      it("treats an attendee without a grant who is a team member as SHARED_VIEWER", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: ATTENDEE_USER_ID });
+        store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+        await addSession();
+
+        const result = await service.resolveViewerRole({
+          bookingUid: BOOKING_UID,
+          userId: ATTENDEE_USER_ID,
+        });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+      });
+
+      it("treats a team member as SHARED_VIEWER when a grant exists for the attendees", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+        await grant();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+      });
+
+      it("refuses a shared viewer in assertHost with the host-only message", async () => {
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const promise = service.assertHost({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+        await expect(promise).rejects.toMatchObject({
+          code: ErrorCode.Forbidden,
+          message: "Only a host of this booking can perform this action",
+        });
+      });
+    });
+
+    describe("mode SELECTED_PEOPLE", () => {
+      it("treats a listed person accepted in the organization as SHARED_VIEWER", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+      });
+
+      it("checks the team when the event type has no organization", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: null }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID, STRANGER_ID]);
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+        await expectDenied(STRANGER_ID);
+      });
+
+      it("rejects a listed person who is only in the team when the event type has an organization", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a listed person who left the organization", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession();
+        membershipLookup.removeMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a team member who is not on the list", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [STRANGER_ID]);
+        membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a listed person when the session was not disclosed", async () => {
+        store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: ORGANIZATION_ID }));
+        store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: COLLEAGUE_ID });
+        await addSession({ disclosed: false });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+    });
+
+    it("rejects when the event type has no team, whatever the stored mode", async () => {
+      store.addBooking(buildBooking());
+      store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+      await addSession();
+
+      await expectDenied(COLLEAGUE_ID);
+
+      store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+
+      await expectDenied(COLLEAGUE_ID);
+    });
+
+    it("rejects when the booking has no event type", async () => {
+      store.addBooking(buildBooking({ eventTypeId: null, teamId: TEAM_ID }));
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
+      await addSession();
+
+      await expectDenied(COLLEAGUE_ID);
     });
   });
 

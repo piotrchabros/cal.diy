@@ -12,14 +12,18 @@ import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
-import type { INotetakerSessionRepository } from "../repositories/interfaces/INotetakerSessionRepository";
+import type {
+  INotetakerSessionRepository,
+  NotetakerSessionRecord,
+} from "../repositories/interfaces/INotetakerSessionRepository";
 import type { INotetakerSummaryRepository } from "../repositories/interfaces/INotetakerSummaryRepository";
 import type {
   INotetakerTranscriptRepository,
   NotetakerPassageRecord,
   NotetakerTranscriptRecord,
 } from "../repositories/interfaces/INotetakerTranscriptRepository";
-import type { NotetakerAccessService } from "./NotetakerAccessService";
+import type { NotetakerAccessService, NotetakerViewerRole } from "./NotetakerAccessService";
+import { NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE } from "./NotetakerAccessService";
 
 const DEFAULT_PASSAGE_LIMIT = 200;
 const MIN_PASSAGE_LIMIT = 1;
@@ -64,8 +68,13 @@ export class NotetakerResultsService {
   }): Promise<{ passages: NotetakerPassageDto[]; nextCursor: number | null }> {
     const { bookingUid, sessionId, userId } = params;
 
-    const { booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
-    const transcript = await this.resolveTranscript({ bookingId: booking.id, bookingUid, sessionId });
+    const { role, booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
+    const { session, transcript } = await this.resolveTranscript({
+      bookingId: booking.id,
+      bookingUid,
+      sessionId,
+    });
+    this.assertSessionReadable(role, session);
 
     const limit = Math.min(
       Math.max(params.limit ?? DEFAULT_PASSAGE_LIMIT, MIN_PASSAGE_LIMIT),
@@ -87,11 +96,18 @@ export class NotetakerResultsService {
     return { passages: page.map(toPassageDto), nextCursor };
   }
 
+  // The viewer role was resolved from the latest session with a transcript, so an explicit sessionId
+  // could point at an earlier session that was recorded without the colleague notice.
+  private assertSessionReadable(role: NotetakerViewerRole, session: NotetakerSessionRecord): void {
+    if (role !== "SHARED_VIEWER" || session.colleagueSharingDisclosed) return;
+    throw ErrorWithCode.Factory.Forbidden(NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE);
+  }
+
   private async resolveTranscript(params: {
     bookingId: number;
     bookingUid: string;
     sessionId?: string;
-  }): Promise<NotetakerTranscriptRecord> {
+  }): Promise<{ session: NotetakerSessionRecord; transcript: NotetakerTranscriptRecord }> {
     const { bookingId, bookingUid, sessionId } = params;
 
     if (sessionId) {
@@ -109,7 +125,7 @@ export class NotetakerResultsService {
       if (!transcript) {
         throw ErrorWithCode.Factory.NotFound(`Notetaker session ${sessionId} has no transcript`);
       }
-      return transcript;
+      return { session, transcript };
     }
 
     const latest = await this.deps.sessionRepository.findLatestWithTranscriptByBookingId(bookingId);
@@ -121,7 +137,7 @@ export class NotetakerResultsService {
         `Results of notetaker session ${latest.session.id} have been deleted`
       );
     }
-    return latest.transcript;
+    return { session: latest.session, transcript: latest.transcript };
   }
 
   async setSharing(params: {
@@ -239,7 +255,7 @@ export class NotetakerResultsService {
   }): Promise<NotetakerExportDto> {
     const { bookingUid, userId } = params;
 
-    const { booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
+    const { role, booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
 
     const latest = await this.deps.sessionRepository.findLatestWithTranscriptByBookingId(booking.id);
     if (!latest) {
@@ -250,6 +266,8 @@ export class NotetakerResultsService {
         `Results of notetaker session ${latest.session.id} have been deleted`
       );
     }
+
+    this.assertSessionReadable(role, latest.session);
 
     const passageRecords = await this.deps.transcriptRepository.findAllPassages(latest.transcript.id);
     const summaryRecord = await this.deps.summaryRepository.findByTranscriptId(latest.transcript.id);
