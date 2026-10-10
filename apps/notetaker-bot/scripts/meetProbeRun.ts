@@ -2,6 +2,7 @@
 // outcome it reports and what the leak check looks for. Pure, so they are tested without a meeting.
 
 import type { PlatformEvent } from "../src/platform/PlatformAdapter";
+import { sourceIdOfKey } from "./meetProbeHash";
 import { IN_CALL_SELECTOR_KEYS } from "./meetProbeRecorder";
 import type { LeakSecret } from "./meetProbeRedaction";
 import type {
@@ -28,6 +29,12 @@ const TERMINAL_OUTCOMES: Partial<Record<PlatformEvent["type"], ProbeOutcome>> = 
   connection_lost: "connection_lost",
 };
 
+// A shorter identifier also occurs as a count or a time in the report and would refuse a clean run.
+export const MIN_IDENTIFIER_SECRET_LENGTH = 8;
+
+const NAME_PARTICIPANT_PREFIX = "name:";
+const ALL_DIGITS = /^[0-9]+$/;
+
 export const PROBE_DISPLAY_NAME = "Notetaker diagnostic probe";
 
 export type ProbeRunState = {
@@ -46,6 +53,14 @@ export type ProbeSecretSources = {
   storageStateValue: string | undefined;
   redactNames: boolean;
   rawNames: readonly string[];
+  salt: string;
+  rawParticipantIds: readonly string[];
+  rawSourceIds: readonly string[];
+};
+
+export type ProbeRawIdentifiers = {
+  participantIds: string[];
+  sourceIds: string[];
 };
 
 export function toLogLine(line: string, tMs: number): RawAdapterLogLine | null {
@@ -99,6 +114,23 @@ export function collectRawNames(events: RawPlatformEvent[], samples: RawPageSamp
   return [...names];
 }
 
+// The ids the adapter emitted in its own platform events; the report must hold only their hashes.
+export function collectRawIdentifiers(events: RawPlatformEvent[]): ProbeRawIdentifiers {
+  const participantIds = new Set<string>();
+  const sourceIds = new Set<string>();
+
+  for (const { event } of events) {
+    if (event.type === "speaker" || event.type === "source_identity") {
+      if (!event.participantId.startsWith(NAME_PARTICIPANT_PREFIX)) participantIds.add(event.participantId);
+    }
+    if (event.type === "source_activity" || event.type === "source_identity") {
+      const sourceId = sourceIdOfKey(event.sourceKey);
+      if (sourceId !== null) sourceIds.add(sourceId);
+    }
+  }
+  return { participantIds: [...participantIds], sourceIds: [...sourceIds] };
+}
+
 export function meetingCodeOf(meetingUrl: string): string | null {
   return new URL(meetingUrl).pathname.split("/").filter(Boolean).at(-1) ?? null;
 }
@@ -120,6 +152,16 @@ export function buildSecrets(sources: ProbeSecretSources): LeakSecret[] {
     for (const name of sources.rawNames) {
       secrets.push({ label: "participant name", value: name, match: "token" });
     }
+  }
+  secrets.push({ label: "probe salt", value: sources.salt });
+  for (const id of sources.rawParticipantIds) {
+    if (id.length >= MIN_IDENTIFIER_SECRET_LENGTH) secrets.push({ label: "participant id", value: id });
+  }
+  for (const id of sources.rawSourceIds) {
+    if (id.length < MIN_IDENTIFIER_SECRET_LENGTH) continue;
+    // A number leaked only as a whole token; digits inside a longer number or a hash are not the id.
+    if (ALL_DIGITS.test(id)) secrets.push({ label: "audio source id", value: id, match: "token" });
+    else secrets.push({ label: "audio source id", value: id });
   }
   return secrets;
 }

@@ -377,7 +377,7 @@ After 60 seconds the probe leaves by itself. Watch the call window and note whet
 
 ### What the terminal prints
 
-At the end the probe prints a summary on standard output: a "Leave" block with one line per hypothesis L1 to L6 and a "Speakers" block with S1 to S7, each marked supported, excluded or inconclusive with one sentence of evidence, then the path of the file to send back. On standard error it prints how the run ended and that the report was written. The exit status is 0 when the window ran to its end, 130 when you ended it with Ctrl+C, and 1 for anything else (denied, removed, meeting ended, connection lost, not admitted in time, join failed, or a refusal to write).
+At the end the probe prints a summary on standard output: a "Leave" block with one line per hypothesis L1 to L6, a "Speakers" block with S1 to S7 and a "Speech measurement" block with Q1 to Q3, each marked supported, excluded or inconclusive with one sentence of evidence, then the path of the file to send back. On standard error it prints how the run ended and that the report was written. The exit status is 0 when the window ran to its end, 130 when you ended it with Ctrl+C, and 1 for anything else (denied, removed, meeting ended, connection lost, not admitted in time, join failed, or a refusal to write).
 
 ### What the file contains
 
@@ -388,17 +388,27 @@ At the end the probe prints a summary on standard output: a "Leave" block with o
 - A table of the name aliases and where each appeared.
 - The run's settings and facts: join mode, credential route (a word, not a value), Chrome channel and headless flag, platform, Node version, the meeting host (`meet.google.com`) and the start time.
 
-It does not contain audio, video, screenshots, recordings, cookies, storage state, credentials, the meeting URL or code, or chat text. Tiles are numbered `tile-1`, `tile-2` and so on, never by Meet's participant id.
+- `measurements`: the verdicts Q1 to Q3 with their counts (schemaVersion 2 of the report).
+
+It does not contain audio, video, screenshots, recordings, cookies, storage state, credentials, the meeting URL or code, or chat text. Tiles are numbered `tile-1`, `tile-2` and so on, never by Meet's participant id. Participant ids and audio sources (both the ones on the tiles and the ones the page's receivers report) are identified only by the first 16 hex characters of a salted SHA-256. The salt is random for each run and is never written, so a hash cannot be turned back into an id and files from two runs cannot be joined.
 
 ### Names and the limits of redaction
 
 With the default redaction, every word taken from the page is kept only if it is a generic Meet interface word; names become `Participant A`, `Participant B` and so on, the same alias each time, and the file still shows where each name appeared. This is a best effort, not a guarantee. A name that is also an ordinary interface word, or a string the probe did not recognise as a name, can survive; a word the probe does not recognise is replaced with `<x>` rather than kept. **Before you send the file, search it for each participant's name (first name, surname, nickname) and for the meeting code.** If one is there, remove it from the file or ask for it to be handled before sending.
 
-The probe checks its own output before writing: if it finds the meeting URL, the meeting code, the account email, the password, the storage state or (with redaction on) a raw participant name in the JSON, it prints which kind of item was found, writes nothing and exits with status 1. The file is deleted. Run it again; if it refuses again, send the author the kind of item it names, not the item.
+The probe checks its own output before writing: if it finds the meeting URL, the meeting code, the account email, the password, the storage state, the probe's salt, a raw participant id, a raw audio source id or (with redaction on) a raw participant name in the JSON, it prints which kind of item was found, writes nothing and exits with status 1. The file is deleted. Run it again; if it refuses again, send the author the kind of item it names, not the item.
 
 ### Sending the file back
 
 Send `meet-probe.json` to the developers by the same private route you use for the register. Add one line by hand: whether the probe's tile disappeared the moment it left. Do not send anything else from the call.
+
+### Two-minute speech measurement
+
+A second protocol uses the same probe to measure whether a tile's source id, a per-tile indicator or the source timestamps can tell who is speaking. It runs for 120 seconds with a fixed speaking schedule for two people, and it has not been run. The steps, the sentence to read to the participants and the results table are in section 11 of [speaker-attribution-spike.md](speaker-attribution-spike.md#11-two-minute-speech-measurement-meet-probe-research-a1). The command is:
+
+```bash
+yarn workspace @calcom/notetaker-bot meet-probe "<meeting-url>" --out /root/meet-probe-speech.json --duration 120
+```
 
 ### Limits
 

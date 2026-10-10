@@ -5,8 +5,9 @@
 //
 // Usage: yarn workspace @calcom/notetaker-bot meet-probe <meeting-url> --out <absolute-file> [options]
 // Joins a Google Meet through the bot's own adapter and launcher, watches the page, leaves, and writes one JSON
-// report (mode 0600) about the leave control and the speaker indicators. The meeting URL, credentials, chat and
-// audio never reach the report or the terminal.
+// report (mode 0600) about the leave control and the speaker indicators. The meeting URL, credentials, chat,
+// audio, participant ids and audio source ids (salted hashes only) never reach the report or the terminal.
+import { randomBytes } from "node:crypto";
 import {
   accessSync,
   closeSync,
@@ -61,6 +62,7 @@ import { buildProbeReport, formatSummary } from "./meetProbeReport";
 import {
   afterLeaveStep,
   buildSecrets,
+  collectRawIdentifiers,
   collectRawNames,
   PROBE_DISPLAY_NAME,
   resolveOutcome,
@@ -80,7 +82,7 @@ import type {
 } from "./meetProbeTypes";
 
 // The same bounds the payload decoder in meetProbePageScript.ts enforces.
-const PAGE_LIMITS: Omit<MeetProbePageOptions, "intervalMs"> = {
+const PAGE_LIMITS: Omit<MeetProbePageOptions, "intervalMs" | "salt"> = {
   maxLeaveControls: 32,
   maxTiles: 64,
   maxStringsPerTile: 64,
@@ -175,6 +177,8 @@ async function runProbe(
   facts: MeetProbePreflightFacts,
   fd: number
 ): Promise<number> {
+  // Never written or logged: discarding it is what keeps the hashes in the report from being reversed.
+  const salt = randomBytes(32).toString("hex");
   const state: RunState = { admitted: false, interrupted: false, terminal: null, leaveReturned: false };
   const admitted = createLatch();
   const ended = createLatch();
@@ -202,7 +206,7 @@ async function runProbe(
   const launcher = new ProbeBrowserLauncher({
     inner: new PlaywrightChromeLauncher({ logger }),
     recorder,
-    initScript: buildMeetProbeInitScript({ intervalMs: options.intervalMs, ...PAGE_LIMITS }),
+    initScript: buildMeetProbeInitScript({ intervalMs: options.intervalMs, salt, ...PAGE_LIMITS }),
     bindingName: PROBE_SAMPLE_BINDING,
     decodeSample: decodeProbeSamplePayload,
   });
@@ -362,9 +366,11 @@ async function runProbe(
     const report = buildProbeReport(raw, {
       redactNames: options.redactNames,
       sampleReceipts: snapshot.sampleReceipts,
+      salt,
     });
     const json = `${JSON.stringify(report, null, 2)}\n`;
 
+    const identifiers = collectRawIdentifiers(platformEvents);
     const leaks = findLeaks(
       json,
       buildSecrets({
@@ -377,6 +383,9 @@ async function runProbe(
           ...snapshot.samples,
           ...(snapshot.afterLeave?.samples ?? []),
         ]),
+        salt,
+        rawParticipantIds: identifiers.participantIds,
+        rawSourceIds: identifiers.sourceIds,
       })
     );
     if (leaks.length > 0) {
@@ -393,7 +402,7 @@ async function runProbe(
       return EXIT_FAILED;
     }
 
-    process.stdout.write(formatSummary(report.hypotheses, options.outFile));
+    process.stdout.write(formatSummary(report.hypotheses, options.outFile, report.measurements));
     process.stderr.write(outcomeMessage(outcome, true));
     process.stderr.write(reportWrittenMessage(options.outFile));
     return exitCodeForOutcome(outcome);

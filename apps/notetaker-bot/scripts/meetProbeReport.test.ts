@@ -2,19 +2,26 @@
 
 import { describe, expect, it } from "vitest";
 import type { PlatformEvent } from "../src/platform/PlatformAdapter";
+import { hashProbeValue } from "./meetProbeHash";
+import { findLeaks } from "./meetProbeRedaction";
 import {
   AUDIO_ACTIVE_LEVEL,
   buildProbeReport,
   evaluateHypotheses,
+  evaluateMeasurements,
   formatSummary,
   LEAVE_REGISTER_FAST_MS,
   MAX_MARKUP_STRING_LENGTH,
+  MAX_REPORTED_INDICATORS,
   MIN_AUDIO_ACTIVE_SAMPLES,
   type ProbeSampleReceipt,
 } from "./meetProbeReport";
+import { buildSecrets, collectRawIdentifiers } from "./meetProbeRun";
 import type {
   HypothesisId,
   HypothesisVerdict,
+  MeasurementId,
+  MeasurementVerdict,
   MeetSelectorKey,
   ProbeReport,
   RawAfterLeaveObservation,
@@ -62,11 +69,20 @@ const ALL_IDS: HypothesisId[] = [
   "S7",
 ];
 
-const source = (id: number, audioLevel: number | null, ageMs: number | null = 20): RawRtcSourceEntry => ({
-  source: id,
+const SALT = "ab".repeat(32);
+const pidHash = (participantId: string): string => hashProbeValue(SALT, "pid", participantId);
+const srcHash = (id: number | string): string => hashProbeValue(SALT, "src", String(id));
+
+const source = (
+  id: number,
+  audioLevel: number | null,
+  ageMs: number | null = 20,
+  timestampRaw: number | null = 1000
+): RawRtcSourceEntry => ({
+  sourceHash: srcHash(id),
   audioLevel,
   ageMs,
-  timestampRaw: 1000,
+  timestampRaw,
 });
 
 const rtc = (entries: RawRtcSourceEntry[], receivers = 1): RawPageSample["rtc"] => ({
@@ -92,8 +108,10 @@ const located = (
 ): RawLocatedString => ({ value, where, visible: true, isNotranslateSpan });
 
 const tile = (participantId: string, overrides: Partial<RawTileFacts> = {}): RawTileFacts => ({
-  participantId,
+  participantIdHash: pidHash(participantId),
+  sourceHashes: [],
   classTokens: ["oZRSLe"],
+  classTokenChanges: { added: [], removed: [] },
   strings: [],
   dataAttributeNames: ["data-participant-id"],
   ariaStates: {},
@@ -233,7 +251,7 @@ const build = (
   raw: RawProbeRun,
   redactNames = true,
   sampleReceipts: readonly ProbeSampleReceipt[] = []
-): ProbeReport => buildProbeReport(raw, { redactNames, sampleReceipts });
+): ProbeReport => buildProbeReport(raw, { redactNames, sampleReceipts, salt: SALT });
 
 const verdictOf = (raw: RawProbeRun, id: HypothesisId): HypothesisVerdict => {
   const verdict = build(raw).hypotheses.find((entry) => entry.id === id);
@@ -247,8 +265,8 @@ describe("buildProbeReport: shape", () => {
   it("carries the run facts and only the meeting host", () => {
     const report = build(rawRun());
 
-    expect(report.schemaVersion).toBe(1);
-    expect(report.tool).toEqual({ name: "meet-probe", version: 1 });
+    expect(report.schemaVersion).toBe(2);
+    expect(report.tool).toEqual({ name: "meet-probe", version: 2 });
     expect(report.run).toEqual({
       startedAt: "2030-01-01T10:00:00.000Z",
       durationSeconds: 60,
@@ -351,7 +369,7 @@ describe("buildProbeReport: shape", () => {
     expect(build(raw).platformEvents).toEqual([
       { tMs: 100, type: "admitted" },
       { tMs: 200, type: "participant_count", count: 3 },
-      { tMs: 300, type: "source_activity", sourceKey: "csrc:7", level: 0.5 },
+      { tMs: 300, type: "source_activity", sourceKey: `csrc:${srcHash(7)}`, level: 0.5 },
     ]);
   });
 
@@ -427,6 +445,135 @@ describe("buildProbeReport: tile keys", () => {
 
     for (const id of RAW_IDS) expect(json).not.toContain(id);
     expect(json).not.toContain('participantId":"spaces');
+  });
+});
+
+describe("buildProbeReport: hashed identifiers", () => {
+  const TILE_SSRC = "3141592653";
+  const RECEIVER_SOURCE = 2718281828;
+  const RAW_SOURCES = [String(RECEIVER_SOURCE), TILE_SSRC];
+  const idSample = (sequence: number): RawPageSample =>
+    sample(sequence, {
+      tiles: [tile(ZOFIA_ID, { sourceHashes: [srcHash(TILE_SSRC)] }), tile(BOGDAN_ID)],
+      rtc: rtc([source(RECEIVER_SOURCE, 0.4), source(Number(TILE_SSRC), 0.4)]),
+    });
+  const raw = rawRun({
+    samples: [idSample(1), idSample(2)],
+    platformEvents: [
+      event(300, { type: "source_activity", sourceKey: `csrc:${RECEIVER_SOURCE}`, level: 0.5 }),
+      event(400, { type: "source_activity", sourceKey: "weird-key", level: 0.5 }),
+      event(500, {
+        type: "source_identity",
+        sourceKey: `ssrc:${TILE_SSRC}`,
+        participantId: ZOFIA_ID,
+        name: ZOFIA,
+      }),
+    ],
+    leave: leave({
+      preLeave: { tMs: 60000, sweeps: [], sample: idSample(60) },
+      afterLeave: afterLeave({ samples: [idSample(61)] }),
+    }),
+  });
+
+  it.each([
+    true,
+    false,
+  ])("holds no raw id, source number, salt or name in the file (redactNames %s)", (redactNames) => {
+    const json = JSON.stringify(build(raw, redactNames));
+    const identifiers = collectRawIdentifiers(raw.platformEvents);
+    const secrets = buildSecrets({
+      meetingUrl: `https://meet.google.com/${MEETING_CODE}`,
+      accountEmail: null,
+      accountPassword: null,
+      storageStateValue: undefined,
+      redactNames,
+      rawNames: redactNames ? RAW_SECRETS : [],
+      salt: SALT,
+      rawParticipantIds: identifiers.participantIds,
+      rawSourceIds: identifiers.sourceIds,
+    });
+
+    for (const id of RAW_IDS) expect(json).not.toContain(id);
+    for (const number of RAW_SOURCES) expect(json).not.toContain(number);
+    expect(json).not.toContain(SALT);
+    expect(identifiers.participantIds).toContain(ZOFIA_ID);
+    expect(identifiers.sourceIds).toEqual(expect.arrayContaining(RAW_SOURCES));
+    expect(findLeaks(json, secrets)).toEqual([]);
+  });
+
+  it("hashes event source keys the way the receivers carry them", () => {
+    const report = build(raw);
+    const entry = report.samples[0]?.rtc.receivers[0]?.contributingSources[0];
+
+    expect(report.platformEvents.map((item) => item.sourceKey)).toEqual([
+      `csrc:${entry?.sourceHash}`,
+      `other:${srcHash("weird-key")}`,
+      `ssrc:${srcHash(TILE_SSRC)}`,
+    ]);
+  });
+
+  it("maps an event participant id equal to a tile's raw id to that tile", () => {
+    expect(build(raw).platformEvents[2]?.participantId).toBe("tile-1");
+  });
+
+  it("carries the hashes, the source hashes and the capped class token changes on tiles", () => {
+    const long = "x".repeat(MAX_MARKUP_STRING_LENGTH + 20);
+    const report = build(
+      rawRun({
+        samples: [
+          sample(1, {
+            tiles: [
+              tile(ZOFIA_ID, {
+                sourceHashes: [srcHash(1), srcHash(2)],
+                classTokenChanges: { added: ["on", long], removed: ["off"] },
+              }),
+            ],
+          }),
+        ],
+      })
+    );
+
+    expect(report.samples[0]?.tiles[0]).toMatchObject({
+      tileKey: "tile-1",
+      participantIdHash: pidHash(ZOFIA_ID),
+      sourceHashes: [srcHash(1), srcHash(2)],
+      classTokenChanges: { added: ["on", "x".repeat(MAX_MARKUP_STRING_LENGTH)], removed: ["off"] },
+    });
+  });
+
+  it("rebuilds rtc entries with exactly the report keys", () => {
+    const polluted = { ...source(7, 0.4), source: 7, extra: "x" };
+    const report = build(rawRun({ samples: [sample(1, { rtc: rtc([polluted]) })] }));
+    const entry = report.samples[0]?.rtc.receivers[0]?.contributingSources[0];
+
+    expect(Object.keys(entry ?? {}).sort()).toEqual(["ageMs", "audioLevel", "sourceHash", "timestampRaw"]);
+  });
+
+  it("states the hashing and clock limits", () => {
+    const limits = build(rawRun()).selectors.limits.join(" ");
+
+    expect(limits).toContain("salted SHA-256");
+    expect(limits).toContain("1000 ms");
+  });
+
+  it("throws rather than hash with a bad salt", () => {
+    expect(() =>
+      buildProbeReport(rawRun(), { redactNames: true, sampleReceipts: [], salt: "short" })
+    ).not.toThrow();
+    expect(() =>
+      buildProbeReport(
+        rawRun({
+          platformEvents: [
+            event(1, { type: "speaker", participantId: ZOFIA_ID, name: ZOFIA, speaking: true }),
+          ],
+        }),
+        {
+          redactNames: true,
+          sampleReceipts: [],
+          salt: "short",
+        }
+      )
+    ).toThrow(/salt/);
   });
 });
 
@@ -610,14 +757,14 @@ describe("buildProbeReport: redaction", () => {
       {
         tMs: 1600,
         type: "source_identity",
-        sourceKey: "csrc:7",
+        sourceKey: `csrc:${srcHash(7)}`,
         participantId: "tile-1",
         name: "Participant A",
       },
       {
         tMs: 1700,
         type: "source_identity",
-        sourceKey: "csrc:8",
+        sourceKey: `csrc:${srcHash(8)}`,
         participantId: "participant-1",
         name: "Participant B",
       },
@@ -1436,5 +1583,516 @@ describe("formatSummary", () => {
     for (const secret of RAW_SECRETS) expect(summary).not.toContain(secret);
     expect(summary).not.toContain("meet.google.com");
     expect(summary).not.toContain(MEETING_CODE);
+  });
+});
+
+describe("evaluateMeasurements", () => {
+  const A_SRC = 2718281828;
+  const B_SRC = 3141592653;
+  const LOUD = 0.4;
+
+  type Who = "A" | "B" | "none" | "both";
+
+  // Timestamps move with the sequence for a talking source, as a live receiver's do; a silent one keeps its last.
+  const entries = (sequence: number, who: Who): RawRtcSourceEntry[] => [
+    source(A_SRC, who === "A" || who === "both" ? LOUD : 0, 20, who === "A" || who === "both" ? sequence : 1),
+    source(B_SRC, who === "B" || who === "both" ? LOUD : 0, 20, who === "B" || who === "both" ? sequence : 1),
+  ];
+
+  const linkedTiles = (): RawTileFacts[] => [
+    tile(ZOFIA_ID, { sourceHashes: [srcHash(A_SRC)] }),
+    tile(BOGDAN_ID, { sourceHashes: [srcHash(B_SRC)] }),
+  ];
+
+  const turn = (
+    who: Who,
+    count: number,
+    from: number,
+    tiles: () => RawTileFacts[] = linkedTiles
+  ): RawPageSample[] =>
+    samples(count, (sequence) => ({ rtc: rtc(entries(sequence, who)), tiles: tiles() }), from);
+
+  const protocol = (): RawPageSample[] => [...turn("A", 3, 1), ...turn("B", 3, 4), ...turn("none", 3, 7)];
+
+  const measure = <Id extends MeasurementId>(
+    samplesList: RawPageSample[],
+    id: Id
+  ): Extract<MeasurementVerdict, { id: Id }> => {
+    const found = build(rawRun({ samples: samplesList })).measurements.find((entry) => entry.id === id);
+    if (!found) throw new Error(`Unable to read the measurement: ${id} is missing from the report`);
+    return found as Extract<MeasurementVerdict, { id: Id }>;
+  };
+
+  describe("Q1", () => {
+    it("is inconclusive without samples", () => {
+      const q1 = measure([], "Q1");
+
+      expect(q1.verdict).toBe("inconclusive");
+      expect(q1.evidence).toContain("no page samples");
+    });
+
+    it("is inconclusive when nobody verifiably spoke", () => {
+      const q1 = measure([...turn("A", 2, 1), ...turn("none", 4, 3)], "Q1");
+
+      expect(q1.verdict).toBe("inconclusive");
+      expect(q1.evidence).toContain("only 2 of 6 samples");
+    });
+
+    it("is inconclusive when speech came while no tile was there to compare with", () => {
+      const q1 = measure(
+        turn("A", 5, 1, () => []),
+        "Q1"
+      );
+
+      expect(q1.verdict).toBe("inconclusive");
+      expect(q1.counts.activeSamples).toBe(5);
+      expect(q1.counts.activeSamplesWithTiles).toBe(0);
+    });
+
+    it("is excluded when no tile carried a source", () => {
+      const q1 = measure(
+        [
+          ...turn("A", 3, 1, () => [tile(ZOFIA_ID), tile(BOGDAN_ID)]),
+          ...turn("B", 3, 4, () => [tile(ZOFIA_ID)]),
+        ],
+        "Q1"
+      );
+
+      expect(q1.verdict).toBe("excluded");
+      expect(q1.counts.tilesWithSource).toBe(0);
+    });
+
+    it("is excluded when tile sources never equal a receiver source", () => {
+      const q1 = measure(
+        turn("A", 6, 1, () => [tile(ZOFIA_ID, { sourceHashes: [srcHash(99)] }), tile(BOGDAN_ID)]),
+        "Q1"
+      );
+
+      expect(q1.verdict).toBe("excluded");
+      expect(q1.counts).toMatchObject({ tilesWithSource: 1, linkedTiles: 0 });
+      expect(q1.evidence).toContain("another format");
+    });
+
+    it("is supported with exact counts when two tiles are each the only active one", () => {
+      const q1 = measure(protocol(), "Q1");
+
+      expect(q1.verdict).toBe("supported");
+      expect(q1.counts).toEqual({
+        samples: 9,
+        activeSamples: 6,
+        activeSamplesWithTiles: 6,
+        tilesSeen: 2,
+        tilesWithSource: 2,
+        receiverSources: { csrc: 2, ssrc: 0 },
+        linkedTiles: 2,
+        matchedEntries: { csrc: 6, ssrc: 0 },
+        soloSamplesByTile: { "tile-1": 3, "tile-2": 3 },
+        tilesWithSoloSpeech: 2,
+        multiActiveSamples: 0,
+        unlinkedActiveSamples: 0,
+      });
+    });
+
+    it("matches through a synchronization source as well", () => {
+      const viaSsrc = (sequence: number, who: Who): RawPageSample["rtc"] => ({
+        peerConnectionCount: 1,
+        receivers: [
+          {
+            readyState: "live",
+            muted: false,
+            contributingSources: [],
+            synchronizationSources: entries(sequence, who),
+          },
+        ],
+      });
+      const q1 = measure(
+        [
+          ...samples(3, (sequence) => ({ rtc: viaSsrc(sequence, "A"), tiles: linkedTiles() })),
+          ...samples(3, (sequence) => ({ rtc: viaSsrc(sequence, "B"), tiles: linkedTiles() }), 4),
+        ],
+        "Q1"
+      );
+
+      expect(q1.verdict).toBe("supported");
+      expect(q1.counts.matchedEntries).toEqual({ csrc: 0, ssrc: 6 });
+      expect(q1.counts.receiverSources).toEqual({ csrc: 0, ssrc: 2 });
+    });
+
+    it("is inconclusive when only one tile was ever the single active one", () => {
+      const q1 = measure([...turn("A", 4, 1), ...turn("none", 3, 5)], "Q1");
+
+      expect(q1.verdict).toBe("inconclusive");
+      expect(q1.evidence).toContain("telling speakers apart was not tested");
+      expect(q1.counts.tilesWithSoloSpeech).toBe(1);
+    });
+
+    it("is inconclusive when a second tile has fewer than three solo samples", () => {
+      const q1 = measure([...turn("A", 4, 1), ...turn("B", 2, 5)], "Q1");
+
+      expect(q1.verdict).toBe("inconclusive");
+      expect(q1.evidence).toContain("fewer than 3 solo samples");
+    });
+
+    it("counts samples with several matching tiles and with speech but no matching tile", () => {
+      const q1 = measure(
+        [
+          ...turn("both", 3, 1),
+          ...turn("A", 3, 4, () => [tile(BOGDAN_ID, { sourceHashes: [srcHash(B_SRC)] })]),
+        ],
+        "Q1"
+      );
+
+      expect(q1.counts).toMatchObject({ multiActiveSamples: 3, unlinkedActiveSamples: 3 });
+    });
+
+    it("does not count a loud entry whose timestamp has not moved", () => {
+      const frozen = samples(6, () => ({
+        rtc: rtc([source(A_SRC, LOUD, 20, 5000), source(B_SRC, 0, 20, 1)]),
+        tiles: linkedTiles(),
+      }));
+      const q1 = measure(frozen, "Q1");
+
+      expect(q1.counts.activeSamples).toBe(1);
+      expect(q1.verdict).toBe("inconclusive");
+    });
+
+    it("counts two elements with one tile key once", () => {
+      const q1 = measure(
+        turn("A", 6, 1, () => [
+          tile(ZOFIA_ID, { sourceHashes: [srcHash(A_SRC)] }),
+          tile(ZOFIA_ID, { sourceHashes: [srcHash(A_SRC)] }),
+        ]),
+        "Q1"
+      );
+
+      expect(q1.counts).toMatchObject({
+        tilesSeen: 1,
+        tilesWithSource: 1,
+        soloSamplesByTile: { "tile-1": 6 },
+      });
+    });
+  });
+
+  describe("Q2", () => {
+    const withTiles = (
+      speaking: (sequence: number) => boolean,
+      shape: (active: boolean, sequence: number) => Partial<RawTileFacts>,
+      count = 8
+    ): RawPageSample[] =>
+      samples(count, (sequence) => {
+        const active = speaking(sequence);
+        return {
+          rtc: rtc([source(A_SRC, active ? LOUD : 0, 20, active ? sequence : 1)]),
+          tiles: [tile(ZOFIA_ID, shape(active, sequence))],
+        };
+      });
+    const firstHalf = (sequence: number): boolean => sequence <= 4;
+
+    it("is inconclusive without samples", () => {
+      expect(measure([], "Q2").verdict).toBe("inconclusive");
+    });
+
+    it("is inconclusive with too few quiet or too few speech samples", () => {
+      const fewQuiet = measure(
+        withTiles(
+          (sequence) => sequence <= 6,
+          () => ({}),
+          8
+        ),
+        "Q2"
+      );
+      const fewSpeech = measure(
+        withTiles(
+          (sequence) => sequence <= 2,
+          () => ({}),
+          8
+        ),
+        "Q2"
+      );
+
+      expect(fewQuiet.verdict).toBe("inconclusive");
+      expect(fewQuiet.counts.quietSamplesWithTiles).toBe(2);
+      expect(fewSpeech.verdict).toBe("inconclusive");
+      expect(fewSpeech.counts.activeSamplesWithTiles).toBe(2);
+    });
+
+    it("is supported by a class token that toggles with speech", () => {
+      const q2 = measure(
+        withTiles(firstHalf, (active) => ({
+          classTokenChanges: { added: active ? ["lit"] : [], removed: [] },
+        })),
+        "Q2"
+      );
+
+      expect(q2.verdict).toBe("supported");
+      expect(q2.counts.indicators[0]).toEqual({
+        name: "class:lit",
+        kind: "class",
+        measure: "toggle",
+        speech: 4,
+        silence: 0,
+        speechRate: 1,
+        silenceRate: 0,
+        tiles: 1,
+      });
+      expect(q2.evidence).toContain("class:lit");
+    });
+
+    it("reads a toggled class token from the class mutation too", () => {
+      const q2 = measure(
+        withTiles(firstHalf, (active) => ({
+          mutations: active ? [{ attribute: "class", count: 1, toggledClassTokens: ["flash"] }] : [],
+        })),
+        "Q2"
+      );
+
+      expect(q2.counts.indicators.map((item) => item.name)).toContain("class:flash");
+    });
+
+    it("is supported by an attribute that changes with speech", () => {
+      const q2 = measure(
+        withTiles(firstHalf, (active) => ({
+          mutations: active ? [{ attribute: "style", count: 3, toggledClassTokens: [] }] : [],
+        })),
+        "Q2"
+      );
+
+      expect(q2.verdict).toBe("supported");
+      expect(q2.counts.indicators[0]).toMatchObject({
+        name: "attr:style",
+        kind: "attribute",
+        measure: "toggle",
+      });
+    });
+
+    it("is supported by presence alone when toggles fall at the edges of a turn", () => {
+      const q2 = measure(
+        withTiles(firstHalf, (active, sequence) => ({
+          classTokens: active ? ["oZRSLe", "on"] : ["oZRSLe"],
+          classTokenChanges: { added: sequence === 1 ? ["on"] : [], removed: sequence === 5 ? ["on"] : [] },
+        })),
+        "Q2"
+      );
+
+      expect(q2.verdict).toBe("supported");
+      const presence = q2.counts.indicators.find((item) => item.measure === "presence");
+      expect(presence).toMatchObject({
+        name: "class:on",
+        speech: 4,
+        silence: 0,
+        speechRate: 1,
+        silenceRate: 0,
+      });
+      expect(q2.counts.indicators.find((item) => item.measure === "toggle")).toBeUndefined();
+    });
+
+    it("is excluded when the tokens change as often in silence as in speech", () => {
+      const q2 = measure(
+        withTiles(firstHalf, () => ({
+          classTokens: ["oZRSLe", "busy"],
+          classTokenChanges: { added: ["busy"], removed: [] },
+          mutations: [{ attribute: "style", count: 1, toggledClassTokens: [] }],
+        })),
+        "Q2"
+      );
+
+      expect(q2.verdict).toBe("excluded");
+      expect(q2.counts.qualifying).toBe(0);
+      expect(q2.counts.candidates).toBe(3);
+      expect(q2.evidence).toContain("4 samples with speech and 4 quiet samples");
+    });
+
+    it("sorts the indicators and keeps at most five", () => {
+      const tokens = ["t7", "t6", "t5", "t4", "t3", "t2", "t1"];
+      const q2 = measure(
+        withTiles(firstHalf, (active) => ({ classTokens: active ? ["oZRSLe", ...tokens] : ["oZRSLe"] })),
+        "Q2"
+      );
+
+      expect(q2.counts.qualifying).toBe(7);
+      expect(q2.counts.indicators).toHaveLength(MAX_REPORTED_INDICATORS);
+      expect(q2.counts.indicators.map((item) => item.name)).toEqual([
+        "class:t1",
+        "class:t2",
+        "class:t3",
+        "class:t4",
+        "class:t5",
+      ]);
+    });
+
+    it("ranks an indicator seen on more tiles first", () => {
+      const q2 = measure(
+        samples(8, (sequence) => {
+          const active = firstHalf(sequence);
+          return {
+            rtc: rtc([source(A_SRC, active ? LOUD : 0, 20, active ? sequence : 1)]),
+            tiles: [
+              tile(ZOFIA_ID, { classTokens: active ? ["zzz", "aaa"] : [] }),
+              tile(BOGDAN_ID, { classTokens: active ? ["zzz"] : [] }),
+            ],
+          };
+        }),
+        "Q2"
+      );
+
+      expect(q2.counts.indicators.map((item) => [item.name, item.tiles])).toEqual([
+        ["class:zzz", 2],
+        ["class:aaa", 1],
+      ]);
+    });
+
+    it("caps the indicator names", () => {
+      const long = "x".repeat(MAX_MARKUP_STRING_LENGTH + 30);
+      const q2 = measure(
+        withTiles(firstHalf, (active) => ({ classTokens: active ? [long] : [] })),
+        "Q2"
+      );
+
+      expect(q2.counts.indicators[0]?.name).toHaveLength(MAX_MARKUP_STRING_LENGTH);
+    });
+  });
+
+  describe("Q3", () => {
+    const aged = (count: number, ageMs: (sequence: number) => number | null): RawPageSample[] =>
+      samples(count, (sequence) => ({ rtc: rtc([source(A_SRC, LOUD, ageMs(sequence), sequence)]) }));
+
+    it("is inconclusive without samples", () => {
+      expect(measure([], "Q3").verdict).toBe("inconclusive");
+    });
+
+    it("is supported when ages stay within the tolerance", () => {
+      const q3 = measure(
+        aged(6, () => 40),
+        "Q3"
+      );
+
+      expect(q3.verdict).toBe("supported");
+      expect(q3.counts).toEqual({
+        entriesWithTimestamp: 6,
+        judgedEntries: 6,
+        withinTolerance: 6,
+        outsideTolerance: 0,
+        medianAgeMs: 40,
+        minAgeMs: 40,
+        maxAgeMs: 40,
+      });
+    });
+
+    it("is excluded when ages sit on another clock", () => {
+      const q3 = measure(
+        aged(6, () => 1.7e12),
+        "Q3"
+      );
+
+      expect(q3.verdict).toBe("excluded");
+      expect(q3.counts.withinTolerance).toBe(0);
+      expect(q3.evidence).toContain("median age");
+    });
+
+    it("is excluded when every age is missing", () => {
+      const q3 = measure(
+        aged(6, () => null),
+        "Q3"
+      );
+
+      expect(q3.verdict).toBe("excluded");
+      expect(q3.counts).toMatchObject({
+        judgedEntries: 6,
+        outsideTolerance: 6,
+        medianAgeMs: null,
+        minAgeMs: null,
+      });
+    });
+
+    it("is inconclusive when the ages are mixed", () => {
+      const q3 = measure(
+        aged(10, (sequence) => (sequence % 2 === 0 ? 40 : 5000)),
+        "Q3"
+      );
+
+      expect(q3.verdict).toBe("inconclusive");
+      expect(q3.counts).toMatchObject({ withinTolerance: 5, outsideTolerance: 5 });
+    });
+
+    it("is inconclusive with fewer than three judged entries", () => {
+      expect(
+        measure(
+          aged(2, () => 40),
+          "Q3"
+        ).verdict
+      ).toBe("inconclusive");
+    });
+
+    it("does not judge stale entries", () => {
+      const stale = samples(6, () => ({ rtc: rtc([source(A_SRC, LOUD, 40, 5000)]) }));
+      const q3 = measure(stale, "Q3");
+
+      expect(q3.counts).toMatchObject({ entriesWithTimestamp: 6, judgedEntries: 1 });
+      expect(q3.verdict).toBe("inconclusive");
+    });
+  });
+
+  it("always returns Q1, Q2 and Q3 in order, and the report carries them", () => {
+    const report = build(rawRun({ samples: protocol() }));
+
+    expect(evaluateMeasurements([]).map((entry) => entry.id)).toEqual(["Q1", "Q2", "Q3"]);
+    expect(report.measurements.map((entry) => entry.id)).toEqual(["Q1", "Q2", "Q3"]);
+    expect(report.measurements).toEqual(evaluateMeasurements(report.samples));
+  });
+
+  it("judges observation samples only", () => {
+    const report = build(
+      rawRun({
+        samples: [],
+        leave: leave({
+          preLeave: { tMs: 60000, sweeps: [], sample: sample(60, { rtc: rtc(entries(60, "A")) }) },
+          afterLeave: afterLeave({ samples: turn("A", 5, 61) }),
+        }),
+      })
+    );
+
+    expect(report.measurements.find((entry) => entry.id === "Q3")?.counts).toMatchObject({
+      judgedEntries: 0,
+    });
+  });
+
+  it("changes nothing in the hypothesis verdicts", () => {
+    expect(build(rawRun({ samples: protocol() })).hypotheses.map((entry) => entry.id)).toEqual(ALL_IDS);
+  });
+});
+
+describe("formatSummary: speech measurement", () => {
+  const hypotheses: HypothesisVerdict[] = ALL_IDS.map((id) => ({
+    id,
+    verdict: "inconclusive",
+    evidence: `Evidence for ${id}.`,
+  }));
+
+  it("prints exactly what it printed before when there are no measurements", () => {
+    const plain = formatSummary(hypotheses, "/out.json");
+
+    expect(formatSummary(hypotheses, "/out.json", [])).toBe(plain);
+    expect(plain).not.toContain("Speech measurement");
+  });
+
+  it("adds a Speech measurement block after the Speakers block", () => {
+    const report = build(rawRun());
+    const lines = formatSummary(hypotheses, "/out.json", report.measurements).split("\n");
+    const start = lines.indexOf("Speech measurement");
+
+    expect(start).toBe(lines.indexOf("Speakers") + 9);
+    expect(lines[start - 1]).toBe("");
+    expect(lines.slice(start + 1, start + 4).map((line) => line.trim().slice(0, 2))).toEqual([
+      "Q1",
+      "Q2",
+      "Q3",
+    ]);
+    expect(lines[start + 1]).toMatch(
+      /^ {2}Q1 {2}inconclusive {2}tile source equals a receiver source that rises with speech: /
+    );
+    expect(lines[start + 2]).toContain("a per-tile indicator follows speech");
+    expect(lines[start + 3]).toContain("source timestamps are on the page clock");
+    expect(lines[start + 4]).toBe("");
+    expect(lines[start + 5]).toBe("File to send back: /out.json");
   });
 });
