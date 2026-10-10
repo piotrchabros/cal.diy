@@ -190,13 +190,17 @@ export class NotetakerChoiceService {
       this.deps.bookingNotetakerRepository.findSharingGrant(booking.id),
     ]);
 
+    const isSharedViewer = role === "SHARED_VIEWER";
+    // A colleague reads the session the results came from; a later session may have no notice or results.
+    const stateSession = isSharedViewer ? (latestWithTranscript?.session ?? null) : latestSession;
+
     const choice = this.getEffectiveChoice(booking);
     const eligibility = this.resolveEligibility(booking, featureEnabled, now);
     const isHost = role === "HOST";
 
     const displayedStatus = getDisplayedStatus({
-      choice,
-      latestSessionStatus: latestSession?.status ?? null,
+      choice: isSharedViewer ? null : choice,
+      latestSessionStatus: stateSession?.status ?? null,
     });
     // "Enabled, not pending, no session" is unreachable by invariant; shown as SCHEDULED rather than as off.
     const status = displayedStatus ?? (choice?.enabled ? "SCHEDULED" : null);
@@ -206,6 +210,10 @@ export class NotetakerChoiceService {
         ? latestWithTranscript.transcript
         : null;
     const summary = transcript ? await this.deps.summaryRepository.findByTranscriptId(transcript.id) : null;
+
+    if (isSharedViewer && transcript && stateSession) {
+      await this.recordFirstSharedView({ bookingId: booking.id, sessionId: stateSession.id, userId });
+    }
 
     let choiceDto: NotetakerStateDto["choice"] = null;
     if (isHost && choice) {
@@ -234,10 +242,10 @@ export class NotetakerChoiceService {
         (choice?.enabled === true || eligibility.eligible),
       canStop: isHost && latestSession !== null && STOPPABLE_SESSION_STATUSES.includes(latestSession.status),
       isRecurring: booking.recurringEventId !== null,
-      session: latestSession ? toSessionDto(latestSession) : null,
+      session: stateSession ? toSessionDto(stateSession) : null,
       transcript: transcript ? toTranscriptDto(transcript) : null,
       summary: summary ? toNotetakerSummaryDto(summary) : null,
-      sharedWithAttendees: sharingGrant !== null,
+      sharedWithAttendees: !isSharedViewer && sharingGrant !== null,
     };
   }
 
@@ -486,6 +494,33 @@ export class NotetakerChoiceService {
     });
 
     await this.createActivity({ bookingId, action: "DISABLED", userId, actorName });
+  }
+
+  // Awaited and not swallowed: a view that cannot be recorded is not served. Two concurrent first
+  // views may write two rows; the activity feed collapses them.
+  private async recordFirstSharedView(params: {
+    bookingId: number;
+    sessionId: string;
+    userId: number;
+  }): Promise<void> {
+    const { bookingId, sessionId, userId } = params;
+
+    const alreadyViewed = await this.deps.activityRepository.existsByBookingIdAndActionAndActorUserId({
+      bookingId,
+      action: "SHARED_VIEWED",
+      actorUserId: userId,
+    });
+    if (alreadyViewed) return;
+
+    await this.deps.activityRepository.create({
+      bookingId,
+      sessionId,
+      action: "SHARED_VIEWED",
+      actorType: "USER",
+      actorUserId: userId,
+      actorName: await this.findUserName(userId),
+      detail: null,
+    });
   }
 
   private async createActivity(params: {

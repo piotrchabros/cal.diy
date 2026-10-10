@@ -12,10 +12,12 @@ import { getNotetakerTasker } from "../di/tasker/NotetakerTasker.container";
 import type { NotetakerFakeScenario } from "../lib/config";
 import { getNotetakerConfig } from "../lib/config";
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
+import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
 import { NotetakerAccessService } from "../services/NotetakerAccessService";
 import { NotetakerDispatchService } from "../services/NotetakerDispatchService";
+import { InMemoryNotetakerMembershipLookup } from "./InMemoryNotetakerMembershipLookup";
 
 const DEFAULT_STARTS_IN_MS = 60_000;
 const DEFAULT_DURATION_MS = 30 * 60_000;
@@ -30,6 +32,19 @@ const silentLogger: ISimpleLogger = {
   info() {},
   warn() {},
 };
+
+function buildAccessService(
+  bookingNotetakerRepository: PrismaBookingNotetakerRepository,
+  sessionRepository: PrismaNotetakerSessionRepository
+): NotetakerAccessService {
+  return new NotetakerAccessService({
+    bookingNotetakerRepository,
+    sessionRepository,
+    eventTypeNotetakerSettingsRepository: new PrismaEventTypeNotetakerSettingsRepository(prisma),
+    // No shared viewer takes part in the quickstart flows, so nobody is a member.
+    membershipLookup: new InMemoryNotetakerMembershipLookup(),
+  });
+}
 
 function assertQuickstartEnvironment(): void {
   // The default DATABASE_URL of this checkout is a live site's database and the harness writes rows.
@@ -126,7 +141,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
   const bookingNotetakerRepository = new PrismaBookingNotetakerRepository(prisma);
   const sessionRepository = new PrismaNotetakerSessionRepository(prisma);
   const activityRepository = new PrismaNotetakerActivityRepository(prisma);
-  const accessService = new NotetakerAccessService({ bookingNotetakerRepository });
+  const accessService = buildAccessService(bookingNotetakerRepository, sessionRepository);
   const userRepository = new UserRepository(prisma);
   // Stock limits whatever NOTETAKER_* the developer's environment holds. apps/web augments
   // ProcessEnv with required keys, so a bare literal is rejected there: start from the real

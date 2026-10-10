@@ -22,6 +22,7 @@ import type {
   NotetakerSummaryGeneratorInput,
   NotetakerSummaryResult,
 } from "../summary/INotetakerSummaryGenerator";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
@@ -198,6 +199,9 @@ describe("NotetakerSummaryService", () => {
     service = new NotetakerSummaryService({
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+        sessionRepository: repositories.sessionRepository,
+        eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+        membershipLookup: new InMemoryNotetakerMembershipLookup(),
       }),
       sessionRepository: repositories.sessionRepository,
       transcriptRepository: repositories.transcriptRepository,

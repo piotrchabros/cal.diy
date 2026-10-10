@@ -5,8 +5,10 @@ import { createNotetakerBotGatewayError } from "../bot/INotetakerBotGateway";
 import { getNotetakerConfig } from "../lib/config";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
+import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import { NotetakerAccessService } from "./NotetakerAccessService";
 import { NotetakerDispatchService } from "./NotetakerDispatchService";
 
@@ -22,6 +24,7 @@ const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const bookingNotetakerRepository = new PrismaBookingNotetakerRepository(prisma);
 const sessionRepository = new PrismaNotetakerSessionRepository(prisma);
 const activityRepository = new PrismaNotetakerActivityRepository(prisma);
+const eventTypeNotetakerSettingsRepository = new PrismaEventTypeNotetakerSettingsRepository(prisma);
 
 let userId: number | undefined;
 let bookingId: number | undefined;
@@ -71,7 +74,12 @@ function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
     botGatewayResolver: { resolve: () => binding },
     config: getNotetakerConfig(defaultsOnlyEnv),
     logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
-    accessService: new NotetakerAccessService({ bookingNotetakerRepository }),
+    accessService: new NotetakerAccessService({
+      bookingNotetakerRepository,
+      sessionRepository,
+      eventTypeNotetakerSettingsRepository,
+      membershipLookup: new InMemoryNotetakerMembershipLookup(),
+    }),
     userRepository: { findByIds: async () => [] },
     notetakerTasker: stubTasker,
     calendarInviteService: { ensureBotInvited: async () => "NOT_CONFIGURED" },

@@ -9,6 +9,7 @@ import type {
 } from "@calcom/features/notetaker/lib/tasker/types";
 import { NotetakerAccessService } from "@calcom/features/notetaker/services/NotetakerAccessService";
 import { NotetakerChoiceService } from "@calcom/features/notetaker/services/NotetakerChoiceService";
+import { InMemoryNotetakerMembershipLookup } from "@calcom/features/notetaker/tests/InMemoryNotetakerMembershipLookup";
 import { createInMemoryNotetakerRepositories } from "@calcom/features/notetaker/tests/InMemoryNotetakerRepositories";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
@@ -90,6 +91,9 @@ describe("notetakerDisclosureHandler", () => {
       activityRepository: repositories.activityRepository,
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+        sessionRepository: repositories.sessionRepository,
+        eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+        membershipLookup: new InMemoryNotetakerMembershipLookup(),
       }),
       featuresRepository: { checkIfUserHasFeature: async () => true },
       userRepository: { findByIds: async () => [] },

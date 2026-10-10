@@ -18,6 +18,7 @@ import type {
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed, InMemoryEventTypeSeed } from "../tests/InMemoryNotetakerRepositories";
 import {
   createInMemoryNotetakerRepositories,
@@ -157,6 +158,7 @@ describe("NotetakerChoiceService", () => {
   let tasker: RecordingNotetakerTasker;
   let logger: ReturnType<typeof createLogger>;
   let service: NotetakerChoiceService;
+  let membershipLookup: InMemoryNotetakerMembershipLookup;
 
   function buildService(
     config: NotetakerConfig = buildConfig(),
@@ -172,7 +174,12 @@ describe("NotetakerChoiceService", () => {
       transcriptRepository: repositories.transcriptRepository,
       summaryRepository: repositories.summaryRepository,
       activityRepository: repositories.activityRepository,
-      accessService: new NotetakerAccessService({ bookingNotetakerRepository }),
+      accessService: new NotetakerAccessService({
+        bookingNotetakerRepository,
+        sessionRepository: repositories.sessionRepository,
+        eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+        membershipLookup,
+      }),
       featuresRepository: { checkIfUserHasFeature },
       userRepository,
       notetakerTasker: tasker,
@@ -353,6 +360,7 @@ describe("NotetakerChoiceService", () => {
     checkIfUserHasFeature.mockResolvedValue(true);
     users = [userRecord(ORGANIZER_ID, "Organizer"), userRecord(CO_HOST_ID, "Co Host")];
     repositories = createInMemoryNotetakerRepositories();
+    membershipLookup = new InMemoryNotetakerMembershipLookup();
     tasker = new RecordingNotetakerTasker();
     logger = createLogger();
     service = buildService();
@@ -2330,6 +2338,131 @@ describe("NotetakerChoiceService", () => {
       if (emails) repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, emails);
 
       const error = await captureError(getState(ATTENDEE_USER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+    });
+  });
+
+  describe("getState for a shared viewer", () => {
+    const TEAM_ID = 50;
+    const VIEWER_ID = 7;
+
+    async function seedTeamShared(): Promise<{ resultsSessionId: string; transcriptId: string }> {
+      repositories.store.addBooking(buildBooking({ teamId: TEAM_ID, organizationId: null }));
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: VIEWER_ID });
+      await enable();
+      const session = await repositories.sessionRepository.create({
+        bookingId: BOOKING_ID,
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET_LINK,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: new Date("2026-10-12T10:00:00.000Z"),
+        status: "READY",
+        colleagueSharingDisclosed: true,
+      });
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.summaryRepository.upsertPending(transcript.id);
+      checkIfUserHasFeature.mockReset();
+      checkIfUserHasFeature.mockResolvedValue(false);
+      return { resultsSessionId: session.id, transcriptId: transcript.id };
+    }
+
+    function sharedViewedActivities() {
+      return repositories.store.activities.filter((activity) => activity.action === "SHARED_VIEWED");
+    }
+
+    it("returns a read-only state built from the results session", async () => {
+      const { resultsSessionId, transcriptId } = await seedTeamShared();
+
+      const state = await getState(VIEWER_ID);
+
+      expect(state.viewerRole).toBe("SHARED_VIEWER");
+      expect(state.featureEnabled).toBe(true);
+      expect(state.choice).toBeNull();
+      expect(state.canToggle).toBe(false);
+      expect(state.canStop).toBe(false);
+      expect(state.sharedWithAttendees).toBe(false);
+      expect(state.session?.id).toBe(resultsSessionId);
+      expect(state.transcript?.id).toBe(transcriptId);
+      expect(state.summary?.status).toBe("PENDING");
+      expect(checkIfUserHasFeature).not.toHaveBeenCalled();
+    });
+
+    it("takes session and status from the results session when a later session exists", async () => {
+      const { resultsSessionId } = await seedTeamShared();
+      const later = await createSession("TRANSCRIBING");
+
+      const state = await getState(VIEWER_ID);
+
+      expect(later.id).not.toBe(resultsSessionId);
+      expect(state.session?.id).toBe(resultsSessionId);
+      expect(state.status).toBe("READY");
+    });
+
+    it("records one SHARED_VIEWED activity on the first call and none on later calls", async () => {
+      const { resultsSessionId } = await seedTeamShared();
+
+      await getState(VIEWER_ID);
+      await getState(VIEWER_ID);
+
+      expect(sharedViewedActivities()).toHaveLength(1);
+      expect(sharedViewedActivities()[0]).toMatchObject({
+        bookingId: BOOKING_ID,
+        sessionId: resultsSessionId,
+        actorType: "USER",
+        actorUserId: VIEWER_ID,
+        detail: null,
+      });
+    });
+
+    it("records a first view per viewer", async () => {
+      await seedTeamShared();
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: 8 });
+
+      await getState(VIEWER_ID);
+      await getState(8);
+
+      expect(sharedViewedActivities()).toHaveLength(2);
+    });
+
+    it("records no view for the host", async () => {
+      await seedTeamShared();
+
+      await getState(ORGANIZER_ID);
+
+      expect(sharedViewedActivities()).toHaveLength(0);
+    });
+
+    it("records no view for a granted attendee", async () => {
+      await seedTeamShared();
+      await repositories.bookingNotetakerRepository.createSharingGrant({
+        bookingId: BOOKING_ID,
+        grantedByUserId: ORGANIZER_ID,
+      });
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      const state = await getState(ATTENDEE_USER_ID);
+
+      expect(state.viewerRole).toBe("ATTENDEE");
+      expect(sharedViewedActivities()).toHaveLength(0);
+    });
+
+    it("refuses setEnabled for a shared viewer", async () => {
+      await seedTeamShared();
+
+      const error = await captureError(
+        service.setEnabled({
+          bookingUid: BOOKING_UID,
+          enabled: false,
+          scope: "THIS_BOOKING",
+          userId: VIEWER_ID,
+        })
+      );
 
       expect(error.code).toBe(ErrorCode.Forbidden);
     });
