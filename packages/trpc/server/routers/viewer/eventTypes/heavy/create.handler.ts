@@ -1,6 +1,7 @@
 import { getDefaultLocations } from "@calcom/app-store/_utils/getDefaultLocations";
 import { DailyLocationType } from "@calcom/app-store/constants";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -9,13 +10,6 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import type { TrpcSessionUser } from "../../../../types";
 import type { TCreateInputSchema } from "./create.schema";
-
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
-}
 
 type EventTypeLocation = z.infer<typeof eventTypeLocations>[number];
 
@@ -57,18 +51,7 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
   const isManagedEventType = schedulingType === SchedulingType.MANAGED;
   const isOrgAdmin = !!ctx.user?.organization?.isOrgAdmin;
 
-  const permissionService = new PermissionCheckService();
-  // Check if user has organization-level eventType.create permission (equivalent to org admin for event types)
-  let hasOrgEventTypeCreatePermission = isOrgAdmin; // Default fallback
-
-  if (ctx.user.organizationId) {
-    hasOrgEventTypeCreatePermission = await permissionService.checkPermission({
-      userId,
-      teamId: ctx.user.organizationId,
-      permission: "eventType.create",
-      fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
-    });
-  }
+  const hasOrgEventTypeCreatePermission = isOrgAdmin;
 
   const locations: EventTypeLocation[] =
     inputLocations && inputLocations.length !== 0 ? inputLocations : await getDefaultLocations(ctx.user);
@@ -103,17 +86,17 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
   if (teamId && schedulingType) {
     const isSystemAdmin = ctx.user.role === "ADMIN";
 
-    // Only check for team-level permissions - this will also check for membership
-    const hasCreatePermission = await permissionService.checkPermission({
+    const membership = await new MembershipRepository(ctx.prisma).findUniqueByUserIdAndTeamId({
       userId,
       teamId,
-      permission: "eventType.create",
-      fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
     });
+    const isAcceptedMember = !!membership?.accepted;
+    const isTeamAdminOrOwner =
+      isAcceptedMember &&
+      (membership?.role === MembershipRole.ADMIN || membership?.role === MembershipRole.OWNER);
 
-    if (!isSystemAdmin && !hasOrgEventTypeCreatePermission && !hasCreatePermission) {
-      // If none of the above conditions are met, the user is unauthorized.
-      // which means the user is not admin of the team nor the org.
+    // Org admin is deliberately not a bypass here: it would grant access to any teamId, not only teams of that org
+    if (!isSystemAdmin && !isTeamAdminOrOwner) {
       console.warn(`User ${userId} does not have eventType.create permission for team ${teamId}`);
       throw new TRPCError({ code: "UNAUTHORIZED" });
     }
@@ -124,6 +107,15 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
       },
     };
     data.schedulingType = schedulingType;
+
+    const isHostedSchedulingType =
+      schedulingType === SchedulingType.COLLECTIVE || schedulingType === SchedulingType.ROUND_ROBIN;
+    // Without a host the event type cannot be booked; hosts must be accepted members, so a system admin from outside the team gets none
+    if (isHostedSchedulingType && isAcceptedMember) {
+      data.hosts = {
+        create: [{ userId, isFixed: schedulingType === SchedulingType.COLLECTIVE, priority: 2, weight: 100 }],
+      };
+    }
   }
 
   // If we are in an organization & they don't have org-level eventType.create permission & they are not creating an event on a teamID
