@@ -8,10 +8,15 @@ function colleaguesLine(
   t: ReturnType<typeof useLocale>["t"]
 ): string | null {
   if (colleagues === null) return null;
-  if (colleagues.route === "TEAM") return t("notetaker_access_team", { teamName: colleagues.teamName });
+  if (colleagues.route === "TEAM")
+    return t("notetaker_access_team", {
+      teamName: colleagues.teamName,
+      interpolation: { escapeValue: false },
+    });
   if (colleagues.people.length === 0) return t("notetaker_access_selected_people_none");
   return t("notetaker_access_selected_people", {
     names: colleagues.people.map((person) => person.name).join(", "),
+    interpolation: { escapeValue: false },
   });
 }
 

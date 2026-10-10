@@ -84,7 +84,9 @@ describe("NotetakerSharedResultsList", () => {
     expect(row.getAttribute("href")).toBe("/booking/booking-1/notetaker");
     expect(row.textContent).toContain("Weekly sync");
     expect(row.textContent).toContain("Sync");
-    expect(row.textContent).toContain('notetaker_shared_with_me_host:{"name":"Alice"}');
+    expect(row.textContent).toContain(
+      'notetaker_shared_with_me_host:{"name":"Alice","interpolation":{"escapeValue":false}}'
+    );
     expect(row.textContent).toContain(
       new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(
         new Date("2026-03-04T10:15:00.000Z")
@@ -110,7 +112,9 @@ describe("NotetakerSharedResultsList", () => {
     );
 
     const rows = screen.getAllByTestId(ROW_ID);
-    expect(rows[0]?.textContent).toContain('notetaker_shared_with_me_route_team:{"teamName":"Team A"}');
+    expect(rows[0]?.textContent).toContain(
+      'notetaker_shared_with_me_route_team:{"teamName":"Team A","interpolation":{"escapeValue":false}}'
+    );
     expect(rows[1]?.textContent).toContain("notetaker_shared_with_me_route_selected_people");
   });
 

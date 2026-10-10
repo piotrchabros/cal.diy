@@ -132,7 +132,10 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
                     <button
                       type="button"
                       className="text-sm text-subtle hover:text-emphasis"
-                      aria-label={t("notetaker_sharing_remove_person", { name })}
+                      aria-label={t("notetaker_sharing_remove_person", {
+                        name,
+                        interpolation: { escapeValue: false },
+                      })}
                       onClick={() =>
                         update({ people: current.people.filter((p) => p.userId !== person.userId) })
                       }>
@@ -202,7 +205,11 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
       {formattedSetAt ? (
         <p className="mt-4 text-sm text-subtle" data-testid="notetaker-sharing-set-by">
           {data.setByName
-            ? t("notetaker_sharing_set_by", { name: data.setByName, date: formattedSetAt })
+            ? t("notetaker_sharing_set_by", {
+                name: data.setByName,
+                date: formattedSetAt,
+                interpolation: { escapeValue: false },
+              })
             : t("notetaker_sharing_set_at", { date: formattedSetAt })}
         </p>
       ) : null}

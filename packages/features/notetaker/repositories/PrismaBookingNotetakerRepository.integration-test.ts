@@ -1,8 +1,16 @@
 import { prisma } from "@calcom/prisma";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import { PrismaBookingNotetakerRepository } from "./PrismaBookingNotetakerRepository";
 
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// The default DATABASE_URL of this checkout is a live site's database, so the file runs only
+// against the scratch database.
+const RUNS_ON_ISOLATED_DATABASE: boolean = isQuickstartIsolatedDatabase();
+
+const SUITE = "PrismaBookingNotetakerRepository (integration)";
+const SHARING_SUITE = "PrismaBookingNotetakerRepository sharing (integration)";
 
 const SEEDED_AT = new Date("2029-12-01T00:00:00.000Z");
 const ENABLED_AT = new Date("2029-12-02T00:00:00.000Z");
@@ -127,7 +135,11 @@ function shareConcurrently(id: number, grantedByUserIds: (number | null)[]): Pro
   );
 }
 
-describe("PrismaBookingNotetakerRepository (integration)", () => {
+describe.runIf(!RUNS_ON_ISOLATED_DATABASE)(`${SUITE}: not run`, () => {
+  it.skip(QUICKSTART_SKIP_MESSAGE, () => {});
+});
+
+describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
       data: {
@@ -670,6 +682,520 @@ describe("PrismaBookingNotetakerRepository (integration)", () => {
 
     it("returns an empty list for an unknown user", async () => {
       expect(await repository.findVerifiedEmailsByUserId(UNKNOWN_USER_ID)).toEqual([]);
+    });
+  });
+});
+
+describe.runIf(!RUNS_ON_ISOLATED_DATABASE)(`${SHARING_SUITE}: not run`, () => {
+  it.skip(QUICKSTART_SKIP_MESSAGE, () => {});
+});
+
+describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
+  const prefix = "notetaker-sharing-it-";
+  const ORGANIZER_NAME = `Sharing Organizer ${runId}`;
+
+  let organizerId: number | undefined;
+  let otherOrganizerId: number | undefined;
+  let organizationId: number | undefined;
+  let subTeamId: number | undefined;
+  let standaloneTeamId: number | undefined;
+  let subTeamEventTypeId: number | undefined;
+  let standaloneEventTypeId: number | undefined;
+  let otherEventTypeId: number | undefined;
+  let personalEventTypeId: number | undefined;
+  let uidCounter = 0;
+  const bookingIds: number[] = [];
+
+  function required(value: number | undefined, label: string): number {
+    if (value === undefined) {
+      throw new Error(`Test setup did not complete: ${label} is missing`);
+    }
+    return value;
+  }
+
+  function ownEventTypeIds(): number[] {
+    return [subTeamEventTypeId, standaloneEventTypeId, otherEventTypeId, personalEventTypeId].filter(
+      (id): id is number => id !== undefined
+    );
+  }
+
+  async function createTeam(
+    slug: string,
+    name: string,
+    extra: { isOrganization?: boolean; parentId?: number }
+  ) {
+    const team = await prisma.team.create({
+      data: { name, slug: `${prefix}${runId}-${slug}`, ...extra },
+      select: { id: true },
+    });
+    return team.id;
+  }
+
+  async function createEventType(slug: string, extra: { teamId?: number; userId?: number }) {
+    const eventType = await prisma.eventType.create({
+      data: { title: `Sharing ${slug}`, slug: `${prefix}${runId}-${slug}`, length: 30, ...extra },
+      select: { id: true },
+    });
+    return eventType.id;
+  }
+
+  async function createBooking(params: { eventTypeId: number | null; startTime: Date }): Promise<number> {
+    uidCounter += 1;
+    const booking = await prisma.booking.create({
+      data: {
+        uid: `${prefix}${runId}-${uidCounter}`,
+        title: "Notetaker sharing integration test",
+        startTime: params.startTime,
+        endTime: new Date(params.startTime.getTime() + 30 * 60 * 1000),
+        userId: required(organizerId, "organizer id"),
+        eventTypeId: params.eventTypeId,
+      },
+      select: { id: true },
+    });
+    bookingIds.push(booking.id);
+    return booking.id;
+  }
+
+  async function createSession(params: {
+    bookingId: number;
+    startTime: Date;
+    disclosed: boolean;
+    withTranscript: boolean;
+    dispatchedAt?: Date;
+    resultsDeletedAt?: Date;
+    summaryStatus?: "PENDING" | "READY";
+  }): Promise<string> {
+    const session = await prisma.notetakerSession.create({
+      data: {
+        bookingId: params.bookingId,
+        platform: "GOOGLE_MEET",
+        meetingUrl: "https://meet.google.com/abc-defg-hij",
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: params.startTime,
+        dispatchedAt: params.dispatchedAt,
+        colleagueSharingDisclosed: params.disclosed,
+        resultsDeletedAt: params.resultsDeletedAt,
+      },
+      select: { id: true },
+    });
+    if (params.withTranscript) {
+      const transcript = await prisma.notetakerTranscript.create({
+        data: { sessionId: session.id, bookingId: params.bookingId },
+        select: { id: true },
+      });
+      if (params.summaryStatus !== undefined) {
+        await prisma.notetakerSummary.create({
+          data: { transcriptId: transcript.id, status: params.summaryStatus },
+          select: { id: true },
+        });
+      }
+    }
+    return session.id;
+  }
+
+  // A booking with one session, the usual shape of a listed result.
+  async function createBookingWithSession(params: {
+    eventTypeId: number | null;
+    startTime: Date;
+    disclosed: boolean;
+    withTranscript: boolean;
+    dispatchedAt?: Date;
+    resultsDeletedAt?: Date;
+    summaryStatus?: "PENDING" | "READY";
+  }): Promise<number> {
+    const id = await createBooking({ eventTypeId: params.eventTypeId, startTime: params.startTime });
+    await createSession({ ...params, bookingId: id });
+    return id;
+  }
+
+  function setSharingMode(eventTypeId: number, sharingMode: "TEAM" | "SELECTED_PEOPLE" | "HOSTS_ONLY") {
+    return prisma.eventTypeNotetakerSettings.create({
+      data: { eventTypeId, sharingMode },
+      select: { eventTypeId: true },
+    });
+  }
+
+  beforeAll(async () => {
+    const organizer = await prisma.user.create({
+      data: {
+        email: `${prefix}${runId}-organizer@example.com`,
+        username: `${prefix}${runId}-organizer`,
+        name: ORGANIZER_NAME,
+      },
+      select: { id: true },
+    });
+    organizerId = organizer.id;
+    const otherOrganizer = await prisma.user.create({
+      data: {
+        email: `${prefix}${runId}-other@example.com`,
+        username: `${prefix}${runId}-other`,
+      },
+      select: { id: true },
+    });
+    otherOrganizerId = otherOrganizer.id;
+
+    organizationId = await createTeam("org", `Sharing Org ${runId}`, { isOrganization: true });
+    subTeamId = await createTeam("sub", `Sharing Sub ${runId}`, { parentId: organizationId });
+    standaloneTeamId = await createTeam("standalone", `Sharing Standalone ${runId}`, {});
+
+    subTeamEventTypeId = await createEventType("sub", { teamId: subTeamId });
+    standaloneEventTypeId = await createEventType("standalone", { teamId: standaloneTeamId });
+    otherEventTypeId = await createEventType("other", { teamId: standaloneTeamId });
+    personalEventTypeId = await createEventType("personal", { userId: organizer.id });
+  });
+
+  afterEach(async () => {
+    // Prisma treats `where: { id: undefined }` as no filter, so every delete needs an explicit guard
+    // to avoid wiping a real database when setup failed before the id was assigned.
+    const eventTypeIds = ownEventTypeIds();
+    if (eventTypeIds.length > 0) {
+      await prisma.eventTypeNotetakerSettings.deleteMany({ where: { eventTypeId: { in: eventTypeIds } } });
+    }
+    // Deleting the booking cascades to its sessions, transcripts, summaries and attendees.
+    if (bookingIds.length > 0) {
+      await prisma.booking.deleteMany({ where: { id: { in: bookingIds } } });
+    }
+    bookingIds.length = 0;
+  });
+
+  afterAll(async () => {
+    const eventTypeIds = ownEventTypeIds();
+    if (eventTypeIds.length > 0) {
+      await prisma.eventType.deleteMany({ where: { id: { in: eventTypeIds } } });
+    }
+    if (subTeamId !== undefined) {
+      await prisma.team.deleteMany({ where: { id: subTeamId } });
+    }
+    if (standaloneTeamId !== undefined) {
+      await prisma.team.deleteMany({ where: { id: standaloneTeamId } });
+    }
+    if (organizationId !== undefined) {
+      await prisma.team.deleteMany({ where: { id: organizationId } });
+    }
+    const userIds = [organizerId, otherOrganizerId].filter((id): id is number => id !== undefined);
+    if (userIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    }
+  });
+
+  describe("booking context", () => {
+    const startTime = new Date("2030-04-01T10:00:00.000Z");
+
+    it("reports the team, the organization and the stored sharing mode of a sub-team event type", async () => {
+      await setSharingMode(required(subTeamEventTypeId, "sub-team event type id"), "TEAM");
+      const id = await createBooking({ eventTypeId: required(subTeamEventTypeId, "event type"), startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: subTeamId,
+          teamName: `Sharing Sub ${runId}`,
+          organizationId,
+          sharingMode: "TEAM",
+        })
+      );
+    });
+
+    it("defaults to HOSTS_ONLY for a team event type without a settings row", async () => {
+      const id = await createBooking({
+        eventTypeId: required(standaloneEventTypeId, "event type"),
+        startTime,
+      });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context?.sharingMode).toBe("HOSTS_ONLY");
+      expect(context?.teamId).toBe(standaloneTeamId);
+      expect(context?.organizationId).toBeNull();
+    });
+
+    it("reports SELECTED_PEOPLE when the settings row says so", async () => {
+      await setSharingMode(required(standaloneEventTypeId, "event type"), "SELECTED_PEOPLE");
+      const id = await createBooking({
+        eventTypeId: required(standaloneEventTypeId, "event type"),
+        startTime,
+      });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context?.sharingMode).toBe("SELECTED_PEOPLE");
+    });
+
+    it("reports no team and HOSTS_ONLY for a personal event type", async () => {
+      const id = await createBooking({ eventTypeId: required(personalEventTypeId, "event type"), startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: null,
+          teamName: null,
+          organizationId: null,
+          sharingMode: "HOSTS_ONLY",
+        })
+      );
+    });
+
+    it("reports no team and HOSTS_ONLY for a booking without an event type", async () => {
+      const id = await createBooking({ eventTypeId: null, startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: null,
+          teamName: null,
+          organizationId: null,
+          sharingMode: "HOSTS_ONLY",
+        })
+      );
+    });
+
+    it("returns the same four fields when the booking is looked up by uid", async () => {
+      await setSharingMode(required(subTeamEventTypeId, "sub-team event type id"), "TEAM");
+      const id = await createBooking({ eventTypeId: required(subTeamEventTypeId, "event type"), startTime });
+      const byId = await repository.findByBookingIdIncludeBooking(id);
+      if (!byId) throw new Error("Booking context was not found by id");
+
+      const byUid = await repository.findByBookingUidIncludeBooking(byId.uid);
+
+      expect(byUid).toEqual(
+        expect.objectContaining({
+          teamId: byId.teamId,
+          teamName: byId.teamName,
+          organizationId: byId.organizationId,
+          sharingMode: byId.sharingMode,
+        })
+      );
+      expect(byUid?.sharingMode).toBe("TEAM");
+    });
+  });
+
+  describe("findByEventTypeIdsIncludeResultsSession", () => {
+    const early = new Date("2030-05-01T10:00:00.000Z");
+    const middle = new Date("2030-05-02T10:00:00.000Z");
+    const late = new Date("2030-05-03T10:00:00.000Z");
+
+    // Four listed bookings, two of them at the same start time, newest first with ties broken by id.
+    async function createListedBookings(): Promise<number[]> {
+      const eventTypeId = required(standaloneEventTypeId, "event type");
+      const ids: number[] = [];
+      for (const startTime of [early, middle, middle, late]) {
+        ids.push(
+          await createBookingWithSession({ eventTypeId, startTime, disclosed: true, withTranscript: true })
+        );
+      }
+      const [first, secondMiddle, thirdMiddle, last] = ids;
+      if (
+        first === undefined ||
+        secondMiddle === undefined ||
+        thirdMiddle === undefined ||
+        last === undefined
+      ) {
+        throw new Error("Listed bookings were not created");
+      }
+      return [last, Math.max(secondMiddle, thirdMiddle), Math.min(secondMiddle, thirdMiddle), first];
+    }
+
+    it("returns an empty list for no event types", async () => {
+      expect(
+        await repository.findByEventTypeIdsIncludeResultsSession({
+          eventTypeIds: [],
+          cursor: null,
+          limit: 10,
+        })
+      ).toEqual([]);
+    });
+
+    it("lists only bookings with a disclosed session that has a transcript, of the asked event types", async () => {
+      const standaloneId = required(standaloneEventTypeId, "event type");
+      const otherId = required(otherEventTypeId, "other event type");
+      const listed = await createBookingWithSession({
+        eventTypeId: standaloneId,
+        startTime: early,
+        disclosed: true,
+        withTranscript: true,
+      });
+      await createBookingWithSession({
+        eventTypeId: standaloneId,
+        startTime: middle,
+        disclosed: true,
+        withTranscript: false,
+      });
+      await createBookingWithSession({
+        eventTypeId: standaloneId,
+        startTime: late,
+        disclosed: false,
+        withTranscript: true,
+      });
+      const ofOtherEventType = await createBookingWithSession({
+        eventTypeId: otherId,
+        startTime: early,
+        disclosed: true,
+        withTranscript: true,
+      });
+
+      const onlyStandalone = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds: [standaloneId],
+        cursor: null,
+        limit: 10,
+      });
+      const both = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds: [standaloneId, otherId],
+        cursor: null,
+        limit: 10,
+      });
+
+      expect(onlyStandalone.map((row) => row.bookingId)).toEqual([listed]);
+      expect(both.map((row) => row.bookingId).sort((a, b) => a - b)).toEqual(
+        [listed, ofOtherEventType].sort((a, b) => a - b)
+      );
+    });
+
+    it("orders by start time then id, both descending, and honours the limit", async () => {
+      const expected = await createListedBookings();
+      const eventTypeIds = [required(standaloneEventTypeId, "event type")];
+
+      const all = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds,
+        cursor: null,
+        limit: 10,
+      });
+      const limited = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds,
+        cursor: null,
+        limit: 3,
+      });
+
+      expect(all.map((row) => row.bookingId)).toEqual(expected);
+      expect(limited.map((row) => row.bookingId)).toEqual(expected.slice(0, 3));
+    });
+
+    it("pages with a cursor without overlap or gap, including a row that shares the cursor start time", async () => {
+      const expected = await createListedBookings();
+      const eventTypeIds = [required(standaloneEventTypeId, "event type")];
+
+      const pageOne = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds,
+        cursor: null,
+        limit: 2,
+      });
+      const lastOfPageOne = pageOne[pageOne.length - 1];
+      if (!lastOfPageOne) throw new Error("The first page is empty");
+      const pageTwo = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds,
+        cursor: { startTime: lastOfPageOne.startTime, id: lastOfPageOne.bookingId },
+        limit: 2,
+      });
+
+      expect(pageOne.map((row) => row.bookingId)).toEqual(expected.slice(0, 2));
+      expect(pageTwo.map((row) => row.bookingId)).toEqual(expected.slice(2));
+    });
+
+    it("returns the booking fields, the attendees and the results session", async () => {
+      const eventTypeId = required(standaloneEventTypeId, "event type");
+      const withoutSummary = await createBookingWithSession({
+        eventTypeId,
+        startTime: early,
+        disclosed: true,
+        withTranscript: true,
+      });
+      const withSummary = await createBookingWithSession({
+        eventTypeId,
+        startTime: late,
+        disclosed: true,
+        withTranscript: true,
+        summaryStatus: "READY",
+      });
+      for (const email of [`a-${runId}@example.com`, `b-${runId}@example.com`]) {
+        await prisma.attendee.create({
+          data: { bookingId: withoutSummary, email, name: "Attendee", timeZone: "UTC" },
+          select: { id: true },
+        });
+      }
+
+      const rows = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds: [eventTypeId],
+        cursor: null,
+        limit: 10,
+      });
+
+      const plain = rows.find((row) => row.bookingId === withoutSummary);
+      const summarized = rows.find((row) => row.bookingId === withSummary);
+      const stored = await prisma.booking.findUnique({
+        where: { id: withoutSummary },
+        select: { uid: true, title: true },
+      });
+      expect(plain).toEqual({
+        bookingId: withoutSummary,
+        bookingUid: stored?.uid,
+        title: stored?.title,
+        startTime: early,
+        eventTypeId,
+        organizerUserId: organizerId,
+        organizerName: ORGANIZER_NAME,
+        attendeeEmails: expect.arrayContaining([`a-${runId}@example.com`, `b-${runId}@example.com`]),
+        resultsSession: {
+          id: expect.any(String),
+          colleagueSharingDisclosed: true,
+          resultsDeletedAt: null,
+          summaryStatus: null,
+        },
+      });
+      expect(plain?.attendeeEmails).toHaveLength(2);
+      expect(summarized?.resultsSession?.summaryStatus).toBe("READY");
+    });
+
+    it("returns resultsDeletedAt of the session", async () => {
+      const deletedAt = new Date("2030-05-10T00:00:00.000Z");
+      const id = await createBookingWithSession({
+        eventTypeId: required(standaloneEventTypeId, "event type"),
+        startTime: early,
+        disclosed: true,
+        withTranscript: true,
+        resultsDeletedAt: deletedAt,
+      });
+
+      const rows = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds: [required(standaloneEventTypeId, "event type")],
+        cursor: null,
+        limit: 10,
+      });
+
+      expect(rows.find((row) => row.bookingId === id)?.resultsSession?.resultsDeletedAt).toEqual(deletedAt);
+    });
+
+    it("shows the newest session with a transcript even when only an older one is disclosed", async () => {
+      const id = await createBooking({
+        eventTypeId: required(standaloneEventTypeId, "event type"),
+        startTime: early,
+      });
+      await createSession({
+        bookingId: id,
+        startTime: early,
+        disclosed: true,
+        withTranscript: true,
+        dispatchedAt: new Date("2030-05-01T09:00:00.000Z"),
+      });
+      const newerSessionId = await createSession({
+        bookingId: id,
+        startTime: early,
+        disclosed: false,
+        withTranscript: true,
+        dispatchedAt: new Date("2030-05-01T09:30:00.000Z"),
+      });
+
+      const rows = await repository.findByEventTypeIdsIncludeResultsSession({
+        eventTypeIds: [required(standaloneEventTypeId, "event type")],
+        cursor: null,
+        limit: 10,
+      });
+
+      const row = rows.find((candidate) => candidate.bookingId === id);
+      expect(row?.resultsSession?.id).toBe(newerSessionId);
+      expect(row?.resultsSession?.colleagueSharingDisclosed).toBe(false);
     });
   });
 });
