@@ -3,6 +3,7 @@
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { SkeletonText } from "@calcom/ui/components/skeleton";
+import { NotetakerAccessSummary } from "@calcom/web/modules/notetaker/components/NotetakerAccessSummary";
 import { NotetakerActivityList } from "@calcom/web/modules/notetaker/components/NotetakerActivityList";
 import { NotetakerResultsActions } from "@calcom/web/modules/notetaker/components/NotetakerResultsActions";
 import { NotetakerStatusBadge } from "@calcom/web/modules/notetaker/components/NotetakerStatusBadge";
@@ -113,6 +114,7 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
           )}
         </>
       )}
+      {state.viewerRole === "HOST" && state.access && <NotetakerAccessSummary access={state.access} />}
       {state.viewerRole === "HOST" && <NotetakerActivityList bookingUid={bookingUid} />}
     </div>
   );

@@ -485,6 +485,36 @@ describe("NotetakerBookingSection for an attendee", () => {
   });
 });
 
+describe("NotetakerBookingSection for a shared viewer", () => {
+  it("shows the status and the transcript link only", () => {
+    renderSection(
+      buildState({
+        viewerRole: "SHARED_VIEWER",
+        status: "READY",
+        canToggle: false,
+        canStop: false,
+        session: buildSession({ status: "READY", outcomeReason: null }),
+        transcript: TRANSCRIPT,
+      })
+    );
+
+    expect(screen.getAllByTestId("notetaker-status-badge")).toHaveLength(1);
+    expect(screen.getByTestId("notetaker-view-transcript")).toHaveAttribute(
+      "href",
+      `/booking/${BOOKING_UID}/notetaker`
+    );
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-stop-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-results-deleted")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the feature is disabled", () => {
+    renderSection(buildState({ viewerRole: "SHARED_VIEWER", featureEnabled: false, transcript: TRANSCRIPT }));
+
+    expect(screen.queryByTestId("notetaker-booking-section")).not.toBeInTheDocument();
+  });
+});
+
 describe("NotetakerBookingSection after the results were deleted", () => {
   it("shows a host the deleted line last in the section and no transcript link", () => {
     renderSection(

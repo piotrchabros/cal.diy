@@ -62,6 +62,27 @@ describe("NotetakerResultsActions", () => {
     expect(screen.queryByTestId("dialog-confirmation")).not.toBeInTheDocument();
   });
 
+  it("shows only the export action and a notice to a shared viewer", () => {
+    renderActions({ viewerRole: "SHARED_VIEWER", sharedWithAttendees: false, sessionStatus: "READY" });
+
+    expect(screen.getByTestId("notetaker-export-button")).toBeInTheDocument();
+    expect(screen.getByTestId("notetaker-shared-viewer-notice")).toHaveTextContent(
+      "notetaker_shared_viewer_notice"
+    );
+    expect(screen.queryByTestId("notetaker-share-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-delete-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dialog-confirmation")).not.toBeInTheDocument();
+  });
+
+  it("shows no shared viewer notice to a host or an attendee", () => {
+    const { unmount } = renderActions();
+    expect(screen.queryByTestId("notetaker-shared-viewer-notice")).not.toBeInTheDocument();
+    unmount();
+
+    renderActions({ viewerRole: "ATTENDEE" });
+    expect(screen.queryByTestId("notetaker-shared-viewer-notice")).not.toBeInTheDocument();
+  });
+
   it("offers to share when the results are not shared", () => {
     renderActions({ sharedWithAttendees: false });
 

@@ -1,7 +1,7 @@
 import { localeOptions } from "@calcom/lib/i18n";
 import { trpc } from "@calcom/trpc/react";
 import { NotetakerEventTypeDefault } from "@calcom/web/modules/notetaker/components/NotetakerEventTypeDefault";
-
+import { NotetakerEventTypeSharing } from "@calcom/web/modules/notetaker/components/NotetakerEventTypeSharing";
 import type { EventAdvancedBaseProps } from "./EventAdvancedTab";
 import { EventAdvancedTab } from "./EventAdvancedTab";
 
@@ -20,6 +20,9 @@ const EventAdvancedWebWrapper = ({ ...props }: EventAdvancedBaseProps) => {
       verifiedEmails={verifiedEmails}
       localeOptions={localeOptions}
       notetakerDefaultSetting={<NotetakerEventTypeDefault eventTypeId={props.eventType.id} />}
+      notetakerSharingSetting={
+        props.team ? <NotetakerEventTypeSharing eventTypeId={props.eventType.id} /> : undefined
+      }
     />
   );
 };

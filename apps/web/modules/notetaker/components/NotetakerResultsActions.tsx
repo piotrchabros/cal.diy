@@ -39,6 +39,11 @@ export function NotetakerResultsActions({
           {t("notetaker_export")}
         </Button>
       </div>
+      {viewerRole === "SHARED_VIEWER" && (
+        <p className="text-subtle text-xs" data-testid="notetaker-shared-viewer-notice">
+          {t("notetaker_shared_viewer_notice")}
+        </p>
+      )}
       {isHost && (
         <>
           <div className="flex">

@@ -11,7 +11,14 @@ import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
-import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
+import type {
+  IEventTypeNotetakerSettingsRepository,
+  NotetakerSharingChangeRecord,
+} from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type {
+  INotetakerActivityRepository,
+  NotetakerActivityRecord,
+} from "../repositories/interfaces/INotetakerActivityRepository";
 import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
@@ -42,6 +49,70 @@ function toPassageDto(passage: NotetakerPassageRecord): NotetakerPassageDto {
   };
 }
 
+type ActivityEntry = { createdAt: Date; activity: NotetakerActivityDto };
+
+// Mapped field by field so bookingId, sessionId and actorUserId never reach a client.
+function toActivityEntry(row: NotetakerActivityRecord): ActivityEntry {
+  return {
+    createdAt: row.createdAt,
+    activity: {
+      id: row.id,
+      action: row.action,
+      actorType: row.actorType,
+      actorName: row.actorName,
+      createdAt: row.createdAt.toISOString(),
+      detail: row.detail,
+    },
+  };
+}
+
+function toSharingChangeEntry(change: NotetakerSharingChangeRecord): ActivityEntry {
+  let action: NotetakerActivityDto["action"] = "SHARING_PEOPLE_CHANGED";
+  if (change.previousMode !== change.newMode) action = "SHARING_MODE_CHANGED";
+
+  return {
+    createdAt: change.createdAt,
+    activity: {
+      // Prefixed because the row lives in another table than the stored activity.
+      id: `sharing-change:${change.id}`,
+      action,
+      actorType: "USER",
+      actorName: change.actorName,
+      createdAt: change.createdAt.toISOString(),
+      detail: {
+        previousMode: change.previousMode,
+        newMode: change.newMode,
+        addedUserNames: change.addedUserNames,
+        removedUserNames: change.removedUserNames,
+      },
+    },
+  };
+}
+
+// Two concurrent first views can each store a row, because no unique index guards the check.
+function dropRepeatedFirstViews(rows: NotetakerActivityRecord[]): NotetakerActivityRecord[] {
+  const seenViewerIds = new Set<number>();
+  const kept: NotetakerActivityRecord[] = [];
+  // Rows arrive newest first, so walking backwards meets the earliest view of each viewer first.
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.action === "SHARED_VIEWED" && row.actorUserId !== null) {
+      if (seenViewerIds.has(row.actorUserId)) continue;
+      seenViewerIds.add(row.actorUserId);
+    }
+    kept.push(row);
+  }
+  return kept.reverse();
+}
+
+function compareNewestFirst(a: ActivityEntry, b: ActivityEntry): number {
+  const byCreatedAt = b.createdAt.getTime() - a.createdAt.getTime();
+  if (byCreatedAt !== 0) return byCreatedAt;
+  if (a.activity.id < b.activity.id) return 1;
+  if (a.activity.id > b.activity.id) return -1;
+  return 0;
+}
+
 export const NOTETAKER_ACTIVITY_LIMIT = 200;
 
 export interface INotetakerResultsServiceDeps {
@@ -51,6 +122,10 @@ export interface INotetakerResultsServiceDeps {
   transcriptRepository: INotetakerTranscriptRepository;
   summaryRepository: INotetakerSummaryRepository;
   activityRepository: INotetakerActivityRepository;
+  eventTypeNotetakerSettingsRepository: Pick<
+    IEventTypeNotetakerSettingsRepository,
+    "findSharingChangesByEventTypeIdSince"
+  >;
   userRepository: INotetakerUserLookup;
   notetakerTasker: INotetakerTasker;
   logger: ISimpleLogger;
@@ -336,15 +411,33 @@ export class NotetakerResultsService {
       limit: NOTETAKER_ACTIVITY_LIMIT,
     });
 
-    // Mapped field by field so bookingId, sessionId and actorUserId never reach a client.
-    return rows.map((row) => ({
-      id: row.id,
-      action: row.action,
-      actorType: row.actorType,
-      actorName: row.actorName,
-      createdAt: row.createdAt.toISOString(),
-      detail: row.detail,
-    }));
+    const entries = dropRepeatedFirstViews(rows).map(toActivityEntry);
+
+    const changes = await this.findSharingChanges(booking);
+    for (let i = 0; i < changes.length; i++) entries.push(toSharingChangeEntry(changes[i]));
+
+    return entries
+      .sort(compareNewestFirst)
+      .slice(0, NOTETAKER_ACTIVITY_LIMIT)
+      .map((entry) => entry.activity);
+  }
+
+  // A sharing mode only governs sessions dispatched under it, so changes made before
+  // the booking's first session say nothing about who could read its results.
+  private async findSharingChanges(booking: {
+    id: number;
+    eventTypeId: number | null;
+  }): Promise<NotetakerSharingChangeRecord[]> {
+    if (booking.eventTypeId === null) return [];
+
+    const firstSession = await this.deps.sessionRepository.findEarliestByBookingId(booking.id);
+    if (!firstSession) return [];
+
+    return this.deps.eventTypeNotetakerSettingsRepository.findSharingChangesByEventTypeIdSince({
+      eventTypeId: booking.eventTypeId,
+      since: firstSession.createdAt,
+      limit: NOTETAKER_ACTIVITY_LIMIT,
+    });
   }
 
   private async findActor(userId: number): Promise<NotetakerUserRecord | null> {

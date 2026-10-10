@@ -355,6 +355,12 @@ vi.mock("@calcom/web/modules/notetaker/components/NotetakerActivityList", () => 
   ),
 }));
 
+vi.mock("@calcom/web/modules/notetaker/components/NotetakerAccessSummary", () => ({
+  NotetakerAccessSummary: (props: { access: { attendees: boolean } }) => (
+    <div data-testid="access-summary-stub" data-attendees={String(props.access.attendees)} />
+  ),
+}));
+
 const DELETED_AT = "2026-01-02T00:00:00.000Z";
 
 describe("NotetakerResultsPage sharing, export, deletion and activity", () => {
@@ -484,5 +490,42 @@ describe("NotetakerResultsPage sharing, export, deletion and activity", () => {
     expect(screen.getByTestId("results-actions-stub")).toBeInTheDocument();
     expect(screen.getByTestId("summary-stub")).toBeInTheDocument();
     expect(screen.getByTestId("transcript-stub")).toBeInTheDocument();
+  });
+
+  describe("access summary and shared viewer", () => {
+    const access = { attendees: true, colleagues: null };
+
+    it("shows a host with access the summary above the activity list", () => {
+      renderPage(buildState({ access }));
+
+      const summary = screen.getByTestId("access-summary-stub");
+      expect(summary).toHaveAttribute("data-attendees", "true");
+      expect(
+        summary.compareDocumentPosition(screen.getByTestId("activity-list-stub")) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    });
+
+    it("shows a host without access no summary", () => {
+      renderPage(buildState());
+
+      expect(screen.queryByTestId("access-summary-stub")).not.toBeInTheDocument();
+    });
+
+    it.each(["ATTENDEE", "SHARED_VIEWER"] as const)("shows %s no summary", (viewerRole) => {
+      renderPage(buildState({ viewerRole, access }));
+
+      expect(screen.queryByTestId("access-summary-stub")).not.toBeInTheDocument();
+    });
+
+    it("gives a shared viewer status, actions, summary and transcript but no activity list", () => {
+      renderPage(buildState({ viewerRole: "SHARED_VIEWER" }));
+
+      expect(screen.getByTestId("notetaker-status-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("results-actions-stub")).toHaveAttribute("data-viewer-role", "SHARED_VIEWER");
+      expect(screen.getByTestId("summary-stub")).toBeInTheDocument();
+      expect(screen.getByTestId("transcript-stub")).toBeInTheDocument();
+      expect(screen.queryByTestId("activity-list-stub")).not.toBeInTheDocument();
+    });
   });
 });
