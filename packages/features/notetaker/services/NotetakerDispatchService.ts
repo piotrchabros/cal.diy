@@ -677,6 +677,7 @@ export class NotetakerDispatchService {
 
     const { t, hostName, displayName } = await this.resolveDisplay(booking);
     const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
+    const sharedWithColleagues = booking.teamId !== null && booking.sharingMode !== "HOSTS_ONLY";
 
     const session = await sessionRepository.create({
       bookingId: booking.id,
@@ -687,6 +688,7 @@ export class NotetakerDispatchService {
       scheduledStartAt: booking.startTime,
       dispatchedAt: now,
       startedLate,
+      colleagueSharingDisclosed: sharedWithColleagues,
     });
 
     return {
@@ -696,7 +698,12 @@ export class NotetakerDispatchService {
         platform,
         meetingUrl,
         displayName,
-        noticeMessage: t("notetaker_meeting_notice", { hostName }),
+        noticeMessage: t(
+          sharedWithColleagues ? "notetaker_meeting_notice_shared" : "notetaker_meeting_notice",
+          {
+            hostName,
+          }
+        ),
         scheduledStartAt: booking.startTime.toISOString(),
         callbackUrl: `${WEBAPP_URL}/api/notetaker/events`,
         limits: {

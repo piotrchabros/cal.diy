@@ -5,11 +5,15 @@ import { ZDeleteResultsInputSchema } from "./deleteResults.schema";
 import { ZExportInputSchema } from "./export.schema";
 import { ZGetActivityInputSchema } from "./getActivity.schema";
 import { ZGetEventTypeDefaultInputSchema } from "./getEventTypeDefault.schema";
+import { ZGetEventTypeSharingInputSchema } from "./getEventTypeSharing.schema";
 import { ZGetStateInputSchema } from "./getState.schema";
+import { ZListEventTypeSharingCandidatesInputSchema } from "./listEventTypeSharingCandidates.schema";
 import { ZListPassagesInputSchema } from "./listPassages.schema";
+import { ZListSharedWithMeInputSchema } from "./listSharedWithMe.schema";
 import { ZRegenerateSummaryInputSchema } from "./regenerateSummary.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
 import { ZSetEventTypeDefaultInputSchema } from "./setEventTypeDefault.schema";
+import { ZSetEventTypeSharingInputSchema } from "./setEventTypeSharing.schema";
 import { ZSetSharingInputSchema } from "./setSharing.schema";
 import { ZStopInputSchema } from "./stop.schema";
 
@@ -55,6 +59,45 @@ export const notetakerRouter = router({
         input: { eventTypeId: input.eventTypeId, enabledByDefault: input.enabledByDefault },
       });
     }),
+
+  getEventTypeSharing: eventOwnerProcedure
+    .input(ZGetEventTypeSharingInputSchema)
+    .query(async ({ ctx, input }) => {
+      const { getEventTypeSharingHandler } = await import("./getEventTypeSharing.handler");
+      return getEventTypeSharingHandler({ ctx, input: { eventTypeId: input.eventTypeId } });
+    }),
+
+  setEventTypeSharing: eventOwnerProcedure
+    .input(ZSetEventTypeSharingInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setEventTypeSharingHandler } = await import("./setEventTypeSharing.handler");
+      return setEventTypeSharingHandler({
+        ctx,
+        input: { eventTypeId: input.eventTypeId, mode: input.mode, userIds: input.userIds },
+      });
+    }),
+
+  listEventTypeSharingCandidates: eventOwnerProcedure
+    .input(ZListEventTypeSharingCandidatesInputSchema)
+    .query(async ({ ctx, input }) => {
+      const { listEventTypeSharingCandidatesHandler } = await import(
+        "./listEventTypeSharingCandidates.handler"
+      );
+      return listEventTypeSharingCandidatesHandler({
+        ctx,
+        input: {
+          eventTypeId: input.eventTypeId,
+          search: input.search,
+          cursor: input.cursor,
+          limit: input.limit,
+        },
+      });
+    }),
+
+  listSharedWithMe: authedProcedure.input(ZListSharedWithMeInputSchema).query(async ({ ctx, input }) => {
+    const { listSharedWithMeHandler } = await import("./listSharedWithMe.handler");
+    return listSharedWithMeHandler({ ctx, input });
+  }),
 
   setSharing: authedProcedure.input(ZSetSharingInputSchema).mutation(async ({ ctx, input }) => {
     const { setSharingHandler } = await import("./setSharing.handler");

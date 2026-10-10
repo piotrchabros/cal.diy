@@ -95,6 +95,7 @@ describe("notetakerDisclosureHandler", () => {
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup: new InMemoryNotetakerMembershipLookup(),
       }),
+      membershipLookup: new InMemoryNotetakerMembershipLookup(),
       featuresRepository: { checkIfUserHasFeature: async () => true },
       userRepository: { findByIds: async () => [] },
       config: buildConfig(),
@@ -111,7 +112,12 @@ describe("notetakerDisclosureHandler", () => {
 
     const result = await run();
 
-    expect(Object.keys(result).sort()).toEqual(["enabledByDefault", "onBehalfOf", "supportedLocationTypes"]);
+    expect(Object.keys(result).sort()).toEqual([
+      "enabledByDefault",
+      "onBehalfOf",
+      "sharedWithColleagues",
+      "supportedLocationTypes",
+    ]);
   });
 
   it("reports the seeded default, the owner name and the supported location types", async () => {
@@ -123,6 +129,7 @@ describe("notetakerDisclosureHandler", () => {
     expect(await run()).toEqual({
       enabledByDefault: true,
       onBehalfOf: "Organizer",
+      sharedWithColleagues: false,
       supportedLocationTypes: [MeetLocationType],
     });
   });
@@ -131,8 +138,34 @@ describe("notetakerDisclosureHandler", () => {
     expect(await run()).toEqual({
       enabledByDefault: false,
       onBehalfOf: "Organizer",
+      sharedWithColleagues: false,
       supportedLocationTypes: [MeetLocationType],
     });
+  });
+
+  it("reports sharedWithColleagues true for a team event type that shares with the team", async () => {
+    repositories.store.addEventType({
+      id: 11,
+      userId: null,
+      teamId: 5,
+      locations: [{ type: MeetLocationType }],
+      ownerName: null,
+    });
+    repositories.store.setSharingMode(11, "TEAM");
+
+    expect((await run(11)).sharedWithColleagues).toBe(true);
+  });
+
+  it("reports sharedWithColleagues false for a team event type that is hosts only", async () => {
+    repositories.store.addEventType({
+      id: 12,
+      userId: null,
+      teamId: 5,
+      locations: [{ type: MeetLocationType }],
+      ownerName: null,
+    });
+
+    expect((await run(12)).sharedWithColleagues).toBe(false);
   });
 
   it("rejects with a not-found ErrorWithCode for an unknown event type", async () => {

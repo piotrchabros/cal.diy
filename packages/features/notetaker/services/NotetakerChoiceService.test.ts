@@ -180,6 +180,7 @@ describe("NotetakerChoiceService", () => {
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup,
       }),
+      membershipLookup,
       featuresRepository: { checkIfUserHasFeature },
       userRepository,
       notetakerTasker: tasker,
@@ -799,6 +800,7 @@ describe("NotetakerChoiceService", () => {
         transcript: null,
         summary: null,
         sharedWithAttendees: false,
+        access: { attendees: false, colleagues: null },
       });
     });
 
@@ -1353,13 +1355,44 @@ describe("NotetakerChoiceService", () => {
       expect(Object.keys(result).sort()).toEqual([
         "enabledByDefault",
         "onBehalfOf",
+        "sharedWithColleagues",
         "supportedLocationTypes",
       ]);
       expect(result).toEqual({
         enabledByDefault: true,
         onBehalfOf: "Organizer",
+        sharedWithColleagues: false,
         supportedLocationTypes: [MeetLocationType],
       });
+    });
+
+    it("reports sharedWithColleagues true for a team event type in TEAM mode", async () => {
+      seedEventType({ teamId: 5 });
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+
+      expect((await getDisclosure()).sharedWithColleagues).toBe(true);
+    });
+
+    it("reports sharedWithColleagues true for a team event type in SELECTED_PEOPLE mode", async () => {
+      seedEventType({ teamId: 5 });
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+
+      expect((await getDisclosure()).sharedWithColleagues).toBe(true);
+    });
+
+    it("reports sharedWithColleagues false for a team event type in HOSTS_ONLY mode or without settings", async () => {
+      seedEventType({ teamId: 5 });
+      expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "HOSTS_ONLY");
+      expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+    });
+
+    it("reports sharedWithColleagues false for a personal event type even with a sharing mode set", async () => {
+      seedEventType({ teamId: null });
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+
+      expect((await getDisclosure()).sharedWithColleagues).toBe(false);
     });
 
     it("reports enabledByDefault false without a settings row", async () => {
@@ -1415,6 +1448,7 @@ describe("NotetakerChoiceService", () => {
       expect(result).toEqual({
         enabledByDefault: true,
         onBehalfOf: "Organizer",
+        sharedWithColleagues: false,
         supportedLocationTypes: [MeetLocationType],
       });
     });
@@ -2465,6 +2499,192 @@ describe("NotetakerChoiceService", () => {
       );
 
       expect(error.code).toBe(ErrorCode.Forbidden);
+    });
+  });
+
+  describe("getState access summary", () => {
+    const TEAM_ID = 50;
+    const ORGANIZATION_ID = 60;
+    const VIEWER_ID = 7;
+
+    async function seedTeamBooking(
+      params: {
+        booking?: Partial<InMemoryBookingSeed>;
+        mode?: "HOSTS_ONLY" | "TEAM" | "SELECTED_PEOPLE";
+        disclosed?: boolean;
+        withTranscript?: boolean;
+      } = {}
+    ): Promise<NotetakerSessionRecord> {
+      const { booking = {}, mode = "TEAM", disclosed = true, withTranscript = true } = params;
+      repositories.store.addBooking(
+        buildBooking({ teamId: TEAM_ID, teamName: "Sales", organizationId: null, ...booking })
+      );
+      repositories.store.setSharingMode(EVENT_TYPE_ID, mode);
+      const session = await repositories.sessionRepository.create({
+        bookingId: BOOKING_ID,
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET_LINK,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: new Date("2026-10-12T10:00:00.000Z"),
+        status: "READY",
+        colleagueSharingDisclosed: disclosed,
+      });
+      if (withTranscript) {
+        await repositories.transcriptRepository.createIfMissing({
+          sessionId: session.id,
+          bookingId: BOOKING_ID,
+        });
+      }
+      return session;
+    }
+
+    it("reports attendees from the sharing grant", async () => {
+      repositories.store.addBooking(buildBooking());
+
+      expect((await getState()).access).toEqual({ attendees: false, colleagues: null });
+
+      await repositories.bookingNotetakerRepository.createSharingGrant({
+        bookingId: BOOKING_ID,
+        grantedByUserId: ORGANIZER_ID,
+      });
+
+      expect((await getState()).access).toEqual({ attendees: true, colleagues: null });
+    });
+
+    it("names the team under TEAM mode for a disclosed session", async () => {
+      await seedTeamBooking();
+
+      const state = await getState();
+
+      expect(state.access).toEqual({ attendees: false, colleagues: { route: "TEAM", teamName: "Sales" } });
+    });
+
+    it("gives an empty team name when the team has none", async () => {
+      await seedTeamBooking({ booking: { teamName: null } });
+
+      expect((await getState()).access?.colleagues).toEqual({ route: "TEAM", teamName: "" });
+    });
+
+    it("reports no colleagues under HOSTS_ONLY", async () => {
+      await seedTeamBooking({ mode: "HOSTS_ONLY" });
+
+      expect((await getState()).access?.colleagues).toBeNull();
+    });
+
+    it("reports no colleagues when the session was not disclosed", async () => {
+      await seedTeamBooking({ disclosed: false });
+
+      expect((await getState()).access?.colleagues).toBeNull();
+    });
+
+    it("reports no colleagues for a booking without a team", async () => {
+      await seedTeamBooking({ booking: { teamId: null, teamName: null } });
+
+      expect((await getState()).access?.colleagues).toBeNull();
+    });
+
+    it("reports no colleagues before any session exists", async () => {
+      repositories.store.addBooking(buildBooking({ teamId: TEAM_ID, teamName: "Sales" }));
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+
+      expect((await getState()).access?.colleagues).toBeNull();
+    });
+
+    it("reads the disclosure from the results session, not from a later session", async () => {
+      await seedTeamBooking({ disclosed: false });
+      await repositories.sessionRepository.create({
+        bookingId: BOOKING_ID,
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET_LINK,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: new Date("2026-10-12T10:10:00.000Z"),
+        status: "TRANSCRIBING",
+        colleagueSharingDisclosed: true,
+      });
+
+      expect((await getState()).access?.colleagues).toBeNull();
+    });
+
+    it("falls back to the latest session while no session has a transcript", async () => {
+      await seedTeamBooking({ withTranscript: false });
+
+      expect((await getState()).access?.colleagues).toEqual({ route: "TEAM", teamName: "Sales" });
+    });
+
+    it("lists only the selected people who are still members, falling back to the email", async () => {
+      await seedTeamBooking({ mode: "SELECTED_PEOPLE" });
+      repositories.store.setSharingMembers(EVENT_TYPE_ID, [11, 12, 13]);
+      repositories.store.setUser(11, { name: "Ada", email: "ada@example.com", avatarUrl: null });
+      repositories.store.setUser(12, { name: null, email: "nameless@example.com", avatarUrl: null });
+      repositories.store.setUser(13, { name: "Left", email: "left@example.com", avatarUrl: null });
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: 11 });
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: 12 });
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: 13, accepted: false });
+
+      const state = await getState();
+
+      expect(state.access?.colleagues).toEqual({
+        route: "SELECTED_PEOPLE",
+        people: [{ name: "Ada" }, { name: "nameless@example.com" }],
+      });
+    });
+
+    it("checks the selected people against the organization when the team has one", async () => {
+      await seedTeamBooking({ mode: "SELECTED_PEOPLE", booking: { organizationId: ORGANIZATION_ID } });
+      repositories.store.setSharingMembers(EVENT_TYPE_ID, [11, 12]);
+      repositories.store.setUser(11, { name: "Ada", email: "ada@example.com", avatarUrl: null });
+      repositories.store.setUser(12, { name: "Team Only", email: "team@example.com", avatarUrl: null });
+      membershipLookup.addMember({ teamId: ORGANIZATION_ID, userId: 11 });
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: 12 });
+
+      expect((await getState()).access?.colleagues).toEqual({
+        route: "SELECTED_PEOPLE",
+        people: [{ name: "Ada" }],
+      });
+    });
+
+    it("lists at most 50 selected people", async () => {
+      await seedTeamBooking({ mode: "SELECTED_PEOPLE" });
+      const userIds = Array.from({ length: 60 }, (_, index) => 100 + index);
+      repositories.store.setSharingMembers(EVENT_TYPE_ID, userIds);
+      for (const userId of userIds) membershipLookup.addMember({ teamId: TEAM_ID, userId });
+
+      const colleagues = (await getState()).access?.colleagues;
+
+      expect(colleagues?.route).toBe("SELECTED_PEOPLE");
+      expect(colleagues?.route === "SELECTED_PEOPLE" ? colleagues.people : []).toHaveLength(50);
+    });
+
+    it("gives an empty list when nobody is selected", async () => {
+      await seedTeamBooking({ mode: "SELECTED_PEOPLE" });
+
+      expect((await getState()).access?.colleagues).toEqual({ route: "SELECTED_PEOPLE", people: [] });
+    });
+
+    it("leaves access out for a granted attendee", async () => {
+      await seedTeamBooking();
+      await repositories.bookingNotetakerRepository.createSharingGrant({
+        bookingId: BOOKING_ID,
+        grantedByUserId: ORGANIZER_ID,
+      });
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      const state = await getState(ATTENDEE_USER_ID);
+
+      expect(state.viewerRole).toBe("ATTENDEE");
+      expect(state).not.toHaveProperty("access");
+    });
+
+    it("leaves access out for a shared viewer", async () => {
+      await seedTeamBooking();
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: VIEWER_ID });
+
+      const state = await getState(VIEWER_ID);
+
+      expect(state.viewerRole).toBe("SHARED_VIEWER");
+      expect(state).not.toHaveProperty("access");
     });
   });
 });
