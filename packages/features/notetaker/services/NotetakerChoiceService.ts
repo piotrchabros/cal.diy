@@ -1,6 +1,7 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import type {
+  NotetakerAccessDto,
   NotetakerDisclosureDto,
   NotetakerEventTypeDefaultDto,
   NotetakerSessionStatusDto,
@@ -12,6 +13,7 @@ import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { getBookingNotetakerEligibility, getEventTypeNotetakerAvailability } from "../lib/eligibility";
 import { parseEventTypeLocations } from "../lib/eventTypeLocations";
+import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
 import { getDisplayedStatus } from "../lib/sessionStateMachine";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
@@ -39,6 +41,8 @@ import type {
 import type { NotetakerAccessService } from "./NotetakerAccessService";
 
 const NOTETAKER_FEATURE_SLUG = "notetaker";
+
+const NOTETAKER_ACCESS_MAX_PEOPLE = 50;
 
 const STOPPABLE_SESSION_STATUSES: NotetakerSessionStatusDto[] = [
   "SCHEDULED",
@@ -83,6 +87,7 @@ export interface INotetakerChoiceServiceDeps {
   summaryRepository: INotetakerSummaryRepository;
   activityRepository: INotetakerActivityRepository;
   accessService: NotetakerAccessService;
+  membershipLookup: Pick<INotetakerMembershipLookup, "findAcceptedUserIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   userRepository: INotetakerUserLookup;
   config: NotetakerConfig;
@@ -226,6 +231,16 @@ export class NotetakerChoiceService {
       };
     }
 
+    const access = isHost
+      ? {
+          attendees: sharingGrant !== null,
+          colleagues: await this.resolveColleagueAccess(
+            booking,
+            latestWithTranscript?.session ?? latestSession
+          ),
+        }
+      : null;
+
     return {
       bookingUid: booking.uid,
       featureEnabled,
@@ -246,6 +261,7 @@ export class NotetakerChoiceService {
       transcript: transcript ? toTranscriptDto(transcript) : null,
       summary: summary ? toNotetakerSummaryDto(summary) : null,
       sharedWithAttendees: !isSharedViewer && sharingGrant !== null,
+      ...(access ? { access } : {}),
     };
   }
 
@@ -294,6 +310,8 @@ export class NotetakerChoiceService {
       enabledByDefault:
         (context.settings?.enabledByDefault ?? false) && isNotetakerBotProviderUsable(this.deps.config),
       onBehalfOf: context.ownerName,
+      sharedWithColleagues:
+        context.teamId !== null && (context.settings?.sharingMode ?? "HOSTS_ONLY") !== "HOSTS_ONLY",
       supportedLocationTypes: availability.supportedLocationTypes,
     };
   }
@@ -465,6 +483,35 @@ export class NotetakerChoiceService {
     if (!choice) return null;
     if (booking.status !== "CANCELLED" && booking.status !== "REJECTED") return choice;
     return { ...choice, enabled: false, pendingDispatch: false };
+  }
+
+  // Colleagues can read only what was announced to the participants, so the session decides, not the
+  // mode alone. People who left the team or organization are left out: they can no longer read.
+  private async resolveColleagueAccess(
+    booking: NotetakerBookingContext,
+    accessSession: NotetakerSessionRecord | null
+  ): Promise<NotetakerAccessDto["colleagues"]> {
+    if (accessSession?.colleagueSharingDisclosed !== true) return null;
+    if (booking.teamId === null || booking.eventTypeId === null) return null;
+    if (booking.sharingMode === "HOSTS_ONLY") return null;
+    if (booking.sharingMode === "TEAM") return { route: "TEAM", teamName: booking.teamName ?? "" };
+
+    const members = await this.deps.eventTypeNotetakerSettingsRepository.findSharingMembersIncludeUser(
+      booking.eventTypeId
+    );
+    const acceptedUserIds = new Set(
+      await this.deps.membershipLookup.findAcceptedUserIds({
+        teamId: booking.organizationId ?? booking.teamId,
+        userIds: members.map((member) => member.userId),
+      })
+    );
+    return {
+      route: "SELECTED_PEOPLE",
+      people: members
+        .filter((member) => acceptedUserIds.has(member.userId))
+        .slice(0, NOTETAKER_ACCESS_MAX_PEOPLE)
+        .map((member) => ({ name: member.name ?? member.email })),
+    };
   }
 
   private async findUserName(userId: number): Promise<string | null> {

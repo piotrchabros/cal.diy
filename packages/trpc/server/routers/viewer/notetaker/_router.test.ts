@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
   regenerateSummaryHandler: vi.fn(),
   getEventTypeDefaultHandler: vi.fn(),
   setEventTypeDefaultHandler: vi.fn(),
+  getEventTypeSharingHandler: vi.fn(),
+  setEventTypeSharingHandler: vi.fn(),
+  listEventTypeSharingCandidatesHandler: vi.fn(),
+  listSharedWithMeHandler: vi.fn(),
   setSharingHandler: vi.fn(),
   exportHandler: vi.fn(),
   deleteResultsHandler: vi.fn(),
@@ -46,6 +50,18 @@ vi.mock("./getEventTypeDefault.handler", () => ({
 vi.mock("./setEventTypeDefault.handler", () => ({
   setEventTypeDefaultHandler: mocks.setEventTypeDefaultHandler,
 }));
+vi.mock("./getEventTypeSharing.handler", () => ({
+  getEventTypeSharingHandler: mocks.getEventTypeSharingHandler,
+}));
+vi.mock("./setEventTypeSharing.handler", () => ({
+  setEventTypeSharingHandler: mocks.setEventTypeSharingHandler,
+}));
+vi.mock("./listEventTypeSharingCandidates.handler", () => ({
+  listEventTypeSharingCandidatesHandler: mocks.listEventTypeSharingCandidatesHandler,
+}));
+vi.mock("./listSharedWithMe.handler", () => ({
+  listSharedWithMeHandler: mocks.listSharedWithMeHandler,
+}));
 vi.mock("./setSharing.handler", () => ({ setSharingHandler: mocks.setSharingHandler }));
 vi.mock("./export.handler", () => ({ exportHandler: mocks.exportHandler }));
 vi.mock("./deleteResults.handler", () => ({ deleteResultsHandler: mocks.deleteResultsHandler }));
@@ -69,6 +85,10 @@ const handlerMocks = [
   mocks.regenerateSummaryHandler,
   mocks.getEventTypeDefaultHandler,
   mocks.setEventTypeDefaultHandler,
+  mocks.getEventTypeSharingHandler,
+  mocks.setEventTypeSharingHandler,
+  mocks.listEventTypeSharingCandidatesHandler,
+  mocks.listSharedWithMeHandler,
   mocks.setSharingHandler,
   mocks.exportHandler,
   mocks.deleteResultsHandler,
@@ -124,6 +144,31 @@ const procedures: {
     invoke: (caller) => caller.setEventTypeDefault({ eventTypeId: 42, enabledByDefault: true }),
   },
   {
+    name: "getEventTypeSharing",
+    handler: mocks.getEventTypeSharingHandler,
+    expectedInput: { eventTypeId: 42 },
+    invoke: (caller) => caller.getEventTypeSharing({ eventTypeId: 42 }),
+  },
+  {
+    name: "setEventTypeSharing",
+    handler: mocks.setEventTypeSharingHandler,
+    expectedInput: { eventTypeId: 42, mode: "SELECTED_PEOPLE", userIds: [3, 4] },
+    invoke: (caller) =>
+      caller.setEventTypeSharing({ eventTypeId: 42, mode: "SELECTED_PEOPLE", userIds: [3, 4] }),
+  },
+  {
+    name: "listEventTypeSharingCandidates",
+    handler: mocks.listEventTypeSharingCandidatesHandler,
+    expectedInput: { eventTypeId: 42, search: "sa", cursor: 9, limit: 20 },
+    invoke: (caller) => caller.listEventTypeSharingCandidates({ eventTypeId: 42, search: "sa", cursor: 9 }),
+  },
+  {
+    name: "listSharedWithMe",
+    handler: mocks.listSharedWithMeHandler,
+    expectedInput: { cursor: "c1", limit: 20 },
+    invoke: (caller) => caller.listSharedWithMe({ cursor: "c1" }),
+  },
+  {
     name: "setSharing",
     handler: mocks.setSharingHandler,
     expectedInput: { bookingUid: "b1", shared: true },
@@ -170,6 +215,49 @@ describe("notetakerRouter", () => {
     expect(procedure.handler).toHaveBeenCalledWith({
       ctx: expect.objectContaining({ user: expect.objectContaining({ id: 7 }) }),
       input: procedure.expectedInput,
+    });
+  });
+
+  describe("event type sharing procedures use the eventOwnerProcedure guard", () => {
+    const sharingCalls: {
+      name: string;
+      handler: ReturnType<typeof vi.fn>;
+      invoke: (c: Caller) => Promise<unknown>;
+    }[] = [
+      {
+        name: "getEventTypeSharing",
+        handler: mocks.getEventTypeSharingHandler,
+        invoke: (caller) => caller.getEventTypeSharing({ eventTypeId: 42 }),
+      },
+      {
+        name: "setEventTypeSharing",
+        handler: mocks.setEventTypeSharingHandler,
+        invoke: (caller) => caller.setEventTypeSharing({ eventTypeId: 42, mode: "TEAM" }),
+      },
+      {
+        name: "listEventTypeSharingCandidates",
+        handler: mocks.listEventTypeSharingCandidatesHandler,
+        invoke: (caller) => caller.listEventTypeSharingCandidates({ eventTypeId: 42 }),
+      },
+    ];
+
+    it.each(sharingCalls)("$name rejects a user who does not own the event type", async (call) => {
+      mocks.eventTypeFindUnique.mockResolvedValue({ userId: 99, users: [], team: null });
+
+      const error = await call.invoke(createCaller(ctx)).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({ code: "FORBIDDEN" });
+      expect(call.handler).not.toHaveBeenCalled();
+    });
+
+    it.each(sharingCalls)("$name rejects a missing event type", async (call) => {
+      mocks.eventTypeFindUnique.mockResolvedValue(null);
+
+      const error = await call.invoke(createCaller(ctx)).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(call.handler).not.toHaveBeenCalled();
     });
   });
 

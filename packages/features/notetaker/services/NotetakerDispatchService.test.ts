@@ -30,6 +30,7 @@ import type {
 } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { NotetakerSessionUpdateInput } from "../repositories/interfaces/INotetakerSessionRepository";
+import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
@@ -219,6 +220,9 @@ describe("NotetakerDispatchService", () => {
       logger,
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+        sessionRepository: repositories.sessionRepository,
+        eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+        membershipLookup: new InMemoryNotetakerMembershipLookup(),
       }),
       userRepository,
       notetakerTasker: tasker,
@@ -749,6 +753,58 @@ describe("NotetakerDispatchService", () => {
         `de:notetaker_meeting_notice:${JSON.stringify({ hostName: "Jana" })}`
       );
       expect(onlySession().displayName).toBe(displayName);
+    });
+
+    describe("colleague sharing disclosure", () => {
+      const EXPECTED_SHARED_NOTICE = `en:notetaker_meeting_notice_shared:${JSON.stringify({ hostName: "Organizer" })}`;
+
+      it.each([
+        "TEAM",
+        "SELECTED_PEOPLE",
+      ] as const)("tells the participants and marks the session disclosed when a team booking is shared as %s", async (mode) => {
+        const bookingId = await seedArmed({ teamId: 20 });
+        repositories.store.setSharingMode(10, mode);
+        const gateway = fake();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+        await settle(gateway);
+
+        expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_SHARED_NOTICE);
+        expect(onlySession()).toMatchObject({ bookingId, colleagueSharingDisclosed: true });
+      });
+
+      it("keeps the plain notice and an undisclosed session when the mode is HOSTS_ONLY", async () => {
+        await seedArmed({ teamId: 20 });
+        repositories.store.setSharingMode(10, "HOSTS_ONLY");
+        const gateway = fake();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+        await settle(gateway);
+
+        expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+        expect(onlySession().colleagueSharingDisclosed).toBe(false);
+      });
+
+      it("keeps the plain notice when the booking has no team, whatever the stored mode", async () => {
+        await seedArmed({ teamId: null });
+        repositories.store.setSharingMode(10, "TEAM");
+        const gateway = fake();
+
+        await buildService(fakeBinding(gateway)).dispatchDue();
+        await settle(gateway);
+
+        expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+        expect(onlySession().colleagueSharingDisclosed).toBe(false);
+      });
+
+      it("never marks a failed session as disclosed", async () => {
+        await seedArmed({ teamId: 20, location: MeetLocationType, references: [], metadata: null });
+        repositories.store.setSharingMode(10, "TEAM");
+
+        await buildService(fakeBinding(createStubGateway())).dispatchDue();
+
+        expect(onlySession()).toMatchObject({ status: "FAILED", colleagueSharingDisclosed: false });
+      });
     });
 
     const hostNameCases: { name: string; organizer: InMemoryBookingSeed["organizer"]; hostName: string }[] = [

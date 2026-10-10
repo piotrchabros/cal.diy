@@ -3,6 +3,7 @@
 import { ColumnFilterType, type SystemFilterSegment } from "@calcom/features/data-table";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import classNames from "@calcom/ui/classNames";
+import { NotetakerSharedNotesLink } from "@calcom/web/modules/notetaker/components/NotetakerSharedNotesLink";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
@@ -81,12 +82,17 @@ function BookingsContent({ status, permissions, bookingsV3Enabled, bookingAuditE
   return (
     <div className={classNames(view === "calendar" && "-mb-8")}>
       {view === "list" && (
-        <BookingListContainer
-          status={status}
-          permissions={permissions}
-          bookingsV3Enabled={bookingsV3Enabled}
-          bookingAuditEnabled={bookingAuditEnabled}
-        />
+        <>
+          <div className="mb-2 flex justify-end">
+            <NotetakerSharedNotesLink />
+          </div>
+          <BookingListContainer
+            status={status}
+            permissions={permissions}
+            bookingsV3Enabled={bookingsV3Enabled}
+            bookingAuditEnabled={bookingAuditEnabled}
+          />
+        </>
       )}
       {bookingsV3Enabled && view === "calendar" && (
         <BookingCalendarContainer
