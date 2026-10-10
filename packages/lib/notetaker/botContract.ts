@@ -9,6 +9,8 @@ export const NOTETAKER_SIGNATURE_TOLERANCE_SECONDS = 300;
 
 const MAX_PASSAGE_TEXT_LENGTH = 1000;
 const MAX_PASSAGES_PER_EVENT = 50;
+const MAX_SPEAKER_RESOLUTIONS = 64;
+const MAX_SPEAKER_NAME_LENGTH = 200;
 
 const SIGNATURE_PREFIX = "sha256=";
 const SIGNATURE_PATTERN = /^sha256=[0-9a-f]{64}$/;
@@ -53,6 +55,15 @@ export const notetakerBotPassageSchema = z
 
 export type NotetakerBotPassage = z.infer<typeof notetakerBotPassageSchema>;
 
+// Prefix and uniqueness are checked by the service: a bad entry is dropped there instead of rejecting the whole event.
+export const notetakerBotSpeakerResolutionSchema = z.object({
+  speakerKey: z.string().min(1),
+  resolvedSpeakerKey: z.string().min(1),
+  speakerName: z.string().min(1).max(MAX_SPEAKER_NAME_LENGTH),
+});
+
+export type NotetakerBotSpeakerResolution = z.infer<typeof notetakerBotSpeakerResolutionSchema>;
+
 const eventEnvelopeShape = {
   eventId: z.string().uuid(),
   sessionId: z.string().min(1),
@@ -87,6 +98,11 @@ export const notetakerBotEventSchema = z.discriminatedUnion("type", [
       durationMs: millisecondsSchema,
       interruptedAtMs: millisecondsSchema.nullable(),
       passageCount: z.number().int().nonnegative(),
+      speakerNamesAvailable: z.boolean().optional(),
+      speakerResolutions: z
+        .array(notetakerBotSpeakerResolutionSchema)
+        .max(MAX_SPEAKER_RESOLUTIONS)
+        .optional(),
     }),
   }),
 ]);

@@ -14,6 +14,7 @@ const transcriptSelect = {
   completeness: true,
   durationMs: true,
   passageCount: true,
+  speakerNamesAvailable: true,
   createdAt: true,
 } satisfies Prisma.NotetakerTranscriptSelect;
 
@@ -122,7 +123,10 @@ export class PrismaNotetakerTranscriptRepository implements INotetakerTranscript
   async update(
     id: string,
     data: Partial<
-      Pick<NotetakerTranscriptRecord, "language" | "completeness" | "durationMs" | "passageCount">
+      Pick<
+        NotetakerTranscriptRecord,
+        "language" | "completeness" | "durationMs" | "passageCount" | "speakerNamesAvailable"
+      >
     >
   ): Promise<NotetakerTranscriptRecord> {
     return await this.prismaClient.notetakerTranscript.update({
@@ -132,9 +136,27 @@ export class PrismaNotetakerTranscriptRepository implements INotetakerTranscript
         completeness: data.completeness,
         durationMs: data.durationMs,
         passageCount: data.passageCount,
+        speakerNamesAvailable: data.speakerNamesAvailable,
       },
       select: transcriptSelect,
     });
+  }
+
+  async updatePassageSpeakersBySpeakerKey(params: {
+    transcriptId: string;
+    speakerKey: string;
+    resolvedSpeakerKey: string;
+    speakerName: string;
+  }): Promise<number> {
+    const result = await this.prismaClient.notetakerTranscriptPassage.updateMany({
+      where: { transcriptId: params.transcriptId, speakerKey: params.speakerKey },
+      data: {
+        speakerKey: params.resolvedSpeakerKey,
+        speakerName: params.speakerName,
+        unknownSpeakerNumber: null,
+      },
+    });
+    return result.count;
   }
 
   async deleteById(id: string): Promise<void> {

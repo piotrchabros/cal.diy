@@ -34,6 +34,7 @@ const sessionSelect = {
   stopRequestedAt: true,
   stopRequestedByUserId: true,
   resultsDeletedAt: true,
+  colleagueSharingDisclosed: true,
   createdAt: true,
 } satisfies Prisma.NotetakerSessionSelect;
 
@@ -45,6 +46,7 @@ const transcriptSelect = {
   completeness: true,
   durationMs: true,
   passageCount: true,
+  speakerNamesAvailable: true,
   createdAt: true,
 } satisfies Prisma.NotetakerTranscriptSelect;
 
@@ -70,6 +72,7 @@ export class PrismaNotetakerSessionRepository implements INotetakerSessionReposi
         dispatchedAt: data.dispatchedAt,
         endedAt: data.endedAt,
         startedLate: data.startedLate,
+        colleagueSharingDisclosed: data.colleagueSharingDisclosed,
       },
       select: sessionSelect,
     });
@@ -86,6 +89,14 @@ export class PrismaNotetakerSessionRepository implements INotetakerSessionReposi
     return await this.prismaClient.notetakerSession.findFirst({
       where: { bookingId },
       orderBy: latestOrder,
+      select: sessionSelect,
+    });
+  }
+
+  async findEarliestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null> {
+    return await this.prismaClient.notetakerSession.findFirst({
+      where: { bookingId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: sessionSelect,
     });
   }

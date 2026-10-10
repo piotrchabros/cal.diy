@@ -1,5 +1,6 @@
 "use client";
 
+import type { NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
@@ -11,7 +12,7 @@ export function NotetakerSummary({
   isRegenerating,
 }: {
   summary: NotetakerSummaryDto | null;
-  viewerRole: "HOST" | "ATTENDEE";
+  viewerRole: NotetakerStateDto["viewerRole"];
   onRegenerate: () => void;
   isRegenerating: boolean;
 }): JSX.Element {

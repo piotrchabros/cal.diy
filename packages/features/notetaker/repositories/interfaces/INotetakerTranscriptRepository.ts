@@ -8,6 +8,8 @@ export type NotetakerTranscriptRecord = {
   completeness: NotetakerTranscriptCompletenessDto;
   durationMs: number;
   passageCount: number;
+  /** null: made before speaker names existed. false: nobody could be identified. */
+  speakerNamesAvailable: boolean | null;
   createdAt: Date;
 };
 
@@ -41,9 +43,22 @@ export interface INotetakerTranscriptRepository {
   update(
     id: string,
     data: Partial<
-      Pick<NotetakerTranscriptRecord, "language" | "completeness" | "durationMs" | "passageCount">
+      Pick<
+        NotetakerTranscriptRecord,
+        "language" | "completeness" | "durationMs" | "passageCount" | "speakerNamesAvailable"
+      >
     >
   ): Promise<NotetakerTranscriptRecord>;
+  /**
+   * One updateMany over the passages of the transcript with this speakerKey: sets speakerKey to
+   * resolvedSpeakerKey, speakerName, and unknownSpeakerNumber to null. Resolves to the row count.
+   */
+  updatePassageSpeakersBySpeakerKey(params: {
+    transcriptId: string;
+    speakerKey: string;
+    resolvedSpeakerKey: string;
+    speakerName: string;
+  }): Promise<number>;
   deleteById(id: string): Promise<void>;
   deleteByBookingId(bookingId: number): Promise<number>;
 }

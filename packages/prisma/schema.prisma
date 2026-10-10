@@ -282,11 +282,13 @@ model EventType {
   restrictionSchedule   Schedule?   @relation("restrictionSchedule", fields: [restrictionScheduleId], references: [id])
   hostGroups            HostGroup[]
 
-  bookingRequiresAuthentication Boolean                        @default(false)
-  rrHostSubsetEnabled           Boolean                        @default(false)
-  requiresCancellationReason    CancellationReasonRequirement? @default(MANDATORY_HOST_ONLY)
-  enablePerHostLocations        Boolean                        @default(false)
+  bookingRequiresAuthentication Boolean                           @default(false)
+  rrHostSubsetEnabled           Boolean                           @default(false)
+  requiresCancellationReason    CancellationReasonRequirement?    @default(MANDATORY_HOST_ONLY)
+  enablePerHostLocations        Boolean                           @default(false)
   notetakerSettings             EventTypeNotetakerSettings?
+  notetakerSharingMembers       EventTypeNotetakerSharingMember[]
+  notetakerSharingChanges       EventTypeNotetakerSharingChange[]
 
   createdAt DateTime? @default(now())
   updatedAt DateTime? @updatedAt
@@ -474,33 +476,33 @@ model User {
   bookingRedirectsTo OutOfOfficeEntry[] @relation(name: "toUser")
 
   // Used to lock the user account
-  locked                         Boolean                       @default(false)
+  locked                         Boolean                           @default(false)
   platformOAuthClients           PlatformOAuthClient[]
   AccessToken                    AccessToken[]
   RefreshToken                   RefreshToken[]
   PlatformAuthorizationToken     PlatformAuthorizationToken[]
   profiles                       Profile[]
   movedToProfileId               Int?
-  movedToProfile                 Profile?                      @relation("moved_to_profile", fields: [movedToProfileId], references: [id], onDelete: SetNull)
+  movedToProfile                 Profile?                          @relation("moved_to_profile", fields: [movedToProfileId], references: [id], onDelete: SetNull)
   secondaryEmails                SecondaryEmail[]
-  isPlatformManaged              Boolean                       @default(false)
+  isPlatformManaged              Boolean                           @default(false)
   OutOfOfficeReasons             OutOfOfficeReason[]
-  smsLockState                   SMSLockState                  @default(UNLOCKED)
-  smsLockReviewedByAdmin         Boolean                       @default(false)
+  smsLockState                   SMSLockState                      @default(UNLOCKED)
+  smsLockReviewedByAdmin         Boolean                           @default(false)
   NotificationsSubscriptions     NotificationsSubscriptions[]
   referralLinkId                 String?
   features                       UserFeatures[]
-  reassignedBookings             Booking[]                     @relation("reassignByUser")
-  createdAttributeToUsers        AttributeToUser[]             @relation("createdBy")
-  updatedAttributeToUsers        AttributeToUser[]             @relation("updatedBy")
-  createdTranslations            EventTypeTranslation[]        @relation("CreatedEventTypeTranslations")
-  updatedTranslations            EventTypeTranslation[]        @relation("UpdatedEventTypeTranslations")
-  reportedBookings               BookingReport[]               @relation("ReportedBy")
-  wrongAssignmentReports         WrongAssignmentReport[]       @relation("WrongAssignmentReportedBy")
-  reviewedWrongAssignmentReports WrongAssignmentReport[]       @relation("WrongAssignmentReviewedBy")
+  reassignedBookings             Booking[]                         @relation("reassignByUser")
+  createdAttributeToUsers        AttributeToUser[]                 @relation("createdBy")
+  updatedAttributeToUsers        AttributeToUser[]                 @relation("updatedBy")
+  createdTranslations            EventTypeTranslation[]            @relation("CreatedEventTypeTranslations")
+  updatedTranslations            EventTypeTranslation[]            @relation("UpdatedEventTypeTranslations")
+  reportedBookings               BookingReport[]                   @relation("ReportedBy")
+  wrongAssignmentReports         WrongAssignmentReport[]           @relation("WrongAssignmentReportedBy")
+  reviewedWrongAssignmentReports WrongAssignmentReport[]           @relation("WrongAssignmentReviewedBy")
   BookingInternalNote            BookingInternalNote[]
   creationSource                 CreationSource?
-  createdOrganizationOnboardings OrganizationOnboarding[]      @relation("CreatedOrganizationOnboardings")
+  createdOrganizationOnboardings OrganizationOnboarding[]          @relation("CreatedOrganizationOnboardings")
   filterSegments                 FilterSegment[]
   filterSegmentPreferences       UserFilterSegmentPreference[]
   creditBalance                  CreditBalance?
@@ -508,6 +510,7 @@ model User {
   agents                         Agent[]
   oAuthClients                   OAuthClient[]
   holidaySettings                UserHolidaySettings?
+  notetakerSharingMemberships    EventTypeNotetakerSharingMember[]
 
   autoOptInFeatures Boolean @default(false)
 
@@ -2915,6 +2918,7 @@ enum NotetakerActivityAction {
   EXPORTED
   DELETED
   SUMMARY_REQUESTED
+  SHARED_VIEWED
 }
 
 enum NotetakerActorType {
@@ -2923,12 +2927,22 @@ enum NotetakerActorType {
   SYSTEM
 }
 
+enum NotetakerSharingMode {
+  HOSTS_ONLY
+  TEAM
+  SELECTED_PEOPLE
+}
+
 model EventTypeNotetakerSettings {
-  eventTypeId      Int       @id
-  eventType        EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
-  enabledByDefault Boolean   @default(false)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  eventTypeId        Int                  @id
+  eventType          EventType            @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  enabledByDefault   Boolean              @default(false)
+  sharingMode        NotetakerSharingMode @default(HOSTS_ONLY)
+  // Soft reference to User.id without an FK
+  sharingSetByUserId Int?
+  sharingSetAt       DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 }
 
 model BookingNotetaker {
@@ -2951,54 +2965,58 @@ model BookingNotetaker {
 }
 
 model NotetakerSession {
-  id                    String                  @id @default(uuid())
-  bookingId             Int
-  booking               Booking                 @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  status                NotetakerSessionStatus  @default(SCHEDULED)
-  outcomeReason         NotetakerOutcomeReason?
-  platform              NotetakerPlatform
-  meetingUrl            String
-  botProvider           NotetakerBotProvider
-  externalRef           String?
-  displayName           String
-  scheduledStartAt      DateTime
-  dispatchedAt          DateTime                @default(now())
-  joinRequestedAt       DateTime?
-  admittedAt            DateTime?
-  noticePostedAt        DateTime?
-  endedAt               DateTime?
-  startedLate           Boolean                 @default(false)
-  rejoinAttempted       Boolean                 @default(false)
-  interruptedAtMs       Int?
-  lastHeartbeatAt       DateTime?
-  lastEventSequence     Int                     @default(0)
-  stopRequestedAt       DateTime?
+  id                        String                  @id @default(uuid())
+  bookingId                 Int
+  booking                   Booking                 @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  status                    NotetakerSessionStatus  @default(SCHEDULED)
+  outcomeReason             NotetakerOutcomeReason?
+  platform                  NotetakerPlatform
+  meetingUrl                String
+  botProvider               NotetakerBotProvider
+  externalRef               String?
+  displayName               String
+  scheduledStartAt          DateTime
+  dispatchedAt              DateTime                @default(now())
+  joinRequestedAt           DateTime?
+  admittedAt                DateTime?
+  noticePostedAt            DateTime?
+  endedAt                   DateTime?
+  startedLate               Boolean                 @default(false)
+  rejoinAttempted           Boolean                 @default(false)
+  interruptedAtMs           Int?
+  lastHeartbeatAt           DateTime?
+  lastEventSequence         Int                     @default(0)
+  stopRequestedAt           DateTime?
   // Soft reference to User.id without an FK
-  stopRequestedByUserId Int?
-  resultsDeletedAt      DateTime?
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-  transcript            NotetakerTranscript?
+  stopRequestedByUserId     Int?
+  resultsDeletedAt          DateTime?
+  // Set at dispatch and never changed: the participants of this session were told that colleagues may read the notes
+  colleagueSharingDisclosed Boolean                 @default(false)
+  createdAt                 DateTime                @default(now())
+  updatedAt                 DateTime                @updatedAt
+  transcript                NotetakerTranscript?
 
   @@index([bookingId])
   @@index([status])
 }
 
 model NotetakerTranscript {
-  id           String                          @id @default(uuid())
-  sessionId    String                          @unique
-  session      NotetakerSession                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  bookingId    Int
-  booking      Booking                         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  language     String?
+  id                    String                          @id @default(uuid())
+  sessionId             String                          @unique
+  session               NotetakerSession                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  bookingId             Int
+  booking               Booking                         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  language              String?
   // PARTIAL by default so a transcript whose bot died before finalize is labelled correctly
-  completeness NotetakerTranscriptCompleteness @default(PARTIAL)
-  durationMs   Int                             @default(0)
-  passageCount Int                             @default(0)
-  createdAt    DateTime                        @default(now())
-  updatedAt    DateTime                        @updatedAt
-  passages     NotetakerTranscriptPassage[]
-  summary      NotetakerSummary?
+  completeness          NotetakerTranscriptCompleteness @default(PARTIAL)
+  durationMs            Int                             @default(0)
+  passageCount          Int                             @default(0)
+  // null: made before speaker names existed. false: nobody could be identified
+  speakerNamesAvailable Boolean?
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @updatedAt
+  passages              NotetakerTranscriptPassage[]
+  summary               NotetakerSummary?
 
   @@index([bookingId])
 }
@@ -3059,4 +3077,33 @@ model NotetakerActivity {
   createdAt   DateTime                @default(now())
 
   @@index([bookingId, createdAt])
+}
+
+model EventTypeNotetakerSharingMember {
+  eventTypeId   Int
+  eventType     EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Soft reference to User.id without an FK
+  addedByUserId Int?
+  addedAt       DateTime  @default(now())
+
+  @@id([eventTypeId, userId])
+  @@index([userId])
+}
+
+model EventTypeNotetakerSharingChange {
+  id               String               @id @default(uuid())
+  eventTypeId      Int
+  eventType        EventType            @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  // Soft reference to User.id without an FK
+  actorUserId      Int?
+  actorName        String?
+  previousMode     NotetakerSharingMode
+  newMode          NotetakerSharingMode
+  addedUserNames   String[]             @default([])
+  removedUserNames String[]             @default([])
+  createdAt        DateTime             @default(now())
+
+  @@index([eventTypeId, createdAt])
 }

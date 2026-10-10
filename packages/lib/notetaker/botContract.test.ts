@@ -8,6 +8,7 @@ import {
   notetakerBotJoinRequestSchema,
   notetakerBotJoinResponseSchema,
   notetakerBotPassageSchema,
+  notetakerBotSpeakerResolutionSchema,
   notetakerBotStateSchema,
   notetakerBotStopReasonSchema,
   notetakerBotStopRequestSchema,
@@ -401,5 +402,72 @@ describe("notetaker stop and state schemas", () => {
     const state = { sessionId: joinRequest.sessionId, phase: "IN_MEETING", lastEventSequence: 7 };
     expect(notetakerBotStateSchema.parse(state)).toEqual(state);
     expect(notetakerBotStateSchema.safeParse({ ...state, phase: "PAUSED" }).success).toBe(false);
+  });
+});
+
+describe("session.ended speaker names", () => {
+  const ended = {
+    ...envelope,
+    type: "session.ended",
+    data: {
+      endReason: "MEETING_ENDED",
+      durationMs: 1200000,
+      interruptedAtMs: null,
+      passageCount: 3,
+    },
+  };
+  const resolution = {
+    speakerKey: "unknown:1",
+    resolvedSpeakerKey: "participant:abc",
+    speakerName: "Ada Lovelace",
+  };
+  const withData = (extra: Record<string, unknown>) => ({ ...ended, data: { ...ended.data, ...extra } });
+  const resolutions = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ ...resolution, speakerKey: `unknown:${i}` }));
+
+  it("parses without either field", () => {
+    expect(notetakerBotEventSchema.safeParse(ended).success).toBe(true);
+  });
+
+  it("parses with both fields present", () => {
+    const event = withData({ speakerNamesAvailable: true, speakerResolutions: [resolution] });
+    expect(notetakerBotEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("accepts speakerNamesAvailable false and rejects a non-boolean", () => {
+    expect(notetakerBotEventSchema.safeParse(withData({ speakerNamesAvailable: false })).success).toBe(true);
+    expect(notetakerBotEventSchema.safeParse(withData({ speakerNamesAvailable: "yes" })).success).toBe(false);
+  });
+
+  it("accepts 64 resolutions and rejects 65", () => {
+    expect(notetakerBotEventSchema.safeParse(withData({ speakerResolutions: resolutions(64) })).success).toBe(
+      true
+    );
+    expect(notetakerBotEventSchema.safeParse(withData({ speakerResolutions: resolutions(65) })).success).toBe(
+      false
+    );
+  });
+
+  it("accepts a name of 200 characters and rejects 201", () => {
+    const named = (speakerName: string) => ({ ...resolution, speakerName });
+    expect(notetakerBotSpeakerResolutionSchema.safeParse(named("a".repeat(200))).success).toBe(true);
+    expect(notetakerBotSpeakerResolutionSchema.safeParse(named("a".repeat(201))).success).toBe(false);
+  });
+
+  it.each(["speakerKey", "resolvedSpeakerKey", "speakerName"])("rejects an empty %s", (field) => {
+    expect(notetakerBotSpeakerResolutionSchema.safeParse({ ...resolution, [field]: "" }).success).toBe(false);
+  });
+
+  it("leaves prefix and uniqueness checks to the service", () => {
+    const odd = [
+      { speakerKey: "participant:1", resolvedSpeakerKey: "unknown:2", speakerName: "X" },
+      { speakerKey: "participant:1", resolvedSpeakerKey: "unknown:2", speakerName: "Y" },
+    ];
+    expect(notetakerBotEventSchema.safeParse(withData({ speakerResolutions: odd })).success).toBe(true);
+  });
+
+  it("still accepts unknown extra fields", () => {
+    expect(notetakerBotEventSchema.safeParse(withData({ somethingNew: 1 })).success).toBe(true);
+    expect(notetakerBotSpeakerResolutionSchema.safeParse({ ...resolution, extra: 1 }).success).toBe(true);
   });
 });

@@ -1,4 +1,6 @@
+import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerChoiceSourceDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 
 export type NotetakerBookingStatus = "CANCELLED" | "ACCEPTED" | "REJECTED" | "PENDING" | "AWAITING_HOST";
 
@@ -52,6 +54,14 @@ export type NotetakerBookingContext = {
   metadata: unknown;
   recurringEventId: string | null;
   eventTypeId: number | null;
+  /** EventType.teamId */
+  teamId: number | null;
+  /** EventType.team.name */
+  teamName: string | null;
+  /** EventType.team.parentId */
+  organizationId: number | null;
+  /** "HOSTS_ONLY" when the event type has no settings row or there is no event type. */
+  sharingMode: NotetakerSharingModeDto;
   attendeeEmails: string[];
   /** Non-deleted references only. */
   references: { type: string; meetingUrl: string | null }[];
@@ -68,6 +78,24 @@ export type NotetakerSeriesBookingRecord = {
   endTime: Date;
   status: NotetakerBookingStatus;
   choice: BookingNotetakerRecord | null;
+};
+
+export type NotetakerBookingWithResultsSessionRecord = {
+  bookingId: number;
+  bookingUid: string;
+  title: string;
+  startTime: Date;
+  eventTypeId: number;
+  organizerUserId: number | null;
+  organizerName: string | null;
+  attendeeEmails: string[];
+  /** Latest session (dispatchedAt desc, id desc) that has a transcript. */
+  resultsSession: {
+    id: string;
+    colleagueSharingDisclosed: boolean;
+    resultsDeletedAt: Date | null;
+    summaryStatus: NotetakerSummaryStatusDto | null;
+  } | null;
 };
 
 export interface IBookingNotetakerRepository {
@@ -161,4 +189,13 @@ export interface IBookingNotetakerRepository {
    * grantedByUserId and grantedAt of the existing row are kept). Never throws on a duplicate.
    */
   createSharingGrantIfMissing(data: { bookingId: number; grantedByUserId: number | null }): Promise<boolean>;
+  /**
+   * Bookings of the given event types that have at least one disclosed session with a transcript.
+   * Ordered by startTime desc, id desc. Empty eventTypeIds gives [] without a query.
+   */
+  findByEventTypeIdsIncludeResultsSession(params: {
+    eventTypeIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerBookingWithResultsSessionRecord[]>;
 }

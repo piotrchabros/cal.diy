@@ -8,6 +8,7 @@ import type {
   NotetakerBookingContext,
   NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
+  NotetakerBookingWithResultsSessionRecord,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
@@ -69,9 +70,34 @@ const bookingBaseSelect = {
     select: {
       hosts: { select: { userId: true, user: { select: { email: true } } } },
       users: { select: { id: true, email: true } },
+      teamId: true,
+      team: { select: { name: true, parentId: true } },
+      notetakerSettings: { select: { sharingMode: true } },
     },
   },
   user: { select: { id: true, name: true, email: true, locale: true } },
+} satisfies Prisma.BookingSelect;
+
+const resultsSessionBookingSelect = {
+  id: true,
+  uid: true,
+  title: true,
+  startTime: true,
+  eventTypeId: true,
+  userId: true,
+  user: { select: { name: true } },
+  attendees: { select: { email: true } },
+  notetakerSessions: {
+    where: { transcript: { isNot: null } },
+    orderBy: [{ dispatchedAt: "desc" }, { id: "desc" }],
+    take: 1,
+    select: {
+      id: true,
+      colleagueSharingDisclosed: true,
+      resultsDeletedAt: true,
+      transcript: { select: { summary: { select: { status: true } } } },
+    },
+  },
 } satisfies Prisma.BookingSelect;
 
 const bookingContextSelect = {
@@ -109,6 +135,10 @@ function toBookingContext(
     references: booking.references,
     eventTypeHosts: Array.from(hostsByUserId.values()),
     organizer: booking.user,
+    teamId: booking.eventType?.teamId ?? null,
+    teamName: booking.eventType?.team?.name ?? null,
+    organizationId: booking.eventType?.team?.parentId ?? null,
+    sharingMode: booking.eventType?.notetakerSettings?.sharingMode ?? "HOSTS_ONLY",
     choice,
   };
 }
@@ -418,5 +448,58 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       skipDuplicates: true,
     });
     return count === 1;
+  }
+
+  async findByEventTypeIdsIncludeResultsSession(params: {
+    eventTypeIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerBookingWithResultsSessionRecord[]> {
+    const { eventTypeIds, cursor, limit } = params;
+    if (eventTypeIds.length === 0) return [];
+
+    const rows = await this.prismaClient.booking.findMany({
+      where: {
+        eventTypeId: { in: eventTypeIds },
+        notetakerSessions: { some: { colleagueSharingDisclosed: true, transcript: { isNot: null } } },
+        ...(cursor
+          ? {
+              OR: [
+                { startTime: { lt: cursor.startTime } },
+                { startTime: cursor.startTime, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ startTime: "desc" }, { id: "desc" }],
+      take: limit,
+      select: resultsSessionBookingSelect,
+    });
+
+    const records: NotetakerBookingWithResultsSessionRecord[] = [];
+    for (const row of rows) {
+      // The where clause guarantees an event type; the null check narrows the type.
+      if (row.eventTypeId === null) continue;
+      const [session] = row.notetakerSessions;
+      records.push({
+        bookingId: row.id,
+        bookingUid: row.uid,
+        title: row.title,
+        startTime: row.startTime,
+        eventTypeId: row.eventTypeId,
+        organizerUserId: row.userId,
+        organizerName: row.user?.name ?? null,
+        attendeeEmails: row.attendees.map((attendee) => attendee.email),
+        resultsSession: session
+          ? {
+              id: session.id,
+              colleagueSharingDisclosed: session.colleagueSharingDisclosed,
+              resultsDeletedAt: session.resultsDeletedAt,
+              summaryStatus: session.transcript?.summary?.status ?? null,
+            }
+          : null,
+      });
+    }
+    return records;
   }
 }

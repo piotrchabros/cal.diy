@@ -84,6 +84,22 @@ export class PrismaNotetakerActivityRepository implements INotetakerActivityRepo
     return rows.map((row) => this.toRecord(row));
   }
 
+  async existsByBookingIdAndActionAndActorUserId({
+    bookingId,
+    action,
+    actorUserId,
+  }: {
+    bookingId: number;
+    action: NotetakerActivityRecord["action"];
+    actorUserId: number;
+  }): Promise<boolean> {
+    const row = await this.prismaClient.notetakerActivity.findFirst({
+      where: { bookingId, action, actorUserId },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
   async findDistinctActorUserIdsByBookingIdAndAction({
     bookingId,
     action,

@@ -1,4 +1,5 @@
-import type { NotetakerActivityActionDto } from "@calcom/lib/dto/NotetakerActivityDto";
+import type { NotetakerStoredActivityActionDto } from "@calcom/lib/dto/NotetakerActivityDto";
+import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerChoiceSourceDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type {
@@ -8,6 +9,7 @@ import type {
   NotetakerBookingContext,
   NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
+  NotetakerBookingWithResultsSessionRecord,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
@@ -16,6 +18,9 @@ import type {
   EventTypeNotetakerSettingsRecord,
   IEventTypeNotetakerSettingsRepository,
   NotetakerEventTypeContext,
+  NotetakerSharedEventTypeRecord,
+  NotetakerSharingChangeRecord,
+  NotetakerSharingMemberRecord,
 } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 import type {
   INotetakerActivityRepository,
@@ -37,8 +42,24 @@ import type {
   NotetakerTranscriptRecord,
 } from "../repositories/interfaces/INotetakerTranscriptRepository";
 
-type InMemoryBookingSeed = Omit<NotetakerBookingContext, "choice">;
-type InMemoryEventTypeSeed = Omit<NotetakerEventTypeContext, "settings">;
+type InMemoryBookingSeed = Omit<
+  NotetakerBookingContext,
+  "choice" | "teamId" | "teamName" | "organizationId" | "sharingMode"
+> & {
+  teamId?: number | null;
+  teamName?: string | null;
+  organizationId?: number | null;
+};
+type InMemoryEventTypeSeed = Omit<
+  NotetakerEventTypeContext,
+  "settings" | "title" | "teamName" | "organizationId"
+> & {
+  title?: string;
+  teamName?: string | null;
+  organizationId?: number | null;
+};
+type InMemoryUser = { name: string | null; email: string; avatarUrl: string | null };
+type InMemorySharingMember = { userId: number; addedByUserId: number | null; addedAt: Date };
 
 function copySeed(seed: InMemoryBookingSeed): InMemoryBookingSeed {
   return {
@@ -140,6 +161,9 @@ export class InMemoryNotetakerStore {
   readonly choices = new Map<number, BookingNotetakerRecord>();
   readonly sharingGrants = new Map<number, NotetakerSharingGrantRecord>();
   readonly eventTypeSettings = new Map<number, EventTypeNotetakerSettingsRecord>();
+  readonly sharingMembers = new Map<number, InMemorySharingMember[]>();
+  readonly sharingChanges: NotetakerSharingChangeRecord[] = [];
+  readonly users = new Map<number, InMemoryUser>();
   readonly sessions = new Map<string, NotetakerSessionRecord>();
   readonly transcripts = new Map<string, NotetakerTranscriptRecord>();
   readonly passages = new Map<string, Map<number, NotetakerPassageRecord>>();
@@ -193,6 +217,40 @@ export class InMemoryNotetakerStore {
     this.eventTypes.set(eventType.id, copyEventTypeSeed(eventType));
   }
 
+  setUser(userId: number, user: InMemoryUser): void {
+    this.users.set(userId, { ...user });
+  }
+
+  getUser(userId: number): InMemoryUser {
+    const user = this.users.get(userId);
+    return user ? { ...user } : { name: null, email: `user${userId}@example.com`, avatarUrl: null };
+  }
+
+  // Creates the settings row when missing so tests need no event type seed.
+  setSharingMode(eventTypeId: number, mode: NotetakerSharingModeDto): void {
+    const existing = this.eventTypeSettings.get(eventTypeId);
+    if (existing) {
+      existing.sharingMode = mode;
+      return;
+    }
+    this.eventTypeSettings.set(eventTypeId, {
+      eventTypeId,
+      enabledByDefault: false,
+      updatedAt: new Date(),
+      sharingMode: mode,
+      sharingSetByUserId: null,
+      sharingSetAt: null,
+    });
+  }
+
+  setSharingMembers(eventTypeId: number, userIds: number[]): void {
+    const addedAt = new Date();
+    this.sharingMembers.set(
+      eventTypeId,
+      userIds.map((userId) => ({ userId, addedByUserId: null, addedAt }))
+    );
+  }
+
   setVerifiedEmails(userId: number, emails: string[]): void {
     this.verifiedEmails.set(userId, [...emails]);
   }
@@ -221,7 +279,17 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
 
   private toContext(seed: InMemoryBookingSeed): NotetakerBookingContext {
     const choice = this.store.choices.get(seed.id);
-    return { ...copySeed(seed), choice: choice ? copyChoice(choice) : null };
+    return {
+      ...copySeed(seed),
+      teamId: seed.teamId ?? null,
+      teamName: seed.teamName ?? null,
+      organizationId: seed.organizationId ?? null,
+      sharingMode:
+        (seed.eventTypeId !== null
+          ? this.store.eventTypeSettings.get(seed.eventTypeId)?.sharingMode
+          : undefined) ?? "HOSTS_ONLY",
+      choice: choice ? copyChoice(choice) : null,
+    };
   }
 
   private bookingsByRecurringEventId(recurringEventId: string): InMemoryBookingSeed[] {
@@ -506,6 +574,64 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     });
     return true;
   }
+
+  async findByEventTypeIdsIncludeResultsSession(params: {
+    eventTypeIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerBookingWithResultsSessionRecord[]> {
+    if (params.eventTypeIds.length === 0) return [];
+    const eventTypeIds = new Set(params.eventTypeIds);
+    const { cursor } = params;
+    const transcriptSessionIds = new Set<string>();
+    for (const transcript of Array.from(this.store.transcripts.values())) {
+      transcriptSessionIds.add(transcript.sessionId);
+    }
+
+    const rows: { seed: InMemoryBookingSeed; eventTypeId: number; sessions: NotetakerSessionRecord[] }[] = [];
+    for (const seed of Array.from(this.store.bookings.values())) {
+      if (seed.eventTypeId === null || !eventTypeIds.has(seed.eventTypeId)) continue;
+      if (cursor !== null) {
+        const startMs = seed.startTime.getTime();
+        const cursorMs = cursor.startTime.getTime();
+        if (startMs > cursorMs || (startMs === cursorMs && seed.id >= cursor.id)) continue;
+      }
+      const sessions = Array.from(this.store.sessions.values())
+        .filter((session) => session.bookingId === seed.id && transcriptSessionIds.has(session.id))
+        .sort(compareLatestSessionFirst);
+      if (!sessions.some((session) => session.colleagueSharingDisclosed)) continue;
+      rows.push({ seed, eventTypeId: seed.eventTypeId, sessions });
+    }
+    rows.sort(
+      (a, b) =>
+        compareNumbers(b.seed.startTime.getTime(), a.seed.startTime.getTime()) ||
+        compareNumbers(b.seed.id, a.seed.id)
+    );
+
+    return rows.slice(0, params.limit).map(({ seed, eventTypeId, sessions }) => {
+      const latest = sessions[0];
+      const transcript = Array.from(this.store.transcripts.values()).find(
+        (candidate) => candidate.sessionId === latest.id
+      );
+      const summary = transcript ? this.store.summaries.get(transcript.id) : undefined;
+      return {
+        bookingId: seed.id,
+        bookingUid: seed.uid,
+        title: seed.title,
+        startTime: seed.startTime,
+        eventTypeId,
+        organizerUserId: seed.userId,
+        organizerName: seed.organizer?.name ?? null,
+        attendeeEmails: [...seed.attendeeEmails],
+        resultsSession: {
+          id: latest.id,
+          colleagueSharingDisclosed: latest.colleagueSharingDisclosed,
+          resultsDeletedAt: latest.resultsDeletedAt,
+          summaryStatus: summary ? summary.status : null,
+        },
+      };
+    });
+  }
 }
 
 export class InMemoryEventTypeNotetakerSettingsRepository implements IEventTypeNotetakerSettingsRepository {
@@ -523,10 +649,14 @@ export class InMemoryEventTypeNotetakerSettingsRepository implements IEventTypeN
     if (!this.store.eventTypes.has(data.eventTypeId)) {
       throw new Error(`InMemoryNotetakerStore: event type ${data.eventTypeId} does not exist`);
     }
+    const existing = this.store.eventTypeSettings.get(data.eventTypeId);
     const settings: EventTypeNotetakerSettingsRecord = {
       eventTypeId: data.eventTypeId,
       enabledByDefault: data.enabledByDefault,
       updatedAt: new Date(),
+      sharingMode: existing?.sharingMode ?? "HOSTS_ONLY",
+      sharingSetByUserId: existing?.sharingSetByUserId ?? null,
+      sharingSetAt: existing?.sharingSetAt ?? null,
     };
     this.store.eventTypeSettings.set(data.eventTypeId, settings);
     return copySettings(settings);
@@ -536,7 +666,146 @@ export class InMemoryEventTypeNotetakerSettingsRepository implements IEventTypeN
     const seed = this.store.eventTypes.get(eventTypeId);
     if (!seed) return null;
     const settings = this.store.eventTypeSettings.get(eventTypeId);
-    return { ...copyEventTypeSeed(seed), settings: settings ? copySettings(settings) : null };
+    return {
+      ...copyEventTypeSeed(seed),
+      title: seed.title ?? "",
+      teamName: seed.teamName ?? null,
+      organizationId: seed.organizationId ?? null,
+      settings: settings ? copySettings(settings) : null,
+    };
+  }
+
+  async updateSharing(data: {
+    eventTypeId: number;
+    sharingMode: NotetakerSharingModeDto;
+    sharingSetByUserId: number | null;
+    sharingSetAt: Date;
+    memberUserIds?: number[];
+    change: Omit<NotetakerSharingChangeRecord, "id" | "eventTypeId" | "createdAt">;
+  }): Promise<void> {
+    if (!this.store.eventTypes.has(data.eventTypeId)) {
+      throw new Error(`InMemoryNotetakerStore: event type ${data.eventTypeId} does not exist`);
+    }
+    const existing = this.store.eventTypeSettings.get(data.eventTypeId);
+    this.store.eventTypeSettings.set(data.eventTypeId, {
+      eventTypeId: data.eventTypeId,
+      enabledByDefault: existing?.enabledByDefault ?? false,
+      updatedAt: new Date(),
+      sharingMode: data.sharingMode,
+      sharingSetByUserId: data.sharingSetByUserId,
+      sharingSetAt: data.sharingSetAt,
+    });
+
+    if (data.memberUserIds !== undefined) {
+      const wanted = new Set(data.memberUserIds);
+      const current = this.store.sharingMembers.get(data.eventTypeId) ?? [];
+      const kept = current.filter((member) => wanted.has(member.userId));
+      const keptIds = new Set(kept.map((member) => member.userId));
+      const addedAt = new Date();
+      for (const userId of data.memberUserIds) {
+        if (keptIds.has(userId)) continue;
+        keptIds.add(userId);
+        kept.push({ userId, addedByUserId: data.sharingSetByUserId, addedAt });
+      }
+      this.store.sharingMembers.set(data.eventTypeId, kept);
+    }
+
+    this.store.sharingChanges.push({
+      ...data.change,
+      addedUserNames: [...data.change.addedUserNames],
+      removedUserNames: [...data.change.removedUserNames],
+      id: this.store.nextId(),
+      eventTypeId: data.eventTypeId,
+      createdAt: new Date(),
+    });
+  }
+
+  async findSharingMembersIncludeUser(eventTypeId: number): Promise<NotetakerSharingMemberRecord[]> {
+    const members = [...(this.store.sharingMembers.get(eventTypeId) ?? [])].sort(
+      (a, b) => compareNumbers(a.addedAt.getTime(), b.addedAt.getTime()) || compareNumbers(a.userId, b.userId)
+    );
+    return members.map((member) => {
+      const user = this.store.getUser(member.userId);
+      return {
+        userId: member.userId,
+        name: user.name,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        addedAt: member.addedAt,
+      };
+    });
+  }
+
+  async hasSharingMember(params: { eventTypeId: number; userId: number }): Promise<boolean> {
+    return (this.store.sharingMembers.get(params.eventTypeId) ?? []).some(
+      (member) => member.userId === params.userId
+    );
+  }
+
+  async findSharingChangesByEventTypeIdSince(params: {
+    eventTypeId: number;
+    since: Date;
+    limit: number;
+  }): Promise<NotetakerSharingChangeRecord[]> {
+    return this.store.sharingChanges
+      .filter(
+        (change) =>
+          change.eventTypeId === params.eventTypeId && change.createdAt.getTime() >= params.since.getTime()
+      )
+      .sort(
+        (a, b) => compareNumbers(b.createdAt.getTime(), a.createdAt.getTime()) || compareStrings(b.id, a.id)
+      )
+      .slice(0, params.limit)
+      .map((change) => ({
+        ...change,
+        addedUserNames: [...change.addedUserNames],
+        removedUserNames: [...change.removedUserNames],
+      }));
+  }
+
+  async findByTeamIdsAndSharingModeIncludeEventType(params: {
+    teamIds: number[];
+    sharingMode: NotetakerSharingModeDto;
+  }): Promise<NotetakerSharedEventTypeRecord[]> {
+    if (params.teamIds.length === 0) return [];
+    const teamIds = new Set(params.teamIds);
+    const result: NotetakerSharedEventTypeRecord[] = [];
+    for (const seed of Array.from(this.store.eventTypes.values())) {
+      if (seed.teamId === null || !teamIds.has(seed.teamId)) continue;
+      const settings = this.store.eventTypeSettings.get(seed.id);
+      if (!settings || settings.sharingMode !== params.sharingMode) continue;
+      result.push(this.toSharedEventType(seed, seed.teamId, settings.sharingMode));
+    }
+    return result.sort((a, b) => compareNumbers(a.eventTypeId, b.eventTypeId));
+  }
+
+  async findBySharingMemberUserIdIncludeEventType(params: {
+    userId: number;
+  }): Promise<NotetakerSharedEventTypeRecord[]> {
+    const result: NotetakerSharedEventTypeRecord[] = [];
+    for (const [eventTypeId, members] of Array.from(this.store.sharingMembers.entries())) {
+      if (!members.some((member) => member.userId === params.userId)) continue;
+      const seed = this.store.eventTypes.get(eventTypeId);
+      if (!seed || seed.teamId === null) continue;
+      const sharingMode = this.store.eventTypeSettings.get(eventTypeId)?.sharingMode ?? "HOSTS_ONLY";
+      result.push(this.toSharedEventType(seed, seed.teamId, sharingMode));
+    }
+    return result.sort((a, b) => compareNumbers(a.eventTypeId, b.eventTypeId));
+  }
+
+  private toSharedEventType(
+    seed: InMemoryEventTypeSeed,
+    teamId: number,
+    sharingMode: NotetakerSharingModeDto
+  ): NotetakerSharedEventTypeRecord {
+    return {
+      eventTypeId: seed.id,
+      eventTypeTitle: seed.title ?? "",
+      teamId,
+      teamName: seed.teamName ?? "",
+      organizationId: seed.organizationId ?? null,
+      sharingMode,
+    };
   }
 }
 
@@ -577,6 +846,7 @@ export class InMemoryNotetakerSessionRepository implements INotetakerSessionRepo
       stopRequestedAt: null,
       stopRequestedByUserId: null,
       resultsDeletedAt: null,
+      colleagueSharingDisclosed: data.colleagueSharingDisclosed ?? false,
       createdAt: new Date(),
     };
     this.store.sessions.set(session.id, session);
@@ -591,6 +861,15 @@ export class InMemoryNotetakerSessionRepository implements INotetakerSessionRepo
   async findLatestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null> {
     const latest = this.sessionsOfBookingLatestFirst(bookingId)[0];
     return latest ? copySession(latest) : null;
+  }
+
+  async findEarliestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null> {
+    const earliest = Array.from(this.store.sessions.values())
+      .filter((session) => session.bookingId === bookingId)
+      .sort(
+        (a, b) => compareNumbers(a.createdAt.getTime(), b.createdAt.getTime()) || compareStrings(a.id, b.id)
+      )[0];
+    return earliest ? copySession(earliest) : null;
   }
 
   async findLatestWithTranscriptByBookingId(
@@ -722,6 +1001,7 @@ export class InMemoryNotetakerTranscriptRepository implements INotetakerTranscri
       completeness: "PARTIAL",
       durationMs: 0,
       passageCount: 0,
+      speakerNamesAvailable: null,
       createdAt: new Date(),
     };
     this.store.transcripts.set(transcript.id, transcript);
@@ -780,7 +1060,10 @@ export class InMemoryNotetakerTranscriptRepository implements INotetakerTranscri
   async update(
     id: string,
     data: Partial<
-      Pick<NotetakerTranscriptRecord, "language" | "completeness" | "durationMs" | "passageCount">
+      Pick<
+        NotetakerTranscriptRecord,
+        "language" | "completeness" | "durationMs" | "passageCount" | "speakerNamesAvailable"
+      >
     >
   ): Promise<NotetakerTranscriptRecord> {
     const transcript = this.store.transcripts.get(id);
@@ -789,6 +1072,23 @@ export class InMemoryNotetakerTranscriptRepository implements INotetakerTranscri
     }
     applyDefined(transcript, data);
     return copyTranscript(transcript);
+  }
+
+  async updatePassageSpeakersBySpeakerKey(params: {
+    transcriptId: string;
+    speakerKey: string;
+    resolvedSpeakerKey: string;
+    speakerName: string;
+  }): Promise<number> {
+    let updated = 0;
+    for (const passage of Array.from(this.store.passages.get(params.transcriptId)?.values() ?? [])) {
+      if (passage.speakerKey !== params.speakerKey) continue;
+      passage.speakerKey = params.resolvedSpeakerKey;
+      passage.speakerName = params.speakerName;
+      passage.unknownSpeakerNumber = null;
+      updated += 1;
+    }
+    return updated;
   }
 
   async deleteById(id: string): Promise<void> {
@@ -916,7 +1216,7 @@ export class InMemoryNotetakerActivityRepository implements INotetakerActivityRe
 
   async findDistinctActorUserIdsByBookingIdAndAction(params: {
     bookingId: number;
-    action: NotetakerActivityActionDto;
+    action: NotetakerStoredActivityActionDto;
   }): Promise<number[]> {
     const seen = new Set<number>();
     for (const activity of this.store.activities) {
@@ -924,6 +1224,19 @@ export class InMemoryNotetakerActivityRepository implements INotetakerActivityRe
       if (activity.actorUserId !== null) seen.add(activity.actorUserId);
     }
     return Array.from(seen);
+  }
+
+  async existsByBookingIdAndActionAndActorUserId(params: {
+    bookingId: number;
+    action: NotetakerStoredActivityActionDto;
+    actorUserId: number;
+  }): Promise<boolean> {
+    return this.store.activities.some(
+      (activity) =>
+        activity.bookingId === params.bookingId &&
+        activity.action === params.action &&
+        activity.actorUserId === params.actorUserId
+    );
   }
 }
 
@@ -948,4 +1261,4 @@ export function createInMemoryNotetakerRepositories(): {
   };
 }
 
-export type { InMemoryBookingSeed, InMemoryEventTypeSeed };
+export type { InMemoryBookingSeed, InMemoryEventTypeSeed, InMemoryUser };
