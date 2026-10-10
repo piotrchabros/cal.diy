@@ -14,6 +14,10 @@ const ALL_EVENTS: PlatformEvent[] = [
   { type: "denied" },
   { type: "participant_count", count: 3 },
   { type: "speaker", participantId: "p1", name: "Ada", speaking: true },
+  {
+    type: "participants",
+    participants: [{ participantId: "p1", name: "Ada", isSelf: false, speakingNow: true }],
+  },
   { type: "source_activity", sourceKey: "src-1", level: 0.5 },
   { type: "source_identity", sourceKey: "src-1", participantId: "p1", name: "Ada" },
   { type: "removed" },

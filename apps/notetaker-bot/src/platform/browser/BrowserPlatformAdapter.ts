@@ -55,6 +55,16 @@ export type MeetingPageState =
   | "LINK_INVALID"
   | "UNKNOWN";
 
+export type ParticipantReading = {
+  participantId: string;
+  name: string;
+  // The sustained indicator: it trails the end of a turn.
+  speaking: boolean;
+  // The instantaneous indicator: on only while sound is present.
+  speakingNow: boolean;
+  isSelf: boolean;
+};
+
 export interface MeetingPageDriver {
   readonly platform: PlatformName;
   signIn?(page: MeetingPage): Promise<void>;
@@ -62,6 +72,8 @@ export interface MeetingPageDriver {
   readState(page: MeetingPage): Promise<MeetingPageState>;
   readParticipantCount(page: MeetingPage): Promise<number | null>;
   readActiveSpeakers(page: MeetingPage): Promise<{ participantId: string; name: string }[]>;
+  // A driver that has it is polled through it alone; readActiveSpeakers is then not called.
+  readParticipants?(page: MeetingPage): Promise<ParticipantReading[]>;
   postChatMessage(page: MeetingPage, text: string): Promise<void>;
   leave(page: MeetingPage): Promise<void>;
 }
@@ -368,9 +380,7 @@ export class BrowserPlatformAdapter implements PlatformAdapter {
       if (!countRead) return;
       this.applyParticipantCount(countRead.value);
 
-      const speakersRead = await this.readOrLose(session, () => this.driver.readActiveSpeakers(page));
-      if (!speakersRead) return;
-      this.applySpeakers(speakersRead.value);
+      if (!(await this.pollSpeakers(session))) return;
     }
 
     // A handler called above may have left the meeting.
@@ -390,6 +400,44 @@ export class BrowserPlatformAdapter implements PlatformAdapter {
     if (count === this.lastCount) return;
     this.lastCount = count;
     this.emit({ type: "participant_count", count });
+  }
+
+  // False means the tick must stop.
+  private async pollSpeakers(session: PageSession): Promise<boolean> {
+    const page = session.page;
+    const readParticipants = this.driver.readParticipants?.bind(this.driver);
+    if (!readParticipants) {
+      const speakersRead = await this.readOrLose(session, () => this.driver.readActiveSpeakers(page));
+      if (!speakersRead) return false;
+      this.applySpeakers(speakersRead.value);
+      return true;
+    }
+
+    const participantsRead = await this.readOrLose(session, () => readParticipants(page));
+    if (!participantsRead) return false;
+    this.applyParticipants(participantsRead.value);
+    return true;
+  }
+
+  private applyParticipants(readings: ParticipantReading[]): void {
+    const seen = new Set<string>();
+    const participants: Extract<PlatformEvent, { type: "participants" }>["participants"] = [];
+    const speakers: { participantId: string; name: string }[] = [];
+    for (const reading of readings) {
+      if (reading.participantId === "" || seen.has(reading.participantId)) continue;
+      seen.add(reading.participantId);
+      participants.push({
+        participantId: reading.participantId,
+        name: reading.name,
+        isSelf: reading.isSelf,
+        speakingNow: reading.speakingNow,
+      });
+      if (reading.speaking) speakers.push({ participantId: reading.participantId, name: reading.name });
+    }
+    // Sent before the speaker events so that the receiver knows the self flag and the name of a participant
+    // before it hears that the participant speaks.
+    this.emit({ type: "participants", participants });
+    this.applySpeakers(speakers);
   }
 
   private applySpeakers(speakers: { participantId: string; name: string }[]): void {

@@ -5,7 +5,11 @@ import type { RunnerConfig } from "../src/config";
 import { createSilentLogger } from "../src/logger";
 import { DEFAULT_POLL_INTERVAL_MS } from "../src/platform/browser/BrowserPlatformAdapter";
 import { FakeMeetingBrowserLauncher, FakeMeetingPage } from "../src/platform/browser/FakeMeetingPage";
-import { GOOGLE_MEET_SELECTORS, GoogleMeetAdapter } from "../src/platform/GoogleMeetAdapter";
+import {
+  GOOGLE_MEET_SELECTORS,
+  GOOGLE_MEET_SPEAKING_INDICATORS,
+  GoogleMeetAdapter,
+} from "../src/platform/GoogleMeetAdapter";
 import type { PlatformEvent, PlatformHandlers } from "../src/platform/PlatformAdapter";
 import {
   AFTER_LEAVE_OBSERVATION_MS,
@@ -103,7 +107,7 @@ describe("stripVisible", () => {
     );
     expect(stripVisible(S.leaveCallButton)).toBe('button[aria-label*="Leave call" i]');
     expect(stripVisible(S.activeSpeakerName)).toBe(
-      '[data-participant-id]:has([aria-label*="speaking" i]) span.notranslate'
+      `[data-participant-id]:not([data-participant-id] [data-participant-id]).${GOOGLE_MEET_SPEAKING_INDICATORS.sustained} span.notranslate`
     );
   });
 
@@ -202,6 +206,45 @@ describe("RecordingMeetingPage", () => {
       ok("readTexts", null, { kind: "count", value: 0 }),
       ok("close", null),
     ]);
+  });
+
+  it("forwards readElements and records the selector key and the row count only", async () => {
+    const { inner, recorder, page } = setupPage();
+    const attributeName = "fake-attribute-name";
+    const innerSelector = "span.fake-inner-selector";
+    const attributeValue = "fake-attribute-value";
+    inner.setElements(S.participantTile, [
+      { attributes: { [attributeName]: attributeValue }, text: FAKE_TEXT },
+      { attributes: {}, text: null },
+    ]);
+
+    expect(await page.readElements(S.participantTile, [attributeName], innerSelector)).toEqual([
+      { attributes: { [attributeName]: attributeValue }, text: FAKE_TEXT },
+      { attributes: { [attributeName]: null }, text: null },
+    ]);
+    expect(await page.readElements("div.not-an-adapter-selector", [attributeName], null)).toEqual([]);
+
+    expect(recorder.pageCalls().map(shape)).toEqual([
+      {
+        method: "readElements",
+        selectorKey: "participantTile",
+        result: { kind: "count", value: 2 },
+        errorName: null,
+      },
+      { method: "readElements", selectorKey: null, result: { kind: "count", value: 0 }, errorName: null },
+    ]);
+    const json = JSON.stringify(recorder.pageCalls());
+    for (const secret of [attributeName, innerSelector, attributeValue, FAKE_TEXT]) {
+      expect(json).not.toContain(secret);
+    }
+  });
+
+  it("records the error name of a failing readElements and rethrows", async () => {
+    const { inner, recorder, page } = setupPage();
+    inner.setError("readElements", new FakeTimeoutError());
+
+    await expect(page.readElements(S.participantTile, ["a"], null)).rejects.toBeInstanceOf(FakeTimeoutError);
+    expect(recorder.pageCalls().map((call) => shape(call)?.errorName)).toEqual(["TimeoutError"]);
   });
 
   it("forwards the any-frame methods and records the selector key, never the value", async () => {
@@ -751,7 +794,12 @@ describe("a full GoogleMeetAdapter join and leave through the recording launcher
   it("records the join, the speaker reads and the leave steps", async () => {
     const { inner, recorder, launcher } = setupLauncher();
     prepareGuestJoin(inner);
-    inner.setTexts(S.activeSpeakerName, [FAKE_TEXT]);
+    inner.setElements(S.participantTile, [
+      {
+        attributes: { "data-participant-id": "p1", class: GOOGLE_MEET_SPEAKING_INDICATORS.sustained },
+        text: FAKE_TEXT,
+      },
+    ]);
     const events: PlatformEvent[] = [];
     const handlers: PlatformHandlers = { onEvent: (event) => events.push(event), onAudioFrame: () => {} };
     const adapter = new GoogleMeetAdapter({
@@ -763,7 +811,7 @@ describe("a full GoogleMeetAdapter join and leave through the recording launcher
 
     await adapter.join({ meetingUrl: FAKE_URL, displayName: FAKE_NAME }, handlers);
     await advance(DEFAULT_POLL_INTERVAL_MS);
-    expect(events.map((event) => event.type)).toEqual(["admitted", "speaker"]);
+    expect(events.map((event) => event.type)).toEqual(["admitted", "participants", "speaker"]);
 
     // The probe's own install comes first and the adapter's script and bindings are all still there.
     expect(inner.actions.slice(0, 5)).toEqual([
@@ -791,13 +839,21 @@ describe("a full GoogleMeetAdapter join and leave through the recording launcher
       errorName: null,
     });
     expect(joinCalls.map(shape)).toContainEqual({
-      method: "readTexts",
-      selectorKey: "activeSpeakerName",
+      method: "readElements",
+      selectorKey: "participantTile",
       result: { kind: "count", value: 1 },
       errorName: null,
     });
     // Every selector the adapter used is one of its own, so nothing was recorded without a key.
-    const selectorMethods = ["isVisible", "waitForVisible", "click", "fill", "readText", "readTexts"];
+    const selectorMethods = [
+      "isVisible",
+      "waitForVisible",
+      "click",
+      "fill",
+      "readText",
+      "readTexts",
+      "readElements",
+    ];
     expect(
       joinCalls.filter((call) => selectorMethods.includes(call.method) && call.selectorKey === null)
     ).toEqual([]);

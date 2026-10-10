@@ -11,7 +11,7 @@ import type { Logger } from "../../logger";
 import { createLogger, createSilentLogger } from "../../logger";
 import type { PlatformEvent, PlatformHandlers, PlatformName } from "../PlatformAdapter";
 import { PlatformLinkUnusableError } from "../PlatformAdapter";
-import type { MeetingPageDriver, MeetingPageState } from "./BrowserPlatformAdapter";
+import type { MeetingPageDriver, MeetingPageState, ParticipantReading } from "./BrowserPlatformAdapter";
 import {
   BrowserPlatformAdapter,
   DEFAULT_POLL_INTERVAL_MS,
@@ -39,6 +39,7 @@ type DriverMethod =
   | "readState"
   | "readParticipantCount"
   | "readActiveSpeakers"
+  | "readParticipants"
   | "postChatMessage"
   | "leave";
 
@@ -115,6 +116,16 @@ class SignInDriver extends ScriptedDriver {
   }
 }
 
+class ParticipantsDriver extends ScriptedDriver {
+  participants: ParticipantReading[] = [];
+
+  async readParticipants(_page: MeetingPage): Promise<ParticipantReading[]> {
+    this.calls.push("readParticipants");
+    this.maybeThrow("readParticipants");
+    return this.participants;
+  }
+}
+
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve: (value: T) => void = () => {};
   const promise = new Promise<T>((settle) => {
@@ -146,6 +157,7 @@ function createHandlers(hooks: { throwOnFirstEvent?: boolean; throwOnFrame?: boo
 type SetupOptions = {
   platform?: PlatformName;
   signIn?: boolean;
+  driver?: ScriptedDriver;
   state?: MeetingPageState;
   defaultTimings?: boolean;
   logger?: Logger;
@@ -153,7 +165,9 @@ type SetupOptions = {
 };
 
 function setup(options: SetupOptions = {}) {
-  const driver = options.signIn ? new SignInDriver(options.platform) : new ScriptedDriver(options.platform);
+  const driver =
+    options.driver ??
+    (options.signIn ? new SignInDriver(options.platform) : new ScriptedDriver(options.platform));
   if (options.state) driver.state = options.state;
   const launcher = new FakeMeetingBrowserLauncher();
   const { handlers, events, frames } = createHandlers(options.hooks);
@@ -578,6 +592,194 @@ describe("counts and speakers", () => {
     await advance(POLL);
 
     expect(ended.events.slice(-2)).toEqual([speakerEvent(SPEAKER_A, false), { type: "meeting_ended" }]);
+  });
+});
+
+describe("participants", () => {
+  const reading = (
+    participantId: string,
+    name: string,
+    flags: Partial<Pick<ParticipantReading, "speaking" | "speakingNow" | "isSelf">> = {}
+  ): ParticipantReading => ({
+    participantId,
+    name,
+    speaking: false,
+    speakingNow: false,
+    isSelf: false,
+    ...flags,
+  });
+  const sample = (
+    participantId: string,
+    name: string,
+    flags: { isSelf?: boolean; speakingNow?: boolean } = {}
+  ) => ({ participantId, name, isSelf: false, speakingNow: false, ...flags });
+  const participantsEvent = (participants: ReturnType<typeof sample>[]): PlatformEvent => ({
+    type: "participants",
+    participants,
+  });
+  const participantsEvents = (events: PlatformEvent[]) =>
+    events.filter((event) => event.type === "participants");
+
+  async function joinedWithTiles(
+    state: MeetingPageState = "IN_MEETING"
+  ): Promise<{ ctx: Ctx; driver: ParticipantsDriver }> {
+    const driver = new ParticipantsDriver();
+    const ctx = await joined({ driver, state });
+    return { ctx, driver };
+  }
+
+  it("polls a driver that has readParticipants through it and never calls readActiveSpeakers", async () => {
+    const { driver } = await joinedWithTiles();
+    driver.speakers = [SPEAKER_A];
+
+    await advance(POLL * 3);
+
+    expect(driver.calls.filter((call) => call === "readParticipants").length).toBe(3);
+    expect(driver.calls).not.toContain("readActiveSpeakers");
+  });
+
+  it("emits one participants event per poll, also for an empty list, before the speaker events of the tick", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+
+    await advance(POLL);
+    expect(ctx.events).toEqual([{ type: "admitted" }, participantsEvent([])]);
+
+    driver.participants = [reading("p-a", "Ada", { speaking: true })];
+    await advance(POLL);
+    driver.participants = [reading("p-b", "Bob", { speaking: true })];
+    await advance(POLL);
+
+    expect(ctx.events.slice(2)).toEqual([
+      participantsEvent([sample("p-a", "Ada")]),
+      speakerEvent(SPEAKER_A, true),
+      participantsEvent([sample("p-b", "Bob")]),
+      speakerEvent(SPEAKER_A, false),
+      speakerEvent(SPEAKER_B, true),
+    ]);
+  });
+
+  it("keys speaker events by the participant id, so two tiles with one name are two speakers", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+    const first = { participantId: "p-1", name: "Anna Nowak" };
+    const second = { participantId: "p-2", name: "Anna Nowak" };
+
+    driver.participants = [
+      reading("p-1", "Anna Nowak", { speaking: true }),
+      reading("p-2", "Anna Nowak", { speaking: true }),
+    ];
+    await advance(POLL);
+    driver.participants = [reading("p-1", "Anna Nowak"), reading("p-2", "Anna Nowak", { speaking: true })];
+    await advance(POLL);
+    driver.participants = [reading("p-1", "Anna Nowak"), reading("p-2", "Anna Nowak")];
+    await advance(POLL);
+
+    expect(speakerEvents(ctx.events)).toEqual([
+      speakerEvent(first, true),
+      speakerEvent(second, true),
+      speakerEvent(first, false),
+      speakerEvent(second, false),
+    ]);
+  });
+
+  it("carries speakingNow in the participants event without producing a speaker event", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+    driver.participants = [reading("p-a", "Ada", { speakingNow: true }), reading("p-b", "Bob")];
+
+    await advance(POLL);
+
+    expect(speakerEvents(ctx.events)).toEqual([]);
+    expect(participantsEvents(ctx.events)).toEqual([
+      participantsEvent([sample("p-a", "Ada", { speakingNow: true }), sample("p-b", "Bob")]),
+    ]);
+  });
+
+  it("drops empty ids and keeps the first reading of a duplicate id", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+    driver.participants = [
+      reading("", "Nobody", { speaking: true }),
+      reading("p-a", "Ada", { speaking: true }),
+      reading("p-a", "Duplicate", { speakingNow: true }),
+    ];
+
+    await advance(POLL);
+
+    expect(participantsEvents(ctx.events)).toEqual([participantsEvent([sample("p-a", "Ada")])]);
+    expect(speakerEvents(ctx.events)).toEqual([speakerEvent(SPEAKER_A, true)]);
+  });
+
+  it("passes isSelf through unchanged", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+    driver.participants = [reading("p-self", "You", { isSelf: true }), reading("p-a", "Ada")];
+
+    await advance(POLL);
+
+    expect(participantsEvents(ctx.events)).toEqual([
+      participantsEvent([sample("p-self", "You", { isSelf: true }), sample("p-a", "Ada")]),
+    ]);
+  });
+
+  it("treats a throwing readParticipants as a loss, closing open speakers first", async () => {
+    const { ctx, driver } = await joinedWithTiles();
+    driver.participants = [reading("p-a", "Ada", { speaking: true })];
+    await advance(POLL);
+
+    driver.errors.set("readParticipants", new Error("fake read failure"));
+    await advance(POLL);
+    const readsAtLoss = readStateCalls(driver);
+    await advance(POLL * 10);
+
+    expect(ctx.events.slice(-2)).toEqual([speakerEvent(SPEAKER_A, false), { type: "connection_lost" }]);
+    expect(participantsEvents(ctx.events).length).toBe(1);
+    expect(readStateCalls(driver)).toBe(readsAtLoss);
+  });
+
+  it("reads and emits nothing before IN_MEETING, after a terminal state or after leave", async () => {
+    const waiting = await joinedWithTiles("WAITING");
+    await advance(POLL * 3);
+    expect(waiting.driver.calls).not.toContain("readParticipants");
+    expect(participantsEvents(waiting.ctx.events)).toEqual([]);
+
+    const ended = await joinedWithTiles();
+    await advance(POLL);
+    ended.driver.state = "ENDED";
+    await advance(POLL * 5);
+    expect(ended.driver.calls.filter((call) => call === "readParticipants").length).toBe(1);
+    expect(types(ended.ctx.events)).toEqual(["admitted", "participants", "meeting_ended"]);
+
+    const left = await joinedWithTiles();
+    await advance(POLL);
+    await left.ctx.adapter.leave();
+    await advance(POLL * 5);
+    expect(left.driver.calls.filter((call) => call === "readParticipants").length).toBe(1);
+    expect(types(left.ctx.events)).toEqual(["admitted", "participants"]);
+  });
+
+  it("emits no participants event for a driver without readParticipants", async () => {
+    const { driver, events } = await joined({ state: "IN_MEETING" });
+    driver.speakers = [SPEAKER_A];
+
+    await advance(POLL * 3);
+
+    expect(participantsEvents(events)).toEqual([]);
+    expect(speakerEvents(events)).toEqual([speakerEvent(SPEAKER_A, true)]);
+  });
+
+  it("logs no participant name or id", async () => {
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", write: (line) => lines.push(line) });
+    const driver = new ParticipantsDriver();
+    const ctx = await joined({ driver, state: "IN_MEETING", logger });
+    driver.participants = [
+      reading("spaces/fake-id-123", "Ada Lovelace", { speaking: true, speakingNow: true }),
+    ];
+    await advance(POLL);
+    driver.errors.set("readParticipants", new Error("fake read failure"));
+    await advance(POLL);
+
+    expect(ctx.events.at(-1)).toEqual({ type: "connection_lost" });
+    const output = lines.join("\n");
+    expect(output).not.toContain("Ada Lovelace");
+    expect(output).not.toContain("spaces/fake-id-123");
   });
 });
 

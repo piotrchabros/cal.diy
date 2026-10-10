@@ -5,7 +5,13 @@ import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page } fr
 import { chromium, errors } from "playwright";
 import type { Logger } from "../../logger";
 import { buildChromeLaunchOptions, sanitizeBrowserError } from "./chromeLaunch";
-import type { MeetingBrowserLauncher, MeetingBrowserOptions, MeetingPage } from "./MeetingPage";
+import type {
+  ElementReading,
+  MeetingBrowserLauncher,
+  MeetingBrowserOptions,
+  MeetingPage,
+} from "./MeetingPage";
+import { readElementsInPage } from "./readElementsInPage";
 
 const NAVIGATION_TIMEOUT_MS = 45000;
 const ACTION_TIMEOUT_MS = 10000;
@@ -101,6 +107,18 @@ class PlaywrightMeetingPage implements MeetingPage {
 
   readTexts(selector: string): Promise<string[]> {
     return this.run("readTexts", () => this.page.locator(selector).allTextContents());
+  }
+
+  readElements(
+    selector: string,
+    attributeNames: readonly string[],
+    innerTextSelector: string | null
+  ): Promise<ElementReading[]> {
+    return this.run("readElements", () =>
+      this.page
+        .locator(selector)
+        .evaluateAll(readElementsInPage, { attributeNames: [...attributeNames], innerTextSelector })
+    );
   }
 
   // page.frames() lists the main frame first, then child frames, so the main frame wins when several match.

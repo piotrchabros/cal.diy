@@ -153,6 +153,7 @@ export type RecordedPageMethod =
   | "pressKey"
   | "readText"
   | "readTexts"
+  | "readElements"
   | "waitForVisibleInAnyFrame"
   | "clickInAnyFrame"
   | "fillInAnyFrame"

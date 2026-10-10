@@ -155,3 +155,72 @@ describe("FakeMeetingPage any-frame methods", () => {
     await expect(page.readValueInAnyFrame(SELECTOR)).rejects.toThrow("page is closed");
   });
 });
+
+describe("FakeMeetingPage readElements", () => {
+  const TILES = "div.tile";
+  const ATTRIBUTES = ["data-id", "class"] as const;
+
+  it("returns only the requested attributes, null for a missing one", async () => {
+    const page = new FakeMeetingPage();
+    page.setElements(TILES, [{ attributes: { "data-id": "a", extra: "hidden" }, text: "Ada" }]);
+
+    expect(await page.readElements(TILES, ATTRIBUTES, "span")).toEqual([
+      { attributes: { "data-id": "a", class: null }, text: "Ada" },
+    ]);
+  });
+
+  it("returns a null text without an inner selector and for a row without text", async () => {
+    const page = new FakeMeetingPage();
+    page.setElements(TILES, [{ attributes: { "data-id": "a" }, text: "Ada" }, { attributes: {} }]);
+
+    const withoutInner = await page.readElements(TILES, ATTRIBUTES, null);
+    expect(withoutInner.map((row) => row.text)).toEqual([null, null]);
+    const withInner = await page.readElements(TILES, ATTRIBUTES, "span");
+    expect(withInner.map((row) => row.text)).toEqual(["Ada", null]);
+  });
+
+  it("returns an empty list for an unknown selector", async () => {
+    const page = new FakeMeetingPage();
+
+    expect(await page.readElements("div.unknown", ATTRIBUTES, null)).toEqual([]);
+  });
+
+  it("is not changed by mutating a returned row or the rows given to setElements", async () => {
+    const page = new FakeMeetingPage();
+    const rows = [{ attributes: { "data-id": "a" as string | null }, text: "Ada" }];
+    page.setElements(TILES, rows);
+
+    const first = await page.readElements(TILES, ATTRIBUTES, "span");
+    if (first[0]) first[0].attributes["data-id"] = "changed";
+    first.pop();
+    if (rows[0]) rows[0].attributes["data-id"] = "also changed";
+    rows.pop();
+
+    expect(await page.readElements(TILES, ATTRIBUTES, "span")).toEqual([
+      { attributes: { "data-id": "a", class: null }, text: "Ada" },
+    ]);
+  });
+
+  it("rejects after close and when an error is scripted", async () => {
+    const page = new FakeMeetingPage();
+    page.setElements(TILES, [{}]);
+    page.setError("readElements", new Error("method failure"));
+    await expect(page.readElements(TILES, ATTRIBUTES, null)).rejects.toThrow("method failure");
+
+    page.setError("readElements", null);
+    page.setSelectorError(TILES, new Error("selector failure"));
+    await expect(page.readElements(TILES, ATTRIBUTES, null)).rejects.toThrow("selector failure");
+
+    page.setSelectorError(TILES, null);
+    await page.close();
+    await expect(page.readElements(TILES, ATTRIBUTES, null)).rejects.toThrow("closed");
+  });
+
+  it("adds no action", async () => {
+    const page = new FakeMeetingPage();
+    page.setElements(TILES, [{}]);
+    await page.readElements(TILES, ATTRIBUTES, null);
+
+    expect(page.actions).toEqual([]);
+  });
+});
