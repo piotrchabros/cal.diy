@@ -8,6 +8,7 @@ import {
   getVideoOptionsActions,
   getEditEventActions,
   getAfterEventActions,
+  getNotetakerResultsAction,
   shouldShowPendingActions,
   shouldShowEditActions,
   shouldShowRecurringCancelAction,
@@ -477,6 +478,46 @@ describe("Booking Actions", () => {
       const noShowAction = actions.find((a) => a.id === "no_show");
       expect(noShowAction?.label).toBe("unmark_as_no_show");
       expect(noShowAction?.icon).toBe("eye");
+    });
+  });
+
+  describe("getNotetakerResultsAction", () => {
+    it("returns null when the flag is false or undefined", () => {
+      expect(getNotetakerResultsAction(createMockContext({ isNotetakerEnabled: false }))).toBeNull();
+      expect(getNotetakerResultsAction(createMockContext())).toBeNull();
+    });
+
+    it.each([
+      ["upcoming", { isUpcoming: true }],
+      ["past", { isBookingInPast: true, isUpcoming: false }],
+      ["cancelled", { isCancelled: true }],
+    ])("returns an enabled link for %s bookings", (_name, overrides) => {
+      const action = getNotetakerResultsAction(createMockContext({ isNotetakerEnabled: true, ...overrides }));
+
+      expect(action).toEqual({
+        id: "notetaker_results",
+        label: "notetaker_transcript_and_summary",
+        icon: "file-text",
+        href: "/booking/booking-123/notetaker",
+        disabled: false,
+      });
+    });
+
+    it("is placed after the video actions and before no-show in the after-event actions", () => {
+      const actions = getAfterEventActions(createMockContext({ isNotetakerEnabled: true }));
+
+      expect(actions.map((a) => a.id)).toEqual([
+        "view_recordings",
+        "meeting_session_details",
+        "notetaker_results",
+        "no_show",
+      ]);
+    });
+
+    it("is absent from the after-event actions when disabled", () => {
+      const actions = getAfterEventActions(createMockContext({ isNotetakerEnabled: false }));
+
+      expect(actions.map((a) => a.id)).not.toContain("notetaker_results");
     });
   });
 

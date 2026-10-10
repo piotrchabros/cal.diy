@@ -4,6 +4,7 @@ import { ColumnFilterType, type SystemFilterSegment } from "@calcom/features/dat
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import classNames from "@calcom/ui/classNames";
 import { NotetakerSharedNotesLink } from "@calcom/web/modules/notetaker/components/NotetakerSharedNotesLink";
+import { NotetakerFeatureProvider } from "@calcom/web/modules/notetaker/lib/NotetakerFeatureContext";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
@@ -28,6 +29,7 @@ type BookingsProps = {
   };
   bookingsV3Enabled: boolean;
   bookingAuditEnabled: boolean;
+  notetakerEnabled: boolean;
 };
 
 function useSystemSegments(userId?: number) {
@@ -71,7 +73,9 @@ export default function Bookings(props: BookingsProps) {
       useSegments={useSegments}
       systemSegments={systemSegments}
       validateActiveFilters={validateActiveFilters}>
-      <BookingsContent {...props} />
+      <NotetakerFeatureProvider enabled={props.notetakerEnabled}>
+        <BookingsContent {...props} />
+      </NotetakerFeatureProvider>
     </DataTableProvider>
   );
 }

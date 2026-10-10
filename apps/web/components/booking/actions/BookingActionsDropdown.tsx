@@ -17,6 +17,7 @@ import {
 import type { ActionType } from "@calcom/ui/components/table";
 import { showToast } from "@calcom/ui/components/toast";
 import { Tooltip } from "@calcom/ui/components/tooltip";
+import { useNotetakerFeatureEnabled } from "@calcom/web/modules/notetaker/lib/NotetakerFeatureContext";
 import { AddGuestsDialog } from "@components/dialog/AddGuestsDialog";
 import { CancelBookingDialog } from "@components/dialog/CancelBookingDialog";
 import { ChargeCardDialog } from "@components/dialog/ChargeCardDialog";
@@ -69,6 +70,7 @@ export function BookingActionsDropdown({
 }: BookingActionsDropdownProps) {
   const { t } = useLocale();
   const utils = trpc.useUtils();
+  const isNotetakerEnabled = useNotetakerFeatureEnabled();
 
   const isRecurring = booking.recurringEventId !== null;
   const isTabRecurring = booking.listingStatus === "recurring";
@@ -241,6 +243,7 @@ export function BookingActionsDropdown({
     cardCharged,
     attendeeList,
     getSeatReferenceUid,
+    isNotetakerEnabled,
     t,
   } as BookingActionContext;
 
