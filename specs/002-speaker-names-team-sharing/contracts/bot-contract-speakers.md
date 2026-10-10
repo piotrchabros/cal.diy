@@ -52,4 +52,4 @@ Reprocessing the same event is harmless: after step 2 no passage has the old key
 ## Platform adapter interface inside the bot (internal)
 
 - `MeetingPage` gains one read: for every element matching a selector, return the values of a fixed list of attributes and the text of the first match of an inner selector. It never returns HTML, and it reads the main frame only.
-- `MeetingPageDriver` gains an optional `readParticipants(page)` returning `{ participantId, name, sourceKeys[], isSelf }[]`. `BrowserPlatformAdapter` turns the result into the existing `source_identity` and `speaker` platform events. A driver that does not implement it keeps today's behaviour.
+- `MeetingPageDriver` gains an optional `readParticipants(page)` returning `{ participantId, name, speaking, speakingNow, isSelf }[]`. `BrowserPlatformAdapter` turns the result into the existing `speaker` platform events and one `participants` event per poll. A driver that does not implement it keeps today's behaviour.
