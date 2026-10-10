@@ -27,6 +27,10 @@ class RecordingAttributor implements ISpeakerAttributor {
     return;
   }
 
+  recordParticipants(): void {
+    return;
+  }
+
   recordSourceActivity(): void {
     return;
   }
@@ -38,6 +42,14 @@ class RecordingAttributor implements ISpeakerAttributor {
   attribute(utterance: AttributionRange): SpeakerAttribution {
     this.calls.push({ ...utterance });
     return this.resolve(utterance);
+  }
+
+  resolutions(): [] {
+    return [];
+  }
+
+  namesAvailable(): boolean {
+    return false;
   }
 }
 

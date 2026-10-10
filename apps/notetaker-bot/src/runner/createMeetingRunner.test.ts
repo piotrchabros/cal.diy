@@ -15,7 +15,7 @@ import type { PlatformEvent } from "../platform/PlatformAdapter";
 import { FakeSpeechToTextProvider } from "../stt/FakeSpeechToTextProvider";
 import type { SttUtterance } from "../stt/SpeechToTextProvider";
 import { buildJoinRequest } from "../testing/httpTestKit";
-import { createMeetingRunner } from "./createMeetingRunner";
+import { createMeetingRunner, SIGNAL_ORDER_BY_PLATFORM } from "./createMeetingRunner";
 import { createFakeMeeting, FAKE_MEETING_MIN_MS, FAKE_MEETING_TIMES, FAKE_PARTICIPANT } from "./fakeMeeting";
 import type { RunnerStatus } from "./launcher/MeetingRunnerLauncher";
 import type { RunnerEndSummary } from "./MeetingRunner";
@@ -309,7 +309,7 @@ describe("createMeetingRunner", () => {
     });
     expect(passages[1]).toMatchObject({
       speakerName: FAKE_PARTICIPANT.name,
-      speakerKey: `participant:${FAKE_PARTICIPANT.participantId}`,
+      speakerKey: expect.stringMatching(/^participant:[0-9a-f]{16}$/),
       unknownSpeakerNumber: null,
       startMs: 250,
       endMs: 350,
@@ -323,6 +323,8 @@ describe("createMeetingRunner", () => {
         interruptedAtMs: null,
         passageCount: 2,
         durationMs: 1700,
+        speakerNamesAvailable: true,
+        speakerResolutions: [],
       });
     }
 
@@ -331,6 +333,13 @@ describe("createMeetingRunner", () => {
       .filter((phase, index, all) => index === 0 || phase !== all[index - 1]);
     expect(seenPhases).toEqual(["STARTING", "WAITING", "IN_MEETING", "ENDED"]);
     expect(phases[phases.length - 1]?.lastEventSequence).toBe(5);
+  });
+
+  it("orders the attribution signals per platform", () => {
+    expect(SIGNAL_ORDER_BY_PLATFORM).toEqual({
+      GOOGLE_MEET: ["CONTRIBUTING_SOURCE", "UI_ACTIVE_SPEAKER"],
+      MICROSOFT_TEAMS: ["UI_ACTIVE_SPEAKER"],
+    });
   });
 
   it("builds none of the real collaborators in fake mode", () => {

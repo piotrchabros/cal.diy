@@ -8,7 +8,7 @@ import type { EventSenderStopCause, IEventSender, NotetakerBotEventDraft } from 
 import type { Logger } from "../logger";
 import type { PlatformAdapter, PlatformEvent } from "../platform/PlatformAdapter";
 import { PlatformLinkUnusableError } from "../platform/PlatformAdapter";
-import type { ISpeakerAttributor } from "../speakers/SpeakerAttribution";
+import type { ISpeakerAttributor, SpeakerResolution } from "../speakers/SpeakerAttribution";
 import type { SpeechToTextProvider, SttUtterance } from "../stt/SpeechToTextProvider";
 import { AudioFramePump } from "./AudioFramePump";
 import type { RunnerHandle, RunnerPhase, RunnerStatus } from "./launcher/MeetingRunnerLauncher";
@@ -16,6 +16,7 @@ import { PassageBuilder } from "./PassageBuilder";
 
 // The sender splits above this; reaching it only triggers an early hand-over.
 const EARLY_FLUSH_PASSAGE_COUNT = 50;
+const UNKNOWN_SPEAKER_KEY_PREFIX = "unknown:";
 
 type Raced<T> = { outcome: "DONE"; value: T } | { outcome: "TIMEOUT" } | { outcome: "FAILED" };
 type Race<T> = { result: Promise<Raced<T>>; cancel(): void };
@@ -61,6 +62,8 @@ export const STT_FLUSH_TIMEOUT_MS = 3000;
 export const ENDED_DELIVERY_TIMEOUT_MS = 300000;
 // The sender has no acceptance callback, so a change of its last accepted sequence can only be seen by polling.
 export const STATUS_POLL_INTERVAL_MS = 1000;
+// The wire schema rejects a session.ended event with more.
+export const MAX_SPEAKER_RESOLUTIONS_PER_EVENT = 64;
 
 export type MeetingRunnerDeps = {
   request: NotetakerBotJoinRequest;
@@ -100,6 +103,7 @@ export class MeetingRunner implements RunnerHandle {
 
   private readonly waiting: NotetakerBotPassage[] = [];
   private enqueuedPassageCount = 0;
+  private readonly sentUnknownSpeakerKeys = new Set<string>();
   private utterancesClosed = false;
 
   private reconnectAttempted = false;
@@ -257,6 +261,13 @@ export class MeetingRunner implements RunnerHandle {
           speaking: event.speaking,
         });
         return;
+      case "participants":
+        if (this.admittedAtMs === null) return;
+        this.deps.attributor.recordParticipants({
+          atMs: this.clockMs(),
+          participants: event.participants,
+        });
+        return;
       case "source_activity":
         if (this.admittedAtMs === null) return;
         this.deps.attributor.recordSourceActivity({
@@ -405,6 +416,20 @@ export class MeetingRunner implements RunnerHandle {
     const passages = this.waiting.splice(0);
     this.enqueue({ type: "transcript.passages", data: { passages } });
     this.enqueuedPassageCount += passages.length;
+    for (const passage of passages) {
+      if (passage.speakerKey.startsWith(UNKNOWN_SPEAKER_KEY_PREFIX)) {
+        this.sentUnknownSpeakerKeys.add(passage.speakerKey);
+      }
+    }
+  }
+
+  // The app can only rename a speaker it was told about, so a resolution of a key that never left the process is dropped.
+  private sentSpeakerResolutions(): SpeakerResolution[] {
+    if (this.noticeState !== "POSTED") return [];
+    return this.deps.attributor
+      .resolutions()
+      .filter((resolution) => this.sentUnknownSpeakerKeys.has(resolution.speakerKey))
+      .slice(0, MAX_SPEAKER_RESOLUTIONS_PER_EVENT);
   }
 
   private async attemptNotice(): Promise<void> {
@@ -505,9 +530,23 @@ export class MeetingRunner implements RunnerHandle {
           }
           this.waiting.length = 0;
         }
+        // Read once and only after the last flush: the attributor re-evaluates held windows on every read.
+        const speakerResolutions = this.sentSpeakerResolutions();
+        const speakerNamesAvailable = this.deps.attributor.namesAvailable();
         this.enqueue({
           type: "session.ended",
-          data: { endReason: reason, durationMs, interruptedAtMs, passageCount: this.enqueuedPassageCount },
+          data: {
+            endReason: reason,
+            durationMs,
+            interruptedAtMs,
+            passageCount: this.enqueuedPassageCount,
+            speakerNamesAvailable,
+            speakerResolutions,
+          },
+        });
+        this.logger.info("session ended", {
+          speakerNamesAvailable,
+          speakerResolutions: speakerResolutions.length,
         });
         await this.deps.sender.flush(ENDED_DELIVERY_TIMEOUT_MS);
       }
