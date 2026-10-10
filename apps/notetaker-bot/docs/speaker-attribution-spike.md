@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-The spike of task T175 has NOT been run. T175 is open. Nothing on this page is a result: it is a protocol that a human is meant to follow on a real Google Meet call, and every results table below is deliberately empty. Risk 1 under "Risks to resolve early" and open question 18 in `specs/001-meeting-transcription/research.md` are both still open. SC-005 (the success criterion that, in meetings of up to 8 participants, at least 90% of passages are attributed to the correct speaker, judged on a reviewed sample) is not promised until this protocol has been run and its answers are written down.
+The spike of task T175 has NOT been run as written. T175 is open. Sections 1 to 10 are the original protocol; their results tables stay empty. One part of it was answered on 2026-10-10 by the two-minute speech measurement of section 11 (two speakers, one call): see there for what was measured and what was not. Risk 1 under "Risks to resolve early" and open question 18 in `specs/001-meeting-transcription/research.md` are both still open. SC-005 (the success criterion that, in meetings of up to 8 participants, at least 90% of passages are attributed to the correct speaker, judged on a reviewed sample) is not promised until this protocol has been run and its answers are written down.
 
 ## 2. The four questions
 
@@ -17,19 +17,19 @@ Closing question: is SC-005 achievable, and which signals must `SpeakerAttributo
 
 ## 3. What is believed, and from where
 
-Every belief below is unconfirmed. The status column says "not measured" on every row, and that is the truth: no measurement exists anywhere in this repository.
+The beliefs below were written before any measurement. The status column was updated for the rows the measurement of 2026-10-10 (section 11) answered; the other rows are still not measured.
 
 | Belief | Source | Status |
 |---|---|---|
-| Google Meet sends a small number of mixed "loudest speaker" audio streams, and Teams on the web is similar. | The designer's own knowledge, recorded in `research.md` risk 1. | not measured |
+| Google Meet sends a small number of mixed "loudest speaker" audio streams, and Teams on the web is similar. | The designer's own knowledge, recorded in `research.md` risk 1. | Meet: measured on 2026-10-10 with two remote participants: at most 4 receivers, sources are per speaker (one contributing source each) and one contributing source is audible with everybody. Teams: not measured |
 | The original tech-stack note assumed one audio track per participant. | The tech-stack note that the plan started from; `research.md` treats it as an unverified risk. | not measured |
 | The bot's capture produces one mixed audio stream, so a speaker's name can only come from signals, never from the audio channel. | Build-plan correction C14. | not measured |
 | Soniox returns per-token fields called `speaker` and `language`. | Written from memory in `src/stt/sonioxProtocol.ts`. Confirmed on 2026-10-09 with `scripts/soniox-smoke.ts` on a 16 s two-speaker English sample file (not a Meet call): both fields present, speakers separated correctly. | measured on a sample only |
-| Meet's participant tiles, speaking indicators and audio elements can be found with the candidate selectors in the probe script. | Guesses from memory, written in `scripts/spike-speaker-attribution.ts`. | not measured |
+| Meet's participant tiles, speaking indicators and audio elements can be found with the candidate selectors in the probe script. | Guesses from memory, written in `scripts/spike-speaker-attribution.ts`. | superseded: the tile and the indicator class tokens were measured with `meet-probe` on 2026-10-10 (section 11); the old script was not run |
 
 ## 4. `PROVISIONAL_ATTRIBUTION_RULES` are guesses
 
-`SpeakerAttributor` is driven by six rules, exported as `PROVISIONAL_ATTRIBUTION_RULES` from `src/speakers/SpeakerAttributor.ts`. None of the six values comes from data. They were chosen so that the code could be written and exercised with fake data only, never with a real call.
+`SpeakerAttributor` is driven by twelve rules, exported as `PROVISIONAL_ATTRIBUTION_RULES` from `src/speakers/SpeakerAttributor.ts`. None of the twelve values comes from data. The first six are the original ones. The last six were added for speaker names (specification 002); their values come from the shape of the 2026-10-10 measurement and were exercised against fakes only. They were chosen so that the code could be written and exercised with fake data only, never with a real call.
 
 | Rule | Provisional value | What it controls |
 |---|---|---|
@@ -39,6 +39,12 @@ Every belief below is unconfirmed. The status column says "not measured" on ever
 | `sourceActivityHoldMs` | 500 | How long, in milliseconds, one qualifying source-activity sample is treated as speech. |
 | `minSourceLevel` | 0.05 | The lowest audio level (0 to 1) at which a source-activity sample counts at all (inclusive). |
 | `retentionMs` | 120000 | How far behind the newest attributed utterance, in milliseconds, recorded signals are kept before being discarded. |
+| `minVoiceVotes` | 3 | How many passages named by a signal a diarization label needs before the voice alone may name a later passage. |
+| `minVoiceAgreement` | 0.9 | The share of those passages that must point at one participant (inclusive). |
+| `minLinkVotes` | 12 | How many votes a source needs for a participant, and how many votes a participant needs to count as established, before a link is learned (section 11, "How the bot links a source to a participant"). |
+| `minLinkShare` | 0.8 | The share of a source's presence, normalised by each participant's talk time, that must belong to one participant. |
+| `maxIndicatorAgeMs` | 1500 | The oldest tile reading, in milliseconds, that may be paired with a source-activity sample as a vote. |
+| `learnableSourcePrefix` | `"csrc:"` | Only sources whose key starts with this are learned; an SSRC is a stream slot that can carry another person later. |
 
 The rules silently make two assumptions that the spike should check. First, that one activity sample means roughly 500 ms of speech. Second, that samples arrive about every 250 ms, which is the sampling interval in `DEFAULT_AUDIO_CAPTURE_OPTIONS`; if the real interval is longer than the hold, there will be gaps, and if it is much shorter, the hold is longer than it needs to be.
 
@@ -160,6 +166,7 @@ Read the row that matches your results and apply it. A row that says SC-005 is "
 | Soniox gives no stable speaker label | unchanged | not applicable | unknown speakers collapse into one number; note it under FR-009 |
 | Soniox gives no per-token language | unchanged | not applicable | passages carry `language: null`; SC-005 unaffected |
 | Sample below 90% with the best order | keep the best order | tune once, re-sample once | not promised; record the measured figure |
+| Sources carry levels and timestamps but the page does not tie them to tiles; the speaking indicator is readable as class tokens on the tile (the 2026-10-10 result) | `["CONTRIBUTING_SOURCE","UI_ACTIVE_SPEAKER"]`, with the source linked to a participant by learning | the six link and voice rules of section 4 | not promised: only two speakers were measured; the percentage is measured in specification 002 task T049 |
 
 FR-009 is the requirement that each transcript passage is attributed to a named participant where identifiable and to a distinct "unknown speaker" label otherwise.
 
@@ -187,7 +194,7 @@ When the protocol has actually been run, the human who ran it does the following
 
 ### Status
 
-This measurement has NOT been run. Task T004 of `specs/002-speaker-names-team-sharing/tasks.md` runs it. The questions here are Q1, Q2 and Q3 of Decision A1 in `specs/002-speaker-names-team-sharing/research.md`. They are not the Q1 to Q4 of section 2 above, which belong to the first spike. Nothing below is a result, and the results table at the end is empty on purpose.
+This measurement was run on 2026-10-10 (task T004 of `specs/002-speaker-names-team-sharing/tasks.md`): one call, two speakers, 120 s. The questions here are Q1, Q2 and Q3 of Decision A1 in `specs/002-speaker-names-team-sharing/research.md`. They are not the Q1 to Q4 of section 2 above, which belong to the first spike. The results are in the table at the end, followed by what the measurement disproved, how the bot uses it, how to measure again, and what was not measured. The measurement is one call with two speakers, so it supports the design but does not prove it for larger calls.
 
 The three questions:
 
@@ -255,14 +262,80 @@ Tiles are `tile-N`. Participant ids and audio source ids are 16-character hashes
 
 ### Results
 
-Fill this in by hand after the run. Every cell is empty on purpose.
-
 | Item | Value |
 |---|---|
-| Date | |
-| Operator | |
-| Chrome version (see `chrome://version`) | |
-| Q1 verdict and counts | |
-| Q2 verdict and counts | |
-| Q3 verdict and counts | |
-| Chosen signal order | |
+| Date | 2026-10-10 |
+| Operator | Piotr Chabros, from the deployment VPS |
+| Chrome version (see `chrome://version`) | 155.0.8059.39, Linux, Xvfb 1280x720, account join mode, Meet in English |
+| Run | 120 s window, 1 s page samples, 140 samples (126 with tiles), three tiles: two people and the probe's own account |
+| Q1 verdict and counts | excluded: 3 of 3 tiles carried a `data-ssrc` in some sample, 0 matched a receiver source |
+| Q2 verdict and counts | supported: `Oaajhc` 0.211 per speech tile-sample against 0.035 per quiet one; `BlxGDf` 0.325 against 0.154 |
+| Q3 verdict and counts | supported: 114 of 114 source entries that carried speech were within 1000 ms of the page clock, median age 5 ms |
+| Chosen signal order | contributing source linked by learning first, sustained tile indicator second |
+
+Other verdicts of the same run: no element with an `aria-label` containing "speaking" existed during speech or silence (0 of 121 sweeps); sources carry levels (5 distinct sources rose above 0.05; 808 of 960 captured audio frames were non-silent); the leave click worked and the ended text appeared 211 ms after it.
+
+The timeline was read by hand from the report file, which stays outside the repository (it holds hashes only). In this document the sources are called "source 1" and "source 2" (the contributing sources of the two speakers) and the "common source" (a contributing source that was audible with everybody).
+
+- While person A spoke, source 1 (and one synchronization source) was active, and A's tile carried `BlxGDf` almost continuously and `Oaajhc` intermittently.
+- While person B spoke, source 2 (and another synchronization source) was active, and B's tile carried the same two tokens in the same way.
+- The common source was active whenever anyone spoke.
+- Neither token appeared on two tiles in the same sample, and never on the probe's own tile.
+- `BlxGDf` stays on the speaker's tile for a few seconds after the last sound, and was also on A's tile for parts of the first 19 s when no source level above 0.05 was sampled (a 1 s sample of an instantaneous level misses short sounds).
+- `Oaajhc` is on only while sound is present and flickers within a turn.
+- There were at most 4 audio receivers for 2 remote participants.
+
+### What the measurement disproved
+
+- The tile's `data-ssrc` is not an audio source id. `specs/002-speaker-names-team-sharing/research.md` ("What happens today" and Decision A2) assumed it was; the measurement showed otherwise, and that file is corrected separately. At the end of the run only the probe's own tile still carried a `data-ssrc`.
+- No element carries an `aria-label` containing "speaking" (0 of 121 sweeps), so the old guess for the indicator is wrong.
+- Audio is not one track per participant. Sources are per speaker, not per receiver.
+- A contributing source can be audible with everybody (the common source). A source seen while anyone speaks identifies nobody.
+
+### How the bot links a source to a participant
+
+The page does not say which audio source belongs to which tile, so the bot learns it. Two class tokens on the top-level `[data-participant-id]` tile follow speech. They are kept as `GOOGLE_MEET_SPEAKING_INDICATORS` in `src/platform/GoogleMeetAdapter.ts`:
+
+- `BlxGDf` is the sustained token. It is present almost all through a turn and trails a few seconds after it. It feeds the second signal, `UI_ACTIVE_SPEAKER`.
+- `Oaajhc` is the instantaneous token. It is present only while sound is present. It feeds link learning only, because a vote cast while a trailing hold is still on would name the previous speaker.
+
+A vote for (source, participant) is counted when the source is a contributing source (`csrc:`) with a level of at least `minSourceLevel`, a tile reading no older than `maxIndicatorAgeMs` exists, and exactly one non-self tile in it shows the instantaneous token. The link is computed from the votes whenever it is needed and is never latched, so it disappears if later votes contradict it. A source is linked to a participant when at least two participants are established, the source has at least `minLinkVotes` votes for that participant, and its normalised share for that participant is at least `minLinkShare`. The four values and why each exists:
+
+- `minLinkVotes = 12`: at the production cadence (source activity every 250 ms, a tile poll about every 600 ms, the instantaneous token on in about 21% of speech polls) one turn of 20 s gives roughly 17 votes, so a speaker is established within about one turn. This is an estimate from the measurement, not an observation.
+- `minLinkShare = 0.8`: the common source has equal presence for two speakers, so its share is 0.5 (0.33 with three); it never links. The share is normalised by each participant's talk time, because a raw vote share would link the common source to a speaker who talks much longer than the other. 0.8 tolerates about 25% cross-presence from noise.
+- `maxIndicatorAgeMs = 1500`: a tile reading older than this no longer says who is speaking now.
+- `learnableSourcePrefix = "csrc:"`: only contributing sources are learned. An SSRC is a stream slot that a selective forwarding server can give to another person later, and one two-speaker call cannot show otherwise.
+
+At least two established participants are required because, while only one person has spoken, the common source and that person's own source cannot be told apart. Until then the sustained indicator names people. The bot's own tile never shows a token and has no source (its microphone is off); the tile is also marked as self by its label ("You") or by the display name typed on the guest join screen, and a participant once marked self stays self.
+
+What was measured and what was only simulated: the tokens, the clock and the per-speaker sources were measured on the real page. The link rule, the four values and the whole attribution were run only against fakes, including a replay of the measurement's shape (`src/speakers/SpeakerAttributor.replay.test.ts`: two speakers, a common source, sparse instantaneous levels, a trailing sustained indicator). No bot run on a real call has used them.
+
+### Measuring again when Meet changes its class names
+
+The tokens are obfuscated Meet class names and can change with any Meet release.
+
+1. Symptom: Meet sessions with speech end with `speakerNamesAvailable: false`, and the results page says that names were unavailable.
+2. Run the protocol of this section again (schedule, command, rules while speaking).
+3. Read the up to five class tokens the report names under verdict Q2.
+4. Tell them apart by the timeline: a token present almost all through a turn and a few seconds after it is the sustained one; a token that flickers only while sound is present is the instantaneous one.
+5. Put them into `GOOGLE_MEET_SPEAKING_INDICATORS` in `src/platform/GoogleMeetAdapter.ts`. If only one token exists, put it in both fields; link votes then include the trailing hold and are less reliable.
+6. Run the adapter tests and the probe tests.
+7. Run the probe once more and check that the `activeSpeakerName` sweep matches during speech. That selector is built from the sustained token and is read only by the probe; a renamed token shows there as zero matches during speech.
+8. Record the date and the tokens in `verification-status.md`.
+
+### Not measured
+
+- More than two speakers: whether every speaker has a contributing source of their own, and whether the common source stays common.
+- Overlapping speech: two tiles marked at once give no vote and usually no name; the share of unknown passages is not known.
+- Whether a contributing source id is reused for another person later in a call, and whether it survives a reconnect of the bot or of a participant. A reused id would name the wrong person until the votes turn.
+- A participant who renames: the participant id is assumed to stay the same.
+- Two participants with one name: the numbering is tested with fakes only; that Meet gives them different `data-participant-id` values is assumed.
+- The self rule: the label "You" was never read on the real page, and in account mode the account's name is unknown to the bot.
+- A Polish or other non-English interface: the class tokens are expected to be language independent, the self label is not.
+- The trailing hold of the sustained token when the next speaker starts at once, before links are learned: the indicator may name the previous speaker for a short passage.
+- Participants without a tile (large calls show only some tiles): they can never be named.
+- The real cadence of the instantaneous token at the 500 ms poll, and so the time until links are learned (estimated at about 14 s of speech per speaker).
+- `readElements` in real Chrome, including the cost of one `evaluateAll` per poll and the test for a rendered name span.
+- The 250 ms window of the timestamp filter in `src/audio/captureScript.ts`: the measurement judged against 1000 ms, with a median age of 5 ms.
+- Microsoft Teams: unchanged behaviour, still unverified on the real page.
+- The class tokens themselves can change with any Meet release; the only detection is `speakerNamesAvailable: false` and a probe run.

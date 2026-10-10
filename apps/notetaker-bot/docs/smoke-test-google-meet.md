@@ -259,7 +259,7 @@ Order is by risk. A wrong key near the top ends sessions.
 |---|---|---|---|
 | `inMeetingMarker` | controls that exist only inside the call; first test of admission | | |
 | `participantCountBadge` | number next to the people button | | |
-| `participantTile` | one match per participant tile; fallback for the count | | |
+| `participantTile` | one match per participant tile; fallback for the count. The driver also reads its `data-participant-id` and `class` attributes (speaker names); the tile and the two class tokens were seen on the real page on 2026-10-10 | | |
 | `chatButton` | opens the chat panel | | |
 | `chatPanelOpen` | the chat toggle with `aria-expanded="true"`; read only, never clicked | | |
 | `chatInput` | chat text field | | |
@@ -269,7 +269,7 @@ Order is by risk. A wrong key near the top ends sessions.
 | `removedText` | removed by a participant | | |
 | `endedText` | meeting over; includes "You left the meeting" as a guess | | |
 | `linkInvalidText` | unusable link | | |
-| `activeSpeakerName` | name label of a tile that shows a speaking indicator | | |
+| `activeSpeakerName` | name inside a tile that carries the sustained speaking class token (`BlxGDf`); not read by the driver, swept by the probe only, so a renamed token shows as zero matches during speech | | |
 | `turnOffMicrophone` | pre-join microphone toggle while on | | |
 | `turnOffCamera` | pre-join camera toggle while on | | |
 | `microphoneSettled` | pre-join microphone control in its final state ("Microphone problem" indicator, or the muted toggle via `data-is-muted="true"`); waited for before the turn-off check | | |
@@ -291,7 +291,7 @@ Order is by risk. A wrong key near the top ends sessions.
 
 Also note, for each text key, the exact wording Meet shows in your interface language, so the guess can be corrected.
 
-The leave control (`leaveCallButton`) and the speaker selectors (`activeSpeakerName`) are the two open ones; section 12 runs a probe that records what the real page shows for them.
+The leave control (`leaveCallButton`) is the open one; section 12 runs a probe that records what the real page shows for it. The speaker indicator was measured on 2026-10-10 (see [speaker-attribution-spike.md](speaker-attribution-spike.md), section 11): the speaking class tokens are configuration in `GOOGLE_MEET_SPEAKING_INDICATORS`, not selector strings, and they were read by the probe, not by the bot in a real session.
 
 ## 10. Recording the result
 
@@ -314,9 +314,9 @@ Rules:
 
 ## 11. Known limits and open points
 
-- The leave click and the speaker names are the two defects still open after the 2026-10-09 check; section 12 is the probe that diagnoses them.
-- Speaker ids come from the displayed name, because the page wrapper cannot read Meet's participant id attribute. Two participants with the same display name are one participant to the attributor.
-- No `source_identity` signal can be produced. Only the active-speaker indicator on screen can name a speaker, and its selector is a guess. Speaker attribution rules wait for task T175.
+- The leave click is still open after the 2026-10-09 check; section 12 is the probe that diagnoses it. Speaker names were measured on 2026-10-10 by the probe; whether the bot names speakers in a real meeting is not yet checked (specification 002 task T049).
+- Speaker ids come from the tile's `data-participant-id`, read by `readParticipants` through the page wrapper's `readElements`. That Meet gives two participants with one display name different ids, and that a renamed participant keeps the id, are assumed, not measured. `readParticipants` and `readElements` have run against fakes only.
+- The page does not say which audio source belongs to which tile (the tile's `data-ssrc` never equalled a source), so no `source_identity` event is emitted. The bot learns the link from the instantaneous tile indicator, and the sustained indicator is the second signal. The link rule and its thresholds have been run against fakes only. T175 is only partly done: more than two speakers and SC-005 are not measured.
 - Google may detect and block automated browsers. This was not tested.
 - Google's terms for automating an account are an open question for the owner (research.md open question 3).
 - An organisation can block guests. Such a meeting ends as `NOT_ADMITTED`.

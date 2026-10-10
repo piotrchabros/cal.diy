@@ -22,7 +22,7 @@ Other facts that shape the fix:
 - The diarization label is used only to number unknown speakers. A voice that was named in one passage is not remembered for the next.
 - After a speech-service reconnect the labels restart, so one person can become two unknown speakers.
 - The transcript shows "Unknown speaker N" while the summary prompt says "Speaker N".
-- Measured on the real page: each participant tile holds exactly one visible name (`span.notranslate`), and every tile carries the attributes `data-participant-id` and `data-ssrc`. Values were not recorded. With two other participants the page had four audio receivers, so audio is not one track per participant.
+- Measured on the real page: each participant tile holds exactly one visible name (`span.notranslate`), every tile carries `data-participant-id`. A tile can also carry `data-ssrc`, but the measurement of 2026-10-10 showed that its value never equals an audio source (3 of 3 tiles carried one, 0 matched), so it cannot link a tile to a source. With two other participants the page had four audio receivers, so audio is not one track per participant.
 
 ### Decision A1: Measure the real page during speech before choosing the signal
 
@@ -30,10 +30,10 @@ Other facts that shape the fix:
 - **Rationale**: Both existing signals were built from guesses and both failed. The run of 2026-10-10 could not judge either because nobody spoke. One more guess would repeat the mistake.
 - **Alternatives considered**: Build both signals blind and see which works in production (rejected: a wrong name is worse than no name, SC-002). Skip measurement and use captions (rejected below).
 
-### Decision A2: Primary signal is the audio source linked to a tile; the page indicator is second
+### Decision A2: Primary signal is the audio source linked to a participant by learning; the tile indicator is second
 
-- **Decision**: Implement `source_identity` for Google Meet by reading `data-participant-id` and `data-ssrc` from each top-level tile on every poll and emitting the link between `ssrc:<n>` (and `csrc:<n>`) and the participant. Keep the page's active-speaker indicator as the second signal, with the selector replaced by what Q2 finds. If Q1 fails and Q2 succeeds, the order flips; if both fail, the transcript falls back to numbered labels and says so (Decision A7). The order stays a constructor option of `SpeakerAttributor`, set per platform.
-- **Rationale**: The audio-source path is already implemented and tested in the attributor; only the link is missing. It does not depend on the page language, and it has 250 ms resolution against roughly 600 ms for polling the page.
+- **Decision**: The page does not say which audio source belongs to which tile (measurement of 2026-10-10, Q1 excluded). The bot learns the link: while exactly one tile shows the instantaneous speaking indicator and a contributing source is audible, it counts a vote for that source and participant. A source is linked to a participant once at least two participants have 12 votes each, the source has at least 12 votes for that participant, and at least 80% of its presence, normalised by each participant's talk time, belongs to that participant. A source heard with everybody never links. The second signal is the sustained speaking indicator on the tile. Both indicators are class tokens on the top-level tile (`Oaajhc` instantaneous, `BlxGDf` sustained); they are configuration with a documented way to measure them again. If no indicator is ever seen, the transcript falls back to numbered labels and says so (Decision A7). The order stays a constructor option of `SpeakerAttributor`, set per platform.
+- **Rationale**: The audio-source path of the attributor already exists and has 250 ms resolution; only the link was missing, and the measurement showed it can be learned but not read. The tile indicator alone has about 600 ms resolution and trails a few seconds.
 - **Alternatives considered**:
   - *Live captions*: Meet's captions carry speaker names, but turning them on is an action in the meeting beyond joining, posting the notice and leaving, which FR-016 of the first specification forbids; captions also follow the caption language, not the spoken one.
   - *People panel*: gives a roster but not who is speaking, and requires opening a panel.
@@ -41,7 +41,7 @@ Other facts that shape the fix:
 
 ### Decision A3: Identify participants by the page's participant id, not by name
 
-- **Decision**: Add one read method to the page wrapper that returns, for each element matching a selector, a fixed list of attribute values and the text of one child selector. The Meet adapter uses it to read `{participantId, ssrc, name, isSelf}` per tile. The speaker key becomes `participant:<salted hash of the participant id>`; the salt is random per session and never leaves the bot. Keys already stored (`unknown:<n>`, `participant:name:<x>`) stay valid because the application treats the key as an opaque string.
+- **Decision**: Add one read method to the page wrapper that returns, for each element matching a selector, a fixed list of attribute values and the text of one child selector. The Meet adapter uses it to read `{participantId, name, speaking, speakingNow, isSelf}` per tile. The speaker key becomes `participant:<salted hash of the participant id>`; the salt is random per session and never leaves the bot. Keys already stored (`unknown:<n>`, `participant:name:<x>`) stay valid because the application treats the key as an opaque string.
 - **Rationale**: Required for two people with one name (FR-004), for a renamed participant (same id, new name) and for excluding the notetaker's own tile (FR-005).
 - **Alternatives considered**: Keep name-derived ids and add a counter for duplicates (rejected: two tiles with one name cannot be told apart by text alone).
 
