@@ -92,6 +92,27 @@ const SCRIPTED: [NotetakerFakeScenario, string[]][] = [
       "session.ended",
     ],
   ],
+  [
+    "names_resolved",
+    [
+      "session.join_requested",
+      "session.admitted",
+      "session.notice_posted",
+      "transcript.passages",
+      "transcript.passages",
+      "session.ended",
+    ],
+  ],
+  [
+    "names_unavailable",
+    [
+      "session.join_requested",
+      "session.admitted",
+      "session.notice_posted",
+      "transcript.passages",
+      "session.ended",
+    ],
+  ],
 ];
 
 function endedEvents(events: NotetakerBotEvent[]) {
@@ -142,6 +163,41 @@ describe("FakeBotGateway", () => {
     const [ended] = endedEvents(events);
     expect(ended.data.endReason).toBe("MEETING_ENDED");
     expect(ended.data.passageCount).toBe(passages.length);
+  });
+
+  it("names_resolved: resolves an unknown key that the script sent", async () => {
+    const { events } = await run("names_resolved");
+    const passages = passageEvents(events).flatMap((event) => event.data.passages);
+    const [ended] = endedEvents(events);
+
+    expect(ended.data.speakerNamesAvailable).toBe(true);
+    expect(ended.data.speakerResolutions).toEqual([
+      { speakerKey: "unknown:1", resolvedSpeakerKey: "participant:fake-sam", speakerName: "Sam Example" },
+    ]);
+    expect(passages.some((passage) => passage.speakerKey === "unknown:1")).toBe(true);
+    expect(passages.some((passage) => passage.speakerKey === "participant:fake-sam")).toBe(true);
+    expect(passages.some((passage) => passage.speakerName === "Alex Example")).toBe(true);
+    expect(ended.data.passageCount).toBe(passages.length);
+  });
+
+  it("names_unavailable: sends only unknown speakers and reports names unavailable", async () => {
+    const { events } = await run("names_unavailable");
+    const passages = passageEvents(events).flatMap((event) => event.data.passages);
+    const [ended] = endedEvents(events);
+
+    expect(ended.data.speakerNamesAvailable).toBe(false);
+    expect(ended.data.speakerResolutions).toBeUndefined();
+    expect(passages.every((passage) => passage.speakerName === null)).toBe(true);
+    expect(new Set(passages.map((passage) => passage.speakerKey))).toEqual(
+      new Set(["unknown:1", "unknown:2"])
+    );
+    expect(ended.data.passageCount).toBe(passages.length);
+  });
+
+  it("happy: ended carries no speaker name fields", async () => {
+    const [ended] = endedEvents((await run("happy")).events);
+    expect(ended.data.speakerNamesAvailable).toBeUndefined();
+    expect(ended.data.speakerResolutions).toBeUndefined();
   });
 
   it("no_speech: emits no passages and reports zero", async () => {

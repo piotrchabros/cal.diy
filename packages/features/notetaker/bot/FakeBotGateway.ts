@@ -3,6 +3,7 @@ import type {
   NotetakerBotEvent,
   NotetakerBotJoinRequest,
   NotetakerBotPassage,
+  NotetakerBotSpeakerResolution,
   NotetakerBotStateDto,
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
@@ -36,6 +37,47 @@ const PASSAGE_SAM: NotetakerBotPassage = {
   startMs: 4500,
   endMs: 9000,
   text: "Thanks Alex, I have an update on the project. Testing is finished, so we agreed to launch on Monday, and I will send the release notes to the team today.",
+  language: "en",
+};
+
+// Sam's voice before the bot could tie it to a participant; the later `ended` event resolves the key.
+const PASSAGE_SAM_UNIDENTIFIED: NotetakerBotPassage = {
+  ...PASSAGE_SAM,
+  speakerKey: "unknown:1",
+  speakerName: null,
+  unknownSpeakerNumber: 1,
+};
+
+const PASSAGE_SAM_NAMED_LATER: NotetakerBotPassage = {
+  index: 2,
+  speakerKey: "participant:fake-sam",
+  speakerName: "Sam Example",
+  unknownSpeakerNumber: null,
+  startMs: 9500,
+  endMs: 12000,
+  text: "One more thing: the release notes will also go to the support team.",
+  language: "en",
+};
+
+const PASSAGE_UNKNOWN_FIRST: NotetakerBotPassage = {
+  index: 0,
+  speakerKey: "unknown:1",
+  speakerName: null,
+  unknownSpeakerNumber: 1,
+  startMs: 0,
+  endMs: 4000,
+  text: "Welcome everyone, let's get started. Today we need to decide when the new booking page goes live.",
+  language: "en",
+};
+
+const PASSAGE_UNKNOWN_SECOND: NotetakerBotPassage = {
+  index: 1,
+  speakerKey: "unknown:2",
+  speakerName: null,
+  unknownSpeakerNumber: 2,
+  startMs: 4500,
+  endMs: 9000,
+  text: "Thanks, I have an update on the project. Testing is finished, so we agreed to launch on Monday.",
   language: "en",
 };
 
@@ -91,6 +133,8 @@ const ended = (data: {
   durationMs: number;
   interruptedAtMs: number | null;
   passageCount: number;
+  speakerNamesAvailable?: boolean;
+  speakerResolutions?: NotetakerBotSpeakerResolution[];
 }): EventDraft => ({
   offsetMs: OFFSET_ENDED_MS,
   build: (envelope) => ({ ...envelope, type: "session.ended", data }),
@@ -107,6 +151,38 @@ function buildScript(scenario: NotetakerFakeScenario, request: NotetakerBotJoinR
         firstPassages,
         passages(OFFSET_SECOND_PASSAGES_MS, [PASSAGE_UNKNOWN]),
         ended({ endReason: "MEETING_ENDED", durationMs: 12_000, interruptedAtMs: null, passageCount: 3 }),
+      ];
+    case "names_resolved":
+      return [
+        ...joined,
+        passages(OFFSET_FIRST_PASSAGES_MS, [PASSAGE_ALEX, PASSAGE_SAM_UNIDENTIFIED]),
+        passages(OFFSET_SECOND_PASSAGES_MS, [PASSAGE_SAM_NAMED_LATER]),
+        ended({
+          endReason: "MEETING_ENDED",
+          durationMs: 12_000,
+          interruptedAtMs: null,
+          passageCount: 3,
+          speakerNamesAvailable: true,
+          speakerResolutions: [
+            {
+              speakerKey: "unknown:1",
+              resolvedSpeakerKey: "participant:fake-sam",
+              speakerName: "Sam Example",
+            },
+          ],
+        }),
+      ];
+    case "names_unavailable":
+      return [
+        ...joined,
+        passages(OFFSET_FIRST_PASSAGES_MS, [PASSAGE_UNKNOWN_FIRST, PASSAGE_UNKNOWN_SECOND]),
+        ended({
+          endReason: "MEETING_ENDED",
+          durationMs: 9_000,
+          interruptedAtMs: null,
+          passageCount: 2,
+          speakerNamesAvailable: false,
+        }),
       ];
     case "not_admitted":
       return [

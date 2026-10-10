@@ -1,5 +1,5 @@
 import type { NotetakerSummaryContent } from "@calcom/lib/dto/NotetakerSummaryDto";
-import type { NotetakerPassageRecord } from "../repositories/interfaces/INotetakerTranscriptRepository";
+import { getSpeakerLabel } from "../lib/speakerLabel";
 import type {
   INotetakerSummaryGenerator,
   NotetakerSummaryGeneratorInput,
@@ -10,10 +10,6 @@ const MAX_ITEMS = 3;
 const KEY_POINT_PASSAGE_WINDOW = 10;
 const OVERVIEW_MAX_LENGTH = 300;
 const KEY_POINT_MAX_LENGTH = 120;
-
-function getSpeakerLabel(passage: NotetakerPassageRecord): string {
-  return passage.speakerName ?? `Speaker ${passage.unknownSpeakerNumber ?? "?"}`;
-}
 
 export const STUB_SUMMARY_MODEL = "stub";
 

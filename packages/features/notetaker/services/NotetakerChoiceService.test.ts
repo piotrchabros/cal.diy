@@ -959,6 +959,21 @@ describe("NotetakerChoiceService", () => {
       expect(state.canToggle).toBe(true);
     });
 
+    it.each([true, false, null])("returns speakerNamesAvailable %s from the transcript", async (value) => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      const session = await createSession("READY");
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.transcriptRepository.update(transcript.id, { speakerNamesAvailable: value });
+
+      const state = await getState();
+
+      expect(state.transcript?.speakerNamesAvailable).toBe(value);
+    });
+
     it("maps the transcript and a pending summary", async () => {
       repositories.store.addBooking(buildBooking());
       await enable();
@@ -983,6 +998,7 @@ describe("NotetakerChoiceService", () => {
         completeness: "COMPLETE",
         durationMs: 60000,
         passageCount: 3,
+        speakerNamesAvailable: null,
       });
       expect(state.summary?.status).toBe("PENDING");
       expect(state.summary?.generatedAt).toBeNull();

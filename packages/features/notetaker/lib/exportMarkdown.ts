@@ -1,5 +1,6 @@
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerPassageDto, NotetakerTranscriptDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
+import { getSpeakerLabel } from "./speakerLabel";
 
 // Strings rather than literals because a regex literal with the `u` flag does not compile under the ES5 target.
 const COMBINING_MARKS_PATTERN = "\\p{M}+";
@@ -71,6 +72,7 @@ export type NotetakerExportLabels = {
   noSummary: string;
   partialNote: string;
   truncatedNote: string;
+  speakerNamesUnavailableNote: string;
   owner: (name: string) => string;
   unknownSpeaker: (number: number) => string;
 };
@@ -81,7 +83,7 @@ export type NotetakerExportInput = {
   locale: string;
   timeZone: string;
   summary: NotetakerSummaryDto | null;
-  transcript: Pick<NotetakerTranscriptDto, "completeness">;
+  transcript: Pick<NotetakerTranscriptDto, "completeness" | "speakerNamesAvailable">;
   passages: NotetakerPassageDto[];
   labels: NotetakerExportLabels;
 };
@@ -139,12 +141,15 @@ export function exportMarkdown(input: NotetakerExportInput): { filename: string;
   if (input.transcript.completeness === "PARTIAL") blocks.push(`> ${labels.partialNote}`);
   if (input.transcript.completeness === "TRUNCATED") blocks.push(`> ${labels.truncatedNote}`);
 
+  if (input.transcript.speakerNamesAvailable === false)
+    blocks.push(`> ${labels.speakerNamesUnavailableNote}`);
+
   blocks.push(`## ${labels.summaryHeading}`, ...buildSummaryBlocks(input.summary, labels));
   blocks.push(`## ${labels.transcriptHeading}`);
 
   const passages = [...input.passages].sort((a, b) => a.index - b.index);
   for (const passage of passages) {
-    const speaker = passage.speakerName ?? labels.unknownSpeaker(passage.unknownSpeakerNumber ?? 0);
+    const speaker = getSpeakerLabel(passage, labels.unknownSpeaker);
     blocks.push(
       `**[${formatExportTimestamp(passage.startMs)}] ${escapeMarkdown(speaker)}:** ${escapeMarkdown(passage.text)}`
     );

@@ -95,6 +95,7 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
           />
           <NotetakerTranscript
             bookingUid={bookingUid}
+            speakerNamesAvailable={state.transcript.speakerNamesAvailable}
             interruptedAtMs={
               state.transcript.completeness === "PARTIAL" ? (state.session?.interruptedAtMs ?? null) : null
             }

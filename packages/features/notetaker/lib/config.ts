@@ -12,7 +12,9 @@ type NotetakerFakeScenario =
   | "interrupted"
   | "length_limit"
   | "link_unusable"
-  | "manual";
+  | "manual"
+  | "names_resolved"
+  | "names_unavailable";
 
 type NotetakerConfig = {
   limits: {
@@ -58,6 +60,8 @@ const FAKE_SCENARIOS = [
   "length_limit",
   "link_unusable",
   "manual",
+  "names_resolved",
+  "names_unavailable",
 ] as const satisfies readonly NotetakerFakeScenario[];
 
 // An empty `VAR=` line must count as unset; coercing "" to a number would silently yield 0.

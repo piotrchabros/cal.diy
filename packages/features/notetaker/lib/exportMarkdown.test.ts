@@ -21,6 +21,7 @@ const labels: NotetakerExportLabels = {
   partialNote: "This transcript is incomplete: the notetaker was removed.",
   truncatedNote: "This transcript was cut off at the maximum length.",
   owner: (name: string) => `Owner: ${name}`,
+  speakerNamesUnavailableNote: "Speaker names were not available.",
   unknownSpeaker: (number: number) => `Unknown speaker ${number}`,
 };
 
@@ -226,6 +227,21 @@ describe("exportMarkdown", () => {
 
     const complete = exportMarkdown(buildInput()).content;
     expect(complete.split("\n").some((line) => line.startsWith("> "))).toBe(false);
+  });
+
+  it("adds the speaker names note only when names were unavailable", () => {
+    const note = `> ${labels.speakerNamesUnavailableNote}`;
+    for (const speakerNamesAvailable of [true, null, undefined]) {
+      const content = exportMarkdown(
+        buildInput({ transcript: { completeness: "COMPLETE", speakerNamesAvailable } })
+      ).content;
+      expect(content).not.toContain(note);
+    }
+
+    const content = exportMarkdown(
+      buildInput({ transcript: { completeness: "PARTIAL", speakerNamesAvailable: false } })
+    ).content;
+    expect(content).toContain(`> ${labels.partialNote}\n\n${note}\n\n## Summary`);
   });
 
   it("escapes every dynamic string", () => {

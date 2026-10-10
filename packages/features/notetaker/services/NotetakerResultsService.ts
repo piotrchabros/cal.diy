@@ -276,6 +276,7 @@ export class NotetakerResultsService {
         interpolation: { escapeValue: false },
       }),
       truncatedNote: t("notetaker_transcript_truncated"),
+      speakerNamesUnavailableNote: t("notetaker_speaker_names_unavailable"),
       owner: (name: string): string =>
         t("notetaker_summary_owner", { name, interpolation: { escapeValue: false } }),
       unknownSpeaker: (number: number): string => t("notetaker_unknown_speaker", { number }),
@@ -287,7 +288,10 @@ export class NotetakerResultsService {
       locale,
       timeZone,
       summary,
-      transcript: { completeness: latest.transcript.completeness },
+      transcript: {
+        completeness: latest.transcript.completeness,
+        speakerNamesAvailable: latest.transcript.speakerNamesAvailable,
+      },
       passages: passageRecords.map(toPassageDto),
       labels,
     });

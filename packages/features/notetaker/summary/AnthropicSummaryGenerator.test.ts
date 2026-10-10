@@ -179,13 +179,38 @@ describe("AnthropicSummaryGenerator request", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("user");
     const content = requestUserContent(client);
-    expect(content.startsWith("Transcript (3 passages):\n")).toBe(true);
+    expect(content).toContain("\nTranscript (3 passages):\n");
     for (const text of ["first passage text", "second passage text", "third passage text"]) {
       expect(content.split(text)).toHaveLength(2);
     }
     expect(content).toContain("Alex: first passage text");
-    expect(content).toContain("Speaker 2: second passage text");
-    expect(content).toContain("Speaker ?: third passage text");
+    expect(content).toContain("Unknown speaker 2: second passage text");
+    expect(content).toContain("Unknown speaker 0: third passage text");
+    expect(content).not.toContain("Speaker 2:");
+    expect(content).not.toContain("] Speaker ");
+  });
+
+  it("lists the speakers before the transcript, with every name a person used on one line", () => {
+    const { user } = buildSummaryPrompt({
+      passages: [
+        buildPassage({ index: 0, speakerKey: "participant:a", speakerName: "Alex", text: "one" }),
+        buildPassage({ index: 1, speakerKey: "participant:a", speakerName: "Alex Example", text: "two" }),
+        buildPassage({
+          index: 2,
+          speakerKey: "unknown:1",
+          speakerName: null,
+          unknownSpeakerNumber: 1,
+          text: "three",
+        }),
+      ],
+      languageHint: null,
+    });
+
+    expect(
+      user.startsWith(
+        "Speakers (one line per person; several names on one line are the same person):\n- Alex, Alex Example\n- Unknown speaker 1\n\nTranscript (3 passages):\n"
+      )
+    ).toBe(true);
   });
 
   it("formats timestamps", () => {

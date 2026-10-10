@@ -69,7 +69,10 @@ function buildStandardPassages(): NotetakerPassageDto[] {
   return [buildPassage(0, 0), buildPassage(1, 30000), buildPassage(2, 65000)];
 }
 
-function renderTranscript(result: PassagesQueryResult, props: { interruptedAtMs?: number | null } = {}) {
+function renderTranscript(
+  result: PassagesQueryResult,
+  props: { interruptedAtMs?: number | null; speakerNamesAvailable?: boolean | null } = {}
+) {
   mocks.useInfiniteQuery.mockReturnValue(result);
   render(<NotetakerTranscript bookingUid="uid-1" {...props} />);
 }
@@ -165,5 +168,24 @@ describe("NotetakerTranscript interruption marker", () => {
     renderTranscript(buildQueryResult([buildStandardPassages()]));
 
     expect(mocks.useInfiniteQuery.mock.calls[0]?.[0]).toEqual({ bookingUid: "uid-1", sessionId: undefined });
+  });
+
+  describe("speaker names note", () => {
+    const NOTE_ID = "notetaker-speaker-names-unavailable";
+
+    it("shows the sentence above the list when speaker names were not available", () => {
+      renderTranscript(buildQueryResult([buildStandardPassages()]), { speakerNamesAvailable: false });
+
+      const note = screen.getByTestId(NOTE_ID);
+      expect(note).toHaveTextContent("notetaker_speaker_names_unavailable");
+      const list = within(screen.getByTestId("notetaker-transcript")).getAllByRole("list")[0];
+      expect(note.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it.each([true, null, undefined])("hides the sentence when the flag is %s", (speakerNamesAvailable) => {
+      renderTranscript(buildQueryResult([buildStandardPassages()]), { speakerNamesAvailable });
+
+      expect(screen.queryByTestId(NOTE_ID)).not.toBeInTheDocument();
+    });
   });
 });

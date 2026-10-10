@@ -153,6 +153,8 @@ describe("getNotetakerConfig other fields", () => {
     "length_limit",
     "link_unusable",
     "manual",
+    "names_resolved",
+    "names_unavailable",
   ];
 
   it("defaults the fake scenario to happy", () => {
