@@ -68,7 +68,8 @@ function toActivityEntry(row: NotetakerActivityRecord): ActivityEntry {
 
 function toSharingChangeEntry(change: NotetakerSharingChangeRecord): ActivityEntry {
   let action: NotetakerActivityDto["action"] = "SHARING_PEOPLE_CHANGED";
-  if (change.previousMode !== change.newMode) action = "SHARING_MODE_CHANGED";
+  const teamChanged = (change.previousTeamName ?? null) !== (change.newTeamName ?? null);
+  if (change.previousMode !== change.newMode || teamChanged) action = "SHARING_MODE_CHANGED";
 
   return {
     createdAt: change.createdAt,
@@ -84,6 +85,8 @@ function toSharingChangeEntry(change: NotetakerSharingChangeRecord): ActivityEnt
         newMode: change.newMode,
         addedUserNames: change.addedUserNames,
         removedUserNames: change.removedUserNames,
+        previousTeamName: change.previousTeamName,
+        newTeamName: change.newTeamName,
       },
     },
   };

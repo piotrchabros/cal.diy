@@ -1,6 +1,7 @@
 import type { NotetakerChoiceSourceDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
@@ -70,9 +71,11 @@ const bookingBaseSelect = {
     select: {
       hosts: { select: { userId: true, user: { select: { email: true } } } },
       users: { select: { id: true, email: true } },
-      teamId: true,
-      team: { select: { name: true, parentId: true } },
-      notetakerSettings: { select: { sharingMode: true } },
+      userId: true,
+      team: { select: { id: true, name: true, parentId: true } },
+      notetakerSettings: {
+        select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } },
+      },
     },
   },
   user: { select: { id: true, name: true, email: true, locale: true } },
@@ -135,9 +138,11 @@ function toBookingContext(
     references: booking.references,
     eventTypeHosts: Array.from(hostsByUserId.values()),
     organizer: booking.user,
-    teamId: booking.eventType?.teamId ?? null,
-    teamName: booking.eventType?.team?.name ?? null,
-    organizationId: booking.eventType?.team?.parentId ?? null,
+    ...deriveNotetakerSharingTeam({
+      eventTypeTeam: booking.eventType?.team ?? null,
+      eventTypeUserId: booking.eventType?.userId ?? null,
+      chosenTeam: booking.eventType?.notetakerSettings?.sharingTeam ?? null,
+    }),
     sharingMode: booking.eventType?.notetakerSettings?.sharingMode ?? "HOSTS_ONLY",
     choice,
   };

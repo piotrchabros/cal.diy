@@ -54,12 +54,14 @@ export type NotetakerBookingContext = {
   metadata: unknown;
   recurringEventId: string | null;
   eventTypeId: number | null;
-  /** EventType.teamId */
+  /** Effective sharing team: EventType.teamId, else the team chosen on a personal event type that has an owner. */
   teamId: number | null;
-  /** EventType.team.name */
+  /** Name of the effective sharing team. */
   teamName: string | null;
-  /** EventType.team.parentId */
+  /** EventType.team.parentId; null when the team is the one chosen on a personal event type. */
   organizationId: number | null;
+  /** Owner of a personal event type, who must stay an accepted member of teamId. Null for a team event type. */
+  sharingOwnerUserId: number | null;
   /** "HOSTS_ONLY" when the event type has no settings row or there is no event type. */
   sharingMode: NotetakerSharingModeDto;
   attendeeEmails: string[];

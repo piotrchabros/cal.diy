@@ -1934,6 +1934,8 @@ describe("NotetakerResultsService", () => {
           newMode: "TEAM",
           addedUserNames: [],
           removedUserNames: [],
+          previousTeamName: null,
+          newTeamName: null,
           createdAt: new Date(),
           ...overrides,
         };
@@ -1993,8 +1995,48 @@ describe("NotetakerResultsService", () => {
             newMode: "SELECTED_PEOPLE",
             addedUserNames: ["Ada", "Ben"],
             removedUserNames: ["Cy"],
+            previousTeamName: null,
+            newTeamName: null,
           },
         });
+      });
+
+      it("carries both team names in the detail", async () => {
+        await seedSessionWithoutTranscript();
+        recordSharingChange({ previousTeamName: "Sales", newTeamName: "Support" });
+
+        const result = await getActivityAs();
+
+        expect(result[0].detail).toMatchObject({ previousTeamName: "Sales", newTeamName: "Support" });
+      });
+
+      it("reports a change of the team alone as a change of the mode", async () => {
+        await seedSessionWithoutTranscript();
+        recordSharingChange({
+          previousMode: "TEAM",
+          newMode: "TEAM",
+          previousTeamName: "Sales",
+          newTeamName: "Support",
+        });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.action)).toEqual(["SHARING_MODE_CHANGED"]);
+      });
+
+      it("reports an unchanged team with an unchanged mode as a change of the people", async () => {
+        await seedSessionWithoutTranscript();
+        recordSharingChange({
+          previousMode: "SELECTED_PEOPLE",
+          newMode: "SELECTED_PEOPLE",
+          previousTeamName: "Sales",
+          newTeamName: "Sales",
+          addedUserNames: ["Ada"],
+        });
+
+        const result = await getActivityAs();
+
+        expect(result.map((activity) => activity.action)).toEqual(["SHARING_PEOPLE_CHANGED"]);
       });
 
       it("reports a change that kept the mode as a change of the selected people", async () => {
