@@ -8,5 +8,6 @@ export const ZSetEventTypeSharingInputSchema = z.object({
     .max(50)
     .refine((ids) => new Set(ids).size === ids.length, { message: "userIds must be distinct" })
     .optional(),
+  teamId: z.number().int().positive().optional(),
 });
 export type TSetEventTypeSharingInputSchema = z.infer<typeof ZSetEventTypeSharingInputSchema>;

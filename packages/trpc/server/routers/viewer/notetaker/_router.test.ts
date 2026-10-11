@@ -157,10 +157,23 @@ const procedures: {
       caller.setEventTypeSharing({ eventTypeId: 42, mode: "SELECTED_PEOPLE", userIds: [3, 4] }),
   },
   {
+    name: "setEventTypeSharing with a team",
+    handler: mocks.setEventTypeSharingHandler,
+    expectedInput: { eventTypeId: 42, mode: "TEAM", userIds: undefined, teamId: 5 },
+    invoke: (caller) => caller.setEventTypeSharing({ eventTypeId: 42, mode: "TEAM", teamId: 5 }),
+  },
+  {
     name: "listEventTypeSharingCandidates",
     handler: mocks.listEventTypeSharingCandidatesHandler,
     expectedInput: { eventTypeId: 42, search: "sa", cursor: 9, limit: 20 },
     invoke: (caller) => caller.listEventTypeSharingCandidates({ eventTypeId: 42, search: "sa", cursor: 9 }),
+  },
+  {
+    name: "listEventTypeSharingCandidates with a team",
+    handler: mocks.listEventTypeSharingCandidatesHandler,
+    expectedInput: { eventTypeId: 42, teamId: 5, search: "sa", cursor: 9, limit: 20 },
+    invoke: (caller) =>
+      caller.listEventTypeSharingCandidates({ eventTypeId: 42, teamId: 5, search: "sa", cursor: 9 }),
   },
   {
     name: "listSharedWithMe",
