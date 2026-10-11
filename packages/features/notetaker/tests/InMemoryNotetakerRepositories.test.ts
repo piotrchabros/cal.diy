@@ -4,6 +4,9 @@ import { createInMemoryNotetakerRepositories } from "./InMemoryNotetakerReposito
 
 const EVENT_TYPE_ID = 10;
 const TEAM_ID = 20;
+const CHOSEN_TEAM_ID = 30;
+const PERSONAL_EVENT_TYPE_ID = 14;
+const OWNER_ID = 1;
 
 function bookingSeed(overrides: Partial<InMemoryBookingSeed> = {}): InMemoryBookingSeed {
   return {
@@ -99,6 +102,31 @@ describe("InMemoryNotetakerRepositories", () => {
       const full = await repositories.bookingNotetakerRepository.findByBookingIdIncludeBooking(100);
 
       expect(full?.sharingMode).toBe("HOSTS_ONLY");
+    });
+
+    it("reports no sharing owner by default and the seeded one for a personal event type", async () => {
+      repositories.store.addBooking(bookingSeed());
+      repositories.store.addBooking(
+        bookingSeed({
+          id: 101,
+          uid: "uid-101",
+          teamId: CHOSEN_TEAM_ID,
+          teamName: "Support",
+          sharingOwnerUserId: 1,
+        })
+      );
+
+      const plain = await repositories.bookingNotetakerRepository.findByBookingIdIncludeBooking(100);
+      const personal =
+        await repositories.bookingNotetakerRepository.findByBookingUidIncludeBooking("uid-101");
+
+      expect(plain?.sharingOwnerUserId).toBeNull();
+      expect(personal).toMatchObject({
+        teamId: CHOSEN_TEAM_ID,
+        teamName: "Support",
+        organizationId: null,
+        sharingOwnerUserId: 1,
+      });
     });
   });
 
@@ -286,6 +314,8 @@ describe("InMemoryNotetakerRepositories", () => {
         newMode: "TEAM" as const,
         addedUserNames: [],
         removedUserNames: [],
+        previousTeamName: null,
+        newTeamName: null,
       };
       store.sharingChanges.push(
         { ...base, id: "a", createdAt: new Date("2026-10-01T00:00:00.000Z") },
@@ -334,6 +364,7 @@ describe("InMemoryNotetakerRepositories", () => {
           teamId: TEAM_ID,
           teamName: "Sales",
           organizationId: 5,
+          sharingOwnerUserId: null,
           sharingMode: "TEAM",
         },
       ]);
@@ -362,6 +393,7 @@ describe("InMemoryNotetakerRepositories", () => {
           teamId: TEAM_ID,
           teamName: "Sales",
           organizationId: 5,
+          sharingOwnerUserId: null,
           sharingMode: "TEAM",
         },
       ]);
@@ -370,6 +402,304 @@ describe("InMemoryNotetakerRepositories", () => {
           userId: 8,
         })
       ).toEqual([]);
+    });
+  });
+
+  describe("sharing team of a personal event type", () => {
+    const change = {
+      actorUserId: OWNER_ID,
+      actorName: "Olga",
+      previousMode: "HOSTS_ONLY" as const,
+      newMode: "TEAM" as const,
+      addedUserNames: [],
+      removedUserNames: [],
+    };
+
+    beforeEach(() => {
+      repositories.store.addEventType(
+        eventTypeSeed({ title: "Intro", teamName: "Sales", organizationId: 5 })
+      );
+      repositories.store.addEventType(
+        eventTypeSeed({ id: PERSONAL_EVENT_TYPE_ID, userId: OWNER_ID, teamId: null, title: "One to one" })
+      );
+      repositories.store.setTeam(CHOSEN_TEAM_ID, "Support");
+    });
+
+    function updateSharing(sharingTeamId?: number | null) {
+      return repositories.eventTypeNotetakerSettingsRepository.updateSharing({
+        eventTypeId: PERSONAL_EVENT_TYPE_ID,
+        sharingMode: "TEAM",
+        sharingSetByUserId: OWNER_ID,
+        sharingSetAt: new Date("2026-10-01T00:00:00.000Z"),
+        sharingTeamId,
+        change,
+      });
+    }
+
+    function storedTeamId() {
+      return repositories.eventTypeNotetakerSettingsRepository
+        .findByEventTypeId(PERSONAL_EVENT_TYPE_ID)
+        .then((settings) => settings?.sharingTeamId);
+    }
+
+    it("carries sharingTeamId null on every settings record the fake builds", async () => {
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+
+      expect((await repo.findByEventTypeId(EVENT_TYPE_ID))?.sharingTeamId).toBeNull();
+      expect(
+        (await repo.upsert({ eventTypeId: PERSONAL_EVENT_TYPE_ID, enabledByDefault: true })).sharingTeamId
+      ).toBeNull();
+    });
+
+    it("setSharingTeam creates the settings row when missing and keeps the mode of an existing one", async () => {
+      repositories.store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+      repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      repositories.store.setSharingTeam(EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+
+      expect(await repo.findByEventTypeId(PERSONAL_EVENT_TYPE_ID)).toMatchObject({
+        sharingMode: "HOSTS_ONLY",
+        enabledByDefault: false,
+        sharingTeamId: CHOSEN_TEAM_ID,
+      });
+      expect(await repo.findByEventTypeId(EVENT_TYPE_ID)).toMatchObject({
+        sharingMode: "TEAM",
+        sharingTeamId: CHOSEN_TEAM_ID,
+      });
+    });
+
+    it("updateSharing sets the team, keeps it when undefined and clears it with null", async () => {
+      await updateSharing();
+      expect(await storedTeamId()).toBeNull();
+
+      await updateSharing(CHOSEN_TEAM_ID);
+      expect(await storedTeamId()).toBe(CHOSEN_TEAM_ID);
+
+      await updateSharing();
+      expect(await storedTeamId()).toBe(CHOSEN_TEAM_ID);
+
+      await updateSharing(null);
+      expect(await storedTeamId()).toBeNull();
+    });
+
+    it("upsert keeps the stored team", async () => {
+      await updateSharing(CHOSEN_TEAM_ID);
+
+      const again = await repositories.eventTypeNotetakerSettingsRepository.upsert({
+        eventTypeId: PERSONAL_EVENT_TYPE_ID,
+        enabledByDefault: true,
+      });
+
+      expect(again.sharingTeamId).toBe(CHOSEN_TEAM_ID);
+    });
+
+    it("stores the team names of a change and null when they are left out", async () => {
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+      await updateSharing(CHOSEN_TEAM_ID);
+      await repo.updateSharing({
+        eventTypeId: PERSONAL_EVENT_TYPE_ID,
+        sharingMode: "TEAM",
+        sharingSetByUserId: OWNER_ID,
+        sharingSetAt: new Date("2026-10-02T00:00:00.000Z"),
+        sharingTeamId: CHOSEN_TEAM_ID,
+        change: { ...change, previousTeamName: null, newTeamName: "Support" },
+      });
+
+      const changes = await repo.findSharingChangesByEventTypeIdSince({
+        eventTypeId: PERSONAL_EVENT_TYPE_ID,
+        since: new Date("2026-01-01T00:00:00.000Z"),
+        limit: 10,
+      });
+
+      expect(changes.map(({ previousTeamName, newTeamName }) => ({ previousTeamName, newTeamName }))).toEqual(
+        [
+          { previousTeamName: null, newTeamName: "Support" },
+          { previousTeamName: null, newTeamName: null },
+        ]
+      );
+    });
+
+    it("removeTeam nulls the pointer of the rows that used it and keeps the rows", async () => {
+      repositories.store.setTeam(31, "Ops");
+      repositories.store.setSharingMode(PERSONAL_EVENT_TYPE_ID, "TEAM");
+      repositories.store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+      repositories.store.setSharingTeam(EVENT_TYPE_ID, 31);
+
+      repositories.store.removeTeam(CHOSEN_TEAM_ID);
+
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+      expect(await repo.findByEventTypeId(PERSONAL_EVENT_TYPE_ID)).toMatchObject({
+        sharingMode: "TEAM",
+        sharingTeamId: null,
+      });
+      expect((await repo.findByEventTypeId(EVENT_TYPE_ID))?.sharingTeamId).toBe(31);
+      expect(await repo.findTeamsByIds({ teamIds: [CHOSEN_TEAM_ID, 31] })).toEqual([
+        { teamId: 31, teamName: "Ops" },
+      ]);
+    });
+
+    it("reports the own team as the effective team of a team event type, whatever team is stored", async () => {
+      repositories.store.setSharingTeam(EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+
+      const context =
+        await repositories.eventTypeNotetakerSettingsRepository.findByEventTypeIdIncludeEventType(
+          EVENT_TYPE_ID
+        );
+
+      expect(context).toMatchObject({
+        teamId: TEAM_ID,
+        teamName: "Sales",
+        organizationId: 5,
+        effectiveSharingTeamId: TEAM_ID,
+        effectiveSharingTeamName: "Sales",
+        sharingOwnerUserId: null,
+      });
+    });
+
+    it("reports the chosen team as the effective team of a personal event type and keeps its own team null", async () => {
+      repositories.store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+
+      const context =
+        await repositories.eventTypeNotetakerSettingsRepository.findByEventTypeIdIncludeEventType(
+          PERSONAL_EVENT_TYPE_ID
+        );
+
+      expect(context).toMatchObject({
+        teamId: null,
+        teamName: null,
+        organizationId: null,
+        effectiveSharingTeamId: CHOSEN_TEAM_ID,
+        effectiveSharingTeamName: "Support",
+        sharingOwnerUserId: OWNER_ID,
+      });
+      expect(context?.settings?.sharingTeamId).toBe(CHOSEN_TEAM_ID);
+    });
+
+    it("reports no effective team for a personal event type without a chosen team or after removeTeam", async () => {
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+      const none = { effectiveSharingTeamId: null, effectiveSharingTeamName: null, sharingOwnerUserId: null };
+
+      expect(await repo.findByEventTypeIdIncludeEventType(PERSONAL_EVENT_TYPE_ID)).toMatchObject(none);
+
+      repositories.store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+      repositories.store.removeTeam(CHOSEN_TEAM_ID);
+
+      expect(await repo.findByEventTypeIdIncludeEventType(PERSONAL_EVENT_TYPE_ID)).toMatchObject(none);
+    });
+
+    it("reports no effective team for an event type with a chosen team and no owner", async () => {
+      repositories.store.addEventType(eventTypeSeed({ id: 15, userId: null, teamId: null }));
+      repositories.store.setSharingTeam(15, CHOSEN_TEAM_ID);
+
+      const context =
+        await repositories.eventTypeNotetakerSettingsRepository.findByEventTypeIdIncludeEventType(15);
+
+      expect(context).toMatchObject({ effectiveSharingTeamId: null, sharingOwnerUserId: null });
+    });
+
+    it("finds a personal event type by its chosen team and mode next to team event types", async () => {
+      const store = repositories.store;
+      store.addEventType(eventTypeSeed({ id: 15, userId: 2, teamId: null, title: "Other team" }));
+      store.addEventType(eventTypeSeed({ id: 16, userId: 3, teamId: null, title: "No team chosen" }));
+      store.setTeam(31, "Ops");
+      store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      store.setSharingMode(PERSONAL_EVENT_TYPE_ID, "TEAM");
+      store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+      store.setSharingMode(15, "TEAM");
+      store.setSharingTeam(15, 31);
+      store.setSharingMode(16, "TEAM");
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+
+      const found = await repo.findByTeamIdsAndSharingModeIncludeEventType({
+        teamIds: [TEAM_ID, CHOSEN_TEAM_ID],
+        sharingMode: "TEAM",
+      });
+
+      expect(found).toEqual([
+        {
+          eventTypeId: EVENT_TYPE_ID,
+          eventTypeTitle: "Intro",
+          teamId: TEAM_ID,
+          teamName: "Sales",
+          organizationId: 5,
+          sharingOwnerUserId: null,
+          sharingMode: "TEAM",
+        },
+        {
+          eventTypeId: PERSONAL_EVENT_TYPE_ID,
+          eventTypeTitle: "One to one",
+          teamId: CHOSEN_TEAM_ID,
+          teamName: "Support",
+          organizationId: null,
+          sharingOwnerUserId: OWNER_ID,
+          sharingMode: "TEAM",
+        },
+      ]);
+
+      store.removeTeam(CHOSEN_TEAM_ID);
+
+      expect(
+        (
+          await repo.findByTeamIdsAndSharingModeIncludeEventType({
+            teamIds: [TEAM_ID, CHOSEN_TEAM_ID],
+            sharingMode: "TEAM",
+          })
+        ).map((eventType) => eventType.eventTypeId)
+      ).toEqual([EVENT_TYPE_ID]);
+    });
+
+    it("finds a personal event type by sharing member while it has a chosen team", async () => {
+      const store = repositories.store;
+      store.setSharingMembers(EVENT_TYPE_ID, [2]);
+      store.setSharingMembers(PERSONAL_EVENT_TYPE_ID, [2]);
+      store.setSharingMode(PERSONAL_EVENT_TYPE_ID, "SELECTED_PEOPLE");
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+
+      expect(
+        (await repo.findBySharingMemberUserIdIncludeEventType({ userId: 2 })).map(
+          (eventType) => eventType.eventTypeId
+        )
+      ).toEqual([EVENT_TYPE_ID]);
+
+      store.setSharingTeam(PERSONAL_EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+
+      expect(await repo.findBySharingMemberUserIdIncludeEventType({ userId: 2 })).toEqual([
+        {
+          eventTypeId: EVENT_TYPE_ID,
+          eventTypeTitle: "Intro",
+          teamId: TEAM_ID,
+          teamName: "Sales",
+          organizationId: 5,
+          sharingOwnerUserId: null,
+          sharingMode: "HOSTS_ONLY",
+        },
+        {
+          eventTypeId: PERSONAL_EVENT_TYPE_ID,
+          eventTypeTitle: "One to one",
+          teamId: CHOSEN_TEAM_ID,
+          teamName: "Support",
+          organizationId: null,
+          sharingOwnerUserId: OWNER_ID,
+          sharingMode: "SELECTED_PEOPLE",
+        },
+      ]);
+    });
+
+    it("findTeamsByIds orders by name then id, skips unknown teams and gives [] for no ids", async () => {
+      const store = repositories.store;
+      store.setTeam(33, "Ops");
+      store.setTeam(32, "Ops");
+      store.setTeam(31, "Alpha");
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+
+      expect(await repo.findTeamsByIds({ teamIds: [CHOSEN_TEAM_ID, 33, 32, 31, 99] })).toEqual([
+        { teamId: 31, teamName: "Alpha" },
+        { teamId: 32, teamName: "Ops" },
+        { teamId: 33, teamName: "Ops" },
+        { teamId: CHOSEN_TEAM_ID, teamName: "Support" },
+      ]);
+      expect(await repo.findTeamsByIds({ teamIds: [] })).toEqual([]);
     });
   });
 

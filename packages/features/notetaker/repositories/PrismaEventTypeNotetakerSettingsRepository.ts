@@ -1,6 +1,7 @@
 import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   EventTypeNotetakerSettingsRecord,
   IEventTypeNotetakerSettingsRepository,
@@ -17,6 +18,7 @@ const settingsSelect = {
   sharingMode: true,
   sharingSetByUserId: true,
   sharingSetAt: true,
+  sharingTeamId: true,
 } satisfies Prisma.EventTypeNotetakerSettingsSelect;
 
 const sharingChangeSelect = {
@@ -28,29 +30,47 @@ const sharingChangeSelect = {
   newMode: true,
   addedUserNames: true,
   removedUserNames: true,
+  previousTeamName: true,
+  newTeamName: true,
   createdAt: true,
 } satisfies Prisma.EventTypeNotetakerSharingChangeSelect;
 
 const sharedEventTypeSelect = {
   id: true,
   title: true,
+  userId: true,
   teamId: true,
-  team: { select: { name: true, parentId: true } },
-  notetakerSettings: { select: { sharingMode: true } },
+  team: { select: { id: true, name: true, parentId: true } },
+  notetakerSettings: { select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } } },
 } satisfies Prisma.EventTypeSelect;
 
 function toSharedEventTypeRecord(
   row: Prisma.EventTypeGetPayload<{ select: typeof sharedEventTypeSelect }>
 ): NotetakerSharedEventTypeRecord | null {
-  if (row.teamId === null || row.team === null) return null;
+  const sharingTeam = deriveNotetakerSharingTeam({
+    eventTypeTeam: row.team,
+    eventTypeUserId: row.userId,
+    chosenTeam: row.notetakerSettings?.sharingTeam ?? null,
+  });
+  if (sharingTeam.teamId === null || sharingTeam.teamName === null) return null;
   return {
     eventTypeId: row.id,
     eventTypeTitle: row.title,
-    teamId: row.teamId,
-    teamName: row.team.name,
-    organizationId: row.team.parentId,
+    teamId: sharingTeam.teamId,
+    teamName: sharingTeam.teamName,
+    organizationId: sharingTeam.organizationId,
+    sharingOwnerUserId: sharingTeam.sharingOwnerUserId,
     sharingMode: row.notetakerSettings?.sharingMode ?? "HOSTS_ONLY",
   };
+}
+
+function toSettingsRecord(
+  row: Prisma.EventTypeNotetakerSettingsGetPayload<{
+    select: typeof settingsSelect & { sharingTeam: { select: { id: true; name: true } } };
+  }>
+): EventTypeNotetakerSettingsRecord {
+  const { sharingTeam: _sharingTeam, ...settings } = row;
+  return settings;
 }
 
 export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNotetakerSettingsRepository {
@@ -86,11 +106,20 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
         locations: true,
         title: true,
         owner: { select: { name: true } },
-        team: { select: { name: true, parentId: true } },
-        notetakerSettings: { select: settingsSelect },
+        team: { select: { id: true, name: true, parentId: true } },
+        notetakerSettings: {
+          select: { ...settingsSelect, sharingTeam: { select: { id: true, name: true } } },
+        },
       },
     });
     if (!row) return null;
+
+    const stored = row.notetakerSettings;
+    const sharingTeam = deriveNotetakerSharingTeam({
+      eventTypeTeam: row.team,
+      eventTypeUserId: row.userId,
+      chosenTeam: stored?.sharingTeam ?? null,
+    });
 
     return {
       id: row.id,
@@ -101,7 +130,10 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
       title: row.title,
       teamName: row.team?.name ?? null,
       organizationId: row.team?.parentId ?? null,
-      settings: row.notetakerSettings,
+      effectiveSharingTeamId: sharingTeam.teamId,
+      effectiveSharingTeamName: sharingTeam.teamName,
+      sharingOwnerUserId: sharingTeam.sharingOwnerUserId,
+      settings: stored ? toSettingsRecord(stored) : null,
     };
   }
 
@@ -111,10 +143,27 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
     sharingSetByUserId: number | null;
     sharingSetAt: Date;
     memberUserIds?: number[];
-    change: Omit<NotetakerSharingChangeRecord, "id" | "eventTypeId" | "createdAt">;
+    sharingTeamId?: number | null;
+    change: Omit<
+      NotetakerSharingChangeRecord,
+      "id" | "eventTypeId" | "createdAt" | "previousTeamName" | "newTeamName"
+    > & { previousTeamName?: string | null; newTeamName?: string | null };
   }): Promise<void> {
-    const { eventTypeId, sharingMode, sharingSetByUserId, sharingSetAt, memberUserIds, change } = data;
-    const sharingFields = { sharingMode, sharingSetByUserId, sharingSetAt };
+    const {
+      eventTypeId,
+      sharingMode,
+      sharingSetByUserId,
+      sharingSetAt,
+      memberUserIds,
+      sharingTeamId,
+      change,
+    } = data;
+    const sharingFields = {
+      sharingMode,
+      sharingSetByUserId,
+      sharingSetAt,
+      ...(sharingTeamId !== undefined ? { sharingTeamId } : {}),
+    };
 
     // One transaction so a reader never sees the new mode with the old list, and the audit row
     // exists exactly when the change was applied.
@@ -149,6 +198,8 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
           newMode: change.newMode,
           addedUserNames: change.addedUserNames,
           removedUserNames: change.removedUserNames,
+          previousTeamName: change.previousTeamName ?? null,
+          newTeamName: change.newTeamName ?? null,
         },
         select: { id: true },
       }),
@@ -202,8 +253,15 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
     if (params.teamIds.length === 0) return [];
     const rows = await this.prismaClient.eventType.findMany({
       where: {
-        teamId: { in: params.teamIds },
         notetakerSettings: { is: { sharingMode: params.sharingMode } },
+        OR: [
+          { teamId: { in: params.teamIds } },
+          {
+            teamId: null,
+            userId: { not: null },
+            notetakerSettings: { is: { sharingTeamId: { in: params.teamIds } } },
+          },
+        ],
       },
       orderBy: { id: "asc" },
       select: sharedEventTypeSelect,
@@ -220,5 +278,15 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
       select: { eventType: { select: sharedEventTypeSelect } },
     });
     return rows.flatMap((row) => toSharedEventTypeRecord(row.eventType) ?? []);
+  }
+
+  async findTeamsByIds(params: { teamIds: number[] }): Promise<{ teamId: number; teamName: string }[]> {
+    if (params.teamIds.length === 0) return [];
+    const rows = await this.prismaClient.team.findMany({
+      where: { id: { in: params.teamIds }, isOrganization: false },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: { id: true, name: true },
+    });
+    return rows.map((row) => ({ teamId: row.id, teamName: row.name }));
   }
 }
