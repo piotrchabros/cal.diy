@@ -24,6 +24,8 @@ export type NotetakerSharingChangeDetailDto = {
   newMode: NotetakerSharingModeDto;
   addedUserNames: string[];
   removedUserNames: string[];
+  previousTeamName?: string | null;
+  newTeamName?: string | null;
 };
 
 export const NotetakerSharingChangeDetailDtoSchema: z.ZodType<NotetakerSharingChangeDetailDto> = z.object({
@@ -31,6 +33,8 @@ export const NotetakerSharingChangeDetailDtoSchema: z.ZodType<NotetakerSharingCh
   newMode: NotetakerSharingModeDtoSchema,
   addedUserNames: z.array(z.string()),
   removedUserNames: z.array(z.string()),
+  previousTeamName: z.string().nullable().optional(),
+  newTeamName: z.string().nullable().optional(),
 });
 
 export type NotetakerActorTypeDto = "USER" | "PARTICIPANT" | "SYSTEM";

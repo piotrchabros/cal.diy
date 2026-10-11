@@ -639,6 +639,8 @@ model Team {
   managedOrganizations ManagedOrganization[] @relation("ManagerOrganization")
   filterSegments       FilterSegment[]
 
+  notetakerSharingSettings EventTypeNotetakerSettings[]
+
   teamBilling               TeamBilling?               @relation("TeamBilling")
   organizationBilling       OrganizationBilling?       @relation("OrganizationBilling")
   integrationAttributeSyncs IntegrationAttributeSync[]
@@ -2941,8 +2943,13 @@ model EventTypeNotetakerSettings {
   // Soft reference to User.id without an FK
   sharingSetByUserId Int?
   sharingSetAt       DateTime?
+  // Read only when EventType.teamId is null: the team whose members a personal event type shares with
+  sharingTeamId      Int?
+  sharingTeam        Team?                @relation(fields: [sharingTeamId], references: [id], onDelete: SetNull)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
+
+  @@index([sharingTeamId])
 }
 
 model BookingNotetaker {
@@ -3103,6 +3110,8 @@ model EventTypeNotetakerSharingChange {
   newMode          NotetakerSharingMode
   addedUserNames   String[]             @default([])
   removedUserNames String[]             @default([])
+  previousTeamName String?
+  newTeamName      String?
   createdAt        DateTime             @default(now())
 
   @@index([eventTypeId, createdAt])
