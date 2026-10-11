@@ -154,6 +154,7 @@
 - **US3**: needs US2 (T026, T028, T031, T034).
 - **US4**: needs US2 (T026, T028, T029); T040 also reads the list from US3 and returns only the team route until T037 is merged.
 - **Polish**: T044 to T046 need the stories they cover; T048 needs everything to be deployed in that round; T049 needs T048.
+- **US5**: needs US2 to US4 merged. T051 → T053 → T054; T052 → T056, T060, T061; T053 → T055, T056, T057, T059; T055 → T058; T060 → T061; T062 and T063 need everything before them.
 
 ### Story independence
 
@@ -177,6 +178,14 @@
 | B5 | T034, T035, T039, T040, T041, T042, T043 (web part) |
 | B6 | T044, T045, T046 |
 | A5/B7 | T047, T048, T049 |
+| C0 | T050 |
+| C1 | T051, T052 |
+| C2 | T053, T054, T059 (server part) |
+| C3 | T055, T056, T057, T058 |
+| C4 | T060 |
+| C5 | T059 (web part), T061 |
+| C6 | T062, T063, T064 |
+| C7 | T065, T066 |
 
 ### Parallel opportunities
 
@@ -201,3 +210,31 @@ Agent 5: T029 (dispatch notice and flag)
 - **Start both tracks at once**: the measurement (T004) needs a meeting with two people, so the schema, shapes and all of Part B proceed while it is being arranged.
 - **Deploy once per part** if possible: Part A needs a bot bundle and an application rebuild; Part B needs the migration and a rebuild. Combining them means one downtime of about 6 minutes.
 - **Stop rule**: if the measurement excludes both signals, Part A delivers T012 to T015 (consistent labels, resolutions plumbing, names-unavailable statement) and the owner decides about captions before any further bot work.
+
+---
+
+## Phase 8: User Story 5 - Share a personal event type with a chosen team (Priority: P2, amendment 2026-10-11)
+
+**Goal**: the owner of a personal event type picks one of their teams and a mode; members of that team read the results.
+
+**Independent Test**: quickstart Scenario 7.
+
+- [X] T050 [P] [US5] Amend `spec.md`, `data-model.md`, `research.md` (B10), `quickstart.md` (Scenario 7) and `contracts/trpc-notetaker-sharing.md` for personal event types (C0)
+- [X] T051 [US5] Add `sharingTeamId` (FK to `Team`, set null on delete, indexed) to `EventTypeNotetakerSettings` and `previousTeamName`, `newTeamName` to `EventTypeNotetakerSharingChange` in `packages/prisma/schema.prisma`, with the migration `20261011000000_add_notetaker_personal_sharing_team`; run `yarn prisma generate` only (C1)
+- [X] T052 [P] [US5] Extend `packages/lib/dto/NotetakerEventTypeSharingDto.ts` (`teamId`, `teamOptions`, reason `NO_TEAM_TO_SHARE_WITH`) and the sharing-change detail in `NotetakerActivityDto.ts` (`previousTeamName`, `newTeamName`), with tests in `NotetakerDto.test.ts` (C1)
+- [X] T053 [US5] Tests first, then add `packages/features/notetaker/lib/sharingScope.ts` (effective team derivation and the owner-membership rule), extend the two repository interfaces and the in-memory fakes in `packages/features/notetaker/tests/InMemoryNotetakerRepositories.ts` (C2)
+- [X] T054 [US5] Extend `PrismaEventTypeNotetakerSettingsRepository.ts` and `PrismaBookingNotetakerRepository.ts`: effective team in both contexts, `sharingTeamId` and team names in `updateSharing`, both shared-event-type finders also match `sharingTeamId`, new `findTeamsByIds` (C2)
+- [X] T055 [US5] Tests first in `NotetakerAccessService.test.ts`, then add `resolveSharingScope` and use it in `isSharedViewer`: the matrix rows for personal event types (C3)
+- [X] T056 [US5] Tests first, then extend `NotetakerSharingSettingsService.ts`: owner only, team options, `teamId` on `set` and `listCandidates`, list replaced on team change, team names in the change row, reason `NO_TEAM_TO_SHARE_WITH` (C3)
+- [X] T057 [P] [US5] Tests first, then extend `NotetakerSharedResultsService.ts`: personal event types are listed only while their owner is an accepted member of the chosen team (C3)
+- [X] T058 [US5] Tests first, then use the scope in `NotetakerDispatchService.ts` (flag and wider notice) and in `NotetakerChoiceService.ts` (`getDisclosure`, the host's `access`) (C3)
+- [X] T059 [P] [US5] Tests first, then carry the team names through `NotetakerResultsService.getActivity` and show them in `apps/web/modules/notetaker/components/NotetakerActivityList.tsx` (C2 server part, C5 web part)
+- [X] T060 [P] [US5] Add `teamId` to the inputs of `setEventTypeSharing` and `listEventTypeSharingCandidates` (schema, handler, `_router.tsx`) with handler and router tests (C4)
+- [X] T061 [US5] Team select and personal wording in `NotetakerEventTypeSharing.tsx` and `useNotetakerEventTypeSharing.ts`, mount the control for every event type in `EventAdvancedWebWrapper.tsx`, strings in `common.json`, component and hook tests (C5)
+- [X] T062 [P] [US5] Integration tests against the scratch database only, in the two existing repository integration-test files (C6)
+- [X] T063 [US5] One scenario in `apps/web/playwright/notetaker.e2e.ts`: personal event type shared with a team, a member reads from "Shared with me", a non-member is refused, the owner leaves the team and the member is refused; run against the scratch setup (C6)
+- [X] T064 Run `yarn type-check:ci --force`, the unit suites of quickstart.md with `TZ=UTC`, and `yarn biome check` on the changed paths; record the counts in the last PR description (C6)
+- [ ] T065 Deploy with the owner's agreement: apply the one migration to the live database, then rebuild in place with `/root/caldiy-deploy-inplace.sh`; the bot is not touched (C7)
+- [ ] T066 Acceptance on the live site: quickstart Scenario 7 steps 1 to 4 (C7)
+
+**Checkpoint**: Scenario 7 passes against the scratch setup with the fake bot.

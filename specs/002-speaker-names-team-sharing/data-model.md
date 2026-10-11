@@ -13,8 +13,9 @@ All changes are additive. No column is renamed or removed, and every new column 
 | `sharingMode` | `NotetakerSharingMode` | `HOSTS_ONLY` | Mode in force for results of this event type (FR-009) |
 | `sharingSetByUserId` | `Int?` | null | Soft reference, like other actor columns in this slice |
 | `sharingSetAt` | `DateTime?` | null | When the mode last changed; shown in settings, not used for access |
+| `sharingTeamId` | `Int?` | null | FK to Team, set null on delete. Read only for a personal event type: the team its owner chose |
 
-Rule: `sharingMode` other than `HOSTS_ONLY` is accepted only when the event type has a team (`EventType.teamId` is set). Enforced in the service.
+Rule: the effective sharing team is `EventType.teamId` when set, otherwise `sharingTeamId`. `sharingMode` other than `HOSTS_ONLY` is accepted only when there is an effective sharing team. For a personal event type the team must be one where the owner is an accepted member. Enforced in the service.
 
 ### `NotetakerSession` (existing)
 
@@ -59,7 +60,7 @@ One selected person on one event type's list.
 | `addedAt` | `DateTime` | default now |
 
 - Primary key `(eventTypeId, userId)`; index on `userId` for the "shared with me" query.
-- Validation (service): the user is an accepted member of the organization that owns the event type's team, or of the team itself when it has no organization (FR-012). At most 50 people per event type.
+- Validation (service): the user is an accepted member of the organization that owns the event type's team, or of the team itself when it has no organization (FR-012). At most 50 people per event type. For a personal event type: an accepted member of the chosen team. The list is emptied when the chosen team changes.
 - A row grants access only while the mode is `SELECTED_PEOPLE` and the membership rule still holds (FR-013).
 
 ### `EventTypeNotetakerSharingChange`
@@ -76,6 +77,8 @@ History of the setting (FR-023).
 | `newMode` | `NotetakerSharingMode` | Equal to `previousMode` when only the list changed |
 | `addedUserNames` | `String[]` | Names at the time |
 | `removedUserNames` | `String[]` | Names at the time |
+| `previousTeamName` | `String?` | Name of the sharing team before the change |
+| `newTeamName` | `String?` | Name of the sharing team after the change |
 | `createdAt` | `DateTime` | default now |
 
 - Index `(eventTypeId, createdAt)`.
@@ -89,9 +92,7 @@ Computed per request by `NotetakerAccessService`, in this order:
 
 1. `HOST`: unchanged rule (organizer, or an event-type host who attends the booking).
 2. `ATTENDEE`: unchanged rule (sharing grant on the booking and a verified email on the attendee list).
-3. `SHARED_VIEWER`: the result's session has `colleagueSharingDisclosed = true`, the event type has a team, and
-   - mode `TEAM` and the user is an accepted member of that team, or
-   - mode `SELECTED_PEOPLE`, the user is on the list, and the user is an accepted member of the team's organization (or of the team when it has no organization).
+3. `SHARED_VIEWER`: the result's session has `colleagueSharingDisclosed = true`, the event type has an effective sharing team, for a personal event type its owner is an accepted member of that team, and (mode `TEAM` and the user is an accepted member of the team) or (mode `SELECTED_PEOPLE`, the user is on the list, and the user is an accepted member of the team's organization, or of the team when it has none or the event type is personal).
 4. Otherwise refused with the existing message.
 
 ### Speaker resolution (wire only)
@@ -104,7 +105,8 @@ Sent once by the bot in its final event; applied to passages and not stored on i
 |-----|--------|
 | `NotetakerStateDto` | `viewerRole` gains `"SHARED_VIEWER"`; new optional `access` object for hosts (see the tRPC contract); `transcript` gains `speakerNamesAvailable: boolean \| null` |
 | `NotetakerActivityDto` | action union gains `"SHARED_VIEWED"`, `"SHARING_MODE_CHANGED"`, `"SHARING_PEOPLE_CHANGED"` (the last two are produced from `EventTypeNotetakerSharingChange`) |
-| `NotetakerEventTypeSharingDto` (new) | `eventTypeId`, `available`, `unavailableReason`, `mode`, `people[]` (`userId`, `name`, `email`, `avatarUrl`, `stillEligible`), `teamName`, `setAt`, `setByName` |
+| `NotetakerEventTypeSharingDto` (new) | `eventTypeId`, `available`, `unavailableReason` (adds `NO_TEAM_TO_SHARE_WITH`), `mode`, `people[]` (`userId`, `name`, `email`, `avatarUrl`, `stillEligible`), `teamName`, `teamId`, `teamOptions[]` (`teamId`, `name`), `setAt`, `setByName` |
+| `NotetakerActivityDto` (sharing change detail) | gains `previousTeamName` and `newTeamName` |
 | `NotetakerSharedResultDto` (new) | one row of the "shared with me" list: `bookingUid`, `title`, `startTime`, `eventTypeTitle`, `teamName`, `hostName`, `route` (`TEAM` or `SELECTED_PEOPLE`), `summaryStatus` |
 | `NotetakerDisclosureDto` | gains `sharedWithColleagues: boolean` |
 
@@ -113,3 +115,5 @@ Enums in DTOs are string literal unions, not Prisma enums.
 ## Migration
 
 One migration, `add_notetaker_event_type_sharing_and_speaker_names`: the new enum, the three new columns, the two new tables, and the new enum value on `NotetakerActivityAction`. No data backfill is needed. No new feature flag.
+
+Second migration, `add_notetaker_personal_sharing_team`: one nullable column with a foreign key and an index, two nullable name columns. No backfill.

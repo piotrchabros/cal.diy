@@ -78,6 +78,18 @@ Expected: E reads the result; C (a team member, not selected) is refused; after 
 
 Expected: the booking form and the chat notice both say that colleagues of the host may read the transcript and summary; the result shows who has access (team name or the selected names); the activity history lists the sharing change by A and the first view by C or E.
 
+## Scenario 7: personal event type shared with a team (User Story 5)
+
+Accounts: A and B, both members of team T; C, not a member.
+
+1. As A, open a personal event type, Advanced tab. The sharing control shows team T preselected (A has one team). Choose "Whole team" and save.
+2. Book the event type and hold a transcribed meeting (the fake bot is enough).
+3. As B, open "Shared with me" under bookings and open the result.
+4. As C, open the result's address directly.
+5. Remove A from team T; as B, reload the result.
+
+Expected: B reads and exports in step 3 and the row names team T; C is refused in step 4; B is refused in step 5 and A still reads as host. A user who belongs to no team does not see the sharing control on a personal event type.
+
 ## Deployment check
 
-After the owner approves the migration and the in-place rebuild: apply the one additive migration, rebuild, install the new bot bundle, restart the bot service when no meeting is running, then repeat Scenario 2 and steps 1 to 4 of Scenario 4 on the live site.
+After the owner approves the migration and the in-place rebuild: apply the two additive migrations (`add_notetaker_event_type_sharing_and_speaker_names`, then `add_notetaker_personal_sharing_team`), rebuild, install the new bot bundle, restart the bot service when no meeting is running, then repeat Scenario 2 and steps 1 to 4 of Scenario 4 on the live site.
