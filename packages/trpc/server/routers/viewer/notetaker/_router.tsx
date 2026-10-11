@@ -73,7 +73,12 @@ export const notetakerRouter = router({
       const { setEventTypeSharingHandler } = await import("./setEventTypeSharing.handler");
       return setEventTypeSharingHandler({
         ctx,
-        input: { eventTypeId: input.eventTypeId, mode: input.mode, userIds: input.userIds },
+        input: {
+          eventTypeId: input.eventTypeId,
+          mode: input.mode,
+          userIds: input.userIds,
+          teamId: input.teamId,
+        },
       });
     }),
 
@@ -87,6 +92,7 @@ export const notetakerRouter = router({
         ctx,
         input: {
           eventTypeId: input.eventTypeId,
+          teamId: input.teamId,
           search: input.search,
           cursor: input.cursor,
           limit: input.limit,

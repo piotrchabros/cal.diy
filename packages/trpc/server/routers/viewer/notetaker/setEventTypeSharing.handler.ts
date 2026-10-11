@@ -18,6 +18,7 @@ export const setEventTypeSharingHandler = async ({
     eventTypeId: input.eventTypeId,
     mode: input.mode,
     userIds: input.userIds,
+    teamId: input.teamId,
     userId: ctx.user.id,
   });
 };

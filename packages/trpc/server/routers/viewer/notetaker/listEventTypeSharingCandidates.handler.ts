@@ -16,6 +16,7 @@ export const listEventTypeSharingCandidatesHandler = async ({
 }: ListEventTypeSharingCandidatesOptions): Promise<NotetakerSharingCandidatesDto> => {
   return getNotetakerSharingSettingsService().listCandidates({
     eventTypeId: input.eventTypeId,
+    teamId: input.teamId,
     search: input.search,
     cursor: input.cursor,
     limit: input.limit,

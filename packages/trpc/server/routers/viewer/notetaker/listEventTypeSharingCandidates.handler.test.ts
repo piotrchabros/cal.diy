@@ -42,6 +42,18 @@ describe("listEventTypeSharingCandidatesHandler", () => {
     });
   });
 
+  it("passes the team id of the unsaved draft", async () => {
+    await run({ eventTypeId: 42, teamId: 5 });
+
+    expect(mocks.listCandidates.mock.calls[0]?.[0].teamId).toBe(5);
+  });
+
+  it("leaves teamId undefined when the input has none", async () => {
+    await run({ eventTypeId: 42 });
+
+    expect(mocks.listCandidates.mock.calls[0]?.[0].teamId).toBeUndefined();
+  });
+
   it("uses the default limit of 20", async () => {
     await run({ eventTypeId: 42 });
 
@@ -82,6 +94,12 @@ describe("ZListEventTypeSharingCandidatesInputSchema", () => {
   it("rejects a non-integer cursor", () => {
     expect(parse({ eventTypeId: 42, cursor: 1.5 }).success).toBe(false);
     expect(parse({ eventTypeId: 42, cursor: "9" }).success).toBe(false);
+  });
+
+  it("accepts a positive integer teamId and rejects other values", () => {
+    expect(parse({ eventTypeId: 42, teamId: 5 }).success).toBe(true);
+    expect(parse({ eventTypeId: 42, teamId: 0 }).success).toBe(false);
+    expect(parse({ eventTypeId: 42, teamId: 1.5 }).success).toBe(false);
   });
 
   it("rejects a missing eventTypeId", () => {

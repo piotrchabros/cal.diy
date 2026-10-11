@@ -44,6 +44,18 @@ describe("setEventTypeSharingHandler", () => {
     });
   });
 
+  it("passes the team id for a personal event type", async () => {
+    await run({ eventTypeId: 42, mode: "TEAM", teamId: 5 });
+
+    expect(mocks.set.mock.calls[0]?.[0].teamId).toBe(5);
+  });
+
+  it("leaves teamId undefined when the input has none", async () => {
+    await run({ eventTypeId: 42, mode: "TEAM" });
+
+    expect(mocks.set.mock.calls[0]?.[0].teamId).toBeUndefined();
+  });
+
   it("leaves userIds undefined when the input has none", async () => {
     await run({ eventTypeId: 42, mode: "TEAM" });
 
@@ -90,6 +102,12 @@ describe("ZSetEventTypeSharingInputSchema", () => {
   it("rejects non-positive and non-integer ids", () => {
     expect(parse({ eventTypeId: 42, mode: "SELECTED_PEOPLE", userIds: [0] })).toBe(false);
     expect(parse({ eventTypeId: 42, mode: "SELECTED_PEOPLE", userIds: [1.5] })).toBe(false);
+  });
+
+  it("accepts a positive integer teamId and rejects other values", () => {
+    expect(parse({ eventTypeId: 42, mode: "TEAM", teamId: 5 })).toBe(true);
+    expect(parse({ eventTypeId: 42, mode: "TEAM", teamId: 0 })).toBe(false);
+    expect(parse({ eventTypeId: 42, mode: "TEAM", teamId: 1.5 })).toBe(false);
   });
 
   it("rejects a missing eventTypeId or mode", () => {
