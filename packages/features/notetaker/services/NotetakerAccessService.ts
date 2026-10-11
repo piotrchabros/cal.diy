@@ -1,5 +1,7 @@
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
+import type { NotetakerSharingScope, NotetakerSharingSource } from "../lib/sharingScope";
+import { resolveNotetakerSharingScope } from "../lib/sharingScope";
 import type {
   IBookingNotetakerRepository,
   NotetakerBookingContext,
@@ -72,6 +74,11 @@ export class NotetakerAccessService {
     return booking;
   }
 
+  /** The one place that decides whether an event type's sharing mode applies; null means it does not. */
+  resolveSharingScope(source: NotetakerSharingSource): Promise<NotetakerSharingScope | null> {
+    return resolveNotetakerSharingScope(source, this.deps.membershipLookup);
+  }
+
   private async isSharedViewer(userId: number, booking: NotetakerBookingContext): Promise<boolean> {
     const { eventTypeId, teamId, sharingMode } = booking;
     if (eventTypeId === null || teamId === null || sharingMode === "HOSTS_ONLY") return false;
@@ -82,8 +89,15 @@ export class NotetakerAccessService {
     if (!results) return false;
     if (!results.session.colleagueSharingDisclosed || results.session.resultsDeletedAt !== null) return false;
 
+    // Resolved on every call: for a personal event type the owner leaving the chosen team ends
+    // the access of everyone who had it through that team, without any write.
+    const scope = await this.resolveSharingScope(booking);
+    if (!scope) return false;
+
     // Membership is read on every call, so leaving the team ends the access immediately.
-    if (sharingMode === "TEAM") return this.deps.membershipLookup.isAcceptedMember({ userId, teamId });
+    if (scope.mode === "TEAM") {
+      return this.deps.membershipLookup.isAcceptedMember({ userId, teamId: scope.teamId });
+    }
 
     const isListed = await this.deps.eventTypeNotetakerSettingsRepository.hasSharingMember({
       eventTypeId,
@@ -93,10 +107,7 @@ export class NotetakerAccessService {
 
     // The list can name anyone in the organization, so a listed person is checked against
     // the organization when there is one. Being listed alone is not enough after they leave.
-    return this.deps.membershipLookup.isAcceptedMember({
-      userId,
-      teamId: booking.organizationId ?? teamId,
-    });
+    return this.deps.membershipLookup.isAcceptedMember({ userId, teamId: scope.eligibilityTeamId });
   }
 
   private isHost(userId: number, booking: NotetakerBookingContext): boolean {

@@ -10,6 +10,8 @@ import { NotetakerSharingSettingsService } from "./NotetakerSharingSettingsServi
 const EVENT_TYPE_ID = 10;
 const TEAM_ID = 20;
 const ORGANIZATION_ID = 30;
+const OTHER_TEAM_ID = 21;
+const PENDING_TEAM_ID = 22;
 const ACTOR_ID = 1;
 
 function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig {
@@ -69,7 +71,14 @@ describe("NotetakerSharingSettingsService", () => {
     });
   }
 
-  function seedEventType(overrides: { teamId?: number | null; organizationId?: number | null } = {}) {
+  function seedEventType(
+    overrides: {
+      userId?: number | null;
+      teamId?: number | null;
+      teamName?: string | null;
+      organizationId?: number | null;
+    } = {}
+  ) {
     repositories.store.addEventType({
       id: EVENT_TYPE_ID,
       userId: null,
@@ -133,6 +142,20 @@ describe("NotetakerSharingSettingsService", () => {
         people: [],
         setAt: null,
         setByName: null,
+        teamId: null,
+        teamOptions: [],
+      });
+    });
+
+    it("returns the owning team and no team options for a team event type", async () => {
+      const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+      expect(result).toMatchObject({
+        available: true,
+        unavailableReason: null,
+        teamId: TEAM_ID,
+        teamName: "Sales",
+        teamOptions: [],
       });
     });
 
@@ -419,6 +442,41 @@ describe("NotetakerSharingSettingsService", () => {
 
       expect(repositories.store.eventTypeSettings.get(EVENT_TYPE_ID)?.sharingMode).toBe("TEAM");
     });
+
+    it("refuses a team other than the owning one on a team event type", async () => {
+      repositories.store.setTeam(OTHER_TEAM_ID, "Design");
+      addMembers([ACTOR_ID], OTHER_TEAM_ID);
+
+      await expectRejection(
+        service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: OTHER_TEAM_ID, userId: ACTOR_ID }),
+        ErrorCode.BadRequest,
+        "TEAM_NOT_ALLOWED"
+      );
+      expect(repositories.store.sharingChanges).toHaveLength(0);
+    });
+
+    it("accepts the owning team on a team event type and clears a stale chosen team", async () => {
+      repositories.store.setTeam(OTHER_TEAM_ID, "Design");
+      repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+      const updateSharing = vi.spyOn(repositories.eventTypeNotetakerSettingsRepository, "updateSharing");
+
+      const result = await service.set({
+        eventTypeId: EVENT_TYPE_ID,
+        mode: "TEAM",
+        teamId: TEAM_ID,
+        userId: ACTOR_ID,
+      });
+
+      expect(updateSharing).toHaveBeenCalledTimes(1);
+      expect(updateSharing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sharingTeamId: null,
+          change: expect.objectContaining({ previousTeamName: "Sales", newTeamName: "Sales" }),
+        })
+      );
+      expect(repositories.store.eventTypeSettings.get(EVENT_TYPE_ID)?.sharingTeamId).toBeNull();
+      expect(result).toMatchObject({ mode: "TEAM", teamId: TEAM_ID, teamName: "Sales" });
+    });
   });
 
   describe("listCandidates", () => {
@@ -513,6 +571,600 @@ describe("NotetakerSharingSettingsService", () => {
 
       expect(first.items.map((item) => item.userId)).toEqual([1, 2]);
       expect(second.items.map((item) => item.userId)).toEqual([3, 4]);
+    });
+
+    it("refuses a team other than the owning one on a team event type", async () => {
+      repositories.store.setTeam(OTHER_TEAM_ID, "Design");
+      addMembers([ACTOR_ID, 5], OTHER_TEAM_ID);
+
+      await expectRejection(
+        service.listCandidates({ eventTypeId: EVENT_TYPE_ID, teamId: OTHER_TEAM_ID, userId: ACTOR_ID }),
+        ErrorCode.BadRequest,
+        "TEAM_NOT_ALLOWED"
+      );
+    });
+
+    it("ignores the owning team passed for a team event type", async () => {
+      const result = await service.listCandidates({
+        eventTypeId: EVENT_TYPE_ID,
+        teamId: TEAM_ID,
+        userId: ACTOR_ID,
+      });
+
+      expect(result.items.map((item) => item.userId)).toEqual([1, 2, 3, 4]);
+    });
+  });
+
+  describe("personal event type", () => {
+    const SALES = { teamId: TEAM_ID, name: "Sales" };
+    const DESIGN = { teamId: OTHER_TEAM_ID, name: "Design" };
+
+    function storedSettings() {
+      return repositories.store.eventTypeSettings.get(EVENT_TYPE_ID);
+    }
+
+    function storedMemberIds() {
+      return repositories.store.sharingMembers.get(EVENT_TYPE_ID)?.map((member) => member.userId);
+    }
+
+    function leaveEveryTeam() {
+      membershipLookup.removeMember({ teamId: TEAM_ID, userId: ACTOR_ID });
+      membershipLookup.removeMember({ teamId: OTHER_TEAM_ID, userId: ACTOR_ID });
+    }
+
+    beforeEach(() => {
+      seedEventType({ userId: ACTOR_ID, teamId: null, teamName: null });
+      repositories.store.setUser(5, { name: "Eve", email: "eve@example.com", avatarUrl: null });
+      repositories.store.setTeam(TEAM_ID, "Sales");
+      repositories.store.setTeam(OTHER_TEAM_ID, "Design");
+      repositories.store.setTeam(PENDING_TEAM_ID, "Alpha");
+      addMembers([ACTOR_ID, 4, 5], OTHER_TEAM_ID);
+      membershipLookup.addMember({ teamId: PENDING_TEAM_ID, userId: ACTOR_ID, accepted: false });
+      addMembers([2], PENDING_TEAM_ID);
+    });
+
+    describe("get", () => {
+      it("reports NO_TEAM_TO_SHARE_WITH when the owner is in no team", async () => {
+        leaveEveryTeam();
+        repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        repositories.store.setSharingMembers(EVENT_TYPE_ID, [2]);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toEqual({
+          eventTypeId: EVENT_TYPE_ID,
+          available: false,
+          unavailableReason: "NO_TEAM_TO_SHARE_WITH",
+          mode: "HOSTS_ONLY",
+          teamName: null,
+          people: [],
+          setAt: null,
+          setByName: null,
+          teamId: null,
+          teamOptions: [],
+        });
+      });
+
+      it("reports FEATURE_DISABLED to the owner before the missing team", async () => {
+        checkIfUserHasFeature.mockResolvedValue(false);
+        leaveEveryTeam();
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toMatchObject({ available: false, unavailableReason: "FEATURE_DISABLED" });
+      });
+
+      it("offers the owner's accepted teams by name then id, without organizations or pending invitations", async () => {
+        repositories.store.setTeam(19, "Sales");
+        addMembers([ACTOR_ID], 19);
+        // An organization is never registered as a team: findTeamsByIds leaves organizations out.
+        addMembers([ACTOR_ID], ORGANIZATION_ID);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toEqual({
+          eventTypeId: EVENT_TYPE_ID,
+          available: true,
+          unavailableReason: null,
+          mode: "HOSTS_ONLY",
+          teamName: null,
+          people: [],
+          setAt: null,
+          setByName: null,
+          teamId: null,
+          teamOptions: [DESIGN, { teamId: 19, name: "Sales" }, SALES],
+        });
+      });
+
+      it("returns the stored team and checks the people against it", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+        repositories.store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        repositories.store.setSharingMembers(EVENT_TYPE_ID, [2, 4]);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toMatchObject({
+          available: true,
+          mode: "SELECTED_PEOPLE",
+          teamId: OTHER_TEAM_ID,
+          teamName: "Design",
+          teamOptions: [DESIGN, SALES],
+        });
+        expect(result.people.map((p) => [p.userId, p.stillEligible])).toEqual([
+          [2, false],
+          [4, true],
+        ]);
+      });
+
+      it("keeps the stored mode but no team and no people after the owner left the stored team", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+        repositories.store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+        repositories.store.setSharingMembers(EVENT_TYPE_ID, [4]);
+        membershipLookup.removeMember({ teamId: OTHER_TEAM_ID, userId: ACTOR_ID });
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toMatchObject({
+          available: true,
+          unavailableReason: null,
+          mode: "SELECTED_PEOPLE",
+          teamId: null,
+          teamName: null,
+          people: [],
+          teamOptions: [SALES],
+        });
+      });
+
+      it("keeps the stored mode but no team after the stored team was deleted", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+        repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        repositories.store.removeTeam(OTHER_TEAM_ID);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result).toMatchObject({ mode: "TEAM", teamId: null, teamName: null, teamOptions: [SALES] });
+      });
+
+      it("refuses an actor who is not the owner, even a member of the chosen team", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, TEAM_ID);
+
+        await expectRejection(
+          service.get({ eventTypeId: EVENT_TYPE_ID, userId: 2 }),
+          ErrorCode.Forbidden,
+          "NOT_ALLOWED"
+        );
+      });
+
+      it("refuses an actor who is not the owner while the feature is disabled", async () => {
+        checkIfUserHasFeature.mockResolvedValue(false);
+
+        await expectRejection(
+          service.get({ eventTypeId: EVENT_TYPE_ID, userId: 2 }),
+          ErrorCode.Forbidden,
+          "NOT_ALLOWED"
+        );
+      });
+    });
+
+    describe("set", () => {
+      it("refuses an actor who is not the owner", async () => {
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: 2 }),
+          ErrorCode.Forbidden,
+          "NOT_ALLOWED"
+        );
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "HOSTS_ONLY", userId: 2 }),
+          ErrorCode.Forbidden,
+          "NOT_ALLOWED"
+        );
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+        expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it.each(["TEAM", "SELECTED_PEOPLE"] as const)("refuses %s without a team", async (mode) => {
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode, userIds: [2], userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_REQUIRED"
+        );
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+      });
+
+      it("refuses a mode when the stored team is no longer one of the owner's teams", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+        membershipLookup.removeMember({ teamId: OTHER_TEAM_ID, userId: ACTOR_ID });
+
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_REQUIRED"
+        );
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: OTHER_TEAM_ID, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_NOT_ALLOWED"
+        );
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+      });
+
+      it.each([
+        ["an unknown team", 999],
+        ["a team whose invitation the owner has not accepted", PENDING_TEAM_ID],
+        ["an organization the owner belongs to", ORGANIZATION_ID],
+      ])("refuses %s, for every mode", async (_label, teamId) => {
+        addMembers([ACTOR_ID], ORGANIZATION_ID);
+
+        for (const mode of ["TEAM", "SELECTED_PEOPLE", "HOSTS_ONLY"] as const) {
+          await expectRejection(
+            service.set({ eventTypeId: EVENT_TYPE_ID, mode, teamId, userId: ACTOR_ID }),
+            ErrorCode.BadRequest,
+            "TEAM_NOT_ALLOWED"
+          );
+        }
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+        expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it("refuses sharing when the owner is in no team", async () => {
+        leaveEveryTeam();
+
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "NO_TEAM_TO_SHARE_WITH"
+        );
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "NO_TEAM_TO_SHARE_WITH"
+        );
+        await expectRejection(
+          service.set({ eventTypeId: EVENT_TYPE_ID, mode: "HOSTS_ONLY", userIds: [2], userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "NO_TEAM_TO_SHARE_WITH"
+        );
+      });
+
+      it("returns the state without writing for HOSTS_ONLY when the owner is in no team", async () => {
+        leaveEveryTeam();
+
+        const result = await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "HOSTS_ONLY",
+          userId: ACTOR_ID,
+        });
+
+        expect(result.unavailableReason).toBe("NO_TEAM_TO_SHARE_WITH");
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+        expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it("stores team and mode on the first save and writes one row with the team name", async () => {
+        const result = await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "TEAM",
+          teamId: TEAM_ID,
+          userId: ACTOR_ID,
+        });
+
+        expect(result).toMatchObject({ available: true, mode: "TEAM", teamId: TEAM_ID, teamName: "Sales" });
+        expect(storedSettings()).toMatchObject({
+          sharingMode: "TEAM",
+          sharingTeamId: TEAM_ID,
+          sharingSetByUserId: ACTOR_ID,
+        });
+        expect(repositories.store.sharingChanges).toHaveLength(1);
+        expect(repositories.store.sharingChanges[0]).toMatchObject({
+          actorUserId: ACTOR_ID,
+          previousMode: "HOSTS_ONLY",
+          newMode: "TEAM",
+          addedUserNames: [],
+          removedUserNames: [],
+          previousTeamName: null,
+          newTeamName: "Sales",
+        });
+      });
+
+      it("writes nothing for HOSTS_ONLY without a team on an untouched event type", async () => {
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "HOSTS_ONLY", userId: ACTOR_ID });
+
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+        expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it("uses the stored team when teamId is omitted", async () => {
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID });
+
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          userIds: [2, 3],
+          userId: ACTOR_ID,
+        });
+
+        expect(storedSettings()).toMatchObject({ sharingMode: "SELECTED_PEOPLE", sharingTeamId: TEAM_ID });
+        expect(storedMemberIds()).toEqual([2, 3]);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousTeamName: "Sales",
+          newTeamName: "Sales",
+          addedUserNames: ["Bob", "carol@example.com"],
+        });
+      });
+
+      it("accepts the owner as a selected person", async () => {
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: TEAM_ID,
+          userIds: [ACTOR_ID],
+          userId: ACTOR_ID,
+        });
+
+        expect(storedMemberIds()).toEqual([ACTOR_ID]);
+      });
+
+      it("refuses a person outside the chosen team, even a member of another team of the owner", async () => {
+        await expectRejection(
+          service.set({
+            eventTypeId: EVENT_TYPE_ID,
+            mode: "SELECTED_PEOPLE",
+            teamId: OTHER_TEAM_ID,
+            userIds: [4, 2],
+            userId: ACTOR_ID,
+          }),
+          ErrorCode.BadRequest,
+          "PERSON_NOT_ELIGIBLE"
+        );
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+        expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it("replaces the list on a team change and checks the new people against the new team", async () => {
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: TEAM_ID,
+          userIds: [2, 3, 4],
+          userId: ACTOR_ID,
+        });
+
+        await expectRejection(
+          service.set({
+            eventTypeId: EVENT_TYPE_ID,
+            mode: "SELECTED_PEOPLE",
+            teamId: OTHER_TEAM_ID,
+            userIds: [2],
+            userId: ACTOR_ID,
+          }),
+          ErrorCode.BadRequest,
+          "PERSON_NOT_ELIGIBLE"
+        );
+        expect(storedSettings()?.sharingTeamId).toBe(TEAM_ID);
+        expect(storedMemberIds()).toEqual([2, 3, 4]);
+
+        const result = await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: OTHER_TEAM_ID,
+          userIds: [4, 5],
+          userId: ACTOR_ID,
+        });
+
+        expect(result).toMatchObject({ teamId: OTHER_TEAM_ID, teamName: "Design" });
+        expect(result.people.map((p) => [p.userId, p.stillEligible])).toEqual([
+          [4, true],
+          [5, true],
+        ]);
+        expect(storedSettings()?.sharingTeamId).toBe(OTHER_TEAM_ID);
+        expect(repositories.store.sharingChanges).toHaveLength(2);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousMode: "SELECTED_PEOPLE",
+          newMode: "SELECTED_PEOPLE",
+          addedUserNames: ["Eve"],
+          removedUserNames: ["Bob", "carol@example.com"],
+          previousTeamName: "Sales",
+          newTeamName: "Design",
+        });
+      });
+
+      it("empties the list on a team change without userIds and names the removed people", async () => {
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: TEAM_ID,
+          userIds: [2, 4],
+          userId: ACTOR_ID,
+        });
+
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: OTHER_TEAM_ID,
+          userId: ACTOR_ID,
+        });
+
+        // User 4 is in both teams and is removed all the same: a list is never carried to another team.
+        expect(storedMemberIds()).toEqual([]);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          addedUserNames: [],
+          removedUserNames: ["Bob", "Dan"],
+          previousTeamName: "Sales",
+          newTeamName: "Design",
+        });
+      });
+
+      it("empties the list on a team change to the whole-team mode and ignores userIds", async () => {
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: TEAM_ID,
+          userIds: [2],
+          userId: ACTOR_ID,
+        });
+
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "TEAM",
+          teamId: OTHER_TEAM_ID,
+          userIds: [5],
+          userId: ACTOR_ID,
+        });
+
+        expect(storedMemberIds()).toEqual([]);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousMode: "SELECTED_PEOPLE",
+          newMode: "TEAM",
+          addedUserNames: [],
+          removedUserNames: ["Bob"],
+        });
+      });
+
+      it("writes a row for a change of team alone", async () => {
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID });
+
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "TEAM",
+          teamId: OTHER_TEAM_ID,
+          userId: ACTOR_ID,
+        });
+
+        expect(storedSettings()?.sharingTeamId).toBe(OTHER_TEAM_ID);
+        expect(repositories.store.sharingChanges).toHaveLength(2);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousMode: "TEAM",
+          newMode: "TEAM",
+          addedUserNames: [],
+          removedUserNames: [],
+          previousTeamName: "Sales",
+          newTeamName: "Design",
+        });
+      });
+
+      it("writes nothing for the same team and the same mode", async () => {
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID });
+        const stamp = storedSettings()?.sharingSetAt;
+
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID });
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", userId: ACTOR_ID });
+
+        expect(repositories.store.sharingChanges).toHaveLength(1);
+        expect(storedSettings()?.sharingSetAt).toBe(stamp);
+      });
+
+      it("lets the owner save HOSTS_ONLY after leaving the stored team", async () => {
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "SELECTED_PEOPLE",
+          teamId: TEAM_ID,
+          userIds: [2],
+          userId: ACTOR_ID,
+        });
+        membershipLookup.removeMember({ teamId: TEAM_ID, userId: ACTOR_ID });
+
+        const result = await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "HOSTS_ONLY",
+          userId: ACTOR_ID,
+        });
+
+        expect(result).toMatchObject({ mode: "HOSTS_ONLY", teamId: null, teamName: null, people: [] });
+        expect(storedSettings()).toMatchObject({ sharingMode: "HOSTS_ONLY", sharingTeamId: null });
+        expect(storedMemberIds()).toEqual([]);
+        expect(repositories.store.sharingChanges).toHaveLength(2);
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousMode: "SELECTED_PEOPLE",
+          newMode: "HOSTS_ONLY",
+          removedUserNames: ["Bob"],
+          previousTeamName: "Sales",
+          newTeamName: null,
+        });
+      });
+
+      it("records no earlier team once the stored team was deleted", async () => {
+        await service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", teamId: TEAM_ID, userId: ACTOR_ID });
+        repositories.store.removeTeam(TEAM_ID);
+
+        await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "TEAM",
+          teamId: OTHER_TEAM_ID,
+          userId: ACTOR_ID,
+        });
+
+        expect(repositories.store.sharingChanges[1]).toMatchObject({
+          previousMode: "TEAM",
+          newMode: "TEAM",
+          previousTeamName: null,
+          newTeamName: "Design",
+        });
+      });
+    });
+
+    describe("listCandidates", () => {
+      it("lists the members of the team chosen in the draft, the owner included", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, TEAM_ID);
+
+        const result = await service.listCandidates({
+          eventTypeId: EVENT_TYPE_ID,
+          teamId: OTHER_TEAM_ID,
+          userId: ACTOR_ID,
+        });
+
+        expect(result.items.map((item) => item.userId)).toEqual([1, 4, 5]);
+      });
+
+      it("defaults to the stored team", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, TEAM_ID);
+
+        const result = await service.listCandidates({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result.items.map((item) => item.userId)).toEqual([1, 2, 3, 4]);
+      });
+
+      it("refuses without a team", async () => {
+        await expectRejection(
+          service.listCandidates({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_REQUIRED"
+        );
+      });
+
+      it("refuses the stored team once the owner left it", async () => {
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, OTHER_TEAM_ID);
+        membershipLookup.removeMember({ teamId: OTHER_TEAM_ID, userId: ACTOR_ID });
+
+        await expectRejection(
+          service.listCandidates({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_REQUIRED"
+        );
+        await expectRejection(
+          service.listCandidates({ eventTypeId: EVENT_TYPE_ID, teamId: OTHER_TEAM_ID, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_NOT_ALLOWED"
+        );
+      });
+
+      it.each([
+        ["an unknown team", 999],
+        ["a team whose invitation the owner has not accepted", PENDING_TEAM_ID],
+      ])("refuses %s", async (_label, teamId) => {
+        await expectRejection(
+          service.listCandidates({ eventTypeId: EVENT_TYPE_ID, teamId, userId: ACTOR_ID }),
+          ErrorCode.BadRequest,
+          "TEAM_NOT_ALLOWED"
+        );
+      });
+
+      it("refuses an actor who is not the owner, even a member of the team asked for", async () => {
+        await expectRejection(
+          service.listCandidates({ eventTypeId: EVENT_TYPE_ID, teamId: TEAM_ID, userId: 2 }),
+          ErrorCode.Forbidden,
+          "NOT_ALLOWED"
+        );
+      });
     });
   });
 });

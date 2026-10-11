@@ -1395,6 +1395,52 @@ describe("NotetakerChoiceService", () => {
       expect((await getDisclosure()).sharedWithColleagues).toBe(false);
     });
 
+    describe("personal event type with a chosen team", () => {
+      const CHOSEN_TEAM_ID = 70;
+
+      function seedPersonalWithTeam(mode: "HOSTS_ONLY" | "TEAM" | "SELECTED_PEOPLE" = "TEAM"): void {
+        seedEventType({ teamId: null });
+        repositories.store.setTeam(CHOSEN_TEAM_ID, "Friends");
+        repositories.store.setSharingTeam(EVENT_TYPE_ID, CHOSEN_TEAM_ID);
+        repositories.store.setSharingMode(EVENT_TYPE_ID, mode);
+      }
+
+      it("reports sharedWithColleagues true while the owner is an accepted member", async () => {
+        seedPersonalWithTeam();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getDisclosure()).sharedWithColleagues).toBe(true);
+      });
+
+      it("reports sharedWithColleagues false when the owner left the team", async () => {
+        seedPersonalWithTeam();
+
+        expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+      });
+
+      it("reports sharedWithColleagues false when the owner's membership is not accepted", async () => {
+        seedPersonalWithTeam();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID, accepted: false });
+
+        expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+      });
+
+      it("reports sharedWithColleagues false without a chosen team", async () => {
+        seedEventType({ teamId: null });
+        repositories.store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+      });
+
+      it("reports sharedWithColleagues false in HOSTS_ONLY mode", async () => {
+        seedPersonalWithTeam("HOSTS_ONLY");
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getDisclosure()).sharedWithColleagues).toBe(false);
+      });
+    });
+
     it("reports enabledByDefault false without a settings row", async () => {
       seedEventType();
 
@@ -2661,6 +2707,49 @@ describe("NotetakerChoiceService", () => {
       await seedTeamBooking({ mode: "SELECTED_PEOPLE" });
 
       expect((await getState()).access?.colleagues).toEqual({ route: "SELECTED_PEOPLE", people: [] });
+    });
+
+    describe("personal event type with a chosen team", () => {
+      const CHOSEN_TEAM_ID = 70;
+
+      async function seedPersonalBooking(mode: "TEAM" | "SELECTED_PEOPLE"): Promise<void> {
+        await seedTeamBooking({
+          mode,
+          booking: {
+            teamId: CHOSEN_TEAM_ID,
+            teamName: "Friends",
+            organizationId: null,
+            sharingOwnerUserId: ORGANIZER_ID,
+          },
+        });
+      }
+
+      it("names the chosen team under TEAM mode while the owner is an accepted member", async () => {
+        await seedPersonalBooking("TEAM");
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getState()).access?.colleagues).toEqual({ route: "TEAM", teamName: "Friends" });
+      });
+
+      it("lists the eligible people of the chosen team under SELECTED_PEOPLE", async () => {
+        await seedPersonalBooking("SELECTED_PEOPLE");
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        repositories.store.setSharingMembers(EVENT_TYPE_ID, [11, 12]);
+        repositories.store.setUser(11, { name: "Ada", email: "ada@example.com", avatarUrl: null });
+        repositories.store.setUser(12, { name: "Gone", email: "gone@example.com", avatarUrl: null });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: 11 });
+
+        expect((await getState()).access?.colleagues).toEqual({
+          route: "SELECTED_PEOPLE",
+          people: [{ name: "Ada" }],
+        });
+      });
+
+      it("reports no colleagues when the owner left the chosen team", async () => {
+        await seedPersonalBooking("TEAM");
+
+        expect((await getState()).access?.colleagues).toBeNull();
+      });
     });
 
     it("leaves access out for a granted attendee", async () => {

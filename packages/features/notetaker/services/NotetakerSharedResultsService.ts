@@ -10,7 +10,10 @@ import type {
   IBookingNotetakerRepository,
   NotetakerBookingWithResultsSessionRecord,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
-import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type {
+  IEventTypeNotetakerSettingsRepository,
+  NotetakerSharedEventTypeRecord,
+} from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 
 const DEFAULT_LIMIT = 20;
 const MIN_LIMIT = 1;
@@ -35,7 +38,7 @@ export interface INotetakerSharedResultsServiceDeps {
     IEventTypeNotetakerSettingsRepository,
     "findByTeamIdsAndSharingModeIncludeEventType" | "findBySharingMemberUserIdIncludeEventType"
   >;
-  membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
+  membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds" | "findAcceptedUserIds">;
   userRepository: INotetakerUserLookup;
 }
 
@@ -133,18 +136,25 @@ export class NotetakerSharedResultsService {
     ]);
 
     const acceptedTeamIds = new Set(teamIds);
+    // The list outlives a mode change, so a listed person counts only while the mode says so.
+    const selectedFor = memberOf.filter(
+      (eventType) =>
+        eventType.sharingMode === "SELECTED_PEOPLE" &&
+        acceptedTeamIds.has(eventType.organizationId ?? eventType.teamId)
+    );
+    const ownerIsMember = await this.buildOwnerMembershipCheck([...teamShared, ...selectedFor]);
+
     const sharedEventTypes = new Map<number, SharedEventType>();
     for (const eventType of teamShared) {
+      if (!ownerIsMember(eventType)) continue;
       sharedEventTypes.set(eventType.eventTypeId, {
         route: "TEAM",
         eventTypeTitle: eventType.eventTypeTitle,
         teamName: eventType.teamName,
       });
     }
-    for (const eventType of memberOf) {
-      // The list outlives a mode change, so a listed person counts only while the mode says so.
-      if (eventType.sharingMode !== "SELECTED_PEOPLE") continue;
-      if (!acceptedTeamIds.has(eventType.organizationId ?? eventType.teamId)) continue;
+    for (const eventType of selectedFor) {
+      if (!ownerIsMember(eventType)) continue;
       sharedEventTypes.set(eventType.eventTypeId, {
         route: "SELECTED_PEOPLE",
         eventTypeTitle: eventType.eventTypeTitle,
@@ -152,6 +162,37 @@ export class NotetakerSharedResultsService {
       });
     }
     return sharedEventTypes;
+  }
+
+  /**
+   * A personal event type shares only while its owner is an accepted member of the chosen team.
+   * Same rule as resolveNotetakerSharingScope, asked once per team instead of once per event type.
+   */
+  private async buildOwnerMembershipCheck(
+    eventTypes: NotetakerSharedEventTypeRecord[]
+  ): Promise<(eventType: NotetakerSharedEventTypeRecord) => boolean> {
+    const ownerIdsByTeamId = new Map<number, Set<number>>();
+    for (const eventType of eventTypes) {
+      if (eventType.sharingOwnerUserId === null) continue;
+      const ownerIds = ownerIdsByTeamId.get(eventType.teamId) ?? new Set<number>();
+      ownerIds.add(eventType.sharingOwnerUserId);
+      ownerIdsByTeamId.set(eventType.teamId, ownerIds);
+    }
+
+    const acceptedOwnerIdsByTeamId = new Map<number, Set<number>>();
+    await Promise.all(
+      Array.from(ownerIdsByTeamId.entries()).map(async ([teamId, ownerIds]) => {
+        const accepted = await this.deps.membershipLookup.findAcceptedUserIds({
+          teamId,
+          userIds: Array.from(ownerIds),
+        });
+        acceptedOwnerIdsByTeamId.set(teamId, new Set(accepted));
+      })
+    );
+
+    return (eventType) =>
+      eventType.sharingOwnerUserId === null ||
+      (acceptedOwnerIdsByTeamId.get(eventType.teamId)?.has(eventType.sharingOwnerUserId) ?? false);
   }
 
   private async findOwnEmails(userId: number): Promise<Set<string>> {

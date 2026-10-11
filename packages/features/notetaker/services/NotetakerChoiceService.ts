@@ -15,6 +15,7 @@ import { getBookingNotetakerEligibility, getEventTypeNotetakerAvailability } fro
 import { parseEventTypeLocations } from "../lib/eventTypeLocations";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
 import { getDisplayedStatus } from "../lib/sessionStateMachine";
+import { toNotetakerSharingSource } from "../lib/sharingScope";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup } from "../lib/userLookup";
@@ -311,7 +312,7 @@ export class NotetakerChoiceService {
         (context.settings?.enabledByDefault ?? false) && isNotetakerBotProviderUsable(this.deps.config),
       onBehalfOf: context.ownerName,
       sharedWithColleagues:
-        context.teamId !== null && (context.settings?.sharingMode ?? "HOSTS_ONLY") !== "HOSTS_ONLY",
+        (await this.deps.accessService.resolveSharingScope(toNotetakerSharingSource(context))) !== null,
       supportedLocationTypes: availability.supportedLocationTypes,
     };
   }
@@ -492,16 +493,17 @@ export class NotetakerChoiceService {
     accessSession: NotetakerSessionRecord | null
   ): Promise<NotetakerAccessDto["colleagues"]> {
     if (accessSession?.colleagueSharingDisclosed !== true) return null;
-    if (booking.teamId === null || booking.eventTypeId === null) return null;
-    if (booking.sharingMode === "HOSTS_ONLY") return null;
-    if (booking.sharingMode === "TEAM") return { route: "TEAM", teamName: booking.teamName ?? "" };
+    if (booking.eventTypeId === null) return null;
+    const scope = await this.deps.accessService.resolveSharingScope(booking);
+    if (!scope) return null;
+    if (scope.mode === "TEAM") return { route: "TEAM", teamName: scope.teamName };
 
     const members = await this.deps.eventTypeNotetakerSettingsRepository.findSharingMembersIncludeUser(
       booking.eventTypeId
     );
     const acceptedUserIds = new Set(
       await this.deps.membershipLookup.findAcceptedUserIds({
-        teamId: booking.organizationId ?? booking.teamId,
+        teamId: scope.eligibilityTeamId,
         userIds: members.map((member) => member.userId),
       })
     );
