@@ -130,6 +130,109 @@ function countChanges(eventTypeId: number) {
   return prisma.eventTypeNotetakerSharingChange.count({ where: { eventTypeId } });
 }
 
+// The personal-sharing cases build everything they read and delete exactly what they built, so a
+// failed case cannot leave rows that another case would pick up.
+const PERSONAL_PREFIX = `notetaker-personal-sharing-it-${runId}`;
+let personalFixtureCounter = 0;
+
+function readSharingTeamId(eventTypeId: number) {
+  return prisma.eventTypeNotetakerSettings.findUnique({
+    where: { eventTypeId },
+    select: { sharingTeamId: true, sharingMode: true },
+  });
+}
+
+function createPersonalScope() {
+  const created = { userIds: [] as number[], teamIds: [] as number[], eventTypeIds: [] as number[] };
+  const nextKey = () => `${PERSONAL_PREFIX}-${++personalFixtureCounter}`;
+
+  return {
+    async user() {
+      const key = nextKey();
+      const name = `Personal IT user ${key}`;
+      const user = await prisma.user.create({
+        data: { email: `${key}@example.com`, username: key, name },
+        select: { id: true },
+      });
+      created.userIds.push(user.id);
+      return { id: user.id, name };
+    },
+    async team(options: { name?: string; isOrganization?: boolean; parentId?: number } = {}) {
+      const key = nextKey();
+      const name = options.name ?? `Personal IT team ${key}`;
+      const team = await prisma.team.create({
+        data: {
+          name,
+          slug: key,
+          isOrganization: options.isOrganization ?? false,
+          parentId: options.parentId ?? null,
+        },
+        select: { id: true },
+      });
+      created.teamIds.push(team.id);
+      return { id: team.id, name };
+    },
+    async eventType(owner: { teamId: number } | { userId: number }) {
+      const key = nextKey();
+      const title = `Personal IT event ${key}`;
+      const eventType = await prisma.eventType.create({
+        data: { title, slug: key, length: 30, ...owner },
+        select: { id: true },
+      });
+      created.eventTypeIds.push(eventType.id);
+      return { id: eventType.id, title };
+    },
+    async dispose() {
+      if (created.eventTypeIds.length > 0) {
+        await prisma.eventType.deleteMany({ where: { id: { in: created.eventTypeIds } } });
+      }
+      if (created.teamIds.length > 0) {
+        await prisma.team.deleteMany({ where: { id: { in: created.teamIds } } });
+      }
+      if (created.userIds.length > 0) {
+        await prisma.user.deleteMany({ where: { id: { in: created.userIds } } });
+      }
+    },
+  };
+}
+
+type PersonalScope = ReturnType<typeof createPersonalScope>;
+
+async function withPersonalScope(run: (scope: PersonalScope) => Promise<void>) {
+  const scope = createPersonalScope();
+  try {
+    await run(scope);
+  } finally {
+    await scope.dispose();
+  }
+}
+
+function shareWithTeam(
+  eventTypeId: number,
+  sharingTeamId: number | null | undefined,
+  options: {
+    sharingMode?: "TEAM" | "SELECTED_PEOPLE" | "HOSTS_ONLY";
+    memberUserIds?: number[];
+    previousTeamName?: string | null;
+    newTeamName?: string | null;
+  } = {}
+) {
+  const sharingMode = options.sharingMode ?? "TEAM";
+  return repository.updateSharing({
+    eventTypeId,
+    sharingMode,
+    sharingSetByUserId: fx().actor.id,
+    sharingSetAt: SET_AT,
+    memberUserIds: options.memberUserIds,
+    sharingTeamId,
+    change: changeInput({
+      newMode: sharingMode,
+      previousTeamName: options.previousTeamName,
+      newTeamName: options.newTeamName,
+    }),
+  });
+}
+
 describe.runIf(!RUNS_ON_ISOLATED_DATABASE)(`${SUITE}: not run`, () => {
   it.skip(QUICKSTART_SKIP_MESSAGE, () => {});
 });
@@ -587,6 +690,8 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         newMode: "TEAM",
         addedUserNames: ["Added"],
         removedUserNames: ["Removed"],
+        previousTeamName: null,
+        newTeamName: null,
         createdAt: t3,
       });
 
@@ -669,6 +774,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
           teamId: subTeam.id,
           teamName: subTeam.name,
           organizationId: organization.id,
+          sharingOwnerUserId: null,
           sharingMode: "TEAM",
         },
         {
@@ -677,6 +783,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
           teamId: standaloneTeam.id,
           teamName: standaloneTeam.name,
           organizationId: null,
+          sharingOwnerUserId: null,
           sharingMode: "TEAM",
         },
       ]);
@@ -734,6 +841,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
           teamId: subTeam.id,
           teamName: subTeam.name,
           organizationId: organization.id,
+          sharingOwnerUserId: null,
           sharingMode: "TEAM",
         },
         {
@@ -742,6 +850,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
           teamId: standaloneTeam.id,
           teamName: standaloneTeam.name,
           organizationId: null,
+          sharingOwnerUserId: null,
           sharingMode: "SELECTED_PEOPLE",
         },
       ]);
@@ -792,6 +901,298 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
 
     it("resolves null for an unknown event type", async () => {
       expect(await repository.findByEventTypeIdIncludeEventType(UNKNOWN_USER_ID)).toBeNull();
+    });
+  });
+
+  describe("personal event type sharing team", () => {
+    it("updateSharing stores sharingTeamId, keeps it when undefined and clears it with null", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const team = await scope.team();
+        const personal = await scope.eventType({ userId: owner.id });
+
+        await shareWithTeam(personal.id, team.id);
+        expect(await readSharingTeamId(personal.id)).toEqual({ sharingTeamId: team.id, sharingMode: "TEAM" });
+
+        await shareWithTeam(personal.id, undefined, { sharingMode: "HOSTS_ONLY" });
+        expect(await readSharingTeamId(personal.id)).toEqual({
+          sharingTeamId: team.id,
+          sharingMode: "HOSTS_ONLY",
+        });
+
+        await repository.upsert({ eventTypeId: personal.id, enabledByDefault: true });
+        expect((await readSharingTeamId(personal.id))?.sharingTeamId).toBe(team.id);
+
+        await shareWithTeam(personal.id, null, { sharingMode: "HOSTS_ONLY" });
+        expect((await readSharingTeamId(personal.id))?.sharingTeamId).toBeNull();
+      });
+    });
+
+    it("updateSharing leaves sharingTeamId null when it creates the row without one", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const personal = await scope.eventType({ userId: owner.id });
+
+        await shareWithTeam(personal.id, undefined);
+
+        expect(await readSharingTeamId(personal.id)).toEqual({ sharingTeamId: null, sharingMode: "TEAM" });
+      });
+    });
+
+    it("stores the team names on the change row and reads them back, null when omitted", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const first = await scope.team();
+        const second = await scope.team();
+        const personal = await scope.eventType({ userId: owner.id });
+        const since = new Date("2000-01-01T00:00:00.000Z");
+
+        await shareWithTeam(personal.id, first.id, { previousTeamName: null, newTeamName: first.name });
+        await shareWithTeam(personal.id, second.id, {
+          previousTeamName: first.name,
+          newTeamName: second.name,
+        });
+        await shareWithTeam(personal.id, second.id);
+
+        const rows = await repository.findSharingChangesByEventTypeIdSince({
+          eventTypeId: personal.id,
+          since,
+          limit: 10,
+        });
+
+        expect(rows.map((row) => [row.previousTeamName, row.newTeamName])).toEqual([
+          [null, null],
+          [first.name, second.name],
+          [null, first.name],
+        ]);
+      });
+    });
+
+    it("describes a personal event type with a chosen team by the chosen team and its owner", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const team = await scope.team();
+        const personal = await scope.eventType({ userId: owner.id });
+        await shareWithTeam(personal.id, team.id);
+
+        const context = await repository.findByEventTypeIdIncludeEventType(personal.id);
+
+        expect(context).toMatchObject({
+          id: personal.id,
+          userId: owner.id,
+          teamId: null,
+          teamName: null,
+          organizationId: null,
+          effectiveSharingTeamId: team.id,
+          effectiveSharingTeamName: team.name,
+          sharingOwnerUserId: owner.id,
+          settings: { sharingMode: "TEAM", sharingTeamId: team.id },
+        });
+      });
+    });
+
+    it("reports no effective team for a personal event type without a chosen team", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const personal = await scope.eventType({ userId: owner.id });
+
+        const withoutRow = await repository.findByEventTypeIdIncludeEventType(personal.id);
+        expect(withoutRow).toMatchObject({
+          effectiveSharingTeamId: null,
+          effectiveSharingTeamName: null,
+          sharingOwnerUserId: null,
+          settings: null,
+        });
+
+        await shareWithTeam(personal.id, undefined, { sharingMode: "HOSTS_ONLY" });
+        const withRow = await repository.findByEventTypeIdIncludeEventType(personal.id);
+        expect(withRow).toMatchObject({
+          effectiveSharingTeamId: null,
+          effectiveSharingTeamName: null,
+          sharingOwnerUserId: null,
+          settings: { sharingTeamId: null },
+        });
+      });
+    });
+
+    it("describes a team event type by its own team and ignores a stored chosen team", async () => {
+      await withPersonalScope(async (scope) => {
+        const owningTeam = await scope.team();
+        const staleTeam = await scope.team();
+        const teamEventType = await scope.eventType({ teamId: owningTeam.id });
+        await shareWithTeam(teamEventType.id, staleTeam.id);
+
+        const context = await repository.findByEventTypeIdIncludeEventType(teamEventType.id);
+
+        expect(context).toMatchObject({
+          teamId: owningTeam.id,
+          teamName: owningTeam.name,
+          effectiveSharingTeamId: owningTeam.id,
+          effectiveSharingTeamName: owningTeam.name,
+          sharingOwnerUserId: null,
+          settings: { sharingTeamId: staleTeam.id },
+        });
+      });
+    });
+
+    it("deleting the chosen team sets sharingTeamId to null and keeps the row and its mode", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const team = await scope.team();
+        const personal = await scope.eventType({ userId: owner.id });
+        await shareWithTeam(personal.id, team.id);
+
+        await prisma.team.delete({ where: { id: team.id }, select: { id: true } });
+
+        expect(await readSharingTeamId(personal.id)).toEqual({ sharingTeamId: null, sharingMode: "TEAM" });
+        expect(await repository.findByEventTypeIdIncludeEventType(personal.id)).toMatchObject({
+          effectiveSharingTeamId: null,
+          effectiveSharingTeamName: null,
+          sharingOwnerUserId: null,
+        });
+        expect(
+          await repository.findByTeamIdsAndSharingModeIncludeEventType({
+            teamIds: [team.id],
+            sharingMode: "TEAM",
+          })
+        ).toEqual([]);
+      });
+    });
+
+    it("findByTeamIdsAndSharingModeIncludeEventType returns a personal event type by its chosen team", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const team = await scope.team();
+        const otherTeam = await scope.team();
+        // Creation order fixes the id order of the result.
+        const personal = await scope.eventType({ userId: owner.id });
+        const staleTeamEventType = await scope.eventType({ teamId: otherTeam.id });
+        const teamEventType = await scope.eventType({ teamId: team.id });
+        const hostsOnlyPersonal = await scope.eventType({ userId: owner.id });
+        const otherTeamPersonal = await scope.eventType({ userId: owner.id });
+        await shareWithTeam(personal.id, team.id);
+        // A team event type keeps its own team even when a stale chosen team points elsewhere.
+        await shareWithTeam(staleTeamEventType.id, team.id);
+        await shareWithTeam(teamEventType.id, null);
+        await shareWithTeam(hostsOnlyPersonal.id, team.id, { sharingMode: "HOSTS_ONLY" });
+        await shareWithTeam(otherTeamPersonal.id, otherTeam.id);
+
+        const result = await repository.findByTeamIdsAndSharingModeIncludeEventType({
+          teamIds: [team.id],
+          sharingMode: "TEAM",
+        });
+
+        expect(result).toEqual([
+          {
+            eventTypeId: personal.id,
+            eventTypeTitle: personal.title,
+            teamId: team.id,
+            teamName: team.name,
+            organizationId: null,
+            sharingOwnerUserId: owner.id,
+            sharingMode: "TEAM",
+          },
+          {
+            eventTypeId: teamEventType.id,
+            eventTypeTitle: teamEventType.title,
+            teamId: team.id,
+            teamName: team.name,
+            organizationId: null,
+            sharingOwnerUserId: null,
+            sharingMode: "TEAM",
+          },
+        ]);
+      });
+    });
+
+    it("a chosen sub-team of an organization gives a personal event type no organization", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const organization = await scope.team({ isOrganization: true });
+        const subTeam = await scope.team({ parentId: organization.id });
+        const personal = await scope.eventType({ userId: owner.id });
+        await shareWithTeam(personal.id, subTeam.id);
+
+        const result = await repository.findByTeamIdsAndSharingModeIncludeEventType({
+          teamIds: [subTeam.id],
+          sharingMode: "TEAM",
+        });
+
+        expect(result).toEqual([
+          {
+            eventTypeId: personal.id,
+            eventTypeTitle: personal.title,
+            teamId: subTeam.id,
+            teamName: subTeam.name,
+            organizationId: null,
+            sharingOwnerUserId: owner.id,
+            sharingMode: "TEAM",
+          },
+        ]);
+      });
+    });
+
+    it("findBySharingMemberUserIdIncludeEventType lists a personal event type only while it has a chosen team", async () => {
+      await withPersonalScope(async (scope) => {
+        const owner = await scope.user();
+        const listed = await scope.user();
+        const team = await scope.team();
+        const withTeam = await scope.eventType({ userId: owner.id });
+        const withoutTeam = await scope.eventType({ userId: owner.id });
+        await shareWithTeam(withTeam.id, team.id, {
+          sharingMode: "SELECTED_PEOPLE",
+          memberUserIds: [listed.id],
+        });
+        await shareWithTeam(withoutTeam.id, undefined, {
+          sharingMode: "SELECTED_PEOPLE",
+          memberUserIds: [listed.id],
+        });
+
+        expect(await repository.findBySharingMemberUserIdIncludeEventType({ userId: listed.id })).toEqual([
+          {
+            eventTypeId: withTeam.id,
+            eventTypeTitle: withTeam.title,
+            teamId: team.id,
+            teamName: team.name,
+            organizationId: null,
+            sharingOwnerUserId: owner.id,
+            sharingMode: "SELECTED_PEOPLE",
+          },
+        ]);
+
+        await prisma.team.delete({ where: { id: team.id }, select: { id: true } });
+
+        expect(await repository.findBySharingMemberUserIdIncludeEventType({ userId: listed.id })).toEqual([]);
+      });
+    });
+
+    describe("findTeamsByIds", () => {
+      it("resolves an empty list for no ids", async () => {
+        expect(await repository.findTeamsByIds({ teamIds: [] })).toEqual([]);
+      });
+
+      it("orders by name then id and leaves out organizations and unknown ids", async () => {
+        await withPersonalScope(async (scope) => {
+          const key = `${PERSONAL_PREFIX}-order`;
+          // Created out of name order so the id order cannot explain the result.
+          const beta = await scope.team({ name: `${key} beta` });
+          const alpha = await scope.team({ name: `${key} alpha` });
+          const sameFirst = await scope.team({ name: `${key} same` });
+          const sameSecond = await scope.team({ name: `${key} same` });
+          const organization = await scope.team({ name: `${key} aaa org`, isOrganization: true });
+
+          const result = await repository.findTeamsByIds({
+            teamIds: [sameSecond.id, beta.id, organization.id, UNKNOWN_USER_ID, alpha.id, sameFirst.id],
+          });
+
+          expect(result).toEqual([
+            { teamId: alpha.id, teamName: alpha.name },
+            { teamId: beta.id, teamName: beta.name },
+            { teamId: sameFirst.id, teamName: sameFirst.name },
+            { teamId: sameSecond.id, teamName: sameSecond.name },
+          ]);
+        });
+      });
     });
   });
 

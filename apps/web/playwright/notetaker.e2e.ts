@@ -88,9 +88,17 @@ async function seedDueBooking({
   return { host, booking };
 }
 
-async function setSharingMode(page: Page, eventTypeId: number, slug: "team" | "hosts_only"): Promise<void> {
+async function setSharingMode(
+  page: Page,
+  eventTypeId: number,
+  slug: "team" | "hosts_only",
+  expectedTeamId?: number
+): Promise<void> {
   await page.goto(`/event-types/${eventTypeId}?tabName=advanced`);
   await expect(page.getByTestId("notetaker-event-type-sharing")).toBeVisible();
+  if (expectedTeamId !== undefined) {
+    await expect(page.getByTestId("notetaker-sharing-team")).toHaveValue(String(expectedTeamId));
+  }
   const modeRadio = page.getByTestId(`notetaker-sharing-mode-${slug}`);
   await modeRadio.check();
   const saveButton = page.getByTestId("notetaker-sharing-save");
@@ -431,6 +439,109 @@ test.describe("Notetaker", () => {
       await page.goto(resultsUrl);
       await expect(page.getByTestId("notetaker-passage")).toHaveCount(3);
     } finally {
+      await Promise.all(extraContexts.map((context) => context.close()));
+    }
+  });
+
+  test("personal event type shared with a team: a member reads from Shared with me, a non-member is refused, the owner leaving the team refuses the member", async ({
+    page,
+    users,
+    bookings,
+    prisma,
+    browser,
+  }) => {
+    const owner = await users.create({ userFeatureFlags: HOST_FLAGS }, { hasTeam: true });
+    const member = await users.create();
+    const outsider = await users.create();
+    const { team } = await owner.getFirstTeamMembership();
+    await prisma.membership.create({
+      data: {
+        teamId: team.id,
+        userId: member.id,
+        role: MembershipRole.MEMBER,
+        accepted: true,
+        createdAt: new Date(),
+      },
+    });
+    const personalEventType = await prisma.eventType.findFirstOrThrow({
+      where: { userId: owner.id, teamId: null },
+      select: { id: true },
+    });
+    const ownerMembership = await prisma.membership.findFirstOrThrow({
+      where: { teamId: team.id, userId: owner.id },
+      select: { role: true, accepted: true, createdAt: true },
+    });
+    const { booking } = await seedDueBooking({
+      users,
+      bookings,
+      host: owner,
+      eventTypeId: personalEventType.id,
+    });
+    const resultsUrl = `/booking/${booking.uid}/notetaker`;
+    await owner.apiLogin();
+
+    const extraContexts: BrowserContext[] = [];
+    try {
+      // Sharing must be TEAM before the notetaker is enabled: the disclosure flag is fixed at dispatch
+      await setSharingMode(page, personalEventType.id, "team", team.id);
+      const settings = await prisma.eventTypeNotetakerSettings.findUnique({
+        where: { eventTypeId: personalEventType.id },
+        select: { sharingMode: true, sharingTeamId: true },
+      });
+      expect(settings).toEqual({ sharingMode: "TEAM", sharingTeamId: team.id });
+
+      await enableAndFinish(page, prisma, booking);
+      const session = await prisma.notetakerSession.findFirst({
+        where: { bookingId: booking.id },
+        orderBy: { createdAt: "desc" },
+        select: { status: true, colleagueSharingDisclosed: true },
+      });
+      expect(session).toEqual({ status: "READY", colleagueSharingDisclosed: true });
+
+      await page.goto(resultsUrl);
+      await expect(page.getByTestId("notetaker-passage")).toHaveCount(3);
+      await expect(page.getByTestId("notetaker-access-summary")).toContainText(team.name);
+
+      const [memberContext, memberPage] = await member.apiLoginOnNewBrowser(browser);
+      extraContexts.push(memberContext);
+      await memberPage.goto("/bookings/upcoming");
+      await memberPage.getByTestId("notetaker-shared-notes-link").click();
+      await expect(memberPage).toHaveURL(/\/bookings\/shared-notes/);
+      const sharedResults = memberPage.getByTestId("notetaker-shared-result");
+      await expect(sharedResults).toHaveCount(1);
+      await expect(sharedResults).toContainText("Notetaker E2E");
+      await expect(sharedResults).toContainText(team.name);
+      await sharedResults.click();
+      await expect(memberPage).toHaveURL(new RegExp(`/booking/${booking.uid}/notetaker`));
+      await expect(memberPage.getByTestId("notetaker-passage")).toHaveCount(3);
+      await expect(memberPage.getByTestId("notetaker-shared-viewer-notice")).toBeVisible();
+      await expect(memberPage.getByTestId("notetaker-share-toggle")).toHaveCount(0);
+      await expect(memberPage.getByTestId("notetaker-delete-button")).toHaveCount(0);
+
+      const [outsiderContext, outsiderPage] = await outsider.apiLoginOnNewBrowser(browser);
+      extraContexts.push(outsiderContext);
+      const outsiderState = outsiderPage.waitForResponse((response) => isStateCallFor(response, booking.uid));
+      await outsiderPage.goto(resultsUrl);
+      await expectAccessRefused(await outsiderState);
+      await expect(outsiderPage.getByTestId("notetaker-passage")).toHaveCount(0);
+
+      // The sharing stays configured, but a personal event type only reaches a team its owner belongs to
+      await prisma.membership.deleteMany({ where: { teamId: team.id, userId: owner.id } });
+
+      const memberState = memberPage.waitForResponse((response) => isStateCallFor(response, booking.uid));
+      await memberPage.reload();
+      await expectAccessRefused(await memberState);
+      await expect(memberPage.getByTestId("notetaker-passage")).toHaveCount(0);
+
+      await page.goto(resultsUrl);
+      await expect(page.getByTestId("notetaker-passage")).toHaveCount(3);
+      await expect(page.getByTestId("notetaker-access-summary")).not.toContainText(team.name);
+    } finally {
+      // Restored so that users.deleteAll() removes the team as it does for the other tests
+      await prisma.membership.deleteMany({ where: { teamId: team.id, userId: owner.id } });
+      await prisma.membership.create({
+        data: { teamId: team.id, userId: owner.id, ...ownerMembership },
+      });
       await Promise.all(extraContexts.map((context) => context.close()));
     }
   });
