@@ -705,6 +705,10 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
   let personalEventTypeId: number | undefined;
   let uidCounter = 0;
   const bookingIds: number[] = [];
+  // Rows created inside a single test, removed in afterEach; teams in creation order so children go first.
+  const testEventTypeIds: number[] = [];
+  const testTeamIds: number[] = [];
+  let fixtureCounter = 0;
 
   function required(value: number | undefined, label: string): number {
     if (value === undefined) {
@@ -816,6 +820,34 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
     });
   }
 
+  async function createTestTeam(
+    label: string,
+    extra: { parentId?: number }
+  ): Promise<{ id: number; name: string }> {
+    fixtureCounter += 1;
+    const name = `Sharing ${label} ${runId}-${fixtureCounter}`;
+    const id = await createTeam(`${label}-${fixtureCounter}`, name, extra);
+    testTeamIds.push(id);
+    return { id, name };
+  }
+
+  // A personal event type of the organizer, with the team it shares with chosen in its settings.
+  async function createPersonalEventTypeSharingWith(params: {
+    sharingTeamId: number;
+    sharingMode: "TEAM" | "SELECTED_PEOPLE";
+  }): Promise<number> {
+    fixtureCounter += 1;
+    const eventTypeId = await createEventType(`personal-${fixtureCounter}`, {
+      userId: required(organizerId, "organizer id"),
+    });
+    testEventTypeIds.push(eventTypeId);
+    await prisma.eventTypeNotetakerSettings.create({
+      data: { eventTypeId, sharingMode: params.sharingMode, sharingTeamId: params.sharingTeamId },
+      select: { eventTypeId: true },
+    });
+    return eventTypeId;
+  }
+
   beforeAll(async () => {
     const organizer = await prisma.user.create({
       data: {
@@ -857,6 +889,15 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
       await prisma.booking.deleteMany({ where: { id: { in: bookingIds } } });
     }
     bookingIds.length = 0;
+    // Deleting the event type cascades to its settings row.
+    if (testEventTypeIds.length > 0) {
+      await prisma.eventType.deleteMany({ where: { id: { in: testEventTypeIds } } });
+    }
+    testEventTypeIds.length = 0;
+    for (const teamId of testTeamIds.reverse()) {
+      await prisma.team.deleteMany({ where: { id: teamId } });
+    }
+    testTeamIds.length = 0;
   });
 
   afterAll(async () => {
@@ -970,6 +1011,148 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
         })
       );
       expect(byUid?.sharingMode).toBe("TEAM");
+    });
+
+    it("reports the chosen team, no organization and the owner for a personal event type that shares with a team", async () => {
+      const team = await createTestTeam("chosen", {});
+      const eventTypeId = await createPersonalEventTypeSharingWith({
+        sharingTeamId: team.id,
+        sharingMode: "TEAM",
+      });
+      const id = await createBooking({ eventTypeId, startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: team.id,
+          teamName: team.name,
+          organizationId: null,
+          sharingOwnerUserId: organizerId,
+          sharingMode: "TEAM",
+        })
+      );
+    });
+
+    it("reports the same fields when the personal booking is looked up by uid", async () => {
+      const team = await createTestTeam("chosen-uid", {});
+      const eventTypeId = await createPersonalEventTypeSharingWith({
+        sharingTeamId: team.id,
+        sharingMode: "SELECTED_PEOPLE",
+      });
+      const id = await createBooking({ eventTypeId, startTime });
+      const byId = await repository.findByBookingIdIncludeBooking(id);
+      if (!byId) throw new Error("Booking context was not found by id");
+
+      const byUid = await repository.findByBookingUidIncludeBooking(byId.uid);
+
+      expect(byUid).toEqual(
+        expect.objectContaining({
+          teamId: team.id,
+          teamName: team.name,
+          organizationId: null,
+          sharingOwnerUserId: organizerId,
+          sharingMode: "SELECTED_PEOPLE",
+        })
+      );
+    });
+
+    it("reports no organization for a chosen team that belongs to an organization", async () => {
+      const parentId = required(organizationId, "organization id");
+      const team = await createTestTeam("chosen-child", { parentId });
+      const eventTypeId = await createPersonalEventTypeSharingWith({
+        sharingTeamId: team.id,
+        sharingMode: "TEAM",
+      });
+      const id = await createBooking({ eventTypeId, startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: team.id,
+          teamName: team.name,
+          organizationId: null,
+          sharingOwnerUserId: organizerId,
+        })
+      );
+    });
+
+    it("reports no team and no owner for a personal event type without a chosen team, keeping the stored mode", async () => {
+      const personalId = required(personalEventTypeId, "personal event type id");
+      await setSharingMode(personalId, "TEAM");
+      const id = await createBooking({ eventTypeId: personalId, startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: null,
+          teamName: null,
+          organizationId: null,
+          sharingOwnerUserId: null,
+          sharingMode: "TEAM",
+        })
+      );
+    });
+
+    it("reports no owner and the parent organization for a team event type", async () => {
+      await setSharingMode(required(subTeamEventTypeId, "sub-team event type id"), "TEAM");
+      const id = await createBooking({ eventTypeId: required(subTeamEventTypeId, "event type"), startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: subTeamId,
+          teamName: `Sharing Sub ${runId}`,
+          organizationId,
+          sharingOwnerUserId: null,
+        })
+      );
+    });
+
+    it("lets the team of a team event type win over a stale chosen team", async () => {
+      const staleTeam = await createTestTeam("stale", {});
+      const eventTypeId = required(standaloneEventTypeId, "event type");
+      await prisma.eventTypeNotetakerSettings.create({
+        data: { eventTypeId, sharingMode: "TEAM", sharingTeamId: staleTeam.id },
+        select: { eventTypeId: true },
+      });
+      const id = await createBooking({ eventTypeId, startTime });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: standaloneTeamId,
+          teamName: `Sharing Standalone ${runId}`,
+          organizationId: null,
+          sharingOwnerUserId: null,
+        })
+      );
+    });
+
+    it("reports no team after the chosen team was deleted, keeping the stored mode", async () => {
+      const team = await createTestTeam("deleted", {});
+      const eventTypeId = await createPersonalEventTypeSharingWith({
+        sharingTeamId: team.id,
+        sharingMode: "TEAM",
+      });
+      const id = await createBooking({ eventTypeId, startTime });
+      await prisma.team.deleteMany({ where: { id: team.id } });
+
+      const context = await repository.findByBookingIdIncludeBooking(id);
+
+      expect(context).toEqual(
+        expect.objectContaining({
+          teamId: null,
+          teamName: null,
+          organizationId: null,
+          sharingOwnerUserId: null,
+          sharingMode: "TEAM",
+        })
+      );
     });
   });
 
