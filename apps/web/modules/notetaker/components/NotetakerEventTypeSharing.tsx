@@ -16,7 +16,11 @@ import {
   useNotetakerSharingCandidates,
 } from "../hooks/useNotetakerEventTypeSharing";
 
-type Draft = { mode: NotetakerSharingModeDto; people: NotetakerSharingPersonDto[] };
+type Draft = {
+  mode: NotetakerSharingModeDto;
+  people: NotetakerSharingPersonDto[];
+  teamId: number | null;
+};
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -41,12 +45,19 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
   const debouncedSearch = useDebounce(search, SEARCH_DEBOUNCE_MS);
 
   const data = query.data;
-  const current: Draft | null = data ? (draft ?? { mode: data.mode, people: data.people }) : null;
+  const teamOptions = data?.teamOptions ?? [];
+  const showTeamSelect = teamOptions.length > 0;
+  const initialTeamId = data?.teamId ?? (teamOptions.length === 1 ? (teamOptions[0]?.teamId ?? null) : null);
+  const current: Draft | null = data
+    ? (draft ?? { mode: data.mode, people: data.people, teamId: initialTeamId })
+    : null;
   const pickerShown = current?.mode === "SELECTED_PEOPLE";
+  const teamChosen = !showTeamSelect || current?.teamId != null;
   const candidatesQuery = useNotetakerSharingCandidates({
     eventTypeId,
+    teamId: showTeamSelect ? (current?.teamId ?? undefined) : undefined,
     search: debouncedSearch,
-    enabled: pickerShown,
+    enabled: pickerShown && teamChosen,
   });
 
   if (query.isPending || query.isError || !data || !current) return null;
@@ -58,11 +69,18 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
     .filter((candidate) => !selectedIds.has(candidate.userId));
   const limitReached = current.people.length >= NOTETAKER_SHARING_MAX_PEOPLE;
 
+  const savedTeamId = data.teamId ?? null;
   const isDirty =
     current.mode !== data.mode ||
+    (showTeamSelect && current.mode !== "HOSTS_ONLY" && current.teamId !== savedTeamId) ||
     (current.mode === "SELECTED_PEOPLE" && sortedIds(current.people) !== sortedIds(data.people));
 
   const update = (next: Partial<Draft>) => setDraft({ ...current, ...next });
+
+  const chosenTeamName = teamOptions.find((option) => option.teamId === current.teamId)?.name ?? null;
+  const teamName = showTeamSelect ? chosenTeamName : data.teamName;
+  const teamMissing = showTeamSelect && data.mode !== "HOSTS_ONLY" && savedTeamId === null;
+  const teamChanged = showTeamSelect && current.teamId !== initialTeamId;
 
   const onSave = () => {
     save.mutate(
@@ -71,6 +89,7 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
         mode: current.mode,
         userIds:
           current.mode === "SELECTED_PEOPLE" ? current.people.map((person) => person.userId) : undefined,
+        teamId: showTeamSelect && current.teamId !== null ? current.teamId : undefined,
       },
       { onSuccess: () => setDraft(null) }
     );
@@ -85,7 +104,48 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
       className="rounded-lg border border-subtle px-4 py-6 sm:px-6"
       data-testid="notetaker-event-type-sharing">
       <h3 className="font-semibold text-emphasis text-sm">{t("notetaker_sharing_title")}</h3>
-      <p className="mt-1 text-sm text-subtle">{t("notetaker_sharing_description")}</p>
+      <p className="mt-1 text-sm text-subtle">
+        {t(showTeamSelect ? "notetaker_sharing_personal_description" : "notetaker_sharing_description")}
+      </p>
+
+      {teamMissing ? (
+        <p className="mt-3 text-error text-sm" data-testid="notetaker-sharing-team-missing">
+          {t("notetaker_sharing_team_missing")}
+        </p>
+      ) : null}
+
+      {showTeamSelect ? (
+        <div className="mt-4">
+          <label
+            htmlFor={`notetaker-sharing-team-${eventTypeId}`}
+            className="block font-medium text-emphasis text-sm">
+            {t("notetaker_sharing_team_label")}
+          </label>
+          <select
+            id={`notetaker-sharing-team-${eventTypeId}`}
+            className="mt-1 block w-full rounded-md border border-default bg-default px-3 py-2 text-emphasis text-sm"
+            value={current.teamId === null ? "" : String(current.teamId)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setDraft({ ...current, teamId: value === "" ? null : Number(value), people: [] });
+            }}
+            data-testid="notetaker-sharing-team">
+            {current.teamId === null ? (
+              <option value="">{t("notetaker_sharing_team_placeholder")}</option>
+            ) : null}
+            {teamOptions.map((option) => (
+              <option key={option.teamId} value={String(option.teamId)}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+          {teamChanged ? (
+            <p className="mt-1 text-sm text-subtle" data-testid="notetaker-sharing-team-change-hint">
+              {t("notetaker_sharing_team_change_hint")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-4 space-y-3" role="radiogroup" aria-label={t("notetaker_sharing_title")}>
         {MODES.map(({ mode, slug }) => (
@@ -95,6 +155,7 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
               name={`notetaker-sharing-mode-${eventTypeId}`}
               className="mt-1"
               checked={current.mode === mode}
+              disabled={mode !== "HOSTS_ONLY" && !teamChosen}
               onChange={() => update({ mode })}
               data-testid={`notetaker-sharing-mode-${slug}`}
             />
@@ -103,7 +164,12 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
                 {t(`notetaker_sharing_mode_${slug}`)}
               </span>
               <span className="block text-sm text-subtle">
-                {t(`notetaker_sharing_mode_${slug}_description`, { teamName: data.teamName ?? "" })}
+                {t(
+                  mode === "TEAM" && teamName === null
+                    ? "notetaker_sharing_mode_team_description_no_team"
+                    : `notetaker_sharing_mode_${slug}_description`,
+                  { teamName: teamName ?? "", interpolation: { escapeValue: false } }
+                )}
               </span>
             </span>
           </label>

@@ -12,6 +12,12 @@ function getSaveErrorKey(code: string): string {
       return "notetaker_sharing_error_not_a_team_event_type";
     case "PERSON_NOT_ELIGIBLE":
       return "notetaker_sharing_error_person_not_eligible";
+    case "TEAM_REQUIRED":
+      return "notetaker_sharing_error_team_required";
+    case "TEAM_NOT_ALLOWED":
+      return "notetaker_sharing_error_team_not_allowed";
+    case "NO_TEAM_TO_SHARE_WITH":
+      return "notetaker_sharing_error_no_team";
     case "TOO_MANY_PEOPLE":
       return "notetaker_sharing_error_too_many_people";
     case "FEATURE_DISABLED":
@@ -40,6 +46,7 @@ export function useNotetakerEventTypeSharing(eventTypeId: number) {
 
 export function useNotetakerSharingCandidates(params: {
   eventTypeId: number;
+  teamId?: number;
   search: string;
   enabled: boolean;
 }) {
@@ -47,6 +54,7 @@ export function useNotetakerSharingCandidates(params: {
   return trpc.viewer.notetaker.listEventTypeSharingCandidates.useInfiniteQuery(
     {
       eventTypeId: params.eventTypeId,
+      teamId: params.teamId,
       search: search === "" ? undefined : search,
       limit: CANDIDATES_PAGE_SIZE,
     },

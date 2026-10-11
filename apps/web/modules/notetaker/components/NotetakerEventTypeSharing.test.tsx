@@ -8,8 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotetakerEventTypeSharing } from "./NotetakerEventTypeSharing";
 
 type SharingQuery = { data: NotetakerEventTypeSharingDto | undefined; isPending: boolean; isError: boolean };
-type SaveInput = { eventTypeId: number; mode: string; userIds?: number[] };
-type CandidatesParams = { eventTypeId: number; search: string; enabled: boolean };
+type SaveInput = { eventTypeId: number; mode: string; userIds?: number[]; teamId?: number };
+type CandidatesParams = { eventTypeId: number; teamId?: number; search: string; enabled: boolean };
 
 const EVENT_TYPE_ID = 42;
 
@@ -221,5 +221,112 @@ describe("NotetakerEventTypeSharing", () => {
     setup(buildDto({ setAt: "2026-05-01T10:00:00.000Z", setByName: null }));
 
     expect(screen.getByTestId("notetaker-sharing-set-by").textContent).toContain("notetaker_sharing_set_at");
+  });
+
+  describe("personal event type", () => {
+    const options = [
+      { teamId: 1, name: "Sales" },
+      { teamId: 2, name: "Ops" },
+    ];
+    const teamSelect = () => screen.getByTestId("notetaker-sharing-team") as HTMLSelectElement;
+
+    it("renders no team select for a team event type", () => {
+      setup(buildDto({ teamId: 9, teamOptions: [] }));
+
+      expect(screen.queryByTestId("notetaker-sharing-team")).not.toBeInTheDocument();
+      expect(screen.getByText("notetaker_sharing_description")).toBeInTheDocument();
+    });
+
+    it("renders the select with the options and the personal description", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: options }));
+
+      expect(teamSelect().value).toBe("");
+      expect(screen.getByText("Sales")).toBeInTheDocument();
+      expect(screen.getByText("Ops")).toBeInTheDocument();
+      expect(screen.getByText("notetaker_sharing_personal_description")).toBeInTheDocument();
+    });
+
+    it("preselects a single team without enabling save", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: [options[0]] }));
+
+      expect(teamSelect().value).toBe("1");
+      expect(saveButton()).toBeDisabled();
+    });
+
+    it("disables the team modes until a team is chosen", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: options }));
+
+      expect(modeRadio("hosts_only")).toBeEnabled();
+      expect(modeRadio("team")).toBeDisabled();
+      expect(modeRadio("selected_people")).toBeDisabled();
+
+      fireEvent.change(teamSelect(), { target: { value: "2" } });
+
+      expect(modeRadio("team")).toBeEnabled();
+      expect(modeRadio("selected_people")).toBeEnabled();
+    });
+
+    it("sends the chosen team when saving a mode", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: [options[0]] }));
+
+      fireEvent.click(modeRadio("team"));
+      fireEvent.click(saveButton());
+
+      expect(mocks.mutate.mock.calls[0]?.[0]).toEqual({
+        eventTypeId: EVENT_TYPE_ID,
+        mode: "TEAM",
+        teamId: 1,
+      });
+    });
+
+    it("empties the people and shows the hint when the team changes", () => {
+      setup(
+        buildDto({
+          mode: "SELECTED_PEOPLE",
+          teamId: 1,
+          teamName: "Sales",
+          teamOptions: options,
+          people: [person(1)],
+        })
+      );
+      expect(screen.queryByTestId("notetaker-sharing-team-change-hint")).not.toBeInTheDocument();
+
+      fireEvent.change(teamSelect(), { target: { value: "2" } });
+
+      expect(screen.queryByText("Person 1")).not.toBeInTheDocument();
+      expect(screen.getByTestId("notetaker-sharing-team-change-hint")).toBeInTheDocument();
+      expect(saveButton()).toBeEnabled();
+    });
+
+    it("passes the draft team to the candidates query", () => {
+      setup(buildDto({ mode: "SELECTED_PEOPLE", teamId: 1, teamName: "Sales", teamOptions: options }));
+      expect(mocks.useCandidates).toHaveBeenLastCalledWith(
+        expect.objectContaining({ teamId: 1, enabled: true })
+      );
+
+      fireEvent.change(teamSelect(), { target: { value: "2" } });
+
+      expect(mocks.useCandidates).toHaveBeenLastCalledWith(
+        expect.objectContaining({ teamId: 2, enabled: true })
+      );
+    });
+
+    it("does not search before a team is chosen", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: options }));
+
+      expect(mocks.useCandidates).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    });
+
+    it("warns when a mode is stored but the team is gone", () => {
+      setup(buildDto({ mode: "TEAM", teamId: null, teamName: null, teamOptions: options }));
+
+      expect(screen.getByTestId("notetaker-sharing-team-missing")).toBeInTheDocument();
+    });
+
+    it("shows no warning when hosts only is stored without a team", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: options }));
+
+      expect(screen.queryByTestId("notetaker-sharing-team-missing")).not.toBeInTheDocument();
+    });
   });
 });
