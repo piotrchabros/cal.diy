@@ -85,6 +85,9 @@ describe("useNotetakerEventTypeSharing", () => {
   it.each([
     ["NOT_A_TEAM_EVENT_TYPE", "notetaker_sharing_error_not_a_team_event_type"],
     ["PERSON_NOT_ELIGIBLE", "notetaker_sharing_error_person_not_eligible"],
+    ["TEAM_REQUIRED", "notetaker_sharing_error_team_required"],
+    ["TEAM_NOT_ALLOWED", "notetaker_sharing_error_team_not_allowed"],
+    ["NO_TEAM_TO_SHARE_WITH", "notetaker_sharing_error_no_team"],
     ["TOO_MANY_PEOPLE", "notetaker_sharing_error_too_many_people"],
     ["FEATURE_DISABLED", "notetaker_unavailable_feature_disabled"],
     ["boom", "notetaker_sharing_save_failed"],
@@ -112,6 +115,13 @@ describe("useNotetakerSharingCandidates", () => {
     expect(options?.retry).toBe(false);
     expect(options?.getNextPageParam({ nextCursor: 5 })).toBe(5);
     expect(options?.getNextPageParam({ nextCursor: null })).toBeUndefined();
+  });
+
+  it("passes the team of the draft", () => {
+    renderHook(() => useNotetakerSharingCandidates({ eventTypeId: 7, teamId: 3, search: "", enabled: true }));
+
+    const [input] = mocks.useInfiniteQuery.mock.calls[0] ?? [];
+    expect(input).toEqual({ eventTypeId: 7, teamId: 3, search: undefined, limit: 20 });
   });
 
   it("omits an empty search", () => {

@@ -34,13 +34,23 @@ function getDetailLines(activity: NotetakerActivityDto, t: Translate): string[] 
   const parsed = NotetakerSharingChangeDetailDtoSchema.safeParse(activity.detail);
   if (!parsed.success) return [];
 
-  const { previousMode, newMode, addedUserNames, removedUserNames } = parsed.data;
+  const { previousMode, newMode, previousTeamName, newTeamName, addedUserNames, removedUserNames } =
+    parsed.data;
   const lines: string[] = [];
-  if (activity.action === "SHARING_MODE_CHANGED") {
+  // A change of team alone is recorded as a mode change with the same mode on both sides.
+  if (activity.action === "SHARING_MODE_CHANGED" && previousMode !== newMode) {
     lines.push(
       t("notetaker_activity_sharing_mode_detail", {
         previousMode: t(MODE_KEYS[previousMode]),
         newMode: t(MODE_KEYS[newMode]),
+      })
+    );
+  }
+  if (newTeamName && newTeamName !== previousTeamName) {
+    lines.push(
+      t("notetaker_activity_sharing_team_detail", {
+        teamName: newTeamName,
+        interpolation: { escapeValue: false },
       })
     );
   }

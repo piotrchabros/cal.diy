@@ -348,6 +348,90 @@ describe("NotetakerActivityList", () => {
       expect(getDetailLines()[0]).toContain("<b>Eve</b>");
     });
 
+    it("shows the team line and no mode line when only the team changed", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_MODE_CHANGED",
+          detail: {
+            previousMode: "TEAM",
+            newMode: "TEAM",
+            previousTeamName: "Alpha",
+            newTeamName: "Beta",
+            addedUserNames: [],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        'notetaker_activity_sharing_team_detail|teamName=Beta|interpolation={"escapeValue":false}',
+      ]);
+    });
+
+    it("shows the mode line before the team line on a first share", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_MODE_CHANGED",
+          detail: {
+            previousMode: "HOSTS_ONLY",
+            newMode: "TEAM",
+            previousTeamName: null,
+            newTeamName: "Beta",
+            addedUserNames: [],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        "notetaker_activity_sharing_mode_detail|previousMode=notetaker_sharing_mode_hosts_only|newMode=notetaker_sharing_mode_team",
+        'notetaker_activity_sharing_team_detail|teamName=Beta|interpolation={"escapeValue":false}',
+      ]);
+    });
+
+    it("shows no team line when the team name did not change or is empty", () => {
+      renderSingle(
+        buildActivity({
+          action: "SHARING_PEOPLE_CHANGED",
+          detail: {
+            previousMode: "SELECTED_PEOPLE",
+            newMode: "SELECTED_PEOPLE",
+            previousTeamName: "Beta",
+            newTeamName: "Beta",
+            addedUserNames: ["Ann"],
+            removedUserNames: [],
+          },
+        })
+      );
+
+      expect(getDetailLines()).toEqual([
+        'notetaker_activity_sharing_people_added|names=Ann|interpolation={"escapeValue":false}',
+      ]);
+    });
+
+    it("renders a team name as plain text, not markup", () => {
+      const { container } = renderList(
+        buildQuery({
+          data: [
+            buildActivity({
+              action: "SHARING_MODE_CHANGED",
+              detail: {
+                previousMode: "TEAM",
+                newMode: "TEAM",
+                previousTeamName: null,
+                newTeamName: "<b>Evil</b>",
+                addedUserNames: [],
+                removedUserNames: [],
+              },
+            }),
+          ],
+        })
+      );
+
+      expect(container.querySelector("b")).toBeNull();
+      expect(getDetailLines()[0]).toContain("<b>Evil</b>");
+    });
+
     it("shows no detail line for other actions even with a matching payload", () => {
       renderSingle(
         buildActivity({

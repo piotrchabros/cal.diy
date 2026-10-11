@@ -20,9 +20,7 @@ const EventAdvancedWebWrapper = ({ ...props }: EventAdvancedBaseProps) => {
       verifiedEmails={verifiedEmails}
       localeOptions={localeOptions}
       notetakerDefaultSetting={<NotetakerEventTypeDefault eventTypeId={props.eventType.id} />}
-      notetakerSharingSetting={
-        props.team ? <NotetakerEventTypeSharing eventTypeId={props.eventType.id} /> : undefined
-      }
+      notetakerSharingSetting={<NotetakerEventTypeSharing eventTypeId={props.eventType.id} />}
     />
   );
 };
