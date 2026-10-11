@@ -217,6 +217,21 @@ describe("NotetakerSharingChangeDetailDtoSchema", () => {
     const { addedUserNames: _omitted, ...rest } = valid;
     expect(NotetakerSharingChangeDetailDtoSchema.safeParse(rest).success).toBe(false);
   });
+
+  it("parses with team names, null or absent", () => {
+    const withTeams: NotetakerSharingChangeDetailDto = {
+      ...valid,
+      previousTeamName: null,
+      newTeamName: "Sales",
+    };
+    expect(NotetakerSharingChangeDetailDtoSchema.parse(withTeams)).toEqual(withTeams);
+    expect(NotetakerSharingChangeDetailDtoSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("rejects a team name that is not a string", () => {
+    const invalid: unknown = { ...valid, newTeamName: 4 };
+    expect(NotetakerSharingChangeDetailDtoSchema.safeParse(invalid).success).toBe(false);
+  });
 });
 
 describe("NotetakerSharingModeDtoSchema", () => {
@@ -256,6 +271,35 @@ describe("NotetakerEventTypeSharingDtoSchema", () => {
       setByName: null,
     };
     expect(NotetakerEventTypeSharingDtoSchema.parse(unavailable)).toEqual(unavailable);
+  });
+
+  it("parses the no-team reason", () => {
+    const noTeam: NotetakerEventTypeSharingDto = {
+      ...valid,
+      available: false,
+      unavailableReason: "NO_TEAM_TO_SHARE_WITH",
+      teamId: null,
+      teamOptions: [],
+    };
+    expect(NotetakerEventTypeSharingDtoSchema.parse(noTeam)).toEqual(noTeam);
+  });
+
+  it("parses a team id with team options and also without them", () => {
+    const withTeam: NotetakerEventTypeSharingDto = {
+      ...valid,
+      teamId: 5,
+      teamOptions: [
+        { teamId: 5, name: "Sales" },
+        { teamId: 9, name: "Support" },
+      ],
+    };
+    expect(NotetakerEventTypeSharingDtoSchema.parse(withTeam)).toEqual(withTeam);
+    expect(NotetakerEventTypeSharingDtoSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("rejects a team option without a name", () => {
+    const invalid: unknown = { ...valid, teamOptions: [{ teamId: 5 }] };
+    expect(NotetakerEventTypeSharingDtoSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("rejects an unknown unavailable reason", () => {
