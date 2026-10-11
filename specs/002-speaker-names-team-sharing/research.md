@@ -145,6 +145,14 @@ Other facts that shape the fix:
 
 - **Decision**: Sharing applies to event types that have a team directly. Managed event types (a child of a team template) are out of scope because this fork's editor disables them. No new feature flag: the existing `notetaker` flag gates the whole feature, and the default mode changes nothing.
 - **Rationale**: Smallest change that satisfies the specification.
+- Amended by B10 for personal event types.
+
+### Decision B10: Personal event types share with one team chosen by the owner
+
+- **Decision**: `EventTypeNotetakerSettings` gains a nullable `sharingTeamId`. The effective sharing team of an event type is its own team, or else the chosen team. Every rule of B2 to B8 is applied to the effective team. For a personal event type the owner must be an accepted member of the chosen team at the time of each access, each dispatch and each disclosure; one function decides this for all of them. Only the owner sets it; the candidates are the accepted members of the chosen team; changing the team empties the selected list. The history row stores the team's name.
+- **Rationale**: One column, no new table, and the mechanism of B2 and B3 unchanged (flag on the session at dispatch, membership read per request). Requiring the owner's membership makes "the owner leaves the team" stop the sharing without any write, and prevents a person from sharing into a team they no longer belong to.
+- **Alternatives considered**: All of the owner's teams (rejected by the owner: too wide and it changes when the owner joins a team). Every user of the installation (rejected by the owner). Clearing the setting when a membership is removed (rejected: several code paths remove memberships, and a missed one would leave sharing on).
+- **Consequences**: Changing the team from T to U lets members of U read meetings held while sharing with T was on, because the notice named "colleagues of the host", not a team. A managed child event type is treated as a personal event type of its owner. When the owner rejoins a team, sharing resumes for meetings that were disclosed.
 
 ## Testing approach
 

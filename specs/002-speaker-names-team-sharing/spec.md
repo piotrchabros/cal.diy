@@ -86,6 +86,25 @@ A host opens the results of one of their meetings and sees a plain statement of 
 
 ---
 
+### User Story 5 - Share the results of a personal event type with one of my teams (Priority: P2)
+
+A person owns a personal event type (it belongs to them, not to a team) and is a member of one or more teams. In the event type's settings they choose one of their teams and then one of the same three modes: hosts only, the whole team, or selected people from that team. From then on the chosen colleagues can read the transcript and summary of meetings booked through that event type.
+
+**Why this priority**: Many meetings are booked through personal event types. Without this, their notes can be shared only meeting by meeting.
+
+**Independent Test**: As a member of a team, choose that team and "whole team" on a personal event type, hold a transcribed meeting, and confirm that another member of the team can find and read the result while a person outside the team is refused.
+
+**Acceptance Scenarios**:
+
+1. **Given** a personal event type whose owner chose team T and the whole-team mode, **When** a transcribed meeting booked through it produces results, **Then** every current member of T can view the transcript and summary.
+2. **Given** the same event type with the selected-people mode and two chosen members of T, **When** a meeting produces results, **Then** those two people can view them and other members of T cannot.
+3. **Given** an owner who belongs to several teams, **When** they open the setting, **Then** they can choose exactly one of those teams, and only members of that team can be selected.
+4. **Given** the owner leaves the chosen team, **When** a member of that team next opens a result, **Then** access is refused without anyone editing the setting.
+5. **Given** the chosen team is deleted, **When** anyone who had access through it opens a result, **Then** access is refused and the setting asks the owner to choose a team.
+6. **Given** an owner who belongs to no team, **When** they open the event type's settings, **Then** the sharing setting is not shown.
+
+---
+
 ### Edge Cases
 
 - **Two participants share one display name.** They are kept apart as two speakers and shown with a distinguishing suffix; their passages are not merged under one name.
@@ -101,6 +120,11 @@ A host opens the results of one of their meetings and sees a plain statement of 
 - **A selected person is also a host or an attendee.** They keep whatever access they have by those other routes when removed from the list.
 - **Results of meetings hosted by a member who dislikes the setting.** The host cannot override the event type's sharing for one booking in this version, but can delete the result.
 - **Both sharing modes at once.** An event type has exactly one sharing mode at a time; choosing the whole team hides the list of selected people without discarding it.
+- **The owner of a personal event type leaves the chosen team.** Sharing through that event type stops at once. If the owner joins the team again, it resumes for meetings whose participants were told; meetings held in between are not covered.
+- **The team chosen on a personal event type is deleted.** Sharing stops; the stored mode is kept but has no effect until the owner chooses another team.
+- **The owner of a personal event type belongs to no team.** The sharing setting is not offered.
+- **The owner changes the chosen team.** The list of selected people is emptied, because it named members of the earlier team. Members of the new team can read meetings that were held while sharing was on.
+- **A personal event type is moved to a team.** Sharing follows the owning team from then on; the team chosen earlier is ignored.
 
 ## Requirements *(mandatory)*
 
@@ -119,11 +143,11 @@ A host opens the results of one of their meetings and sees a plain statement of 
 
 *Sharing by event type*
 
-- **FR-009**: For a team event type, people allowed to manage that event type MUST be able to set one sharing mode for the notetaker's results: hosts only (default), whole team, or selected people.
-- **FR-010**: With the whole-team mode, every current member of the team that owns the event type MUST be able to view the transcript and summary of every booking of that event type.
+- **FR-009**: For a team event type, people allowed to manage that event type MUST be able to set one sharing mode for the notetaker's results: hosts only (default), whole team, or selected people. For a personal event type, its owner MUST be able to choose one team they are a current member of and set the same three modes for that team.
+- **FR-010**: With the whole-team mode, every current member of the event type's sharing team (the team that owns a team event type, or the team chosen on a personal event type) MUST be able to view the transcript and summary of every booking of that event type.
 - **FR-011**: With the selected-people mode, every currently selected person MUST be able to view the transcript and summary of every booking of that event type, and no other team member gains access by that mode.
-- **FR-012**: People selectable in the selected-people mode MUST be limited to members of the organization that the team belongs to, or to members of the team itself when it belongs to no organization.
-- **FR-013**: Access granted by a sharing mode MUST be evaluated at the time of each access: a person who has left the team, left the organization, or been removed from the list MUST be refused from then on.
+- **FR-012**: People selectable in the selected-people mode MUST be limited to members of the organization that the team belongs to, or to members of the team itself when it belongs to no organization. For a personal event type they MUST be limited to members of the chosen team.
+- **FR-013**: Access granted by a sharing mode MUST be evaluated at the time of each access: a person who has left the team, left the organization, or been removed from the list MUST be refused from then on. For a personal event type, access by a sharing mode additionally requires that the event type's owner is still a member of the chosen team and that the team still exists.
 - **FR-014**: Changing or turning off the sharing mode MUST take effect for all results of that event type on the next access attempt.
 - **FR-015**: A newly chosen sharing mode MUST apply only to results of meetings held after the change; results that already existed MUST keep the access they had, and the settings screen MUST say so.
 - **FR-016**: Access granted by a sharing mode MUST be read-only: such people can view and export, and MUST NOT be able to delete results, change sharing, stop the notetaker or change whether it joins.
@@ -138,13 +162,14 @@ A host opens the results of one of their meetings and sees a plain statement of 
 - **FR-022**: When an event type shares results beyond the hosts, the information given to the person booking and the notice the notetaker posts in the meeting MUST state that the transcript and summary may be read by the host's colleagues.
 - **FR-023**: System MUST record every change of an event type's sharing mode and of its selected people, with who made it and when, and MUST show these changes in the activity history of the affected results.
 - **FR-024**: System MUST record each first view of a result by a person whose access comes from a sharing mode, visible to hosts in the activity history.
-- **FR-025**: Sharing by event type MUST be available only where the notetaker itself is available, and MUST be hidden for event types that do not belong to a team.
+- **FR-025**: Sharing by event type MUST be available only where the notetaker itself is available. It MUST be hidden for a personal event type whose owner belongs to no team.
+- **FR-026**: A personal event type MUST have at most one chosen team at a time. When the owner chooses a different team, the list of selected people MUST be emptied, and the change MUST be recorded with the team's name.
 
 ### Key Entities
 
 - **Speaker**: one participant of a meeting as heard in the transcript. It has a display name when known, otherwise a numbered unknown label, and it is distinct per participant even when names collide.
 - **Transcript Passage** (existing): gains a reliable link to the speaker who said it.
-- **Event Type Sharing Setting**: the sharing mode of one team event type (hosts only, whole team, selected people) with who last changed it and when.
+- **Event Type Sharing Setting**: the sharing mode of one event type (hosts only, whole team, selected people), for a personal event type together with the team its owner chose, with who last changed it and when.
 - **Selected Person**: one member of the organization (or team) named on an event type's selected-people list.
 - **Access Route**: the reason a person may view a result: host, attendee sharing grant, team sharing, or selected person. A person may hold several.
 - **Activity Record** (existing): gains entries for sharing-mode changes, list changes and first views by people with shared access.
@@ -159,15 +184,15 @@ A host opens the results of one of their meetings and sees a plain statement of 
 - **SC-004**: A team admin can turn on whole-team sharing or select people for an event type in under 1 minute, without leaving the event type's settings.
 - **SC-005**: A team member with shared access can find and open a shared result from their own account in under 30 seconds, without a link.
 - **SC-006**: After a person is removed from the team, the organization or the selected list, their next access attempt is refused in 100% of tested cases.
-- **SC-007**: Access reviews find zero cases of a transcript or summary visible to someone who is not a host, a granted attendee, a current team member under whole-team sharing, or a currently selected person.
+- **SC-007**: Access reviews find zero cases of a transcript or summary visible to someone who is not a host, a granted attendee, a current team member under whole-team sharing, a currently selected person, or a person covered by the sharing team chosen on a personal event type.
 - **SC-008**: For every booking of an event type that shares beyond the hosts, the booker's information and the in-meeting notice mention that colleagues of the host may read the notes, in 100% of tested cases.
 
 ## Assumptions
 
 - **One specification, two parts.** Speaker names (User Story 1) and sharing (User Stories 2 to 4) are independent and can be planned, built and released separately.
 - **Both sharing modes are offered (confirmed 2026-10-10).** The description names two ways of sharing; this specification offers both as alternative modes of one setting per event type, with hosts only as the default so nothing changes until an admin chooses.
-- **Team event types only.** Sharing by event type applies to event types owned by a team. Personal event types keep today's rules (hosts, plus attendees when shared).
-- **Who configures.** Whoever may already manage the team event type's settings (team owners and admins) sets the sharing mode; ordinary members cannot.
+- **Team and personal event types (amended 2026-10-11).** Sharing by event type applies to team event types and to personal event types. For a personal event type the audience is one team chosen by the owner from the teams they belong to; it is not all of the owner's teams and not every user of the installation.
+- **Who configures.** Whoever may already manage the team event type's settings (team owners and admins) sets the sharing mode; ordinary members cannot. For a personal event type only its owner sets the sharing mode.
 - **"Recordings" means transcripts and summaries.** The notetaker keeps no audio or video, and this feature does not add any.
 - **Read-only shared access.** People who gain access through a sharing mode can view and export but not delete, re-share or control the notetaker.
 - **No per-booking override.** A host cannot exclude one booking from the event type's sharing in this version; deleting the result remains possible.
