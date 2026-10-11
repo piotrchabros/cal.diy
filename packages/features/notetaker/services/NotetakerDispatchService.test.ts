@@ -158,6 +158,7 @@ describe("NotetakerDispatchService", () => {
     warn: ReturnType<typeof vi.fn>;
   };
   let tasker: RecordingTasker;
+  let membershipLookup: InMemoryNotetakerMembershipLookup;
   let users: NotetakerUserRecord[];
   type InviteParams = Parameters<NotetakerCalendarInviteService["ensureBotInvited"]>[0];
   let inviteCalls: InviteParams[];
@@ -187,6 +188,7 @@ describe("NotetakerDispatchService", () => {
     events = [];
     logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
     tasker = new RecordingTasker();
+    membershipLookup = new InMemoryNotetakerMembershipLookup();
     inviteCalls = [];
     callLog = [];
     inviteBot = async () => "NOT_CONFIGURED";
@@ -222,7 +224,7 @@ describe("NotetakerDispatchService", () => {
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
         sessionRepository: repositories.sessionRepository,
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
-        membershipLookup: new InMemoryNotetakerMembershipLookup(),
+        membershipLookup,
       }),
       userRepository,
       notetakerTasker: tasker,
@@ -795,6 +797,67 @@ describe("NotetakerDispatchService", () => {
 
         expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
         expect(onlySession().colleagueSharingDisclosed).toBe(false);
+      });
+
+      describe("personal event type", () => {
+        const OWNER_ID = ORGANIZER_ID;
+        const CHOSEN_TEAM_ID = 30;
+
+        async function seedPersonal(chosenTeam: boolean): Promise<void> {
+          await seedArmed({
+            teamId: chosenTeam ? CHOSEN_TEAM_ID : null,
+            teamName: chosenTeam ? "Chosen team" : null,
+            sharingOwnerUserId: chosenTeam ? OWNER_ID : null,
+          });
+          repositories.store.setSharingMode(10, "TEAM");
+        }
+
+        it("tells the participants and marks the session disclosed when the owner is a member of the chosen team", async () => {
+          await seedPersonal(true);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: OWNER_ID });
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_SHARED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(true);
+        });
+
+        it("keeps the plain notice when the owner is not a member of the chosen team", async () => {
+          await seedPersonal(true);
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(false);
+        });
+
+        it("keeps the plain notice when the owner's membership is not accepted", async () => {
+          await seedPersonal(true);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: OWNER_ID, accepted: false });
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(false);
+        });
+
+        it("keeps the plain notice when no team is chosen", async () => {
+          await seedPersonal(false);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: OWNER_ID });
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(false);
+        });
       });
 
       it("never marks a failed session as disclosed", async () => {

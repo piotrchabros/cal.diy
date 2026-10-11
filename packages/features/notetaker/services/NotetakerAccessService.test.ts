@@ -17,6 +17,9 @@ const COLLEAGUE_ID = 6;
 const EVENT_TYPE_ID = 10;
 const TEAM_ID = 20;
 const ORGANIZATION_ID = 30;
+const CHOSEN_TEAM_ID = 40;
+const OTHER_TEAM_ID = 41;
+const CHOSEN_TEAM_NAME = "Sales";
 
 const ORGANIZER_EMAIL = "organizer@example.com";
 const CO_HOST_EMAIL = "cohost@example.com";
@@ -507,6 +510,307 @@ describe("NotetakerAccessService", () => {
       });
     });
 
+    describe("personal event type", () => {
+      // The fake does not derive the effective team for a booking seed, so the seed states what the
+      // repository would report: the chosen team, no organization, and the event type's owner.
+      function addPersonalBooking(overrides: Partial<InMemoryBookingSeed> = {}): void {
+        store.addBooking(
+          buildBooking({
+            teamId: CHOSEN_TEAM_ID,
+            teamName: CHOSEN_TEAM_NAME,
+            sharingOwnerUserId: ORGANIZER_ID,
+            ...overrides,
+          })
+        );
+      }
+
+      describe("mode TEAM", () => {
+        beforeEach(() => {
+          store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        });
+
+        it("treats a member of the chosen team as SHARED_VIEWER while the owner is an accepted member", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+          expect(result.role).toBe("SHARED_VIEWER");
+          expect(result.booking.uid).toBe(BOOKING_UID);
+        });
+
+        it("rejects a member of the chosen team once the owner is removed from it, and admits them again when the owner rejoins", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+          const before = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+          expect(before.role).toBe("SHARED_VIEWER");
+
+          membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+          await expectDenied(COLLEAGUE_ID);
+
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+          const after = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+          expect(after.role).toBe("SHARED_VIEWER");
+        });
+
+        it("rejects when the owner's membership of the chosen team is not accepted", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID, accepted: false });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects when the owner is a member of another team only", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects when the chosen team was deleted, whatever the stored mode and list", async () => {
+          addPersonalBooking({ teamId: null, teamName: null, sharingOwnerUserId: null });
+          store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+
+          store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a member of another team of the owner who is not in the chosen team", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a member of the chosen team whose invitation is not accepted", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID, accepted: false });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a listed person who is not in the chosen team", async () => {
+          addPersonalBooking();
+          store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects when the session was not disclosed", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession({ disclosed: false });
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects when the results were deleted", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          const sessionId = await addSession();
+          await repositories.sessionRepository.update(sessionId, {
+            resultsDeletedAt: new Date("2026-10-12T12:00:00.000Z"),
+          });
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects while the stored mode is HOSTS_ONLY", async () => {
+          addPersonalBooking();
+          store.setSharingMode(EVENT_TYPE_ID, "HOSTS_ONLY");
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+      });
+
+      describe("mode SELECTED_PEOPLE", () => {
+        beforeEach(() => {
+          store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+          store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+        });
+
+        it("treats a listed person accepted in the chosen team as SHARED_VIEWER while the owner is an accepted member", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+          expect(result.role).toBe("SHARED_VIEWER");
+        });
+
+        it("rejects a listed person who left the chosen team", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+          membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a listed person who is in another team of the owner only", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a member of the chosen team who is not on the list", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: STRANGER_ID });
+          await addSession();
+
+          await expectDenied(STRANGER_ID);
+        });
+
+        it("rejects a listed person once the owner left the chosen team", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession();
+          membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+
+        it("rejects a listed person when the session was not disclosed", async () => {
+          addPersonalBooking();
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          await addSession({ disclosed: false });
+
+          await expectDenied(COLLEAGUE_ID);
+        });
+      });
+
+      describe("owner no longer an accepted member of the chosen team", () => {
+        beforeEach(async () => {
+          addPersonalBooking({
+            attendeeEmails: [ATTENDEE_EMAIL, CO_HOST_EMAIL],
+            eventTypeHosts: [{ userId: CO_HOST_ID, email: CO_HOST_EMAIL }],
+          });
+          store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+          store.setSharingMembers(EVENT_TYPE_ID, [COLLEAGUE_ID]);
+          store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: TEAM_ADMIN_ID });
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ATTENDEE_USER_ID });
+          await addSession();
+        });
+
+        it("keeps the owner a HOST", async () => {
+          const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+
+          expect(result.role).toBe("HOST");
+        });
+
+        it("keeps an event-type host who attends a HOST", async () => {
+          const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: CO_HOST_ID });
+
+          expect(result.role).toBe("HOST");
+        });
+
+        it("keeps a granted attendee an ATTENDEE", async () => {
+          await grant();
+
+          const result = await service.resolveViewerRole({
+            bookingUid: BOOKING_UID,
+            userId: ATTENDEE_USER_ID,
+          });
+
+          expect(result.role).toBe("ATTENDEE");
+        });
+
+        it("rejects an attendee without a grant even though they are in the chosen team", async () => {
+          await expectDenied(ATTENDEE_USER_ID);
+        });
+
+        it("rejects every member of the chosen team in both modes, listed or not, with or without a grant", async () => {
+          await expectDenied(COLLEAGUE_ID);
+          await expectDenied(TEAM_ADMIN_ID);
+          await expectDenied(STRANGER_ID);
+
+          store.setSharingMode(EVENT_TYPE_ID, "SELECTED_PEOPLE");
+
+          await expectDenied(COLLEAGUE_ID);
+          await expectDenied(TEAM_ADMIN_ID);
+
+          await grant();
+
+          await expectDenied(COLLEAGUE_ID);
+          await expectDenied(TEAM_ADMIN_ID);
+        });
+      });
+
+      it("keeps host and attendee routes unchanged while sharing is on", async () => {
+        addPersonalBooking();
+        store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ATTENDEE_USER_ID });
+        await addSession();
+        await grant();
+
+        const host = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+        const attendee = await service.resolveViewerRole({
+          bookingUid: BOOKING_UID,
+          userId: ATTENDEE_USER_ID,
+        });
+
+        expect(host.role).toBe("HOST");
+        expect(attendee.role).toBe("ATTENDEE");
+      });
+
+      it("refuses a shared viewer in assertHost", async () => {
+        addPersonalBooking();
+        store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const promise = service.assertHost({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        await expect(promise).rejects.toMatchObject({
+          code: ErrorCode.Forbidden,
+          message: "Only a host of this booking can perform this action",
+        });
+      });
+    });
+
     it("rejects when the event type has no team, whatever the stored mode", async () => {
       store.addBooking(buildBooking());
       store.setSharingMode(EVENT_TYPE_ID, "TEAM");
@@ -527,6 +831,95 @@ describe("NotetakerAccessService", () => {
       await addSession();
 
       await expectDenied(COLLEAGUE_ID);
+    });
+  });
+
+  describe("resolveSharingScope", () => {
+    it("returns null for HOSTS_ONLY and for a source without a team", async () => {
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+      const hostsOnly = await service.resolveSharingScope({
+        teamId: CHOSEN_TEAM_ID,
+        teamName: CHOSEN_TEAM_NAME,
+        organizationId: null,
+        sharingOwnerUserId: ORGANIZER_ID,
+        sharingMode: "HOSTS_ONLY",
+      });
+      const noTeam = await service.resolveSharingScope({
+        teamId: null,
+        teamName: null,
+        organizationId: null,
+        sharingOwnerUserId: null,
+        sharingMode: "TEAM",
+      });
+
+      expect(hostsOnly).toBeNull();
+      expect(noTeam).toBeNull();
+    });
+
+    it("returns the scope of a team event type without asking about an owner", async () => {
+      const scope = await service.resolveSharingScope({
+        teamId: TEAM_ID,
+        teamName: "Support",
+        organizationId: ORGANIZATION_ID,
+        sharingOwnerUserId: null,
+        sharingMode: "SELECTED_PEOPLE",
+      });
+
+      expect(scope).toEqual({
+        mode: "SELECTED_PEOPLE",
+        teamId: TEAM_ID,
+        teamName: "Support",
+        eligibilityTeamId: ORGANIZATION_ID,
+      });
+    });
+
+    it("returns the chosen team of a personal event type while the owner is an accepted member", async () => {
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+      const scope = await service.resolveSharingScope({
+        teamId: CHOSEN_TEAM_ID,
+        teamName: CHOSEN_TEAM_NAME,
+        organizationId: null,
+        sharingOwnerUserId: ORGANIZER_ID,
+        sharingMode: "TEAM",
+      });
+
+      expect(scope).toEqual({
+        mode: "TEAM",
+        teamId: CHOSEN_TEAM_ID,
+        teamName: CHOSEN_TEAM_NAME,
+        eligibilityTeamId: CHOSEN_TEAM_ID,
+      });
+    });
+
+    it("returns null for a personal event type whose owner is not an accepted member of the chosen team", async () => {
+      const source = {
+        teamId: CHOSEN_TEAM_ID,
+        teamName: CHOSEN_TEAM_NAME,
+        organizationId: null,
+        sharingOwnerUserId: ORGANIZER_ID,
+        sharingMode: "TEAM",
+      } as const;
+
+      expect(await service.resolveSharingScope(source)).toBeNull();
+
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID, accepted: false });
+
+      expect(await service.resolveSharingScope(source)).toBeNull();
+    });
+
+    it("accepts a booking context as the source", async () => {
+      store.addBooking(
+        buildBooking({ teamId: CHOSEN_TEAM_ID, teamName: CHOSEN_TEAM_NAME, sharingOwnerUserId: ORGANIZER_ID })
+      );
+      store.setSharingMode(EVENT_TYPE_ID, "TEAM");
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+      const booking = await service.assertHost({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+
+      const scope = await service.resolveSharingScope(booking);
+
+      expect(scope).toMatchObject({ mode: "TEAM", teamId: CHOSEN_TEAM_ID, teamName: CHOSEN_TEAM_NAME });
     });
   });
 

@@ -677,7 +677,7 @@ export class NotetakerDispatchService {
 
     const { t, hostName, displayName } = await this.resolveDisplay(booking);
     const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
-    const sharedWithColleagues = booking.teamId !== null && booking.sharingMode !== "HOSTS_ONLY";
+    const sharedWithColleagues = (await this.deps.accessService.resolveSharingScope(booking)) !== null;
 
     const session = await sessionRepository.create({
       bookingId: booking.id,

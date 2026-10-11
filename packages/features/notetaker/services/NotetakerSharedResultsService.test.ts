@@ -25,6 +25,15 @@ const SELECTED_EVENT_TYPE_ID = 11;
 const TEAM_EVENT_TYPE_TITLE = "Discovery call";
 const SELECTED_EVENT_TYPE_TITLE = "Escalation call";
 
+const PERSONAL_OWNER_ID = 3;
+const SECOND_OWNER_ID = 4;
+const PERSONAL_OWNER_NAME = "Petra Owner";
+const CHOSEN_TEAM_ID = 30;
+const OTHER_CHOSEN_TEAM_ID = 31;
+const CHOSEN_TEAM_NAME = "Consulting";
+const PERSONAL_EVENT_TYPE_ID = 12;
+const PERSONAL_EVENT_TYPE_TITLE = "Personal intro";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BASE_START = new Date("2026-10-01T10:00:00.000Z");
 
@@ -282,6 +291,249 @@ describe("NotetakerSharedResultsService", () => {
       repositories.store.setSharingMode(SELECTED_EVENT_TYPE_ID, "HOSTS_ONLY");
 
       expect(await listUids()).toEqual([]);
+    });
+  });
+
+  describe("personal event types", () => {
+    function addPersonalEventType(params: {
+      id: number;
+      title: string;
+      ownerId: number;
+      teamId: number;
+      mode: "TEAM" | "SELECTED_PEOPLE";
+    }): void {
+      repositories.store.addEventType({
+        id: params.id,
+        userId: params.ownerId,
+        teamId: null,
+        locations: [],
+        ownerName: null,
+        title: params.title,
+      });
+      repositories.store.setSharingTeam(params.id, params.teamId);
+      repositories.store.setSharingMode(params.id, params.mode);
+    }
+
+    async function seedPersonalBooking(id: number, eventTypeId: number, ownerId: number): Promise<void> {
+      await seedSharedBooking(id, {
+        eventTypeId,
+        userId: ownerId,
+        organizer: { id: ownerId, name: PERSONAL_OWNER_NAME, email: "owner@example.com", locale: "en" },
+      });
+    }
+
+    beforeEach(() => {
+      repositories.store.setTeam(CHOSEN_TEAM_ID, CHOSEN_TEAM_NAME);
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+    });
+
+    it("lists a booking of a personal event type shared with the chosen team", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+
+      const page = await service.list({ userId: VIEWER_ID });
+
+      expect(page.items).toEqual([
+        {
+          bookingUid: "booking-uid-1",
+          title: "Call 1",
+          startTime: buildBooking(1).startTime.toISOString(),
+          eventTypeTitle: PERSONAL_EVENT_TYPE_TITLE,
+          teamName: CHOSEN_TEAM_NAME,
+          hostName: PERSONAL_OWNER_NAME,
+          route: "TEAM",
+          summaryStatus: null,
+        },
+      ]);
+    });
+
+    it("lists a booking of a personal event type that names the viewer", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "SELECTED_PEOPLE",
+      });
+      repositories.store.setSharingMembers(PERSONAL_EVENT_TYPE_ID, [VIEWER_ID]);
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+
+      const page = await service.list({ userId: VIEWER_ID });
+
+      expect(page.items.map((item) => [item.bookingUid, item.route, item.teamName])).toEqual([
+        ["booking-uid-1", "SELECTED_PEOPLE", CHOSEN_TEAM_NAME],
+      ]);
+    });
+
+    it("shows nothing to a member the selected-people list does not name", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "SELECTED_PEOPLE",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it.each([
+      "TEAM",
+      "SELECTED_PEOPLE",
+    ] as const)("shows nothing under mode %s once the owner left the chosen team, and lists again when the owner is back", async (mode) => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode,
+      });
+      repositories.store.setSharingMembers(PERSONAL_EVENT_TYPE_ID, [VIEWER_ID]);
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      expect(await listUids()).toEqual(["booking-uid-1"]);
+
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      expect(await listUids()).toEqual([]);
+
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      expect(await listUids()).toEqual(["booking-uid-1"]);
+    });
+
+    it("shows nothing while the owner's membership of the chosen team is not accepted", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID, accepted: false });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("does not ask for bookings when every shared event type lost its owner's membership", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      const find = vi.spyOn(
+        repositories.bookingNotetakerRepository,
+        "findByEventTypeIdsIncludeResultsSession"
+      );
+
+      expect(await service.list({ userId: VIEWER_ID })).toEqual({ items: [], nextCursor: null });
+      expect(find).not.toHaveBeenCalled();
+    });
+
+    it("shows nothing after the chosen team was deleted", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      expect(await listUids()).toEqual(["booking-uid-1"]);
+
+      repositories.store.removeTeam(CHOSEN_TEAM_ID);
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("shows nothing to a member of another team of the owner", async () => {
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("checks the owners of several personal event types with one lookup per team", async () => {
+      repositories.store.setTeam(OTHER_CHOSEN_TEAM_ID, "Research");
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: SECOND_OWNER_ID });
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      // Two event types of one owner and one of a second owner share with the first team; a
+      // selected-people one shares with the second team, where its owner is not a member.
+      addPersonalEventType({
+        id: PERSONAL_EVENT_TYPE_ID,
+        title: PERSONAL_EVENT_TYPE_TITLE,
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      addPersonalEventType({
+        id: 31,
+        title: "Second personal",
+        ownerId: PERSONAL_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      addPersonalEventType({
+        id: 32,
+        title: "Third personal",
+        ownerId: SECOND_OWNER_ID,
+        teamId: CHOSEN_TEAM_ID,
+        mode: "TEAM",
+      });
+      addPersonalEventType({
+        id: 33,
+        title: "Fourth personal",
+        ownerId: SECOND_OWNER_ID,
+        teamId: OTHER_CHOSEN_TEAM_ID,
+        mode: "SELECTED_PEOPLE",
+      });
+      repositories.store.setSharingMembers(33, [VIEWER_ID]);
+      await seedPersonalBooking(1, PERSONAL_EVENT_TYPE_ID, PERSONAL_OWNER_ID);
+      await seedPersonalBooking(2, 31, PERSONAL_OWNER_ID);
+      await seedPersonalBooking(3, 32, SECOND_OWNER_ID);
+      await seedPersonalBooking(4, 33, SECOND_OWNER_ID);
+      const findAccepted = vi.spyOn(membershipLookup, "findAcceptedUserIds");
+
+      expect(await listUids()).toEqual(["booking-uid-3", "booking-uid-2", "booking-uid-1"]);
+
+      expect(findAccepted).toHaveBeenCalledTimes(2);
+      const calls = findAccepted.mock.calls
+        .map(([params]) => ({ teamId: params.teamId, userIds: [...params.userIds].sort((a, b) => a - b) }))
+        .sort((a, b) => a.teamId - b.teamId);
+      expect(calls).toEqual([
+        { teamId: CHOSEN_TEAM_ID, userIds: [PERSONAL_OWNER_ID, SECOND_OWNER_ID] },
+        { teamId: OTHER_CHOSEN_TEAM_ID, userIds: [SECOND_OWNER_ID] },
+      ]);
+    });
+
+    it("makes no owner lookup for team event types", async () => {
+      joinTeamAndOrganization();
+      await seedSharedBooking(1);
+      await seedSharedBooking(2, { eventTypeId: SELECTED_EVENT_TYPE_ID });
+      const findAccepted = vi.spyOn(membershipLookup, "findAcceptedUserIds");
+
+      expect(await listUids()).toEqual(["booking-uid-2", "booking-uid-1"]);
+      expect(findAccepted).not.toHaveBeenCalled();
     });
   });
 
