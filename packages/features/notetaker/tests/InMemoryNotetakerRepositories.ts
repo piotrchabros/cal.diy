@@ -2,6 +2,7 @@ import type { NotetakerStoredActivityActionDto } from "@calcom/lib/dto/Notetaker
 import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerChoiceSourceDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
+import { readAdHocBookingMetadata } from "../lib/adHocMeeting";
 import type { NotetakerSharingTeam } from "../lib/sharingScope";
 import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
@@ -162,6 +163,9 @@ function compareLatestSessionFirst(a: NotetakerSessionRecord, b: NotetakerSessio
 
 export class InMemoryNotetakerStore {
   readonly bookings = new Map<number, InMemoryBookingSeed>();
+  // Bookings have no createdAt in the seed; createAdHocBooking and tests record it here, and
+  // countAdHocByUserIdSince falls back to startTime for a booking without an entry.
+  readonly bookingCreatedAt = new Map<number, Date>();
   readonly eventTypes = new Map<number, InMemoryEventTypeSeed>();
   readonly verifiedEmails = new Map<number, string[]>();
   readonly attendees = new Map<number, NotetakerAttendeeRecord[]>();
@@ -195,6 +199,7 @@ export class InMemoryNotetakerStore {
 
   removeBooking(bookingId: number): void {
     this.bookings.delete(bookingId);
+    this.bookingCreatedAt.delete(bookingId);
     this.choices.delete(bookingId);
     this.sharingGrants.delete(bookingId);
     this.attendees.delete(bookingId);
@@ -320,17 +325,44 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
 
   private toContext(seed: InMemoryBookingSeed): NotetakerBookingContext {
     const choice = this.store.choices.get(seed.id);
+    const sharing = this.resolveSharing(seed);
     return {
       ...copySeed(seed),
+      ...sharing,
+      sharingMode: this.resolveSharingMode(seed, sharing),
+      choice: choice ? copyChoice(choice) : null,
+    };
+  }
+
+  private resolveSharingMode(
+    seed: InMemoryBookingSeed,
+    sharing: NotetakerSharingTeam
+  ): NotetakerSharingModeDto {
+    if (seed.eventTypeId !== null) {
+      return this.store.eventTypeSettings.get(seed.eventTypeId)?.sharingMode ?? "HOSTS_ONLY";
+    }
+    return sharing.teamId !== null ? "TEAM" : "HOSTS_ONLY";
+  }
+
+  // Without an event type the chosen team can only come from the ad-hoc metadata; a team missing
+  // from the store counts as deleted, like the batched team lookup in the Prisma repository.
+  private resolveSharing(seed: InMemoryBookingSeed): NotetakerSharingTeam {
+    if (seed.eventTypeId === null) {
+      const { sharingTeamId } = readAdHocBookingMetadata(seed.metadata);
+      const teamName = sharingTeamId !== null ? this.store.teams.get(sharingTeamId) : undefined;
+      if (sharingTeamId !== null && teamName !== undefined) {
+        return deriveNotetakerSharingTeam({
+          eventTypeTeam: null,
+          eventTypeUserId: seed.userId,
+          chosenTeam: { id: sharingTeamId, name: teamName },
+        });
+      }
+    }
+    return {
       teamId: seed.teamId ?? null,
       teamName: seed.teamName ?? null,
       organizationId: seed.organizationId ?? null,
       sharingOwnerUserId: seed.sharingOwnerUserId ?? null,
-      sharingMode:
-        (seed.eventTypeId !== null
-          ? this.store.eventTypeSettings.get(seed.eventTypeId)?.sharingMode
-          : undefined) ?? "HOSTS_ONLY",
-      choice: choice ? copyChoice(choice) : null,
     };
   }
 
@@ -494,6 +526,72 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
       (a, b) => compareNumbers(a.startTime.getTime(), b.startTime.getTime()) || compareNumbers(a.id, b.id)
     );
     return matches.slice(0, params.limit).map((booking) => this.toContext(booking));
+  }
+
+  async createAdHocBooking(data: {
+    uid: string;
+    userId: number;
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    location: string;
+    metadata: Record<string, string>;
+  }): Promise<{ id: number; uid: string }> {
+    for (const existing of Array.from(this.store.bookings.values())) {
+      if (existing.uid === data.uid) {
+        throw new Error(`InMemoryNotetakerStore: booking uid ${data.uid} already exists`);
+      }
+    }
+    const id = Math.max(0, ...Array.from(this.store.bookings.keys())) + 1;
+    const user = this.store.getUser(data.userId);
+    this.store.addBooking({
+      id,
+      uid: data.uid,
+      userId: data.userId,
+      status: "ACCEPTED",
+      startTime: data.startTime,
+      endTime: data.endTime,
+      title: data.title,
+      location: data.location,
+      metadata: { ...data.metadata },
+      recurringEventId: null,
+      eventTypeId: null,
+      attendeeEmails: [],
+      references: [],
+      eventTypeHosts: [],
+      organizer: { id: data.userId, name: user.name, email: user.email, locale: null },
+    });
+    this.store.bookingCreatedAt.set(id, new Date());
+    return { id, uid: data.uid };
+  }
+
+  async countAdHocByUserIdSince(params: { userId: number; since: Date }): Promise<number> {
+    return Array.from(this.store.bookings.values()).filter(
+      (booking) =>
+        booking.userId === params.userId &&
+        this.isAdHoc(booking) &&
+        (this.store.bookingCreatedAt.get(booking.id) ?? booking.startTime).getTime() >= params.since.getTime()
+    ).length;
+  }
+
+  async findActiveAdHocByUserId(params: {
+    userId: number;
+    now: Date;
+  }): Promise<{ bookingUid: string; location: string | null }[]> {
+    return Array.from(this.store.bookings.values())
+      .filter(
+        (booking) =>
+          booking.userId === params.userId &&
+          booking.status === "ACCEPTED" &&
+          booking.endTime.getTime() > params.now.getTime() &&
+          this.isAdHoc(booking)
+      )
+      .sort((a, b) => compareNumbers(a.id, b.id))
+      .map((booking) => ({ bookingUid: booking.uid, location: booking.location }));
+  }
+
+  private isAdHoc(booking: InMemoryBookingSeed): boolean {
+    return readAdHocBookingMetadata(booking.metadata).isAdHoc;
   }
 
   async findByRecurringEventIdFromStartTime(params: {

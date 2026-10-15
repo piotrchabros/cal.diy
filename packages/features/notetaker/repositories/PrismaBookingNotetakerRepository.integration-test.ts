@@ -1,5 +1,6 @@
 import { prisma } from "@calcom/prisma";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { buildAdHocBookingMetadata } from "../lib/adHocMeeting";
 import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import { PrismaBookingNotetakerRepository } from "./PrismaBookingNotetakerRepository";
 
@@ -10,6 +11,7 @@ const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const RUNS_ON_ISOLATED_DATABASE: boolean = isQuickstartIsolatedDatabase();
 
 const SUITE = "PrismaBookingNotetakerRepository (integration)";
+const AD_HOC_SUITE = "PrismaBookingNotetakerRepository ad-hoc bookings (integration)";
 const SHARING_SUITE = "PrismaBookingNotetakerRepository sharing (integration)";
 
 const SEEDED_AT = new Date("2029-12-01T00:00:00.000Z");
@@ -1379,6 +1381,223 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
       const row = rows.find((candidate) => candidate.bookingId === id);
       expect(row?.resultsSession?.id).toBe(newerSessionId);
       expect(row?.resultsSession?.colleagueSharingDisclosed).toBe(false);
+    });
+  });
+});
+
+describe.runIf(!RUNS_ON_ISOLATED_DATABASE)(`${AD_HOC_SUITE}: not run`, () => {
+  it.skip(QUICKSTART_SKIP_MESSAGE, () => {});
+});
+
+describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(AD_HOC_SUITE, () => {
+  const MEET = "https://meet.google.com/abc-defg-hij";
+  const NOW = new Date("2031-03-01T10:00:00.000Z");
+  const HOUR = 60 * 60 * 1000;
+
+  let ownerId: number | undefined;
+  let otherUserId: number | undefined;
+  let teamId: number | undefined;
+  let adHocCounter = 0;
+  const bookingIds: number[] = [];
+
+  function required(value: number | undefined, label: string): number {
+    if (value === undefined) throw new Error(`Test setup did not complete: ${label} is missing`);
+    return value;
+  }
+
+  async function createAdHoc(
+    options: { userId?: number; sharingTeamId?: number | null; endTime?: Date } = {}
+  ) {
+    adHocCounter += 1;
+    const created = await repository.createAdHocBooking({
+      uid: `notetaker-adhoc-it-${runId}-${adHocCounter}`,
+      userId: options.userId ?? required(ownerId, "owner"),
+      title: "Ad-hoc meeting",
+      startTime: NOW,
+      endTime: options.endTime ?? new Date(NOW.getTime() + HOUR),
+      location: MEET,
+      metadata: buildAdHocBookingMetadata({ sharingTeamId: options.sharingTeamId ?? null }),
+    });
+    bookingIds.push(created.id);
+    return created;
+  }
+
+  beforeAll(async () => {
+    const owner = await prisma.user.create({
+      data: { email: `notetaker-adhoc-it-${runId}@example.com`, username: `notetaker-adhoc-it-${runId}` },
+      select: { id: true },
+    });
+    ownerId = owner.id;
+    const other = await prisma.user.create({
+      data: {
+        email: `notetaker-adhoc-it-other-${runId}@example.com`,
+        username: `notetaker-adhoc-it-other-${runId}`,
+      },
+      select: { id: true },
+    });
+    otherUserId = other.id;
+    const team = await prisma.team.create({
+      data: { name: `Ad-hoc IT team ${runId}`, slug: `notetaker-adhoc-it-${runId}` },
+      select: { id: true },
+    });
+    teamId = team.id;
+  });
+
+  afterEach(async () => {
+    if (bookingIds.length > 0) {
+      await prisma.booking.deleteMany({ where: { id: { in: bookingIds } } });
+    }
+    bookingIds.length = 0;
+  });
+
+  afterAll(async () => {
+    if (teamId !== undefined) await prisma.team.deleteMany({ where: { id: teamId } });
+    if (ownerId !== undefined) await prisma.user.deleteMany({ where: { id: ownerId } });
+    if (otherUserId !== undefined) await prisma.user.deleteMany({ where: { id: otherUserId } });
+    teamId = undefined;
+    ownerId = undefined;
+    otherUserId = undefined;
+  });
+
+  describe("createAdHocBooking", () => {
+    it("stores an accepted booking without an event type and with the ad-hoc metadata", async () => {
+      const created = await createAdHoc({ sharingTeamId: required(teamId, "team") });
+
+      const row = await prisma.booking.findUnique({
+        where: { id: created.id },
+        select: { uid: true, status: true, eventTypeId: true, userId: true, location: true, metadata: true },
+      });
+      expect(row).toEqual({
+        uid: created.uid,
+        status: "ACCEPTED",
+        eventTypeId: null,
+        userId: required(ownerId, "owner"),
+        location: MEET,
+        metadata: { notetakerAdHoc: "true", notetakerSharingTeamId: String(required(teamId, "team")) },
+      });
+    });
+  });
+
+  describe("countAdHocByUserIdSince", () => {
+    it("counts the user's ad-hoc bookings created since the cutoff and ignores other bookings and users", async () => {
+      await createAdHoc();
+      await createAdHoc();
+      await createAdHoc({ userId: required(otherUserId, "other user") });
+      const regular = await prisma.booking.create({
+        data: {
+          uid: `notetaker-adhoc-it-${runId}-regular`,
+          title: "Regular",
+          startTime: NOW,
+          endTime: new Date(NOW.getTime() + HOUR),
+          userId: required(ownerId, "owner"),
+        },
+        select: { id: true },
+      });
+      bookingIds.push(regular.id);
+
+      const since = new Date(Date.now() - HOUR);
+      expect(await repository.countAdHocByUserIdSince({ userId: required(ownerId, "owner"), since })).toBe(2);
+      expect(
+        await repository.countAdHocByUserIdSince({
+          userId: required(ownerId, "owner"),
+          since: new Date(Date.now() + HOUR),
+        })
+      ).toBe(0);
+    });
+  });
+
+  describe("findActiveAdHocByUserId", () => {
+    it("returns accepted ad-hoc bookings that have not ended and skips finished, cancelled and regular ones", async () => {
+      const active = await createAdHoc();
+      await createAdHoc({ endTime: new Date(NOW.getTime() - 1) });
+      const cancelled = await createAdHoc();
+      await prisma.booking.update({
+        where: { id: cancelled.id },
+        data: { status: "CANCELLED" },
+        select: { id: true },
+      });
+      await createAdHoc({ userId: required(otherUserId, "other user") });
+      const regular = await prisma.booking.create({
+        data: {
+          uid: `notetaker-adhoc-it-${runId}-regular-active`,
+          title: "Regular",
+          startTime: NOW,
+          endTime: new Date(NOW.getTime() + HOUR),
+          userId: required(ownerId, "owner"),
+        },
+        select: { id: true },
+      });
+      bookingIds.push(regular.id);
+
+      const found = await repository.findActiveAdHocByUserId({
+        userId: required(ownerId, "owner"),
+        now: NOW,
+      });
+
+      expect(found).toEqual([{ bookingUid: active.uid, location: MEET }]);
+    });
+  });
+
+  describe("ad-hoc team context", () => {
+    it("resolves the chosen team into a TEAM context owned by the creator", async () => {
+      const created = await createAdHoc({ sharingTeamId: required(teamId, "team") });
+
+      const byUid = await repository.findByBookingUidIncludeBooking(created.uid);
+      const byId = await repository.findByBookingIdIncludeBooking(created.id);
+
+      for (const context of [byUid, byId]) {
+        expect(context).toMatchObject({
+          eventTypeId: null,
+          teamId,
+          organizationId: null,
+          sharingOwnerUserId: ownerId,
+          sharingMode: "TEAM",
+        });
+        expect(context?.teamName).toContain("Ad-hoc IT team");
+      }
+    });
+
+    it("keeps HOSTS_ONLY when no team was chosen or the chosen team was deleted", async () => {
+      const withoutTeam = await createAdHoc();
+      const deletedTeam = await prisma.team.create({
+        data: { name: `Ad-hoc IT deleted ${runId}`, slug: `notetaker-adhoc-it-deleted-${runId}` },
+        select: { id: true },
+      });
+      const withDeletedTeam = await createAdHoc({ sharingTeamId: deletedTeam.id });
+      await prisma.team.deleteMany({ where: { id: deletedTeam.id } });
+
+      expect(await repository.findByBookingIdIncludeBooking(withoutTeam.id)).toMatchObject({
+        teamId: null,
+        sharingMode: "HOSTS_ONLY",
+      });
+      expect(await repository.findByBookingIdIncludeBooking(withDeletedTeam.id)).toMatchObject({
+        teamId: null,
+        sharingOwnerUserId: null,
+        sharingMode: "HOSTS_ONLY",
+      });
+    });
+
+    it("resolves the team in the sweep list of enabled bookings", async () => {
+      const created = await createAdHoc({ sharingTeamId: required(teamId, "team") });
+      await repository.enableIfDisabled({
+        bookingId: created.id,
+        source: "HOST",
+        appliedToSeries: false,
+        setByUserId: required(ownerId, "owner"),
+        setAt: NOW,
+      });
+
+      const contexts = await repository.findEnabledIncludeBooking({
+        bookingStatuses: ["ACCEPTED"],
+        startTimeLte: NOW,
+        pendingDispatch: true,
+        limit: 1000,
+      });
+
+      expect(contexts.find((context) => context.id === created.id)).toMatchObject({
+        teamId,
+        sharingMode: "TEAM",
+      });
     });
   });
 });

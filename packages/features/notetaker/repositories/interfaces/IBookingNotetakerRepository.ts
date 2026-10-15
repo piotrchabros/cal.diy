@@ -200,4 +200,21 @@ export interface IBookingNotetakerRepository {
     cursor: { startTime: Date; id: number } | null;
     limit: number;
   }): Promise<NotetakerBookingWithResultsSessionRecord[]>;
+  /** Creates an ACCEPTED booking without an event type. Selects id and uid only. */
+  createAdHocBooking(data: {
+    uid: string;
+    userId: number;
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    location: string;
+    metadata: Record<string, string>;
+  }): Promise<{ id: number; uid: string }>;
+  /** Counts the user's ad-hoc bookings (metadata notetakerAdHoc = "true") created at or after `since`. */
+  countAdHocByUserIdSince(params: { userId: number; since: Date }): Promise<number>;
+  /** The user's ACCEPTED ad-hoc bookings whose endTime is after `now`. */
+  findActiveAdHocByUserId(params: {
+    userId: number;
+    now: Date;
+  }): Promise<{ bookingUid: string; location: string | null }[]>;
 }
