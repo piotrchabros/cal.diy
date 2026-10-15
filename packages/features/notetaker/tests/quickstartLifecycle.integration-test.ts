@@ -11,11 +11,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createNotetakerBotGatewayError } from "../bot/INotetakerBotGateway";
 import { getNotetakerChoiceService } from "../di/NotetakerChoiceService.container";
 import { getNotetakerResultsService } from "../di/NotetakerResultsService.container";
+import { getNotetakerSharedResultsService } from "../di/NotetakerSharedResultsService.container";
 import { escapeMarkdown } from "../lib/exportMarkdown";
 import type { QuickstartBooking, QuickstartHarness, QuickstartUser } from "./quickstartHarness";
 import {
   createQuickstartHarness,
   isQuickstartIsolatedDatabase,
+  QUICKSTART_MEET_LINK,
   QUICKSTART_SKIP_MESSAGE,
 } from "./quickstartHarness";
 
@@ -520,6 +522,75 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         turnedOff: false,
       });
       expect(sendNotetakerTurnedOffEmail).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("scenario 10: ad-hoc meeting link", () => {
+    it("a pasted Meet link shared with a team reaches READY for the owner and the team member, not an outsider", async () => {
+      const owner = await harness.createUser({ label: "lc-adhoc-owner", notetakerFlag: true });
+      const member = await harness.createUser({ label: "lc-adhoc-member", notetakerFlag: false });
+      const team = await harness.createTeam({ label: "lc-adhoc", memberIds: [owner.id, member.id] });
+      const { gateway, dispatch } = harness.createFakeBot("happy");
+      const adHocService = harness.createAdHocService(dispatch);
+
+      const { bookingUid, reused } = await adHocService.dispatchToMeeting({
+        userId: owner.id,
+        meetingUrl: QUICKSTART_MEET_LINK,
+        durationMinutes: 30,
+        sharingTeamId: team.id,
+      });
+      await harness.settle(gateway);
+
+      expect(reused).toBe(false);
+      const booking = await prisma.booking.findUniqueOrThrow({
+        where: { uid: bookingUid },
+        select: { id: true, eventTypeId: true, status: true, location: true, metadata: true },
+      });
+      expect(booking).toEqual({
+        id: expect.any(Number),
+        eventTypeId: null,
+        status: "ACCEPTED",
+        location: QUICKSTART_MEET_LINK,
+        metadata: { notetakerAdHoc: "true", notetakerSharingTeamId: String(team.id) },
+      });
+      expect(await findChoice(booking.id)).toMatchObject({ enabled: true, source: "HOST" });
+      const sessions = await prisma.notetakerSession.findMany({
+        where: { bookingId: booking.id },
+        select: { status: true, colleagueSharingDisclosed: true },
+      });
+      expect(sessions).toEqual([{ status: "READY", colleagueSharingDisclosed: true }]);
+      expect(gateway.joinRequests).toHaveLength(1);
+
+      const ownerState = await choiceService.getState({ bookingUid, userId: owner.id });
+      expect(ownerState).toMatchObject({ viewerRole: "HOST", isAdHoc: true, status: "READY" });
+      expect(ownerState.transcript?.passageCount).toBe(3);
+      expect(ownerState.summary?.status).toBe("READY");
+      expect(ownerState.access?.colleagues).toEqual({ route: "TEAM", teamName: team.name });
+
+      const memberState = await choiceService.getState({ bookingUid, userId: member.id });
+      expect(memberState).toMatchObject({ viewerRole: "SHARED_VIEWER", isAdHoc: true });
+      const { passages } = await resultsService.listPassages({ bookingUid, userId: member.id });
+      expect(passages.map((passage) => passage.speakerName)).toEqual(["Alex Example", "Sam Example", null]);
+      const shared = await getNotetakerSharedResultsService().list({ userId: member.id });
+      expect(shared.items).toEqual([
+        expect.objectContaining({ bookingUid, eventTypeTitle: null, teamName: team.name, route: "TEAM" }),
+      ]);
+
+      await expect(choiceService.getState({ bookingUid, userId: outsider.id })).rejects.toMatchObject({
+        code: ErrorCode.Forbidden,
+      });
+      await expect(resultsService.listPassages({ bookingUid, userId: outsider.id })).rejects.toMatchObject({
+        code: ErrorCode.Forbidden,
+      });
+
+      // Pasting the same link again while the meeting is live returns it instead of sending a second bot.
+      const again = await adHocService.dispatchToMeeting({
+        userId: owner.id,
+        meetingUrl: QUICKSTART_MEET_LINK,
+        sharingTeamId: null,
+      });
+      expect(again).toEqual({ bookingUid, reused: true });
+      expect(gateway.joinRequests).toHaveLength(1);
     });
   });
 

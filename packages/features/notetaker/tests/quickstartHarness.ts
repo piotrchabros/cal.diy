@@ -1,23 +1,28 @@
 import process from "node:process";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
+import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { ENABLE_ASYNC_TASKER } from "@calcom/lib/constants";
 import { prisma } from "@calcom/prisma";
+import { MembershipRole } from "@calcom/prisma/enums";
 import { expect } from "vitest";
 import { z } from "zod";
 import { FakeBotGateway } from "../bot/FakeBotGateway";
 import type { INotetakerBotGateway, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
+import { getNotetakerChoiceService } from "../di/NotetakerChoiceService.container";
 import { getNotetakerSessionEventService } from "../di/NotetakerSessionEventService.container";
 import { getNotetakerTasker } from "../di/tasker/NotetakerTasker.container";
 import type { NotetakerFakeScenario } from "../lib/config";
 import { getNotetakerConfig } from "../lib/config";
+import { MembershipRepositoryNotetakerLookup } from "../lib/MembershipRepositoryNotetakerLookup";
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
 import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
 import { NotetakerAccessService } from "../services/NotetakerAccessService";
+import { NotetakerAdHocService } from "../services/NotetakerAdHocService";
 import { NotetakerDispatchService } from "../services/NotetakerDispatchService";
-import { InMemoryNotetakerMembershipLookup } from "./InMemoryNotetakerMembershipLookup";
 
 const DEFAULT_STARTS_IN_MS = 60_000;
 const DEFAULT_DURATION_MS = 30 * 60_000;
@@ -33,6 +38,10 @@ const silentLogger: ISimpleLogger = {
   warn() {},
 };
 
+function createMembershipLookup(): MembershipRepositoryNotetakerLookup {
+  return new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma));
+}
+
 function buildAccessService(
   bookingNotetakerRepository: PrismaBookingNotetakerRepository,
   sessionRepository: PrismaNotetakerSessionRepository
@@ -41,8 +50,8 @@ function buildAccessService(
     bookingNotetakerRepository,
     sessionRepository,
     eventTypeNotetakerSettingsRepository: new PrismaEventTypeNotetakerSettingsRepository(prisma),
-    // No shared viewer takes part in the quickstart flows, so nobody is a member.
-    membershipLookup: new InMemoryNotetakerMembershipLookup(),
+    // The real lookup: the dispatch decides whether the team was disclosed from the owner's membership.
+    membershipLookup: createMembershipLookup(),
   });
 }
 
@@ -97,7 +106,9 @@ export interface QuickstartHarness {
     status?: "ACCEPTED" | "PENDING" | "CANCELLED";
     fromReschedule?: string;
   }): Promise<QuickstartBooking>;
+  createTeam(opts: { label: string; memberIds: number[] }): Promise<{ id: number; name: string }>;
   createDispatch(gateway: INotetakerBotGateway): NotetakerDispatchService;
+  createAdHocService(dispatch: NotetakerDispatchService): NotetakerAdHocService;
   createFakeBot(scenario: NotetakerFakeScenario): {
     gateway: FakeBotGateway;
     dispatch: NotetakerDispatchService;
@@ -135,6 +146,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
   const runId = `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const userIds: number[] = [];
   const eventTypeIds: number[] = [];
+  const teamIds: number[] = [];
   const bookingIds: number[] = [];
   let sequence = 0;
 
@@ -243,7 +255,50 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
       return { id: booking.id, uid: booking.uid };
     },
 
+    async createTeam(opts) {
+      const name = `Notetaker quickstart ${opts.label} ${runId}`;
+      const team = await prisma.team.create({
+        data: { name, slug: `notetaker-qs-${opts.label}-${runId}` },
+        select: { id: true },
+      });
+      teamIds.push(team.id);
+      await prisma.membership.createMany({
+        data: opts.memberIds.map((userId) => ({
+          teamId: team.id,
+          userId,
+          role: MembershipRole.MEMBER,
+          accepted: true,
+          createdAt: new Date(),
+        })),
+      });
+      return { id: team.id, name };
+    },
+
     createDispatch,
+
+    createAdHocService(dispatch) {
+      return new NotetakerAdHocService({
+        // Wrapped so that cleanup also removes the ad-hoc bookings the service creates.
+        bookingNotetakerRepository: {
+          findActiveAdHocByUserId: (params) => bookingNotetakerRepository.findActiveAdHocByUserId(params),
+          countAdHocByUserIdSince: (params) => bookingNotetakerRepository.countAdHocByUserIdSince(params),
+          async createAdHocBooking(input) {
+            const booking = await bookingNotetakerRepository.createAdHocBooking(input);
+            bookingIds.push(booking.id);
+            return booking;
+          },
+        },
+        eventTypeNotetakerSettingsRepository: new PrismaEventTypeNotetakerSettingsRepository(prisma),
+        membershipLookup: createMembershipLookup(),
+        featuresRepository: new FeaturesRepository(prisma),
+        choiceService: getNotetakerChoiceService(),
+        dispatchService: dispatch,
+        userRepository,
+        // The stock config has no bot provider, and the service refuses to dispatch without a usable one.
+        config: getNotetakerConfig({ ...testEnv, NOTETAKER_BOT_PROVIDER: "fake" }),
+        logger: silentLogger,
+      });
+    },
 
     createFakeBot(scenario) {
       const gateway = new FakeBotGateway({
@@ -272,6 +327,10 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
       if (eventTypeIds.length > 0) {
         await prisma.eventType.deleteMany({ where: { id: { in: eventTypeIds } } });
         eventTypeIds.length = 0;
+      }
+      if (teamIds.length > 0) {
+        await prisma.team.deleteMany({ where: { id: { in: teamIds } } });
+        teamIds.length = 0;
       }
       if (userIds.length > 0) {
         await prisma.user.deleteMany({ where: { id: { in: userIds } } });
