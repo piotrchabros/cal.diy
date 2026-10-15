@@ -3,6 +3,7 @@
 import type { NotetakerIneligibilityReasonDto, NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Alert } from "@calcom/ui/components/alert";
+import { Badge } from "@calcom/ui/components/badge";
 import { Button } from "@calcom/ui/components/button";
 import {
   ConfirmationDialogContent,
@@ -42,6 +43,13 @@ function NotetakerReadOnlySection({
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
       <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
+      {state.isAdHoc && (
+        <div className="flex">
+          <Badge variant="gray" data-testid="notetaker-ad-hoc-badge">
+            {t("notetaker_ad_hoc_badge")}
+          </Badge>
+        </div>
+      )}
       {state.status !== null && (
         <div className="flex">
           <NotetakerStatusBadge
@@ -103,6 +111,13 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
       <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
+      {state.isAdHoc && (
+        <div className="flex">
+          <Badge variant="gray" data-testid="notetaker-ad-hoc-badge">
+            {t("notetaker_ad_hoc_badge")}
+          </Badge>
+        </div>
+      )}
       {state.status === "WAITING_TO_BE_ADMITTED" && (
         <div data-testid="notetaker-admit-banner">
           <Alert

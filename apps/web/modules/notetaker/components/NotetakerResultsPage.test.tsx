@@ -101,6 +101,7 @@ function buildState(overrides: Partial<NotetakerStateDto> = {}): NotetakerStateD
     canToggle: false,
     canStop: false,
     isRecurring: false,
+    isAdHoc: false,
     session: buildSession(),
     transcript: buildTranscript(),
     summary: null,

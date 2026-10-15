@@ -66,6 +66,7 @@ export type NotetakerStateDto = {
   canToggle: boolean;
   canStop: boolean;
   isRecurring: boolean;
+  isAdHoc: boolean;
   session: {
     id: string;
     status: NotetakerSessionStatusDto;

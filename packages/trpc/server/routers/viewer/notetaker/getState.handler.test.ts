@@ -32,6 +32,7 @@ const state: NotetakerStateDto = {
   canToggle: true,
   canStop: false,
   isRecurring: false,
+  isAdHoc: false,
   session: null,
   transcript: null,
   summary: null,

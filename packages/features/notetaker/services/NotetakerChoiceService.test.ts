@@ -796,12 +796,21 @@ describe("NotetakerChoiceService", () => {
         canToggle: true,
         canStop: false,
         isRecurring: false,
+        isAdHoc: false,
         session: null,
         transcript: null,
         summary: null,
         sharedWithAttendees: false,
         access: { attendees: false, colleagues: null },
       });
+    });
+
+    it("flags a booking whose metadata marks it as ad-hoc", async () => {
+      repositories.store.addBooking(buildBooking({ metadata: { notetakerAdHoc: "true" } }));
+
+      const state = await getState();
+
+      expect(state.isAdHoc).toBe(true);
     });
 
     it("reports SCHEDULED for an enabled and pending choice", async () => {

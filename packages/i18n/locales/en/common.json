@@ -4832,6 +4832,7 @@
   "notetaker_display_name": "{{appName}} Notetaker for {{hostName}}",
   "notetaker_meeting_notice": "This meeting is being transcribed by an automated notetaker on behalf of {{hostName}}. To stop the transcription, remove the notetaker from the meeting.",
   "notetaker_section_title": "Notetaker",
+  "notetaker_ad_hoc_badge": "Ad-hoc meeting",
   "notetaker_toggle_label": "Transcribe this meeting",
   "notetaker_toggle_description": "An automated notetaker joins the meeting as a participant and writes a transcript. No audio or video is stored.",
   "notetaker_status_scheduled": "Scheduled",

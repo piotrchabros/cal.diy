@@ -83,6 +83,7 @@ function buildState(overrides: Partial<NotetakerStateDto> = {}): NotetakerStateD
     canToggle: true,
     canStop: false,
     isRecurring: false,
+    isAdHoc: false,
     session: null,
     transcript: null,
     summary: null,
@@ -264,6 +265,16 @@ describe("NotetakerBookingSection", () => {
     const text = screen.getByTestId("notetaker-booking-section").textContent;
     expect(text).toContain("notetaker_disabled_at");
     expect(text).not.toContain("notetaker_enabled_by_event_type_default");
+  });
+
+  it("shows the ad-hoc badge only for ad-hoc meetings", () => {
+    renderSection(buildState({ isAdHoc: true }));
+    expect(screen.getByTestId("notetaker-ad-hoc-badge")).toHaveTextContent("notetaker_ad_hoc_badge");
+  });
+
+  it("does not show the ad-hoc badge for a regular booking", () => {
+    renderSection(buildState({ isAdHoc: false }));
+    expect(screen.queryByTestId("notetaker-ad-hoc-badge")).not.toBeInTheDocument();
   });
 
   it("mutates at once with THIS_BOOKING when the booking is not recurring", () => {
