@@ -1,6 +1,8 @@
+import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerChoiceSourceDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { NOTETAKER_AD_HOC_KEY, readAdHocBookingMetadata } from "../lib/adHocMeeting";
 import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
@@ -108,9 +110,20 @@ const bookingContextSelect = {
   notetaker: { select: choiceSelect },
 } satisfies Prisma.BookingSelect;
 
+type BookingBaseRow = Prisma.BookingGetPayload<{ select: typeof bookingBaseSelect }>;
+type ChosenTeam = { id: number; name: string };
+
+const adHocFilter = { path: [NOTETAKER_AD_HOC_KEY], equals: "true" } satisfies Prisma.JsonNullableFilter;
+
+function chosenTeamIdOf(booking: BookingBaseRow): number | null {
+  if (booking.eventType) return null;
+  return readAdHocBookingMetadata(booking.metadata).sharingTeamId;
+}
+
 function toBookingContext(
-  booking: Prisma.BookingGetPayload<{ select: typeof bookingBaseSelect }>,
-  choice: BookingNotetakerRecord | null
+  booking: BookingBaseRow,
+  choice: BookingNotetakerRecord | null,
+  teamsById: Map<number, ChosenTeam>
 ): NotetakerBookingContext {
   const hostsByUserId = new Map<number, { userId: number; email: string }>();
   for (const host of booking.eventType?.hosts ?? []) {
@@ -120,6 +133,23 @@ function toBookingContext(
     if (!hostsByUserId.has(user.id)) {
       hostsByUserId.set(user.id, { userId: user.id, email: user.email });
     }
+  }
+
+  // An ad-hoc booking has no event type, so its chosen team travels in the booking metadata.
+  const adHocTeamId = chosenTeamIdOf(booking);
+  const adHocTeam = adHocTeamId !== null ? (teamsById.get(adHocTeamId) ?? null) : null;
+  const sharingTeam = deriveNotetakerSharingTeam({
+    eventTypeTeam: booking.eventType?.team ?? null,
+    eventTypeUserId: booking.eventType?.userId ?? (adHocTeam ? booking.userId : null),
+    chosenTeam: booking.eventType?.notetakerSettings?.sharingTeam ?? adHocTeam,
+  });
+
+  // Ad-hoc bookings have no settings row; having a resolved team is what makes them shared.
+  let sharingMode: NotetakerSharingModeDto = "HOSTS_ONLY";
+  if (booking.eventType) {
+    sharingMode = booking.eventType.notetakerSettings?.sharingMode ?? "HOSTS_ONLY";
+  } else if (sharingTeam.teamId !== null) {
+    sharingMode = "TEAM";
   }
 
   return {
@@ -138,12 +168,8 @@ function toBookingContext(
     references: booking.references,
     eventTypeHosts: Array.from(hostsByUserId.values()),
     organizer: booking.user,
-    ...deriveNotetakerSharingTeam({
-      eventTypeTeam: booking.eventType?.team ?? null,
-      eventTypeUserId: booking.eventType?.userId ?? null,
-      chosenTeam: booking.eventType?.notetakerSettings?.sharingTeam ?? null,
-    }),
-    sharingMode: booking.eventType?.notetakerSettings?.sharingMode ?? "HOSTS_ONLY",
+    ...sharingTeam,
+    sharingMode,
     choice,
   };
 }
@@ -158,13 +184,27 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     });
   }
 
+  private async findChosenTeams(bookings: BookingBaseRow[]): Promise<Map<number, ChosenTeam>> {
+    const ids = new Set<number>();
+    for (const booking of bookings) {
+      const teamId = chosenTeamIdOf(booking);
+      if (teamId !== null) ids.add(teamId);
+    }
+    if (ids.size === 0) return new Map();
+    const teams = await this.prismaClient.team.findMany({
+      where: { id: { in: Array.from(ids) } },
+      select: { id: true, name: true },
+    });
+    return new Map(teams.map((team) => [team.id, team]));
+  }
+
   async findByBookingUidIncludeBooking(bookingUid: string): Promise<NotetakerBookingContext | null> {
     const row = await this.prismaClient.booking.findUnique({
       where: { uid: bookingUid },
       select: bookingContextSelect,
     });
     if (!row) return null;
-    return toBookingContext(row, row.notetaker);
+    return toBookingContext(row, row.notetaker, await this.findChosenTeams([row]));
   }
 
   async findByBookingIdIncludeBooking(bookingId: number): Promise<NotetakerBookingContext | null> {
@@ -173,7 +213,7 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       select: bookingContextSelect,
     });
     if (!row) return null;
-    return toBookingContext(row, row.notetaker);
+    return toBookingContext(row, row.notetaker, await this.findChosenTeams([row]));
   }
 
   async upsert(data: {
@@ -300,7 +340,8 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       take: params.limit,
       select: { ...choiceSelect, booking: { select: bookingBaseSelect } },
     });
-    return rows.map(({ booking, ...choice }) => toBookingContext(booking, choice));
+    const teamsById = await this.findChosenTeams(rows.map((row) => row.booking));
+    return rows.map(({ booking, ...choice }) => toBookingContext(booking, choice, teamsById));
   }
 
   async findByRecurringEventIdFromStartTime(params: {
@@ -506,5 +547,52 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       });
     }
     return records;
+  }
+
+  async createAdHocBooking(data: {
+    uid: string;
+    userId: number;
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    location: string;
+    metadata: Record<string, string>;
+  }): Promise<{ id: number; uid: string }> {
+    return await this.prismaClient.booking.create({
+      data: {
+        uid: data.uid,
+        userId: data.userId,
+        title: data.title,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        location: data.location,
+        metadata: data.metadata,
+        status: "ACCEPTED",
+      },
+      select: { id: true, uid: true },
+    });
+  }
+
+  async countAdHocByUserIdSince(params: { userId: number; since: Date }): Promise<number> {
+    return await this.prismaClient.booking.count({
+      where: { userId: params.userId, createdAt: { gte: params.since }, metadata: adHocFilter },
+    });
+  }
+
+  async findActiveAdHocByUserId(params: {
+    userId: number;
+    now: Date;
+  }): Promise<{ bookingUid: string; location: string | null }[]> {
+    const rows = await this.prismaClient.booking.findMany({
+      where: {
+        userId: params.userId,
+        status: "ACCEPTED",
+        endTime: { gt: params.now },
+        metadata: adHocFilter,
+      },
+      orderBy: { id: "asc" },
+      select: { uid: true, location: true },
+    });
+    return rows.map((row) => ({ bookingUid: row.uid, location: row.location }));
   }
 }

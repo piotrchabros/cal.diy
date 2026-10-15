@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { buildAdHocBookingMetadata } from "../lib/adHocMeeting";
 import type { InMemoryBookingSeed, InMemoryEventTypeSeed } from "./InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "./InMemoryNotetakerRepositories";
 
@@ -127,6 +128,113 @@ describe("InMemoryNotetakerRepositories", () => {
         organizationId: null,
         sharingOwnerUserId: 1,
       });
+    });
+  });
+
+  describe("ad-hoc bookings", () => {
+    const NOW = new Date("2026-10-12T10:00:00.000Z");
+    const MEET = "https://meet.google.com/abc-defg-hij";
+
+    function create(overrides: { uid?: string; userId?: number; sharingTeamId?: number | null } = {}) {
+      return repositories.bookingNotetakerRepository.createAdHocBooking({
+        uid: overrides.uid ?? "adhoc-1",
+        userId: overrides.userId ?? OWNER_ID,
+        title: "Ad-hoc meeting",
+        startTime: NOW,
+        endTime: new Date(NOW.getTime() + 60 * 60 * 1000),
+        location: MEET,
+        metadata: buildAdHocBookingMetadata({ sharingTeamId: overrides.sharingTeamId ?? null }),
+      });
+    }
+
+    it("creates an accepted booking without an event type and returns its id and uid", async () => {
+      const created = await create();
+
+      expect(created).toEqual({ id: expect.any(Number), uid: "adhoc-1" });
+      expect(
+        await repositories.bookingNotetakerRepository.findByBookingIdIncludeBooking(created.id)
+      ).toMatchObject({
+        uid: "adhoc-1",
+        userId: OWNER_ID,
+        status: "ACCEPTED",
+        eventTypeId: null,
+        location: MEET,
+        sharingMode: "HOSTS_ONLY",
+        teamId: null,
+      });
+    });
+
+    it("rejects a duplicate uid", async () => {
+      await create();
+
+      await expect(create()).rejects.toThrow();
+    });
+
+    it("resolves the chosen team into a TEAM context owned by the creator", async () => {
+      repositories.store.setTeam(CHOSEN_TEAM_ID, "Support");
+      const created = await create({ sharingTeamId: CHOSEN_TEAM_ID });
+
+      const context = await repositories.bookingNotetakerRepository.findByBookingUidIncludeBooking(
+        created.uid
+      );
+
+      expect(context).toMatchObject({
+        teamId: CHOSEN_TEAM_ID,
+        teamName: "Support",
+        organizationId: null,
+        sharingOwnerUserId: OWNER_ID,
+        sharingMode: "TEAM",
+      });
+    });
+
+    it("falls back to HOSTS_ONLY when the chosen team no longer exists", async () => {
+      const created = await create({ sharingTeamId: CHOSEN_TEAM_ID });
+
+      const context = await repositories.bookingNotetakerRepository.findByBookingIdIncludeBooking(created.id);
+
+      expect(context).toMatchObject({ teamId: null, sharingOwnerUserId: null, sharingMode: "HOSTS_ONLY" });
+    });
+
+    it("counts only the user's ad-hoc bookings created since the cutoff", async () => {
+      const repo = repositories.bookingNotetakerRepository;
+      const old = await create({ uid: "old" });
+      repositories.store.bookingCreatedAt.set(old.id, new Date("2026-10-01T00:00:00.000Z"));
+      await create({ uid: "new" });
+      await create({ uid: "other-user", userId: 2 });
+      repositories.store.addBooking(bookingSeed({ id: 500, uid: "regular" }));
+
+      expect(
+        await repo.countAdHocByUserIdSince({ userId: OWNER_ID, since: new Date("2026-10-10T00:00:00.000Z") })
+      ).toBe(1);
+      expect(
+        await repo.countAdHocByUserIdSince({ userId: OWNER_ID, since: new Date("2026-09-01T00:00:00.000Z") })
+      ).toBe(2);
+    });
+
+    it("lists only accepted, unfinished ad-hoc bookings of the user", async () => {
+      const repo = repositories.bookingNotetakerRepository;
+      await create({ uid: "active" });
+      const finished = await create({ uid: "finished" });
+      repositories.store.bookings.set(finished.id, {
+        ...bookingSeed({
+          id: finished.id,
+          uid: "finished",
+          eventTypeId: null,
+          metadata: buildAdHocBookingMetadata({ sharingTeamId: null }),
+        }),
+        endTime: new Date(NOW.getTime() - 1),
+      });
+      const cancelled = await create({ uid: "cancelled" });
+      const cancelledSeed = repositories.store.bookings.get(cancelled.id);
+      if (cancelledSeed) cancelledSeed.status = "CANCELLED";
+      await create({ uid: "other-user", userId: 2 });
+      repositories.store.addBooking(
+        bookingSeed({ id: 501, uid: "regular", endTime: new Date(NOW.getTime() + 1000) })
+      );
+
+      expect(await repo.findActiveAdHocByUserId({ userId: OWNER_ID, now: NOW })).toEqual([
+        { bookingUid: "active", location: MEET },
+      ]);
     });
   });
 
