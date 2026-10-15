@@ -43,4 +43,6 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_SHARING_SETTINGS_SERVICE_MODULE: Symbol("NotetakerSharingSettingsServiceModule"),
   NOTETAKER_SHARED_RESULTS_SERVICE: Symbol("NotetakerSharedResultsService"),
   NOTETAKER_SHARED_RESULTS_SERVICE_MODULE: Symbol("NotetakerSharedResultsServiceModule"),
+  NOTETAKER_AD_HOC_SERVICE: Symbol("NotetakerAdHocService"),
+  NOTETAKER_AD_HOC_SERVICE_MODULE: Symbol("NotetakerAdHocServiceModule"),
 };
