@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   exportHandler: vi.fn(),
   deleteResultsHandler: vi.fn(),
   getActivityHandler: vi.fn(),
+  getAdHocOptionsHandler: vi.fn(),
+  dispatchToMeetingHandler: vi.fn(),
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -66,6 +68,10 @@ vi.mock("./setSharing.handler", () => ({ setSharingHandler: mocks.setSharingHand
 vi.mock("./export.handler", () => ({ exportHandler: mocks.exportHandler }));
 vi.mock("./deleteResults.handler", () => ({ deleteResultsHandler: mocks.deleteResultsHandler }));
 vi.mock("./getActivity.handler", () => ({ getActivityHandler: mocks.getActivityHandler }));
+vi.mock("./getAdHocOptions.handler", () => ({ getAdHocOptionsHandler: mocks.getAdHocOptionsHandler }));
+vi.mock("./dispatchToMeeting.handler", () => ({
+  dispatchToMeetingHandler: mocks.dispatchToMeetingHandler,
+}));
 
 const ctx: TRPCContextInner = {
   prisma,
@@ -93,6 +99,8 @@ const handlerMocks = [
   mocks.exportHandler,
   mocks.deleteResultsHandler,
   mocks.getActivityHandler,
+  mocks.getAdHocOptionsHandler,
+  mocks.dispatchToMeetingHandler,
 ];
 
 const procedures: {
@@ -204,6 +212,27 @@ const procedures: {
     handler: mocks.getActivityHandler,
     expectedInput: { bookingUid: "b1" },
     invoke: (caller) => caller.getActivity({ bookingUid: "b1" }),
+  },
+  {
+    name: "getAdHocOptions",
+    handler: mocks.getAdHocOptionsHandler,
+    expectedInput: undefined,
+    invoke: (caller) => caller.getAdHocOptions(),
+  },
+  {
+    name: "dispatchToMeeting",
+    handler: mocks.dispatchToMeetingHandler,
+    expectedInput: {
+      meetingUrl: "https://meet.google.com/abc-defg-hij",
+      sharingTeamId: null,
+      acknowledgedNotice: true,
+    },
+    invoke: (caller) =>
+      caller.dispatchToMeeting({
+        meetingUrl: "https://meet.google.com/abc-defg-hij",
+        sharingTeamId: null,
+        acknowledgedNotice: true,
+      }),
   },
 ];
 

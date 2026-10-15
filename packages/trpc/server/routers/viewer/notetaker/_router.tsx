@@ -2,6 +2,7 @@ import authedProcedure from "../../../procedures/authedProcedure";
 import { router } from "../../../trpc";
 import { eventOwnerProcedure } from "../eventTypes/util";
 import { ZDeleteResultsInputSchema } from "./deleteResults.schema";
+import { ZDispatchToMeetingInputSchema } from "./dispatchToMeeting.schema";
 import { ZExportInputSchema } from "./export.schema";
 import { ZGetActivityInputSchema } from "./getActivity.schema";
 import { ZGetEventTypeDefaultInputSchema } from "./getEventTypeDefault.schema";
@@ -123,5 +124,15 @@ export const notetakerRouter = router({
   getActivity: authedProcedure.input(ZGetActivityInputSchema).query(async ({ ctx, input }) => {
     const { getActivityHandler } = await import("./getActivity.handler");
     return getActivityHandler({ ctx, input });
+  }),
+
+  getAdHocOptions: authedProcedure.query(async ({ ctx }) => {
+    const { getAdHocOptionsHandler } = await import("./getAdHocOptions.handler");
+    return getAdHocOptionsHandler({ ctx });
+  }),
+
+  dispatchToMeeting: authedProcedure.input(ZDispatchToMeetingInputSchema).mutation(async ({ ctx, input }) => {
+    const { dispatchToMeetingHandler } = await import("./dispatchToMeeting.handler");
+    return dispatchToMeetingHandler({ ctx, input });
   }),
 });
