@@ -44,8 +44,12 @@ async function restoreBookingsV3(
   await prisma.feature.deleteMany({ where: { slug: "bookings-v3" } });
 }
 
+function isNotetakerUrl(url: string, procedure: string): boolean {
+  return new RegExp(`/api/trpc/.*notetaker[./][^?]*${procedure}`).test(url);
+}
+
 function isNotetakerCall(response: Response, procedure: string): boolean {
-  return new RegExp(`/api/trpc/.*notetaker[./][^?]*${procedure}`).test(response.url());
+  return isNotetakerUrl(response.url(), procedure);
 }
 
 // The status is not asserted: the tRPC error conversion does not map ErrorWithCode to 403 here
@@ -184,6 +188,42 @@ async function enableAndFinish(
   await runSweep(page);
   await waitForReady(prisma, booking.id);
   return sheet;
+}
+
+async function sendNotetakerToMeeting(
+  page: Page,
+  { title, sharingTeamId }: { title: string; sharingTeamId?: number }
+): Promise<string> {
+  await page.goto("/bookings/upcoming");
+  await page.getByTestId("notetaker-add-to-meeting").click();
+  const form = page.getByTestId("notetaker-add-to-meeting-form");
+  await expect(form).toBeVisible();
+  await form.getByTestId("notetaker-ad-hoc-link").fill(MEET_LINK);
+  await form.getByTestId("notetaker-ad-hoc-title").fill(title);
+  if (sharingTeamId !== undefined) {
+    await form.getByTestId("notetaker-ad-hoc-team").selectOption(String(sharingTeamId));
+  }
+  const sendButton = form.getByTestId("notetaker-ad-hoc-send");
+  // Stays disabled until the acknowledgement is ticked
+  await expect(sendButton).toBeDisabled();
+  await form.getByTestId("notetaker-ad-hoc-acknowledge").check();
+  await expect(sendButton).toBeEnabled();
+  const dispatchResponse = page.waitForResponse((response) => isNotetakerCall(response, "dispatchToMeeting"));
+  await sendButton.click();
+  expect((await dispatchResponse).status()).toBe(200);
+  await expect(page).toHaveURL(/\/booking\/[^/]+\/notetaker/);
+  const [, , bookingUid] = new URL(page.url()).pathname.split("/");
+  return bookingUid;
+}
+
+async function findAdHocBooking(
+  prisma: Fixtures["prisma"],
+  bookingUid: string
+): Promise<{ id: number; uid: string; eventTypeId: number | null; metadata: unknown }> {
+  return prisma.booking.findUniqueOrThrow({
+    where: { uid: bookingUid },
+    select: { id: true, uid: true, eventTypeId: true, metadata: true },
+  });
 }
 
 test.describe("Notetaker", () => {
@@ -544,5 +584,130 @@ test.describe("Notetaker", () => {
       });
       await Promise.all(extraContexts.map((context) => context.close()));
     }
+  });
+  test.describe("ad-hoc meeting link", () => {
+    test("a pasted Meet link creates an ad-hoc booking whose results the owner reads", async ({
+      page,
+      users,
+      prisma,
+    }) => {
+      const t = await localize("en");
+      const owner = await users.create({ userFeatureFlags: HOST_FLAGS });
+      await owner.apiLogin();
+
+      const bookingUid = await sendNotetakerToMeeting(page, { title: "Ad-hoc E2E" });
+      const booking = await findAdHocBooking(prisma, bookingUid);
+      expect(booking).toMatchObject({ eventTypeId: null, metadata: { notetakerAdHoc: "true" } });
+
+      await runSweep(page);
+      await waitForReady(prisma, booking.id);
+      await page.reload();
+      await expect(page.getByTestId("notetaker-passage")).toHaveCount(3);
+      await expect(page.getByTestId("notetaker-summary")).toContainText(t("notetaker_summary_overview"));
+
+      const sheet = await openBookingSheet(page, bookingUid);
+      await expect(sheet.getByTestId("notetaker-ad-hoc-badge")).toHaveText(t("notetaker_ad_hoc_badge"));
+      await expect(sheet.getByTestId("notetaker-status-badge")).toHaveText(t("notetaker_status_ready"));
+    });
+
+    test("an invalid link shows the inline error and creates no booking", async ({ page, users, prisma }) => {
+      const t = await localize("en");
+      const owner = await users.create({ userFeatureFlags: HOST_FLAGS });
+      await owner.apiLogin();
+      let dispatchCalls = 0;
+      page.on("request", (request) => {
+        if (isNotetakerUrl(request.url(), "dispatchToMeeting")) dispatchCalls += 1;
+      });
+
+      await page.goto("/bookings/upcoming");
+      await page.getByTestId("notetaker-add-to-meeting").click();
+      const form = page.getByTestId("notetaker-add-to-meeting-form");
+      await form.getByTestId("notetaker-ad-hoc-link").fill("https://zoom.us/j/1234567890");
+      await form.getByTestId("notetaker-ad-hoc-acknowledge").check();
+      await form.getByTestId("notetaker-ad-hoc-send").click();
+
+      await expect(form.getByTestId("notetaker-ad-hoc-link-error")).toHaveText(
+        t("notetaker_ad_hoc_invalid_link")
+      );
+      await expect(page).toHaveURL(/\/bookings\/upcoming/);
+      expect(dispatchCalls).toBe(0);
+      expect(await prisma.booking.count({ where: { userId: owner.id } })).toBe(0);
+    });
+
+    test("an ad-hoc meeting shared with a team: a member opens the results from Shared with me", async ({
+      page,
+      users,
+      prisma,
+      browser,
+    }) => {
+      const owner = await users.create({ userFeatureFlags: HOST_FLAGS }, { hasTeam: true });
+      const member = await users.create();
+      const { team } = await owner.getFirstTeamMembership();
+      await prisma.membership.create({
+        data: {
+          teamId: team.id,
+          userId: member.id,
+          role: MembershipRole.MEMBER,
+          accepted: true,
+          createdAt: new Date(),
+        },
+      });
+      await owner.apiLogin();
+
+      const bookingUid = await sendNotetakerToMeeting(page, {
+        title: "Ad-hoc shared E2E",
+        sharingTeamId: team.id,
+      });
+      const booking = await findAdHocBooking(prisma, bookingUid);
+      expect(booking.metadata).toEqual({ notetakerAdHoc: "true", notetakerSharingTeamId: String(team.id) });
+      await runSweep(page);
+      await waitForReady(prisma, booking.id);
+      const session = await prisma.notetakerSession.findFirst({
+        where: { bookingId: booking.id },
+        orderBy: { createdAt: "desc" },
+        select: { colleagueSharingDisclosed: true },
+      });
+      expect(session?.colleagueSharingDisclosed).toBe(true);
+
+      await page.reload();
+      await expect(page.getByTestId("notetaker-passage")).toHaveCount(3);
+      await expect(page.getByTestId("notetaker-access-summary")).toContainText(team.name);
+
+      const [memberContext, memberPage] = await member.apiLoginOnNewBrowser(browser);
+      try {
+        await memberPage.goto("/bookings/upcoming");
+        await memberPage.getByTestId("notetaker-shared-notes-link").click();
+        await expect(memberPage).toHaveURL(/\/bookings\/shared-notes/);
+        const sharedResults = memberPage.getByTestId("notetaker-shared-result");
+        await expect(sharedResults).toHaveCount(1);
+        await expect(sharedResults).toContainText("Ad-hoc shared E2E");
+        await expect(sharedResults).toContainText(team.name);
+        await sharedResults.click();
+        await expect(memberPage).toHaveURL(new RegExp(`/booking/${bookingUid}/notetaker`));
+        await expect(memberPage.getByTestId("notetaker-passage")).toHaveCount(3);
+        await expect(memberPage.getByTestId("notetaker-shared-viewer-notice")).toBeVisible();
+        await expect(memberPage.getByTestId("notetaker-delete-button")).toHaveCount(0);
+      } finally {
+        await memberContext.close();
+      }
+    });
+
+    test("the action menu of an ad-hoc booking offers no reschedule or location edit", async ({
+      page,
+      users,
+    }) => {
+      const owner = await users.create({ userFeatureFlags: HOST_FLAGS });
+      await owner.apiLogin();
+      const bookingUid = await sendNotetakerToMeeting(page, { title: "Ad-hoc actions E2E" });
+
+      const sheet = await openBookingSheet(page, bookingUid);
+      await sheet.getByTestId("booking-actions-dropdown").click();
+      const menu = page.getByRole("menu");
+      // An action that stays proves the menu is open before the absent ones are checked
+      await expect(menu.getByTestId("add_members")).toBeVisible();
+      await expect(menu.getByTestId("reschedule")).toHaveCount(0);
+      await expect(menu.getByTestId("reschedule_request")).toHaveCount(0);
+      await expect(menu.getByTestId("change_location")).toHaveCount(0);
+    });
   });
 });
