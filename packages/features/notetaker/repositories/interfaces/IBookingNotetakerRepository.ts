@@ -100,6 +100,16 @@ export type NotetakerBookingWithResultsSessionRecord = {
   } | null;
 };
 
+export type NotetakerAdHocBookingWithResultsSessionRecord = Omit<
+  NotetakerBookingWithResultsSessionRecord,
+  "eventTypeId"
+> & {
+  /** Team chosen in the booking metadata (notetakerSharingTeamId). */
+  sharingTeamId: number;
+  /** Null when the chosen team no longer exists. */
+  sharingTeamName: string | null;
+};
+
 export interface IBookingNotetakerRepository {
   findByBookingId(bookingId: number): Promise<BookingNotetakerRecord | null>;
   findByBookingUidIncludeBooking(bookingUid: string): Promise<NotetakerBookingContext | null>;
@@ -200,6 +210,16 @@ export interface IBookingNotetakerRepository {
     cursor: { startTime: Date; id: number } | null;
     limit: number;
   }): Promise<NotetakerBookingWithResultsSessionRecord[]>;
+  /**
+   * Ad-hoc bookings (no event type, metadata notetakerAdHoc = "true") whose chosen sharing team is
+   * one of teamIds, with the same session criteria and order as findByEventTypeIdsIncludeResultsSession.
+   * Empty teamIds gives [] without a query.
+   */
+  findAdHocBySharingTeamIdsIncludeResultsSession(params: {
+    teamIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerAdHocBookingWithResultsSessionRecord[]>;
   /** Creates an ACCEPTED booking without an event type. Selects id and uid only. */
   createAdHocBooking(data: {
     uid: string;

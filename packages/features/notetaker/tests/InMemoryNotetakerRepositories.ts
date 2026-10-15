@@ -2,12 +2,17 @@ import type { NotetakerStoredActivityActionDto } from "@calcom/lib/dto/Notetaker
 import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerChoiceSourceDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
-import { readAdHocBookingMetadata } from "../lib/adHocMeeting";
+import {
+  NOTETAKER_AD_HOC_KEY,
+  NOTETAKER_AD_HOC_SHARING_TEAM_KEY,
+  readAdHocBookingMetadata,
+} from "../lib/adHocMeeting";
 import type { NotetakerSharingTeam } from "../lib/sharingScope";
 import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAdHocBookingWithResultsSessionRecord,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingReferenceRecord,
@@ -725,15 +730,66 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
   }): Promise<NotetakerBookingWithResultsSessionRecord[]> {
     if (params.eventTypeIds.length === 0) return [];
     const eventTypeIds = new Set(params.eventTypeIds);
-    const { cursor } = params;
+    const records: NotetakerBookingWithResultsSessionRecord[] = [];
+    for (const { seed, record } of this.findWithResultsSession(
+      (seed) => seed.eventTypeId !== null && eventTypeIds.has(seed.eventTypeId),
+      params.cursor,
+      params.limit
+    )) {
+      // The predicate guarantees an event type; the null check narrows the type.
+      if (seed.eventTypeId === null) continue;
+      records.push({ ...record, eventTypeId: seed.eventTypeId });
+    }
+    return records;
+  }
+
+  async findAdHocBySharingTeamIdsIncludeResultsSession(params: {
+    teamIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerAdHocBookingWithResultsSessionRecord[]> {
+    if (params.teamIds.length === 0) return [];
+    // Raw string equality, like the Prisma JSON path filter, rather than the lenient metadata reader.
+    const wantedTeamIds = new Set(params.teamIds.map(String));
+    const sharingTeamIdOf = (seed: InMemoryBookingSeed): number | null => {
+      const metadata = seed.metadata;
+      if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return null;
+      const record = metadata as Record<string, unknown>;
+      const rawTeamId = record[NOTETAKER_AD_HOC_SHARING_TEAM_KEY];
+      if (record[NOTETAKER_AD_HOC_KEY] !== "true" || typeof rawTeamId !== "string") return null;
+      return wantedTeamIds.has(rawTeamId) ? Number(rawTeamId) : null;
+    };
+
+    const records: NotetakerAdHocBookingWithResultsSessionRecord[] = [];
+    for (const { seed, record } of this.findWithResultsSession(
+      (seed) => seed.eventTypeId === null && sharingTeamIdOf(seed) !== null,
+      params.cursor,
+      params.limit
+    )) {
+      const sharingTeamId = sharingTeamIdOf(seed);
+      if (sharingTeamId === null) continue;
+      records.push({
+        ...record,
+        sharingTeamId,
+        sharingTeamName: this.store.teams.get(sharingTeamId) ?? null,
+      });
+    }
+    return records;
+  }
+
+  private findWithResultsSession(
+    matches: (seed: InMemoryBookingSeed) => boolean,
+    cursor: { startTime: Date; id: number } | null,
+    limit: number
+  ): { seed: InMemoryBookingSeed; record: Omit<NotetakerBookingWithResultsSessionRecord, "eventTypeId"> }[] {
     const transcriptSessionIds = new Set<string>();
     for (const transcript of Array.from(this.store.transcripts.values())) {
       transcriptSessionIds.add(transcript.sessionId);
     }
 
-    const rows: { seed: InMemoryBookingSeed; eventTypeId: number; sessions: NotetakerSessionRecord[] }[] = [];
+    const rows: { seed: InMemoryBookingSeed; sessions: NotetakerSessionRecord[] }[] = [];
     for (const seed of Array.from(this.store.bookings.values())) {
-      if (seed.eventTypeId === null || !eventTypeIds.has(seed.eventTypeId)) continue;
+      if (!matches(seed)) continue;
       if (cursor !== null) {
         const startMs = seed.startTime.getTime();
         const cursorMs = cursor.startTime.getTime();
@@ -743,7 +799,7 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
         .filter((session) => session.bookingId === seed.id && transcriptSessionIds.has(session.id))
         .sort(compareLatestSessionFirst);
       if (!sessions.some((session) => session.colleagueSharingDisclosed)) continue;
-      rows.push({ seed, eventTypeId: seed.eventTypeId, sessions });
+      rows.push({ seed, sessions });
     }
     rows.sort(
       (a, b) =>
@@ -751,26 +807,28 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
         compareNumbers(b.seed.id, a.seed.id)
     );
 
-    return rows.slice(0, params.limit).map(({ seed, eventTypeId, sessions }) => {
+    return rows.slice(0, limit).map(({ seed, sessions }) => {
       const latest = sessions[0];
       const transcript = Array.from(this.store.transcripts.values()).find(
         (candidate) => candidate.sessionId === latest.id
       );
       const summary = transcript ? this.store.summaries.get(transcript.id) : undefined;
       return {
-        bookingId: seed.id,
-        bookingUid: seed.uid,
-        title: seed.title,
-        startTime: seed.startTime,
-        eventTypeId,
-        organizerUserId: seed.userId,
-        organizerName: seed.organizer?.name ?? null,
-        attendeeEmails: [...seed.attendeeEmails],
-        resultsSession: {
-          id: latest.id,
-          colleagueSharingDisclosed: latest.colleagueSharingDisclosed,
-          resultsDeletedAt: latest.resultsDeletedAt,
-          summaryStatus: summary ? summary.status : null,
+        seed,
+        record: {
+          bookingId: seed.id,
+          bookingUid: seed.uid,
+          title: seed.title,
+          startTime: seed.startTime,
+          organizerUserId: seed.userId,
+          organizerName: seed.organizer?.name ?? null,
+          attendeeEmails: [...seed.attendeeEmails],
+          resultsSession: {
+            id: latest.id,
+            colleagueSharingDisclosed: latest.colleagueSharingDisclosed,
+            resultsDeletedAt: latest.resultsDeletedAt,
+            summaryStatus: summary ? summary.status : null,
+          },
         },
       };
     });

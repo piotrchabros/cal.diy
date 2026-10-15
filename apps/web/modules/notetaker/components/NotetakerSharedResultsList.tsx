@@ -47,7 +47,8 @@ export function NotetakerSharedResultsList(): JSX.Element | null {
                 className="flex flex-col gap-1 p-4 hover:bg-muted">
                 <span className="font-medium text-emphasis text-sm">{item.title}</span>
                 <span className="text-sm text-subtle">
-                  {formatter.format(new Date(item.startTime))} · {item.eventTypeTitle}
+                  {formatter.format(new Date(item.startTime))} ·{" "}
+                  {item.eventTypeTitle ?? t("notetaker_ad_hoc_badge")}
                 </span>
                 {item.hostName !== null ? (
                   <span className="text-sm text-subtle">

@@ -1,6 +1,7 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildAdHocBookingMetadata } from "../lib/adHocMeeting";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
@@ -576,6 +577,7 @@ describe("NotetakerSharedResultsService", () => {
       const stubbed = new NotetakerSharedResultsService({
         bookingNotetakerRepository: {
           findVerifiedEmailsByUserId: async () => [],
+          findAdHocBySharingTeamIdsIncludeResultsSession: async () => [],
           findByEventTypeIdsIncludeResultsSession: async () => [
             {
               bookingId: 1,
@@ -728,6 +730,258 @@ describe("NotetakerSharedResultsService", () => {
       await service.list({ userId: VIEWER_ID });
 
       expect(find.mock.calls[0][0].eventTypeIds).toEqual([TEAM_EVENT_TYPE_ID, SELECTED_EVENT_TYPE_ID]);
+    });
+  });
+
+  describe("ad-hoc meetings", () => {
+    const AD_HOC_OWNER = {
+      id: PERSONAL_OWNER_ID,
+      name: PERSONAL_OWNER_NAME,
+      email: "owner@example.com",
+      locale: "en",
+    };
+
+    async function seedAdHocBooking(
+      id: number,
+      overrides: Partial<InMemoryBookingSeed> & { sharingTeamId?: number | null } = {}
+    ): Promise<NotetakerSessionRecord> {
+      const { sharingTeamId = CHOSEN_TEAM_ID, ...bookingOverrides } = overrides;
+      return seedSharedBooking(id, {
+        eventTypeId: null,
+        userId: PERSONAL_OWNER_ID,
+        organizer: AD_HOC_OWNER,
+        title: `Ad-hoc ${id}`,
+        metadata: buildAdHocBookingMetadata({ sharingTeamId }),
+        ...bookingOverrides,
+      });
+    }
+
+    beforeEach(() => {
+      repositories.store.setTeam(CHOSEN_TEAM_ID, CHOSEN_TEAM_NAME);
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+    });
+
+    it("lists an ad-hoc meeting shared with the viewer's team, without an event type title", async () => {
+      await seedAdHocBooking(1);
+
+      const page = await service.list({ userId: VIEWER_ID });
+
+      expect(page).toEqual({
+        items: [
+          {
+            bookingUid: "booking-uid-1",
+            title: "Ad-hoc 1",
+            startTime: buildBooking(1).startTime.toISOString(),
+            eventTypeTitle: null,
+            teamName: CHOSEN_TEAM_NAME,
+            hostName: PERSONAL_OWNER_NAME,
+            route: "TEAM",
+            summaryStatus: null,
+          },
+        ],
+        nextCursor: null,
+      });
+    });
+
+    it("interleaves ad-hoc meetings with event type bookings, newest first", async () => {
+      joinTeamAndOrganization();
+      await seedSharedBooking(1);
+      await seedAdHocBooking(2);
+      await seedSharedBooking(3, { eventTypeId: SELECTED_EVENT_TYPE_ID });
+      await seedAdHocBooking(4);
+      await seedSharedBooking(5);
+
+      const page = await service.list({ userId: VIEWER_ID });
+
+      expect(page.items.map((item) => [item.bookingUid, item.eventTypeTitle])).toEqual([
+        ["booking-uid-5", TEAM_EVENT_TYPE_TITLE],
+        ["booking-uid-4", null],
+        ["booking-uid-3", SELECTED_EVENT_TYPE_TITLE],
+        ["booking-uid-2", null],
+        ["booking-uid-1", TEAM_EVENT_TYPE_TITLE],
+      ]);
+      expect(page.nextCursor).toBeNull();
+    });
+
+    it("pages across both sources without overlap or gap", async () => {
+      joinTeamAndOrganization();
+      await seedSharedBooking(1);
+      await seedAdHocBooking(2);
+      await seedAdHocBooking(3);
+      await seedSharedBooking(4);
+      await seedAdHocBooking(5);
+
+      const first = await service.list({ userId: VIEWER_ID, limit: 2 });
+      expect(first.items.map((item) => item.bookingUid)).toEqual(["booking-uid-5", "booking-uid-4"]);
+      expect(first.nextCursor).toBe(`${buildBooking(4).startTime.toISOString()}|4`);
+
+      const second = await service.list({ userId: VIEWER_ID, limit: 2, cursor: first.nextCursor });
+      expect(second.items.map((item) => item.bookingUid)).toEqual(["booking-uid-3", "booking-uid-2"]);
+      expect(second.nextCursor).toBe(`${buildBooking(2).startTime.toISOString()}|2`);
+
+      const third = await service.list({ userId: VIEWER_ID, limit: 2, cursor: second.nextCursor });
+      expect(third.items.map((item) => item.bookingUid)).toEqual(["booking-uid-1"]);
+      expect(third.nextCursor).toBeNull();
+    });
+
+    it("orders ad-hoc and event type bookings of the same start time by id", async () => {
+      joinTeamAndOrganization();
+      const startTime = buildBooking(1).startTime;
+      await seedSharedBooking(1, { startTime });
+      await seedAdHocBooking(2, { startTime });
+      await seedSharedBooking(3, { startTime });
+
+      const first = await service.list({ userId: VIEWER_ID, limit: 2 });
+      const second = await service.list({ userId: VIEWER_ID, limit: 2, cursor: first.nextCursor });
+
+      expect(first.items.map((item) => item.bookingUid)).toEqual(["booking-uid-3", "booking-uid-2"]);
+      expect(second.items.map((item) => item.bookingUid)).toEqual(["booking-uid-1"]);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it("hides the meeting once its owner left the team", async () => {
+      await seedAdHocBooking(1);
+      expect(await listUids()).toEqual(["booking-uid-1"]);
+
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("hides the meeting while the owner's membership is not accepted", async () => {
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID, accepted: false });
+      await seedAdHocBooking(1);
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("hides a meeting without an owner", async () => {
+      await seedAdHocBooking(1, { userId: null, organizer: null });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("hides a meeting whose session was not disclosed", async () => {
+      repositories.store.addBooking(
+        buildBooking(1, {
+          eventTypeId: null,
+          userId: PERSONAL_OWNER_ID,
+          organizer: AD_HOC_OWNER,
+          metadata: buildAdHocBookingMetadata({ sharingTeamId: CHOSEN_TEAM_ID }),
+        })
+      );
+      await seedSession(1, { disclosed: false });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("hides a meeting whose results were deleted", async () => {
+      const session = await seedAdHocBooking(1);
+      await repositories.sessionRepository.setResultsDeletedAtByIds([session.id], new Date());
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("hides a meeting after the chosen team was deleted", async () => {
+      await seedAdHocBooking(1);
+      repositories.store.removeTeam(CHOSEN_TEAM_ID);
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("never shows a meeting to someone who is not a member of the chosen team", async () => {
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: PERSONAL_OWNER_ID });
+      await seedAdHocBooking(1);
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("leaves out a meeting the viewer created or attends", async () => {
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: SECOND_OWNER_ID });
+      await seedAdHocBooking(1, { userId: VIEWER_ID });
+      await seedAdHocBooking(2, { attendeeEmails: [VIEWER_PRIMARY_EMAIL] });
+      await seedAdHocBooking(3, { userId: SECOND_OWNER_ID });
+
+      expect(await listUids()).toEqual(["booking-uid-3"]);
+    });
+
+    it("leaves out a meeting without a chosen team", async () => {
+      await seedAdHocBooking(1, { sharingTeamId: null });
+
+      expect(await listUids()).toEqual([]);
+    });
+
+    it("asks for ad-hoc meetings of the viewer's teams with the same cursor and limit", async () => {
+      joinTeamAndOrganization();
+      const cursor = `${buildBooking(3).startTime.toISOString()}|3`;
+      const findAdHoc = vi.spyOn(
+        repositories.bookingNotetakerRepository,
+        "findAdHocBySharingTeamIdsIncludeResultsSession"
+      );
+      const findByEventType = vi.spyOn(
+        repositories.bookingNotetakerRepository,
+        "findByEventTypeIdsIncludeResultsSession"
+      );
+
+      await service.list({ userId: VIEWER_ID, cursor, limit: 4 });
+
+      expect(findAdHoc).toHaveBeenCalledTimes(1);
+      expect([...findAdHoc.mock.calls[0][0].teamIds].sort((a, b) => a - b)).toEqual([
+        TEAM_ID,
+        CHOSEN_TEAM_ID,
+        ORGANIZATION_ID,
+      ]);
+      expect(findAdHoc.mock.calls[0][0]).toMatchObject({ limit: 5 });
+      expect(findAdHoc.mock.calls[0][0].cursor).toEqual(findByEventType.mock.calls[0][0].cursor);
+      expect(findAdHoc.mock.calls[0][0].cursor).toEqual({ startTime: buildBooking(3).startTime, id: 3 });
+    });
+
+    it("lists ad-hoc meetings when no event type is shared with the viewer", async () => {
+      await seedAdHocBooking(1);
+      const findByEventType = vi.spyOn(
+        repositories.bookingNotetakerRepository,
+        "findByEventTypeIdsIncludeResultsSession"
+      );
+
+      expect(await listUids()).toEqual(["booking-uid-1"]);
+      expect(findByEventType).not.toHaveBeenCalled();
+    });
+
+    it("makes no ad-hoc query for a viewer without teams", async () => {
+      membershipLookup.removeMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      await seedAdHocBooking(1);
+      const findAdHoc = vi.spyOn(
+        repositories.bookingNotetakerRepository,
+        "findAdHocBySharingTeamIdsIncludeResultsSession"
+      );
+
+      expect(await service.list({ userId: VIEWER_ID })).toEqual({ items: [], nextCursor: null });
+      expect(findAdHoc).not.toHaveBeenCalled();
+    });
+
+    it("checks the owners of the listed meetings with one lookup per team", async () => {
+      repositories.store.setTeam(OTHER_CHOSEN_TEAM_ID, "Research");
+      membershipLookup.addMember({ teamId: OTHER_CHOSEN_TEAM_ID, userId: VIEWER_ID });
+      membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: SECOND_OWNER_ID });
+      await seedAdHocBooking(1);
+      await seedAdHocBooking(2, { userId: SECOND_OWNER_ID });
+      await seedAdHocBooking(3, { sharingTeamId: OTHER_CHOSEN_TEAM_ID });
+      const findAccepted = vi.spyOn(membershipLookup, "findAcceptedUserIds");
+
+      expect(await listUids()).toEqual(["booking-uid-2", "booking-uid-1"]);
+
+      expect(findAccepted).toHaveBeenCalledTimes(2);
+      const calls = findAccepted.mock.calls
+        .map(([params]) => ({ teamId: params.teamId, userIds: [...params.userIds].sort((a, b) => a - b) }))
+        .sort((a, b) => a.teamId - b.teamId);
+      expect(calls).toEqual([
+        { teamId: CHOSEN_TEAM_ID, userIds: [PERSONAL_OWNER_ID, SECOND_OWNER_ID] },
+        { teamId: OTHER_CHOSEN_TEAM_ID, userIds: [PERSONAL_OWNER_ID] },
+      ]);
     });
   });
 });

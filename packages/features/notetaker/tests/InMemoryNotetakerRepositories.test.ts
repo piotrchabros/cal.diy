@@ -919,6 +919,161 @@ describe("InMemoryNotetakerRepositories", () => {
     });
   });
 
+  describe("findAdHocBySharingTeamIdsIncludeResultsSession", () => {
+    const at = (day: number) => new Date(`2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`);
+
+    async function addAdHocBooking(
+      id: number,
+      day: number,
+      options: {
+        sharingTeamId?: number | null;
+        disclosed?: boolean;
+        withTranscript?: boolean;
+        dispatchedAt?: Date;
+      } = {}
+    ) {
+      repositories.store.addBooking(
+        bookingSeed({
+          id,
+          uid: `uid-${id}`,
+          startTime: at(day),
+          eventTypeId: null,
+          eventTypeHosts: [],
+          metadata: buildAdHocBookingMetadata({
+            sharingTeamId: options.sharingTeamId === undefined ? CHOSEN_TEAM_ID : options.sharingTeamId,
+          }),
+        })
+      );
+      return addSession(id, {
+        colleagueSharingDisclosed: options.disclosed ?? true,
+        withTranscript: options.withTranscript,
+        dispatchedAt: options.dispatchedAt,
+      });
+    }
+
+    beforeEach(() => {
+      repositories.store.setTeam(CHOSEN_TEAM_ID, "Support");
+    });
+
+    it("returns [] for no team ids", async () => {
+      await addAdHocBooking(100, 10);
+
+      expect(
+        await repositories.bookingNotetakerRepository.findAdHocBySharingTeamIdsIncludeResultsSession({
+          teamIds: [],
+          cursor: null,
+          limit: 10,
+        })
+      ).toEqual([]);
+    });
+
+    it("orders by startTime desc then id desc and pages with a cursor", async () => {
+      await addAdHocBooking(100, 10);
+      await addAdHocBooking(101, 12);
+      await addAdHocBooking(102, 12);
+      await addAdHocBooking(103, 11);
+      const repo = repositories.bookingNotetakerRepository;
+
+      const first = await repo.findAdHocBySharingTeamIdsIncludeResultsSession({
+        teamIds: [CHOSEN_TEAM_ID],
+        cursor: null,
+        limit: 2,
+      });
+      const second = await repo.findAdHocBySharingTeamIdsIncludeResultsSession({
+        teamIds: [CHOSEN_TEAM_ID],
+        cursor: { startTime: first[1].startTime, id: first[1].bookingId },
+        limit: 5,
+      });
+
+      expect(first.map((row) => row.bookingId)).toEqual([102, 101]);
+      expect(second.map((row) => row.bookingId)).toEqual([103, 100]);
+    });
+
+    it("keeps only ad-hoc bookings shared with the given teams that have a disclosed session with a transcript", async () => {
+      await addAdHocBooking(100, 10);
+      await addAdHocBooking(101, 10, { sharingTeamId: 99 });
+      await addAdHocBooking(102, 10, { disclosed: false });
+      await addAdHocBooking(103, 10, { withTranscript: false });
+      await addAdHocBooking(104, 10, { sharingTeamId: null });
+      repositories.store.addBooking(
+        bookingSeed({
+          id: 105,
+          uid: "uid-105",
+          metadata: buildAdHocBookingMetadata({ sharingTeamId: CHOSEN_TEAM_ID }),
+        })
+      );
+      await addSession(105, { colleagueSharingDisclosed: true });
+      repositories.store.addBooking(
+        bookingSeed({
+          id: 106,
+          uid: "uid-106",
+          eventTypeId: null,
+          metadata: { notetakerSharingTeamId: String(CHOSEN_TEAM_ID) },
+        })
+      );
+      await addSession(106, { colleagueSharingDisclosed: true });
+
+      const rows =
+        await repositories.bookingNotetakerRepository.findAdHocBySharingTeamIdsIncludeResultsSession({
+          teamIds: [CHOSEN_TEAM_ID],
+          cursor: null,
+          limit: 10,
+        });
+
+      expect(rows.map((row) => row.bookingId)).toEqual([100]);
+    });
+
+    it("matches any of several teams and reports the chosen team with its name", async () => {
+      repositories.store.setTeam(31, "Alpha");
+      await addAdHocBooking(100, 10);
+      await addAdHocBooking(101, 11, { sharingTeamId: 31 });
+      await addAdHocBooking(102, 12, { sharingTeamId: 32 });
+
+      const rows =
+        await repositories.bookingNotetakerRepository.findAdHocBySharingTeamIdsIncludeResultsSession({
+          teamIds: [CHOSEN_TEAM_ID, 31, 32],
+          cursor: null,
+          limit: 10,
+        });
+
+      expect(rows.map((row) => [row.bookingId, row.sharingTeamId, row.sharingTeamName])).toEqual([
+        [102, 32, null],
+        [101, 31, "Alpha"],
+        [100, CHOSEN_TEAM_ID, "Support"],
+      ]);
+    });
+
+    it("reports the latest session that has a transcript, with its summary status and organizer", async () => {
+      await addAdHocBooking(100, 10, { dispatchedAt: new Date("2026-10-12T09:00:00.000Z") });
+      const later = await addSession(100, {
+        colleagueSharingDisclosed: false,
+        dispatchedAt: new Date("2026-10-12T11:00:00.000Z"),
+      });
+      await repositories.summaryRepository.upsertPending(later.transcript?.id ?? "");
+
+      const [row] =
+        await repositories.bookingNotetakerRepository.findAdHocBySharingTeamIdsIncludeResultsSession({
+          teamIds: [CHOSEN_TEAM_ID],
+          cursor: null,
+          limit: 10,
+        });
+
+      expect(row).toMatchObject({
+        bookingId: 100,
+        bookingUid: "uid-100",
+        organizerUserId: 1,
+        organizerName: "Organizer",
+        resultsSession: {
+          id: later.session.id,
+          colleagueSharingDisclosed: false,
+          resultsDeletedAt: null,
+          summaryStatus: "PENDING",
+        },
+      });
+      expect(row).not.toHaveProperty("eventTypeId");
+    });
+  });
+
   describe("sessions", () => {
     beforeEach(() => {
       repositories.store.addBooking(bookingSeed());

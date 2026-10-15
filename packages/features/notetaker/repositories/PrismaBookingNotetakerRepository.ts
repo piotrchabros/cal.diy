@@ -2,11 +2,16 @@ import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventType
 import type { NotetakerChoiceSourceDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
-import { NOTETAKER_AD_HOC_KEY, readAdHocBookingMetadata } from "../lib/adHocMeeting";
+import {
+  NOTETAKER_AD_HOC_KEY,
+  NOTETAKER_AD_HOC_SHARING_TEAM_KEY,
+  readAdHocBookingMetadata,
+} from "../lib/adHocMeeting";
 import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAdHocBookingWithResultsSessionRecord,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
   NotetakerBookingReferenceRecord,
@@ -105,6 +110,47 @@ const resultsSessionBookingSelect = {
   },
 } satisfies Prisma.BookingSelect;
 
+const adHocResultsSessionBookingSelect = {
+  ...resultsSessionBookingSelect,
+  metadata: true,
+} satisfies Prisma.BookingSelect;
+
+type ResultsSessionBookingRow = Prisma.BookingGetPayload<{ select: typeof resultsSessionBookingSelect }>;
+
+const resultsSessionWhere = {
+  notetakerSessions: { some: { colleagueSharingDisclosed: true, transcript: { isNot: null } } },
+} satisfies Prisma.BookingWhereInput;
+
+function cursorWhere(cursor: { startTime: Date; id: number } | null): Prisma.BookingWhereInput {
+  if (!cursor) return {};
+  return {
+    OR: [{ startTime: { lt: cursor.startTime } }, { startTime: cursor.startTime, id: { lt: cursor.id } }],
+  };
+}
+
+function toResultsSessionRecord(
+  row: ResultsSessionBookingRow
+): Omit<NotetakerBookingWithResultsSessionRecord, "eventTypeId"> {
+  const [session] = row.notetakerSessions;
+  return {
+    bookingId: row.id,
+    bookingUid: row.uid,
+    title: row.title,
+    startTime: row.startTime,
+    organizerUserId: row.userId,
+    organizerName: row.user?.name ?? null,
+    attendeeEmails: row.attendees.map((attendee) => attendee.email),
+    resultsSession: session
+      ? {
+          id: session.id,
+          colleagueSharingDisclosed: session.colleagueSharingDisclosed,
+          resultsDeletedAt: session.resultsDeletedAt,
+          summaryStatus: session.transcript?.summary?.status ?? null,
+        }
+      : null,
+  };
+}
+
 const bookingContextSelect = {
   ...bookingBaseSelect,
   notetaker: { select: choiceSelect },
@@ -190,9 +236,13 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       const teamId = chosenTeamIdOf(booking);
       if (teamId !== null) ids.add(teamId);
     }
-    if (ids.size === 0) return new Map();
+    return this.findTeamsByIds(Array.from(ids));
+  }
+
+  private async findTeamsByIds(teamIds: number[]): Promise<Map<number, ChosenTeam>> {
+    if (teamIds.length === 0) return new Map();
     const teams = await this.prismaClient.team.findMany({
-      where: { id: { in: Array.from(ids) } },
+      where: { id: { in: teamIds } },
       select: { id: true, name: true },
     });
     return new Map(teams.map((team) => [team.id, team]));
@@ -507,15 +557,8 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     const rows = await this.prismaClient.booking.findMany({
       where: {
         eventTypeId: { in: eventTypeIds },
-        notetakerSessions: { some: { colleagueSharingDisclosed: true, transcript: { isNot: null } } },
-        ...(cursor
-          ? {
-              OR: [
-                { startTime: { lt: cursor.startTime } },
-                { startTime: cursor.startTime, id: { lt: cursor.id } },
-              ],
-            }
-          : {}),
+        ...resultsSessionWhere,
+        ...cursorWhere(cursor),
       },
       orderBy: [{ startTime: "desc" }, { id: "desc" }],
       take: limit,
@@ -526,24 +569,55 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     for (const row of rows) {
       // The where clause guarantees an event type; the null check narrows the type.
       if (row.eventTypeId === null) continue;
-      const [session] = row.notetakerSessions;
+      records.push({ ...toResultsSessionRecord(row), eventTypeId: row.eventTypeId });
+    }
+    return records;
+  }
+
+  async findAdHocBySharingTeamIdsIncludeResultsSession(params: {
+    teamIds: number[];
+    cursor: { startTime: Date; id: number } | null;
+    limit: number;
+  }): Promise<NotetakerAdHocBookingWithResultsSessionRecord[]> {
+    const { teamIds, cursor, limit } = params;
+    if (teamIds.length === 0) return [];
+
+    const rows = await this.prismaClient.booking.findMany({
+      where: {
+        eventTypeId: null,
+        ...resultsSessionWhere,
+        // Two ORs (team and cursor) cannot share one object, so each goes into its own AND entry.
+        AND: [
+          { metadata: adHocFilter },
+          {
+            OR: teamIds.map((teamId) => ({
+              metadata: { path: [NOTETAKER_AD_HOC_SHARING_TEAM_KEY], equals: String(teamId) },
+            })),
+          },
+          cursorWhere(cursor),
+        ],
+      },
+      orderBy: [{ startTime: "desc" }, { id: "desc" }],
+      take: limit,
+      select: adHocResultsSessionBookingSelect,
+    });
+
+    const rowsWithTeam: { row: (typeof rows)[number]; sharingTeamId: number }[] = [];
+    for (const row of rows) {
+      // The where clause guarantees a team id; reading it back narrows the type.
+      const { sharingTeamId } = readAdHocBookingMetadata(row.metadata);
+      if (sharingTeamId !== null) rowsWithTeam.push({ row, sharingTeamId });
+    }
+    const teamsById = await this.findTeamsByIds(
+      Array.from(new Set(rowsWithTeam.map(({ sharingTeamId }) => sharingTeamId)))
+    );
+
+    const records: NotetakerAdHocBookingWithResultsSessionRecord[] = [];
+    for (const { row, sharingTeamId } of rowsWithTeam) {
       records.push({
-        bookingId: row.id,
-        bookingUid: row.uid,
-        title: row.title,
-        startTime: row.startTime,
-        eventTypeId: row.eventTypeId,
-        organizerUserId: row.userId,
-        organizerName: row.user?.name ?? null,
-        attendeeEmails: row.attendees.map((attendee) => attendee.email),
-        resultsSession: session
-          ? {
-              id: session.id,
-              colleagueSharingDisclosed: session.colleagueSharingDisclosed,
-              resultsDeletedAt: session.resultsDeletedAt,
-              summaryStatus: session.transcript?.summary?.status ?? null,
-            }
-          : null,
+        ...toResultsSessionRecord(row),
+        sharingTeamId,
+        sharingTeamName: teamsById.get(sharingTeamId)?.name ?? null,
       });
     }
     return records;
