@@ -1,6 +1,7 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { beforeEach, describe, expect, it } from "vitest";
+import { buildAdHocBookingMetadata } from "../lib/adHocMeeting";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
@@ -825,12 +826,87 @@ describe("NotetakerAccessService", () => {
       await expectDenied(COLLEAGUE_ID);
     });
 
-    it("rejects when the booking has no event type", async () => {
-      store.addBooking(buildBooking({ eventTypeId: null, teamId: TEAM_ID }));
+    it("rejects when the booking has no event type and its owner chose no team", async () => {
+      store.addBooking(
+        buildBooking({ eventTypeId: null, metadata: buildAdHocBookingMetadata({ sharingTeamId: null }) })
+      );
       membershipLookup.addMember({ teamId: TEAM_ID, userId: COLLEAGUE_ID });
       await addSession();
 
       await expectDenied(COLLEAGUE_ID);
+    });
+
+    describe("ad-hoc booking without an event type", () => {
+      // The seed states what the repository reports for an ad-hoc booking whose owner chose a team.
+      function addAdHocBooking(overrides: Partial<InMemoryBookingSeed> = {}): void {
+        store.addBooking(
+          buildBooking({
+            eventTypeId: null,
+            teamId: CHOSEN_TEAM_ID,
+            teamName: CHOSEN_TEAM_NAME,
+            organizationId: null,
+            sharingOwnerUserId: ORGANIZER_ID,
+            sharingMode: "TEAM",
+            ...overrides,
+          })
+        );
+      }
+
+      it("treats an accepted member of the chosen team as SHARED_VIEWER while the owner is an accepted member", async () => {
+        addAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: COLLEAGUE_ID });
+
+        expect(result.role).toBe("SHARED_VIEWER");
+        expect(result.booking.eventTypeId).toBeNull();
+      });
+
+      it("rejects a member of the chosen team when the session was not disclosed", async () => {
+        addAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession({ disclosed: false });
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a member of the chosen team once the owner left it", async () => {
+        addAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a user who is not a member of the chosen team", async () => {
+        addAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: OTHER_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("rejects a member of the chosen team under SELECTED_PEOPLE, which needs an event type", async () => {
+        addAdHocBooking({ sharingMode: "SELECTED_PEOPLE" });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: COLLEAGUE_ID });
+        await addSession();
+
+        await expectDenied(COLLEAGUE_ID);
+      });
+
+      it("keeps the owner a HOST", async () => {
+        addAdHocBooking();
+        await addSession();
+
+        const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+
+        expect(result.role).toBe("HOST");
+      });
     });
   });
 

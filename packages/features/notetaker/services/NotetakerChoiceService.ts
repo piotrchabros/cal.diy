@@ -495,10 +495,11 @@ export class NotetakerChoiceService {
     accessSession: NotetakerSessionRecord | null
   ): Promise<NotetakerAccessDto["colleagues"]> {
     if (accessSession?.colleagueSharingDisclosed !== true) return null;
-    if (booking.eventTypeId === null) return null;
     const scope = await this.deps.accessService.resolveSharingScope(booking);
     if (!scope) return null;
     if (scope.mode === "TEAM") return { route: "TEAM", teamName: scope.teamName };
+    // The member list lives on the event type, so a booking without one has nobody listed.
+    if (booking.eventTypeId === null) return null;
 
     const members = await this.deps.eventTypeNotetakerSettingsRepository.findSharingMembersIncludeUser(
       booking.eventTypeId

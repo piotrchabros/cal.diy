@@ -81,7 +81,7 @@ export class NotetakerAccessService {
 
   private async isSharedViewer(userId: number, booking: NotetakerBookingContext): Promise<boolean> {
     const { eventTypeId, teamId, sharingMode } = booking;
-    if (eventTypeId === null || teamId === null || sharingMode === "HOSTS_ONLY") return false;
+    if (teamId === null || sharingMode === "HOSTS_ONLY") return false;
 
     // Only the latest session that has a transcript counts: the results a viewer would read come
     // from it, so an earlier disclosed session must not open a later one recorded without the notice.
@@ -99,6 +99,8 @@ export class NotetakerAccessService {
       return this.deps.membershipLookup.isAcceptedMember({ userId, teamId: scope.teamId });
     }
 
+    // The member list lives on the event type, so a booking without one has nobody listed.
+    if (eventTypeId === null) return false;
     const isListed = await this.deps.eventTypeNotetakerSettingsRepository.hasSharingMember({
       eventTypeId,
       userId,
