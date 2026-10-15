@@ -257,6 +257,24 @@ describe("Booking Actions", () => {
   });
 
   describe("getEditEventActions", () => {
+    it("should hide reschedule, reschedule request and change location for ad-hoc meetings", () => {
+      const base = createMockContext();
+      const context = createMockContext({
+        booking: { ...base.booking, metadata: { notetakerAdHoc: "true" } },
+      });
+      const ids = getEditEventActions(context).map((a) => a.id);
+
+      expect(ids).not.toContain("reschedule");
+      expect(ids).not.toContain("reschedule_request");
+      expect(ids).not.toContain("change_location");
+    });
+
+    it("should keep reschedule and change location for regular bookings", () => {
+      const ids = getEditEventActions(createMockContext()).map((a) => a.id);
+
+      expect(ids).toEqual(expect.arrayContaining(["reschedule", "reschedule_request", "change_location"]));
+    });
+
     it("should return basic edit actions", () => {
       const context = createMockContext();
       const actions = getEditEventActions(context);

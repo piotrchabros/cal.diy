@@ -1,3 +1,4 @@
+import { readAdHocBookingMetadata } from "@calcom/features/notetaker/lib/adHocMeeting";
 import { isWithinMinimumRescheduleNotice } from "@calcom/features/bookings/lib/reschedule/isWithinMinimumRescheduleNotice";
 import { BookingStatus, SchedulingType } from "@calcom/prisma/enums";
 import type { ActionType } from "@calcom/ui/components/table";
@@ -108,6 +109,8 @@ export function getNotetakerResultsAction(context: BookingActionContext): Action
   };
 }
 
+const AD_HOC_HIDDEN_EDIT_ACTION_IDS = ["reschedule", "reschedule_request", "change_location"];
+
 export function getEditEventActions(context: BookingActionContext): ActionType[] {
   const {
     booking,
@@ -179,7 +182,12 @@ export function getEditEventActions(context: BookingActionContext): ActionType[]
       : null,
   ];
 
-  return actions.filter(Boolean) as ActionType[];
+  // An ad-hoc meeting has no event type to reschedule against, and its location is the Meet link the notetaker joins.
+  const isAdHoc = readAdHocBookingMetadata(booking.metadata).isAdHoc;
+
+  return actions.filter(
+    (action) => action !== null && !(isAdHoc && AD_HOC_HIDDEN_EDIT_ACTION_IDS.includes(action.id))
+  ) as ActionType[];
 }
 
 export function getReportAction(context: BookingActionContext): ActionType {

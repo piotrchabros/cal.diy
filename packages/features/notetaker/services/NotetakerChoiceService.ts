@@ -9,6 +9,7 @@ import type {
 } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerTranscriptDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { readAdHocBookingMetadata } from "../lib/adHocMeeting";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { getBookingNotetakerEligibility, getEventTypeNotetakerAvailability } from "../lib/eligibility";
@@ -258,6 +259,7 @@ export class NotetakerChoiceService {
         (choice?.enabled === true || eligibility.eligible),
       canStop: isHost && latestSession !== null && STOPPABLE_SESSION_STATUSES.includes(latestSession.status),
       isRecurring: booking.recurringEventId !== null,
+      isAdHoc: readAdHocBookingMetadata(booking.metadata).isAdHoc,
       session: stateSession ? toSessionDto(stateSession) : null,
       transcript: transcript ? toTranscriptDto(transcript) : null,
       summary: summary ? toNotetakerSummaryDto(summary) : null,
