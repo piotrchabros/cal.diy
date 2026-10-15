@@ -34,10 +34,8 @@ import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMem
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
-import type {
-  NotetakerCalendarInviteOutcome,
-  NotetakerCalendarInviteService,
-} from "./NotetakerCalendarInviteService";
+import type { NotetakerCalendarInviteOutcome } from "./NotetakerCalendarInviteService";
+import { NotetakerCalendarInviteService } from "./NotetakerCalendarInviteService";
 import { getNotetakerGiveUpDeadline, NotetakerDispatchService } from "./NotetakerDispatchService";
 
 vi.mock("@calcom/i18n/server", () => ({
@@ -860,6 +858,47 @@ describe("NotetakerDispatchService", () => {
         });
       });
 
+      describe("ad-hoc booking without an event type", () => {
+        const OWNER_ID = ORGANIZER_ID;
+        const CHOSEN_TEAM_ID = 30;
+
+        // The seed states what the repository reports for an ad-hoc booking, with or without a chosen team.
+        async function seedAdHoc(chosenTeam: boolean): Promise<void> {
+          await seedArmed({
+            eventTypeId: null,
+            attendeeEmails: [],
+            teamId: chosenTeam ? CHOSEN_TEAM_ID : null,
+            teamName: chosenTeam ? "Chosen team" : null,
+            organizationId: null,
+            sharingOwnerUserId: chosenTeam ? OWNER_ID : null,
+            sharingMode: chosenTeam ? "TEAM" : "HOSTS_ONLY",
+          });
+        }
+
+        it("tells the participants and marks the session disclosed when the owner chose a team", async () => {
+          await seedAdHoc(true);
+          membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: OWNER_ID });
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_SHARED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(true);
+        });
+
+        it("keeps the plain notice and an undisclosed session when no team is chosen", async () => {
+          await seedAdHoc(false);
+          const gateway = fake();
+
+          await buildService(fakeBinding(gateway)).dispatchDue();
+          await settle(gateway);
+
+          expect(gateway.joinRequests[0].noticeMessage).toBe(EXPECTED_NOTICE);
+          expect(onlySession().colleagueSharingDisclosed).toBe(false);
+        });
+      });
+
       it("never marks a failed session as disclosed", async () => {
         await seedArmed({ teamId: 20, location: MeetLocationType, references: [], metadata: null });
         repositories.store.setSharingMode(10, "TEAM");
@@ -1255,6 +1294,43 @@ describe("NotetakerDispatchService", () => {
       const sessionId = onlySession().id;
       expect(inviteCalls).toEqual([{ bookingId, sessionId, platform: "GOOGLE_MEET", meetingUrl: MEET_LINK }]);
       expect(callLog).toEqual([`invite:${sessionId}`, `join:${sessionId}`]);
+    });
+
+    it("dispatches an ad-hoc booking with no attendees and no calendar references without touching a calendar", async () => {
+      const ensureGuestCalls: unknown[] = [];
+      const inviteService = new NotetakerCalendarInviteService({
+        bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+        calendarGuestGateway: {
+          ensureGuest: async (params) => {
+            ensureGuestCalls.push(params);
+            return "ADDED";
+          },
+        },
+        config: { ...config, botProvider: "SELF_HOSTED", googleAccountEmail: "notetaker@example.com" },
+        logger,
+      });
+      const outcomes: NotetakerCalendarInviteOutcome[] = [];
+      inviteBot = async (params) => {
+        const outcome = await inviteService.ensureBotInvited(params);
+        outcomes.push(outcome);
+        return outcome;
+      };
+      const bookingId = await seedArmed({ eventTypeId: null, attendeeEmails: [], references: [] });
+
+      await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
+
+      const session = onlySession();
+      expect(outcomes).toEqual(["NO_CALENDAR_EVENT"]);
+      expect(ensureGuestCalls).toEqual([]);
+      expect(callLog).toEqual([`invite:${session.id}`, `join:${session.id}`]);
+      expect(session.externalRef).toBe(`stub-ref-${session.id}`);
+      expect(tasker.notificationCalls).toEqual([
+        {
+          payload: { kind: "ATTENDEE_NOTICE", bookingId, sessionId: session.id },
+          options: { delay: "30s" },
+        },
+      ]);
+      expect(logger.error).not.toHaveBeenCalled();
     });
 
     describe("when the invite fails", () => {

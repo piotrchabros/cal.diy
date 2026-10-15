@@ -2761,6 +2761,66 @@ describe("NotetakerChoiceService", () => {
       });
     });
 
+    describe("ad-hoc booking without an event type", () => {
+      const CHOSEN_TEAM_ID = 70;
+
+      // The seed states what the repository reports for an ad-hoc booking whose owner chose a team.
+      async function seedAdHocBooking(
+        params: { mode?: "TEAM" | "SELECTED_PEOPLE"; disclosed?: boolean } = {}
+      ): Promise<void> {
+        const { mode = "TEAM", disclosed = true } = params;
+        await seedTeamBooking({
+          disclosed,
+          booking: {
+            eventTypeId: null,
+            teamId: CHOSEN_TEAM_ID,
+            teamName: "Friends",
+            organizationId: null,
+            sharingOwnerUserId: ORGANIZER_ID,
+            sharingMode: mode,
+          },
+        });
+      }
+
+      it("names the chosen team under TEAM mode while the owner is an accepted member", async () => {
+        await seedAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getState()).access?.colleagues).toEqual({ route: "TEAM", teamName: "Friends" });
+      });
+
+      it("reports no colleagues when the session was not disclosed", async () => {
+        await seedAdHocBooking({ disclosed: false });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getState()).access?.colleagues).toBeNull();
+      });
+
+      it("reports no colleagues when the owner left the chosen team", async () => {
+        await seedAdHocBooking();
+
+        expect((await getState()).access?.colleagues).toBeNull();
+      });
+
+      it("reports no colleagues under SELECTED_PEOPLE, which needs an event type", async () => {
+        await seedAdHocBooking({ mode: "SELECTED_PEOPLE" });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+
+        expect((await getState()).access?.colleagues).toBeNull();
+      });
+
+      it("treats a member of the chosen team as a shared viewer, with access left out", async () => {
+        await seedAdHocBooking();
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: ORGANIZER_ID });
+        membershipLookup.addMember({ teamId: CHOSEN_TEAM_ID, userId: VIEWER_ID });
+
+        const state = await getState(VIEWER_ID);
+
+        expect(state.viewerRole).toBe("SHARED_VIEWER");
+        expect(state).not.toHaveProperty("access");
+      });
+    });
+
     it("leaves access out for a granted attendee", async () => {
       await seedTeamBooking();
       await repositories.bookingNotetakerRepository.createSharingGrant({

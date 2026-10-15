@@ -53,6 +53,8 @@ type InMemoryBookingSeed = Omit<
   teamName?: string | null;
   organizationId?: number | null;
   sharingOwnerUserId?: number | null;
+  /** Overrides the resolved mode, for one a real booking cannot reach, such as SELECTED_PEOPLE without an event type. */
+  sharingMode?: NotetakerSharingModeDto;
 };
 type InMemoryEventTypeSeed = Omit<
   NotetakerEventTypeContext,
@@ -338,6 +340,7 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     seed: InMemoryBookingSeed,
     sharing: NotetakerSharingTeam
   ): NotetakerSharingModeDto {
+    if (seed.sharingMode !== undefined) return seed.sharingMode;
     if (seed.eventTypeId !== null) {
       return this.store.eventTypeSettings.get(seed.eventTypeId)?.sharingMode ?? "HOSTS_ONLY";
     }
