@@ -8,7 +8,8 @@ export type NotetakerSharedResultDto = {
   bookingUid: string;
   title: string;
   startTime: string;
-  eventTypeTitle: string;
+  /** Null for an ad-hoc meeting, which has no event type. */
+  eventTypeTitle: string | null;
   teamName: string;
   hostName: string | null;
   route: NotetakerSharedResultRouteDto;
@@ -19,7 +20,7 @@ export const NotetakerSharedResultDtoSchema: z.ZodType<NotetakerSharedResultDto>
   bookingUid: z.string(),
   title: z.string(),
   startTime: z.string().datetime(),
-  eventTypeTitle: z.string(),
+  eventTypeTitle: z.string().nullable(),
   teamName: z.string(),
   hostName: z.string().nullable(),
   route: z.enum(["TEAM", "SELECTED_PEOPLE"]),

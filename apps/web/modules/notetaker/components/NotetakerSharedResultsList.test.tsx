@@ -118,6 +118,16 @@ describe("NotetakerSharedResultsList", () => {
     expect(rows[1]?.textContent).toContain("notetaker_shared_with_me_route_selected_people");
   });
 
+  it("shows the ad-hoc label in place of the event type of an ad-hoc meeting", () => {
+    renderList(
+      buildQuery({ data: { pages: [{ items: [buildItem({ eventTypeTitle: null })], nextCursor: null }] } })
+    );
+
+    const row = screen.getByTestId(ROW_ID);
+    expect(row.textContent).toContain("· notetaker_ad_hoc_badge");
+    expect(row.textContent).not.toContain("null");
+  });
+
   it("omits the host line when the host is unknown", () => {
     renderList(
       buildQuery({ data: { pages: [{ items: [buildItem({ hostName: null })], nextCursor: null }] } })

@@ -5,15 +5,15 @@ import type {
 } from "@calcom/lib/dto/NotetakerSharedResultDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
+import type { NotetakerSharingTeam } from "../lib/sharingScope";
+import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import type {
   IBookingNotetakerRepository,
+  NotetakerAdHocBookingWithResultsSessionRecord,
   NotetakerBookingWithResultsSessionRecord,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
-import type {
-  IEventTypeNotetakerSettingsRepository,
-  NotetakerSharedEventTypeRecord,
-} from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 
 const DEFAULT_LIMIT = 20;
 const MIN_LIMIT = 1;
@@ -29,10 +29,18 @@ type SharedEventType = {
 
 type BookingCursor = { startTime: Date; id: number };
 
+type SharingOwner = Pick<NotetakerSharingTeam, "sharingOwnerUserId"> & { teamId: number };
+
+type ListedRow =
+  | { source: "EVENT_TYPE"; row: NotetakerBookingWithResultsSessionRecord }
+  | { source: "AD_HOC"; row: NotetakerAdHocBookingWithResultsSessionRecord };
+
 export interface INotetakerSharedResultsServiceDeps {
   bookingNotetakerRepository: Pick<
     IBookingNotetakerRepository,
-    "findByEventTypeIdsIncludeResultsSession" | "findVerifiedEmailsByUserId"
+    | "findByEventTypeIdsIncludeResultsSession"
+    | "findAdHocBySharingTeamIdsIncludeResultsSession"
+    | "findVerifiedEmailsByUserId"
   >;
   eventTypeNotetakerSettingsRepository: Pick<
     IEventTypeNotetakerSettingsRepository,
@@ -59,15 +67,37 @@ function parseCursor(cursor: string): BookingCursor {
   return { startTime, id };
 }
 
-function formatCursor(row: NotetakerBookingWithResultsSessionRecord): string {
+function formatCursor(row: { startTime: Date; bookingId: number }): string {
   return `${row.startTime.toISOString()}${CURSOR_SEPARATOR}${row.bookingId}`;
+}
+
+// Both sources come from the booking table, so (startTime desc, id desc) orders them as one list.
+function compareNewestFirst(a: ListedRow, b: ListedRow): number {
+  const byStartTime = b.row.startTime.getTime() - a.row.startTime.getTime();
+  if (byStartTime !== 0) return byStartTime;
+  return b.row.bookingId - a.row.bookingId;
+}
+
+/**
+ * The creator owns an ad-hoc meeting, resolved as the booking context does for NotetakerAccessService.
+ * Null when there is no owner, which leaves the booking unshared.
+ */
+function adHocSharingOwner(row: NotetakerAdHocBookingWithResultsSessionRecord): SharingOwner | null {
+  const sharingTeam = deriveNotetakerSharingTeam({
+    eventTypeTeam: null,
+    eventTypeUserId: row.organizerUserId,
+    chosenTeam: { id: row.sharingTeamId, name: row.sharingTeamName ?? "" },
+  });
+  if (sharingTeam.teamId === null || sharingTeam.sharingOwnerUserId === null) return null;
+  return { teamId: sharingTeam.teamId, sharingOwnerUserId: sharingTeam.sharingOwnerUserId };
 }
 
 const EMPTY_PAGE: NotetakerSharedResultsDto = { items: [], nextCursor: null };
 
 /**
- * Lists the results a colleague can read through an event type's sharing mode. It applies the
- * same rules as the shared-viewer check of NotetakerAccessService, so every row it returns opens.
+ * Lists the results a colleague can read through an event type's sharing mode or through the team
+ * chosen on an ad-hoc meeting. It applies the same rules as the shared-viewer check of
+ * NotetakerAccessService, so every row it returns opens.
  */
 export class NotetakerSharedResultsService {
   constructor(private readonly deps: INotetakerSharedResultsServiceDeps) {}
@@ -85,36 +115,70 @@ export class NotetakerSharedResultsService {
     if (teamIds.length === 0) return { ...EMPTY_PAGE };
 
     const sharedEventTypes = await this.findSharedEventTypes(userId, teamIds);
-    if (sharedEventTypes.size === 0) return { ...EMPTY_PAGE };
-
-    const rows = await this.deps.bookingNotetakerRepository.findByEventTypeIdsIncludeResultsSession({
-      eventTypeIds: Array.from(sharedEventTypes.keys()),
-      cursor,
-      limit: limit + 1,
-    });
+    const { bookingNotetakerRepository } = this.deps;
+    // Each source is read to limit + 1 so the merged list still knows whether an older row remains.
+    const [eventTypeRows, adHocRows] = await Promise.all([
+      sharedEventTypes.size === 0
+        ? []
+        : bookingNotetakerRepository.findByEventTypeIdsIncludeResultsSession({
+            eventTypeIds: Array.from(sharedEventTypes.keys()),
+            cursor,
+            limit: limit + 1,
+          }),
+      bookingNotetakerRepository.findAdHocBySharingTeamIdsIncludeResultsSession({
+        teamIds,
+        cursor,
+        limit: limit + 1,
+      }),
+    ]);
+    const rows: ListedRow[] = [
+      ...eventTypeRows.map((row) => ({ source: "EVENT_TYPE" as const, row })),
+      ...adHocRows.map((row) => ({ source: "AD_HOC" as const, row })),
+    ].sort(compareNewestFirst);
     const page = rows.slice(0, limit);
     // Built before filtering: a page can lose every row to the filter while older rows remain.
-    const nextCursor = rows.length > limit ? formatCursor(page[page.length - 1]) : null;
+    const nextCursor = rows.length > limit ? formatCursor(page[page.length - 1].row) : null;
 
-    const ownEmails = await this.findOwnEmails(userId);
+    const adHocOwners: SharingOwner[] = [];
+    for (const listed of page) {
+      const owner = listed.source === "AD_HOC" ? adHocSharingOwner(listed.row) : null;
+      if (owner) adHocOwners.push(owner);
+    }
+    const [ownEmails, ownerIsMember] = await Promise.all([
+      this.findOwnEmails(userId),
+      this.buildOwnerMembershipCheck(adHocOwners),
+    ]);
+
     const items: NotetakerSharedResultDto[] = [];
-    for (const row of page) {
-      const sharedEventType = sharedEventTypes.get(row.eventTypeId);
+    for (const listed of page) {
+      const { row } = listed;
       const resultsSession = row.resultsSession;
-      if (!sharedEventType || !resultsSession) continue;
+      if (!resultsSession) continue;
       if (!resultsSession.colleagueSharingDisclosed || resultsSession.resultsDeletedAt !== null) continue;
       // Hosts and attendees reach their own bookings from the bookings list.
       if (row.organizerUserId === userId) continue;
       if (row.attendeeEmails.some((email) => ownEmails.has(normalizeEmail(email)))) continue;
 
+      let shared: { route: NotetakerSharedResultRouteDto; eventTypeTitle: string | null; teamName: string };
+      if (listed.source === "EVENT_TYPE") {
+        const sharedEventType = sharedEventTypes.get(listed.row.eventTypeId);
+        if (!sharedEventType) continue;
+        shared = sharedEventType;
+      } else {
+        // A deleted team leaves the booking in HOSTS_ONLY, and an owner who left the team takes the sharing along.
+        const owner = adHocSharingOwner(listed.row);
+        if (!owner || listed.row.sharingTeamName === null || !ownerIsMember(owner)) continue;
+        shared = { route: "TEAM", eventTypeTitle: null, teamName: listed.row.sharingTeamName };
+      }
+
       items.push({
         bookingUid: row.bookingUid,
         title: row.title,
         startTime: row.startTime.toISOString(),
-        eventTypeTitle: sharedEventType.eventTypeTitle,
-        teamName: sharedEventType.teamName,
+        eventTypeTitle: shared.eventTypeTitle,
+        teamName: shared.teamName,
         hostName: row.organizerName,
-        route: sharedEventType.route,
+        route: shared.route,
         summaryStatus: resultsSession.summaryStatus,
       });
     }
@@ -165,12 +229,12 @@ export class NotetakerSharedResultsService {
   }
 
   /**
-   * A personal event type shares only while its owner is an accepted member of the chosen team.
-   * Same rule as resolveNotetakerSharingScope, asked once per team instead of once per event type.
+   * A personal event type or an ad-hoc meeting shares only while its owner is an accepted member of
+   * the chosen team. Same rule as resolveNotetakerSharingScope, asked once per team instead of once per row.
    */
   private async buildOwnerMembershipCheck(
-    eventTypes: NotetakerSharedEventTypeRecord[]
-  ): Promise<(eventType: NotetakerSharedEventTypeRecord) => boolean> {
+    eventTypes: SharingOwner[]
+  ): Promise<(eventType: SharingOwner) => boolean> {
     const ownerIdsByTeamId = new Map<number, Set<number>>();
     for (const eventType of eventTypes) {
       if (eventType.sharingOwnerUserId === null) continue;
