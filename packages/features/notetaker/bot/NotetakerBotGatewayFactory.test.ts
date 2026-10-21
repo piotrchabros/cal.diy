@@ -8,10 +8,14 @@ import { getNotetakerConfig } from "../lib/config";
 import { FakeBotGateway } from "./FakeBotGateway";
 import type { NotetakerBotEventSink } from "./INotetakerBotGateway";
 import { NotetakerBotGatewayFactory } from "./NotetakerBotGatewayFactory";
+import { RecallBotGateway } from "./recall/RecallBotGateway";
+import { getRecallLivenessTimeoutSeconds } from "./recall/recallEventTranslation";
 import { SelfHostedBotGateway } from "./SelfHostedBotGateway";
 
 const BOT_URL = "https://bot.internal.example.com/v1";
 const BOT_SECRET = "s3cr3t-token-value";
+const RECALL_API_KEY = "recall-api-key-value";
+const RECALL_WEBHOOK_SECRET = "whsec_c2VjcmV0LWtleS1ieXRlcw==";
 
 function buildConfig(overrides: Partial<NotetakerConfig>): NotetakerConfig {
   return { ...getNotetakerConfig({}), ...overrides };
@@ -36,7 +40,7 @@ function buildJoinRequest(): NotetakerBotJoinRequest {
 }
 
 function createFactory(config: NotetakerConfig, eventSink: NotetakerBotEventSink = async () => {}) {
-  return new NotetakerBotGatewayFactory({ config, eventSink });
+  return new NotetakerBotGatewayFactory({ config, eventSink, findExternalRef: async () => null });
 }
 
 function captureError(run: () => unknown): unknown {
@@ -131,10 +135,35 @@ describe("NotetakerBotGatewayFactory", () => {
     expect(gateway).toBeInstanceOf(FakeBotGateway);
   });
 
-  it.each(["production", "test"])("throws for RECALL when NODE_ENV is %s", (nodeEnv) => {
+  it.each(["production", "test"])("builds the recall gateway when NODE_ENV is %s", (nodeEnv) => {
+    vi.stubEnv("NODE_ENV", nodeEnv);
+    const config = buildConfig({
+      botProvider: "RECALL",
+      recall: { apiKey: RECALL_API_KEY, region: "eu-central-1", webhookSecret: RECALL_WEBHOOK_SECRET },
+    });
+
+    const binding = createFactory(config).create();
+
+    expect(binding.provider).toBe("RECALL");
+    expect(binding.gateway).toBeInstanceOf(RecallBotGateway);
+    expect(binding.livenessTimeoutSeconds).toBe(getRecallLivenessTimeoutSeconds(config.limits));
+  });
+
+  it("leaves livenessTimeoutSeconds unset for heartbeat-driven providers", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const binding = createFactory(
+      buildConfig({ botProvider: "SELF_HOSTED", botUrl: BOT_URL, botSecret: BOT_SECRET })
+    ).create();
+
+    expect(binding.livenessTimeoutSeconds).toBeUndefined();
+  });
+
+  it.each(["production", "test"])("throws for RECALL without credentials when NODE_ENV is %s", (nodeEnv) => {
     vi.stubEnv("NODE_ENV", nodeEnv);
 
-    const error = captureError(() => createFactory(buildConfig({ botProvider: "RECALL" })).create());
+    const error = captureError(() =>
+      createFactory(buildConfig({ botProvider: "RECALL", recall: null })).create()
+    );
 
     expect(error).toBeInstanceOf(ErrorWithCode);
   });
@@ -160,7 +189,7 @@ describe("NotetakerBotGatewayFactory", () => {
     vi.stubEnv("NEXT_PUBLIC_IS_E2E", "");
     const configs: NotetakerConfig[] = [
       buildConfig({ botProvider: null, botUrl: BOT_URL, botSecret: BOT_SECRET }),
-      buildConfig({ botProvider: "RECALL", botUrl: BOT_URL, botSecret: BOT_SECRET }),
+      buildConfig({ botProvider: "RECALL", botUrl: BOT_URL, botSecret: BOT_SECRET, recall: null }),
       buildConfig({ botProvider: "FAKE", botUrl: BOT_URL, botSecret: BOT_SECRET }),
       buildConfig({ botProvider: "SELF_HOSTED", botUrl: null, botSecret: BOT_SECRET }),
       buildConfig({ botProvider: "SELF_HOSTED", botUrl: BOT_URL, botSecret: null }),

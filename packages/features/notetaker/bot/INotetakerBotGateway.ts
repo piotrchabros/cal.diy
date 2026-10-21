@@ -46,7 +46,9 @@ export function getNotetakerBotGatewayFailure(error: unknown): NotetakerBotGatew
 
 export type NotetakerBotGatewayBinding = {
   gateway: INotetakerBotGateway;
-  provider: Extract<NotetakerBotProviderDto, "SELF_HOSTED" | "FAKE">;
+  provider: NotetakerBotProviderDto;
+  /** Providers that push events instead of heartbeats; undefined uses NOTETAKER_HEARTBEAT_TIMEOUT_SECONDS. */
+  livenessTimeoutSeconds?: number;
 };
 
 export interface INotetakerBotGatewayResolver {

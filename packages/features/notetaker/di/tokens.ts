@@ -45,4 +45,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_SHARED_RESULTS_SERVICE_MODULE: Symbol("NotetakerSharedResultsServiceModule"),
   NOTETAKER_AD_HOC_SERVICE: Symbol("NotetakerAdHocService"),
   NOTETAKER_AD_HOC_SERVICE_MODULE: Symbol("NotetakerAdHocServiceModule"),
+  RECALL_API_CLIENT: Symbol("RecallApiClient"),
+  RECALL_API_CLIENT_MODULE: Symbol("RecallApiClientModule"),
+  RECALL_WEBHOOK_SERVICE: Symbol("RecallWebhookService"),
+  RECALL_WEBHOOK_SERVICE_MODULE: Symbol("RecallWebhookServiceModule"),
 };

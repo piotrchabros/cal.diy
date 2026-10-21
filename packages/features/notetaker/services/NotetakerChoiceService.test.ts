@@ -91,6 +91,7 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
     anthropicApiKey: null,
     fakeScenario: "happy",
     googleAccountEmail: null,
+    recall: null,
     ...overrides,
   };
 }

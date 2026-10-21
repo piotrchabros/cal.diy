@@ -16,6 +16,10 @@ type NotetakerFakeScenario =
   | "names_resolved"
   | "names_unavailable";
 
+const RECALL_REGIONS = ["us-east-1", "us-west-2", "eu-central-1", "ap-northeast-1"] as const;
+type RecallRegion = (typeof RECALL_REGIONS)[number];
+type NotetakerRecallConfig = { apiKey: string; region: RecallRegion; webhookSecret: string };
+
 type NotetakerConfig = {
   limits: {
     admissionTimeoutSeconds: number;
@@ -37,6 +41,8 @@ type NotetakerConfig = {
   fakeScenario: NotetakerFakeScenario;
   // null means unset: the app then never touches a calendar event for the notetaker
   googleAccountEmail: string | null;
+  // null means neither RECALL_API_KEY nor RECALL_WEBHOOK_VERIFICATION_SECRET is set
+  recall: NotetakerRecallConfig | null;
 };
 
 const DEFAULT_SUMMARY_MODEL = "claude-opus-5-5";
@@ -122,7 +128,16 @@ const botUrlSchema = z
   .optional()
   .transform((value) => value ?? null);
 
-const configSchema = z.object({
+const recallWebhookSecretSchema = z
+  .string()
+  .regex(/^whsec_[A-Za-z0-9+/=]+$/, "must be the whsec_ verification secret from the Recall dashboard")
+  .refine(
+    (value) => Buffer.from(value.slice("whsec_".length), "base64").length > 0,
+    "must contain a non-empty base64 key after whsec_"
+  )
+  .optional();
+
+const configObjectSchema = z.object({
   NOTETAKER_ADMISSION_TIMEOUT_SECONDS: limitSchema(600),
   NOTETAKER_NO_SHOW_TIMEOUT_SECONDS: limitSchema(900),
   NOTETAKER_ALONE_TIMEOUT_SECONDS: limitSchema(120),
@@ -154,6 +169,23 @@ const configSchema = z.object({
     .email("must be an email address")
     .optional()
     .transform((value) => value?.toLowerCase() ?? null),
+  RECALL_API_KEY: z.string().optional(),
+  RECALL_REGION: z
+    .enum(RECALL_REGIONS, { errorMap: () => ({ message: `must be one of ${RECALL_REGIONS.join(", ")}` }) })
+    .default("eu-central-1"),
+  RECALL_WEBHOOK_VERIFICATION_SECRET: recallWebhookSecretSchema,
+});
+
+// Half a Recall setup is unusable, so it is reported at startup instead of surfacing as failed joins.
+const configSchema = configObjectSchema.superRefine((value, ctx) => {
+  const hasKey = value.RECALL_API_KEY !== undefined;
+  const hasSecret = value.RECALL_WEBHOOK_VERIFICATION_SECRET !== undefined;
+  if (hasKey === hasSecret) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: [hasKey ? "RECALL_WEBHOOK_VERIFICATION_SECRET" : "RECALL_API_KEY"],
+    message: "must be set together with RECALL_API_KEY and RECALL_WEBHOOK_VERIFICATION_SECRET",
+  });
 });
 
 const getDefaultBotProvider = (env: NodeJS.ProcessEnv): NotetakerBotProviderDto | null => {
@@ -161,7 +193,7 @@ const getDefaultBotProvider = (env: NodeJS.ProcessEnv): NotetakerBotProviderDto 
   return "FAKE";
 };
 
-const CONFIG_KEYS = Object.keys(configSchema.shape) as (keyof typeof configSchema.shape)[];
+const CONFIG_KEYS = Object.keys(configObjectSchema.shape) as (keyof typeof configObjectSchema.shape)[];
 
 function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConfig {
   const raw: Record<string, string | undefined> = {};
@@ -195,6 +227,14 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     fakeScenario: parsed.NOTETAKER_FAKE_SCENARIO,
     googleAccountEmail: parsed.NOTETAKER_GOOGLE_ACCOUNT_EMAIL,
+    recall:
+      parsed.RECALL_API_KEY !== undefined && parsed.RECALL_WEBHOOK_VERIFICATION_SECRET !== undefined
+        ? {
+            apiKey: parsed.RECALL_API_KEY,
+            region: parsed.RECALL_REGION,
+            webhookSecret: parsed.RECALL_WEBHOOK_VERIFICATION_SECRET,
+          }
+        : null,
   };
 }
 
@@ -204,9 +244,9 @@ function isNotetakerBotProviderUsable(
 ): boolean {
   switch (config.botProvider) {
     case null:
-    // Recall is not built in v1, so no factory can produce it in any environment.
-    case "RECALL":
       return false;
+    case "RECALL":
+      return config.recall !== null;
     case "FAKE":
       return env.NODE_ENV !== "production" || Boolean(trimmedOrUndefined(env.NEXT_PUBLIC_IS_E2E));
     case "SELF_HOSTED":
@@ -228,10 +268,17 @@ function getNotetakerSummaryGeneratorKind(
 
 const NOTETAKER_SWEEP_BATCH_SIZE = 200;
 
-export type { NotetakerConfig, NotetakerFakeScenario, NotetakerSummaryGeneratorKind };
+export type {
+  NotetakerConfig,
+  NotetakerFakeScenario,
+  NotetakerRecallConfig,
+  NotetakerSummaryGeneratorKind,
+  RecallRegion,
+};
 export {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
+  RECALL_REGIONS,
 };

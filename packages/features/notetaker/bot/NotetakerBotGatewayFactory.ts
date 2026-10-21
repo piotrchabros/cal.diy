@@ -1,24 +1,24 @@
-import type { NotetakerBotProviderDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { FakeBotGateway } from "./FakeBotGateway";
-import type { INotetakerBotGateway, NotetakerBotEventSink } from "./INotetakerBotGateway";
+import type { NotetakerBotEventSink, NotetakerBotGatewayBinding } from "./INotetakerBotGateway";
+import { RecallApiClient } from "./recall/RecallApiClient";
+import { RecallBotGateway } from "./recall/RecallBotGateway";
+import { getRecallLivenessTimeoutSeconds } from "./recall/recallEventTranslation";
 import { SelfHostedBotGateway } from "./SelfHostedBotGateway";
 
 export interface INotetakerBotGatewayFactoryDeps {
   config: NotetakerConfig;
   eventSink: NotetakerBotEventSink;
+  findExternalRef: (sessionId: string) => Promise<string | null>;
 }
 
 export class NotetakerBotGatewayFactory {
   constructor(private readonly deps: INotetakerBotGatewayFactoryDeps) {}
 
-  create(): {
-    gateway: INotetakerBotGateway;
-    provider: Extract<NotetakerBotProviderDto, "SELF_HOSTED" | "FAKE">;
-  } {
-    const { config, eventSink } = this.deps;
+  create(): NotetakerBotGatewayBinding {
+    const { config, eventSink, findExternalRef } = this.deps;
 
     if (config.botProvider === null) {
       throw ErrorWithCode.Factory.InternalServerError(
@@ -27,7 +27,17 @@ export class NotetakerBotGatewayFactory {
     }
 
     if (config.botProvider === "RECALL") {
-      throw ErrorWithCode.Factory.InternalServerError("Notetaker bot provider recall is not built in v1");
+      if (config.recall === null) {
+        throw ErrorWithCode.Factory.InternalServerError(
+          "Notetaker recall provider needs RECALL_API_KEY and RECALL_WEBHOOK_VERIFICATION_SECRET"
+        );
+      }
+      const { apiKey, region } = config.recall;
+      return {
+        gateway: new RecallBotGateway({ client: new RecallApiClient({ apiKey, region }), findExternalRef }),
+        provider: "RECALL",
+        livenessTimeoutSeconds: getRecallLivenessTimeoutSeconds(config.limits),
+      };
     }
 
     if (config.botProvider === "SELF_HOSTED") {
