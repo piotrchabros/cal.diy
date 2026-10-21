@@ -28,13 +28,21 @@ type Props = {
   orgBannerUrl: null;
 };
 
-async function processReschedule({
+export type BookingPageRescheduleTarget = {
+  eventData: { id: number; allowReschedulingCancelledBookings?: boolean | null };
+  slug: string;
+  booking?: GetBookingType | null;
+  rescheduleUid: string | null;
+  bookingUid: string | null;
+};
+
+export async function processReschedule({
   props,
   rescheduleUid,
   session,
   allowRescheduleForCancelledBooking,
 }: {
-  props: Props;
+  props: BookingPageRescheduleTarget;
   session: Session | null;
   rescheduleUid: string | string[] | undefined;
   allowRescheduleForCancelledBooking?: boolean;
@@ -59,7 +67,7 @@ async function processReschedule({
     (booking?.eventTypeId === props.eventData?.id &&
       (booking.status !== BookingStatus.CANCELLED ||
         allowRescheduleForCancelledBooking ||
-        !!(props.eventData as any)?.allowReschedulingCancelledBookings))
+        !!props.eventData.allowReschedulingCancelledBookings))
   ) {
     props.booking = booking;
     props.rescheduleUid = Array.isArray(rescheduleUid) ? rescheduleUid[0] : rescheduleUid;
@@ -87,12 +95,12 @@ async function processReschedule({
   };
 }
 
-async function processSeatedEvent({
+export async function processSeatedEvent({
   props,
   bookingUid,
   allowRescheduleForCancelledBooking,
 }: {
-  props: Props;
+  props: BookingPageRescheduleTarget;
   bookingUid: string | string[] | undefined;
   allowRescheduleForCancelledBooking?: boolean;
 }) {

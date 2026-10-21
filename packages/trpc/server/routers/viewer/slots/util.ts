@@ -72,6 +72,7 @@ import type { CredentialForCalendarService } from "@calcom/types/Credential";
 import { TRPCError } from "@trpc/server";
 import type { Logger } from "tslog";
 import { v4 as uuid } from "uuid";
+import { getEventTypeIdFromSlugs } from "./getEventTypeIdFromSlugs";
 import type { TGetScheduleInputSchema } from "./getSchedule.schema";
 import type { GetScheduleOptions } from "./types";
 
@@ -355,6 +356,7 @@ export class AvailableSlotsService {
   private async getEventTypeId({
     slug,
     eventTypeSlug,
+    isTeamEvent,
     organizationDetails,
   }: {
     slug?: string;
@@ -364,16 +366,18 @@ export class AvailableSlotsService {
   }) {
     if (!eventTypeSlug || !slug) return null;
 
-    const userId = await this.getUserIdFromUsername(
-      slug,
-      organizationDetails ?? { currentOrgDomain: null, isValidOrgDomain: false }
+    const orgDetails = organizationDetails ?? { currentOrgDomain: null, isValidOrgDomain: false };
+    const eventTypeId = await getEventTypeIdFromSlugs(
+      {
+        eventTypeRepo: this.dependencies.eventTypeRepo,
+        getUserIdByUsername: (username) => this.getUserIdFromUsername(username, orgDetails),
+      },
+      { ownerSlug: slug, eventTypeSlug, isTeamEvent }
     );
-    const eventTypeRepo = this.dependencies.eventTypeRepo;
-    const eventType = await eventTypeRepo.findFirstEventTypeId({ slug: eventTypeSlug, userId });
-    if (!eventType) {
+    if (!eventTypeId) {
       throw new TRPCError({ code: "NOT_FOUND" });
     }
-    return eventType?.id;
+    return eventTypeId;
   }
 
   private async _getBusyTimesFromLimitsForUsers(

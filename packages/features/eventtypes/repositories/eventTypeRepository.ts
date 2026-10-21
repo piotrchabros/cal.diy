@@ -1140,6 +1140,27 @@ export class EventTypeRepository implements IEventTypesRepository {
     });
   }
 
+  async findFirstIdByTeamSlugAndSlug({
+    teamSlug,
+    slug,
+  }: {
+    teamSlug: string;
+    slug: string;
+  }): Promise<{ id: number } | null> {
+    return this.prismaClient.eventType.findFirst({
+      where: {
+        slug,
+        team: {
+          slug: teamSlug,
+          parentId: null,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
   async findByIdIncludeHostsAndTeam({ id }: { id: number }) {
     const eventType = await this.prismaClient.eventType.findUnique({
       where: {
