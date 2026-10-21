@@ -3181,6 +3181,7 @@
   "low": "low",
   "medium": "medium",
   "high": "high",
+  "highest": "highest",
   "Highest": "highest",
   "send_booker_to": "Send Booker to",
   "set_priority": "Set priority",
@@ -4150,6 +4151,8 @@
   "restriction_schedule_not_found_error": "Restriction schedule not found",
   "converted_image_size_limit_exceed": "Image size limit exceeded, please use a smaller image preferably in JPEG format",
   "add_group": "Add Group",
+  "host_group_name_placeholder": "Group {{number}}",
+  "remove_host_group": "Remove group",
   "routing_funnel": "Routing funnel",
   "routing_funnel_total_submissions": "Total submissions",
   "routing_funnel_successful_routings": "Successful routings",
@@ -5047,6 +5050,6 @@
   "notetaker_sharing_error_no_team": "You are not a member of any team, so there is nobody to share with.",
   "notetaker_activity_sharing_team_detail": "Shared with the team {{teamName}}",
   "notetaker_transcript_and_summary": "Transcript and summary",
-  "team_event_type_creator_is_host": "You will be the host of this event type. Other team members cannot be added as hosts yet.",
+  "team_event_type_creator_is_host": "You will be the host of this event type. You can add other team members as hosts later in the Assignment tab.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

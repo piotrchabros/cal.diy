@@ -178,6 +178,7 @@ export type FormValues = {
   forwardParamsSuccessRedirect: boolean | null;
   secondaryEmailId?: number;
   isRRWeightsEnabled: boolean;
+  includeNoShowInRRCalculation?: boolean;
   maxLeadThreshold?: number;
   restrictionScheduleId: number | null;
   useBookerTimezone: boolean;

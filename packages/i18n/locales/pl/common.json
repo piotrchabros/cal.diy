@@ -910,7 +910,7 @@
   "quick_video_meeting": "Szybkie spotkanie wideo.",
   "scheduling_type": "Rodzaj harmonogramu",
   "preview_team": "Podgląd zespołu",
-  "collective": "Zbiór",
+  "collective": "Zbiorowe",
   "collective_description": "Zaplanuj spotkania, gdy wszyscy wybrani członkowie zespołu są dostępni.",
   "duration": "Czas trwania",
   "available_durations": "Dostępne czasy trwania",
@@ -3093,6 +3093,7 @@
   "low": "niski",
   "medium": "średni",
   "high": "wysoki",
+  "highest": "najwyższy",
   "Highest": "najwyższy",
   "send_booker_to": "Wyślij rezerwującego do",
   "set_priority": "Ustaw priorytet",
@@ -4045,6 +4046,8 @@
   "restriction_schedule_not_found_error": "Nie znaleziono harmonogramu ograniczeń",
   "converted_image_size_limit_exceed": "Przekroczono limit rozmiaru obrazu, użyj mniejszego obrazu, najlepiej w formacie JPEG",
   "add_group": "Dodaj grupę",
+  "host_group_name_placeholder": "Grupa {{number}}",
+  "remove_host_group": "Usuń grupę",
   "routing_funnel": "Lejek kierowania",
   "routing_funnel_total_submissions": "Łączna liczba zgłoszeń",
   "routing_funnel_successful_routings": "Pomyślne przekierowania",
@@ -4582,5 +4585,6 @@
   "last_6_months": "Ostatnie 6 miesięcy",
   "last_12_months": "Ostatnie 12 miesięcy",
   "calendar_events_disabled_video_limitation": "Gdy wydarzenia w kalendarzu są wyłączone, nie można generować linków do spotkań w aplikacjach, w których generowanie linku jest powiązane z utworzeniem wydarzenia w kalendarzu, np. Google Meet czy Microsoft Teams. Inne aplikacje wideo, takie jak Cal Video, będą nadal działać.",
+  "team_event_type_creator_is_host": "Będziesz gospodarzem tego typu wydarzenia. Pozostałych członków zespołu możesz dodać jako gospodarzy później w zakładce Przypisanie.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
