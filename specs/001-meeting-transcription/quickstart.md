@@ -37,6 +37,28 @@ This guide proves the notetaker feature works end to end without a real meeting.
 
 `NOTETAKER_BOT_URL`, `NOTETAKER_SUMMARY_MODEL` and the bot-side `SONIOX_API_KEY` are not needed for a fake-bot run. The default limits are fine; lower them only if you want a faster timeout check.
 
+## Recall.ai provider
+
+`NOTETAKER_BOT_PROVIDER=recall` sends Recall.ai bots instead of the own bot. The feature reports disabled in production unless both `RECALL_API_KEY` and `RECALL_WEBHOOK_VERIFICATION_SECRET` are set; setting only one is a config error.
+
+| Variable | Value | Notes |
+|---|---|---|
+| `NOTETAKER_BOT_PROVIDER` | `recall` | |
+| `RECALL_API_KEY` | the bare API key | Sent as the `Authorization` header exactly as configured. |
+| `RECALL_REGION` | `eu-central-1` (default) | Must match the region of the Recall workspace. |
+| `RECALL_WEBHOOK_VERIFICATION_SECRET` | `whsec_...` | The workspace verification secret from the Recall dashboard. |
+| `NOTETAKER_JOIN_LEAD_SECONDS` | `900` recommended | Recall wants bots scheduled more than 10 minutes ahead, so the default of 120 is too short. |
+
+**Webhook.** In the Recall dashboard add an endpoint at `https://<NEXT_PUBLIC_WEBAPP_URL>/api/notetaker/recall/webhook` subscribed to: `bot.joining_call`, `bot.in_waiting_room`, `bot.in_call_not_recording`, `bot.recording_permission_allowed`, `bot.recording_permission_denied`, `bot.in_call_recording`, `bot.call_ended`, `bot.done`, `bot.fatal`, `recording.done`, `recording.failed`, `transcript.done`, `transcript.failed`. Requests are verified with the workspace secret; anything unsigned or stale gets 401.
+
+**Lifecycle.** A bot status webhook only triggers a sync: the app calls Retrieve Bot and rebuilds the `NotetakerBotEvent`s from the bot's status history, so duplicate and out-of-order deliveries are harmless. On `recording.done` it creates an async transcript (`recallai_async`). On `transcript.done` it downloads the transcript, ingests the passages and then ends the session, which moves it to finalize and the summary. Recall sends no heartbeats, so the watchdog uses a longer liveness timeout for this provider.
+
+**Media and cost.** Recall stores the recording and transcript. Set the retention period in the Recall dashboard; the app does not delete Recall media. Recall bills per bot hour.
+
+**Scheduling.** Bookings drive scheduling: the existing sweep dispatches a bot for a booking when the host or event type has opted in. Meetings not booked through cal.diy are not picked up. Recall Calendar V2 is the documented next step for those; it needs a Google OAuth client, an explicit opt-in rule and a callback route, and was deliberately deferred.
+
+**Google Meet admission.** Recall bots join anonymously and knock. The calendar guest invite (`NOTETAKER_GOOGLE_ACCOUNT_EMAIL`) only applies to `SELF_HOSTED`, so the host gets the existing admit prompt instead.
+
 ## Fake bot scenarios
 
 `NOTETAKER_FAKE_SCENARIO` selects the event script `FakeBotGateway` emits. End states follow the session state machine in [data-model.md](./data-model.md).

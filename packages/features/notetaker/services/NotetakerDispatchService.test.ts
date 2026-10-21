@@ -2153,6 +2153,44 @@ describe("NotetakerDispatchService", () => {
         expect(tasker.finalizeCalls).toEqual([]);
       });
 
+      describe("with a binding that has its own liveness timeout", () => {
+        const LIVENESS_SECONDS = 3600;
+        const withLiveness = (gateway: INotetakerBotGateway): NotetakerBotGatewayBinding => ({
+          ...fakeBinding(gateway),
+          livenessTimeoutSeconds: LIVENESS_SECONDS,
+        });
+
+        it("leaves a TRANSCRIBING session alone past the heartbeat timeout", async () => {
+          const bookingId = await seedDispatched();
+          const sessionId = await seedTranscribing(bookingId);
+          const snapshot = await repositories.sessionRepository.findById(sessionId);
+          vi.setSystemTime(offsetFromNow(10 * 60_000));
+          const { gateway, stopRequests } = stopRecorder();
+
+          await buildService(withLiveness(gateway)).dispatchDue();
+
+          expect(stopRequests).toEqual([]);
+          expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
+          expect(tasker.finalizeCalls).toEqual([]);
+        });
+
+        it("interrupts a TRANSCRIBING session once the liveness timeout has passed", async () => {
+          const bookingId = await seedDispatched();
+          const sessionId = await seedTranscribing(bookingId);
+          const at = offsetFromNow((LIVENESS_SECONDS + 1) * 1000);
+          vi.setSystemTime(at);
+
+          await buildService(withLiveness(stopRecorder().gateway)).dispatchDue();
+
+          expect(repositories.store.sessions.get(sessionId)).toMatchObject({
+            status: "PROCESSING",
+            outcomeReason: "INTERRUPTED",
+            endedAt: at,
+          });
+          expect(tasker.finalizeCalls).toEqual([{ payload: { sessionId }, options: undefined }]);
+        });
+      });
+
       it("counts from the last heartbeat when it is later than the dispatch", async () => {
         const bookingId = await seedDispatched();
         const lastHeartbeatAt = offsetFromNow(60_000);
@@ -2330,6 +2368,19 @@ describe("NotetakerDispatchService", () => {
         expect(tasker.finalizeCalls).toEqual([finalizeKey(sessionId)]);
         expect(repositories.store.sessions.get(sessionId)).toEqual(snapshot);
         expect(stopRequests).toEqual([]);
+      });
+
+      it("keeps the heartbeat timeout for a binding with its own liveness timeout", async () => {
+        const bookingId = await seedDispatched();
+        const sessionId = await seedSessionWith(bookingId, ENDED);
+        vi.setSystemTime(AT_TIMEOUT);
+
+        await buildService({
+          ...fakeBinding(stopRecorder().gateway),
+          livenessTimeoutSeconds: 3600,
+        }).dispatchDue();
+
+        expect(tasker.finalizeCalls).toEqual([finalizeKey(sessionId)]);
       });
 
       it("enqueues nothing one second inside the timeout", async () => {

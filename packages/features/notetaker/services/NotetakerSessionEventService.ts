@@ -27,8 +27,8 @@ function fromStatusesFor(target: NotetakerSessionStatusDto): NotetakerSessionSta
   return ACTIVE.filter((status) => canTransition(status, target));
 }
 
-const UNKNOWN_SPEAKER_KEY_PREFIX = "unknown:";
-const PARTICIPANT_SPEAKER_KEY_PREFIX = "participant:";
+export const UNKNOWN_SPEAKER_KEY_PREFIX = "unknown:";
+export const PARTICIPANT_SPEAKER_KEY_PREFIX = "participant:";
 
 export type NotetakerSessionEventResult = "ACCEPTED" | "DUPLICATE" | "GONE";
 

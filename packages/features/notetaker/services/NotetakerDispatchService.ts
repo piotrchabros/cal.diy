@@ -278,6 +278,8 @@ export class NotetakerDispatchService {
     const { sessionRepository, notetakerTasker, config, logger } = this.deps;
     const { id, bookingId } = session;
     const timeoutMs = config.limits.heartbeatTimeoutSeconds * 1000;
+    const livenessTimeoutMs =
+      (binding.livenessTimeoutSeconds ?? config.limits.heartbeatTimeoutSeconds) * 1000;
     const nowMs = now.getTime();
 
     if (session.status === "PROCESSING") {
@@ -311,7 +313,7 @@ export class NotetakerDispatchService {
     }
 
     const since = Math.max(session.dispatchedAt.getTime(), session.lastHeartbeatAt?.getTime() ?? 0);
-    if (nowMs - since < timeoutMs) return;
+    if (nowMs - since < livenessTimeoutMs) return;
 
     // The wire contract has no reason for a lost bot; this one makes a bot that is only cut off
     // from us leave without posting anything.

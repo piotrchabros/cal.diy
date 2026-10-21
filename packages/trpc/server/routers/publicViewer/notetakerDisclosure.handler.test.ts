@@ -48,6 +48,7 @@ function buildConfig(): NotetakerConfig {
     anthropicApiKey: null,
     fakeScenario: "happy",
     googleAccountEmail: null,
+    recall: null,
   };
 }
 

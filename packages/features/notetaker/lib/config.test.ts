@@ -278,11 +278,23 @@ describe("isNotetakerBotProviderUsable", () => {
     expect(isNotetakerBotProviderUsable(getNotetakerConfig(e), e)).toBe(true);
   });
 
-  it("is false for RECALL in every environment", () => {
+  it("is false for RECALL without the recall credentials", () => {
     const prod = env({ ...production, NOTETAKER_BOT_PROVIDER: "recall" });
     expect(isNotetakerBotProviderUsable(getNotetakerConfig(prod), prod)).toBe(false);
     const dev = env({ NOTETAKER_BOT_PROVIDER: "recall" });
     expect(isNotetakerBotProviderUsable(getNotetakerConfig(dev), dev)).toBe(false);
+  });
+
+  it("is true for RECALL in every environment when the recall credentials are set", () => {
+    const recall = {
+      NOTETAKER_BOT_PROVIDER: "recall",
+      RECALL_API_KEY: "key-123",
+      RECALL_WEBHOOK_VERIFICATION_SECRET: "whsec_c2VjcmV0LWtleS1ieXRlcw==",
+    };
+    const prod = env({ ...production, ...recall });
+    expect(isNotetakerBotProviderUsable(getNotetakerConfig(prod), prod)).toBe(true);
+    const dev = env(recall);
+    expect(isNotetakerBotProviderUsable(getNotetakerConfig(dev), dev)).toBe(true);
   });
 
   it("is true for SELF_HOSTED with a url and secret", () => {
@@ -364,5 +376,61 @@ describe("getNotetakerSummaryGeneratorKind", () => {
     expect(getNotetakerSummaryGeneratorKind({ ...getNotetakerConfig(env()), anthropicApiKey: null })).toBe(
       "DISABLED"
     );
+  });
+});
+
+describe("getNotetakerConfig recall", () => {
+  const secret = "whsec_c2VjcmV0LWtleS1ieXRlcw==";
+
+  it("is null when nothing is set", () => {
+    expect(getNotetakerConfig(env()).recall).toBeNull();
+  });
+
+  it("parses the key, region and secret", () => {
+    const config = getNotetakerConfig(
+      env({
+        RECALL_API_KEY: "key-123",
+        RECALL_REGION: "us-west-2",
+        RECALL_WEBHOOK_VERIFICATION_SECRET: secret,
+      })
+    );
+    expect(config.recall).toEqual({ apiKey: "key-123", region: "us-west-2", webhookSecret: secret });
+  });
+
+  it("defaults the region to eu-central-1", () => {
+    const config = getNotetakerConfig(
+      env({ RECALL_API_KEY: "key-123", RECALL_WEBHOOK_VERIFICATION_SECRET: secret })
+    );
+    expect(config.recall?.region).toBe("eu-central-1");
+  });
+
+  it("rejects an unknown region", () => {
+    expectConfigError({ RECALL_REGION: "mars-1" }, "RECALL_REGION");
+  });
+
+  it("rejects a secret without the whsec_ prefix", () => {
+    expectConfigError(
+      { RECALL_API_KEY: "key-123", RECALL_WEBHOOK_VERIFICATION_SECRET: "c2VjcmV0" },
+      "RECALL_WEBHOOK_VERIFICATION_SECRET"
+    );
+  });
+
+  it("rejects only one of the key and secret", () => {
+    expectConfigError(
+      { RECALL_API_KEY: "key-123" },
+      "RECALL_WEBHOOK_VERIFICATION_SECRET must be set together"
+    );
+    expectConfigError({ RECALL_WEBHOOK_VERIFICATION_SECRET: secret }, "RECALL_API_KEY must be set together");
+  });
+
+  it("never puts the key or secret value in the error message", () => {
+    const error = getError(() =>
+      getNotetakerConfig(
+        env({ RECALL_API_KEY: "super-secret-key", RECALL_WEBHOOK_VERIFICATION_SECRET: "bad-secret-value" })
+      )
+    ) as ErrorWithCode;
+    expect(error).toBeInstanceOf(ErrorWithCode);
+    expect(error.message).not.toContain("super-secret-key");
+    expect(error.message).not.toContain("bad-secret-value");
   });
 });
