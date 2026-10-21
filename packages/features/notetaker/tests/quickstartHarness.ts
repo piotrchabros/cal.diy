@@ -140,6 +140,14 @@ export function applyQuickstartEnv(): void {
   delete process.env.NOTETAKER_ENABLED_PLATFORMS;
 }
 
+// Spreading ProcessEnv into a literal with an extra key fails type-checking, because the env
+// typings declare PAYMENT_FEE_PERCENTAGE as a number, which breaks ProcessEnv's string index signature.
+function withFakeBotProvider(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const fakeProviderEnv: NodeJS.ProcessEnv = { ...env };
+  fakeProviderEnv.NOTETAKER_BOT_PROVIDER = "fake";
+  return fakeProviderEnv;
+}
+
 export async function createQuickstartHarness(label: string): Promise<QuickstartHarness> {
   assertQuickstartEnvironment();
 
@@ -295,7 +303,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
         dispatchService: dispatch,
         userRepository,
         // The stock config has no bot provider, and the service refuses to dispatch without a usable one.
-        config: getNotetakerConfig({ ...testEnv, NOTETAKER_BOT_PROVIDER: "fake" }),
+        config: getNotetakerConfig(withFakeBotProvider(testEnv)),
         logger: silentLogger,
       });
     },
