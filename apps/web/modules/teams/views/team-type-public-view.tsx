@@ -1,8 +1,8 @@
 "use client";
 
 import { getBookerWrapperClasses } from "@calcom/features/bookings/Booker/utils/getBookerWrapperClasses";
-import { getMultipleDurationValue } from "@calcom/features/bookings/lib/get-booking";
 import { BookerWebWrapper as Booker } from "@calcom/web/modules/bookings/components/BookerWebWrapper";
+import { getMultipleDurationValue } from "@calcom/web/modules/users/views/users-type-public-view";
 import BookingPageErrorBoundary from "@components/error/BookingPageErrorBoundary";
 import type { inferSSRProps } from "@lib/types/inferSSRProps";
 import type { getServerSideProps } from "@server/lib/team/[slug]/[type]/getServerSideProps";
