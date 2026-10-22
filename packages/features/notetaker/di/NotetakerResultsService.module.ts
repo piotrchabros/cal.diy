@@ -3,6 +3,7 @@ import { moduleLoader as userRepositoryModuleLoader } from "@calcom/features/di/
 import { moduleLoader as loggerServiceModuleLoader } from "@calcom/features/di/shared/services/logger.service";
 import { NotetakerResultsService } from "@calcom/features/notetaker/services/NotetakerResultsService";
 import { moduleLoader as accessServiceModuleLoader } from "./NotetakerAccessService.module";
+import { moduleLoader as pdfRendererModuleLoader } from "./NotetakerPdfRenderer.module";
 import { moduleLoader as recordingMediaGatewayResolverModuleLoader } from "./NotetakerRecordingMediaGateway.module";
 import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as eventTypeNotetakerSettingsRepositoryModuleLoader } from "./PrismaEventTypeNotetakerSettingsRepository.module";
@@ -33,6 +34,7 @@ const loadModule = bindModuleToClassOnToken({
     userRepository: userRepositoryModuleLoader,
     notetakerTasker: notetakerTaskerModuleLoader,
     recordingMediaGatewayResolver: recordingMediaGatewayResolverModuleLoader,
+    pdfRenderer: pdfRendererModuleLoader,
     logger: loggerServiceModuleLoader,
   },
 });

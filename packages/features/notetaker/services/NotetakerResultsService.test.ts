@@ -34,11 +34,17 @@ import type {
   NotetakerPassageRecord,
   NotetakerTranscriptRecord,
 } from "../repositories/interfaces/INotetakerTranscriptRepository";
+import { FAKE_PDF_CONTENT, FakeNotetakerPdfRenderer } from "../tests/FakeNotetakerPdfRenderer";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE, NotetakerAccessService } from "./NotetakerAccessService";
-import { NOTETAKER_ACTIVITY_LIMIT, NotetakerResultsService } from "./NotetakerResultsService";
+import {
+  NOTETAKER_ACTIVITY_LIMIT,
+  NOTETAKER_PDF_MAX_BYTES,
+  NOTETAKER_PDF_MAX_PASSAGES,
+  NotetakerResultsService,
+} from "./NotetakerResultsService";
 
 vi.mock("@calcom/i18n/server", () => ({
   getTranslation: vi.fn(
@@ -216,6 +222,7 @@ describe("NotetakerResultsService", () => {
   let tasker: RecordingNotetakerTasker;
   let logger: ReturnType<typeof createLogger>;
   let mediaGatewayResolver: FakeRecordingMediaGatewayResolver;
+  let pdfRenderer: FakeNotetakerPdfRenderer;
 
   beforeEach(() => {
     vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
@@ -234,6 +241,7 @@ describe("NotetakerResultsService", () => {
     tasker = new RecordingNotetakerTasker();
     logger = createLogger();
     mediaGatewayResolver = new FakeRecordingMediaGatewayResolver();
+    pdfRenderer = new FakeNotetakerPdfRenderer();
     const {
       bookingNotetakerRepository,
       sessionRepository,
@@ -262,6 +270,7 @@ describe("NotetakerResultsService", () => {
       userRepository,
       notetakerTasker: tasker,
       recordingMediaGatewayResolver: mediaGatewayResolver,
+      pdfRenderer,
       logger,
     });
     repositories.store.addBooking(buildBooking());
@@ -1619,6 +1628,84 @@ describe("NotetakerResultsService", () => {
       expect(result.content).toContain("passage 0");
       expect(activitiesOf()).toHaveLength(1);
       expect(activitiesOf()[0]).toMatchObject({ action: "EXPORTED", detail: { format: "html" } });
+    });
+
+    it("renders the PDF export as base64 with its own mime type, filename and activity detail", async () => {
+      await seedFinishedSession({ passages: buildPassages(2) });
+
+      const result = await service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: ORGANIZER_ID });
+
+      expect(result.mimeType).toBe("application/pdf");
+      expect(result.encoding).toBe("base64");
+      expect(result.filename).toBe("planning-call-2026-10-12.pdf");
+      expect(Buffer.from(result.content, "base64").toString("utf8")).toBe(FAKE_PDF_CONTENT);
+      expect(activitiesOf()).toHaveLength(1);
+      expect(activitiesOf()[0]).toMatchObject({ action: "EXPORTED", detail: { format: "pdf" } });
+    });
+
+    it("hands the PDF renderer the same document the HTML export is built from", async () => {
+      await seedFinishedSession({ passages: buildPassages(2) });
+
+      await service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: ORGANIZER_ID });
+      const htmlResult = await service.export({
+        bookingUid: BOOKING_UID,
+        format: "html",
+        userId: ORGANIZER_ID,
+      });
+
+      expect(pdfRenderer.documents).toHaveLength(1);
+      const document = pdfRenderer.documents[0];
+      expect(document.title).toBe("Planning call");
+      expect(htmlResult.content).toContain(document.title);
+      expect(document.transcriptHeading).toBe("notetaker_export_transcript_heading");
+      expect(document.transcript).toHaveLength(2);
+    });
+
+    it("refuses a PDF of too many passages before rendering and records nothing", async () => {
+      await seedFinishedSession({ passages: buildPassages(NOTETAKER_PDF_MAX_PASSAGES + 1) });
+
+      const error = await captureError(
+        service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: ORGANIZER_ID })
+      );
+
+      expect(error.code).toBe(ErrorCode.BadRequest);
+      expect(pdfRenderer.documents).toHaveLength(0);
+      expect(activitiesOf()).toHaveLength(0);
+    });
+
+    it("refuses a PDF above the size limit and records nothing", async () => {
+      await seedFinishedSession({ passages: buildPassages(1) });
+      pdfRenderer.bytes = new Uint8Array(NOTETAKER_PDF_MAX_BYTES + 1);
+
+      const error = await captureError(
+        service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: ORGANIZER_ID })
+      );
+
+      expect(error.code).toBe(ErrorCode.BadRequest);
+      expect(activitiesOf()).toHaveLength(0);
+    });
+
+    it("lets a rendering failure propagate without recording an export", async () => {
+      await seedFinishedSession({ passages: buildPassages(1) });
+      const failure = new Error("layout failed");
+      pdfRenderer.failure = failure;
+
+      await expect(
+        service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: ORGANIZER_ID })
+      ).rejects.toBe(failure);
+      expect(activitiesOf()).toHaveLength(0);
+    });
+
+    it("keeps enforcing access for the PDF format", async () => {
+      await seedFinishedSession({ passages: buildPassages(2) });
+
+      const forbidden = await captureError(
+        service.export({ bookingUid: BOOKING_UID, format: "pdf", userId: STRANGER_ID })
+      );
+
+      expect(forbidden.code).not.toBeUndefined();
+      expect(pdfRenderer.documents).toHaveLength(0);
+      expect(activitiesOf()).toHaveLength(0);
     });
 
     it("escapes the booking title in the HTML export", async () => {

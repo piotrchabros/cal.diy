@@ -68,6 +68,14 @@ export function NotetakerResultsActions({
             <DropdownMenuItem>
               <DropdownItem
                 type="button"
+                onClick={() => exportResults.mutate({ bookingUid, format: "pdf" })}
+                data-testid="notetaker-export-pdf">
+                {t("notetaker_export_pdf")}
+              </DropdownItem>
+            </DropdownMenuItem>
+            <DropdownMenuItem>
+              <DropdownItem
+                type="button"
                 onClick={() => printResults.mutate({ bookingUid, format: "html" })}
                 data-testid="notetaker-print">
                 {t("notetaker_print")}

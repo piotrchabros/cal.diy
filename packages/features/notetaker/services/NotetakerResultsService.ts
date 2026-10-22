@@ -8,6 +8,7 @@ import type {
   INotetakerRecordingMediaGatewayResolver,
   NotetakerVideoDownloadResult,
 } from "../bot/INotetakerRecordingMediaGateway";
+import type { INotetakerPdfRenderer } from "../lib/export/INotetakerPdfRenderer";
 import type { NotetakerExportLabels } from "../lib/exportDocument";
 import { buildNotetakerExportDocument, buildNotetakerExportFilename } from "../lib/exportDocument";
 import { renderNotetakerHtml } from "../lib/exportHtml";
@@ -45,6 +46,8 @@ import { NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE } from "./NotetakerAccessServic
 const DEFAULT_PASSAGE_LIMIT = 200;
 const MIN_PASSAGE_LIMIT = 1;
 const MAX_PASSAGE_LIMIT = 500;
+
+const EXPORT_FILE_EXTENSIONS = { markdown: "md", html: "html", pdf: "pdf" } as const;
 
 // Mapped field by field so the internal speakerKey can never reach a client.
 function toPassageDto(passage: NotetakerPassageRecord): NotetakerPassageDto {
@@ -127,6 +130,8 @@ function compareNewestFirst(a: ActivityEntry, b: ActivityEntry): number {
 }
 
 export const NOTETAKER_ACTIVITY_LIMIT = 200;
+export const NOTETAKER_PDF_MAX_PASSAGES = 20_000;
+export const NOTETAKER_PDF_MAX_BYTES = 10 * 1024 * 1024;
 
 export interface INotetakerResultsServiceDeps {
   accessService: NotetakerAccessService;
@@ -142,6 +147,7 @@ export interface INotetakerResultsServiceDeps {
   userRepository: INotetakerUserLookup;
   notetakerTasker: INotetakerTasker;
   recordingMediaGatewayResolver: INotetakerRecordingMediaGatewayResolver;
+  pdfRenderer: INotetakerPdfRenderer;
   logger: ISimpleLogger;
 }
 
@@ -339,7 +345,7 @@ export class NotetakerResultsService {
 
   async export(params: {
     bookingUid: string;
-    format: "markdown" | "html";
+    format: "markdown" | "html" | "pdf";
     userId: number;
   }): Promise<NotetakerExportDto> {
     const { bookingUid, format, userId } = params;
@@ -347,6 +353,12 @@ export class NotetakerResultsService {
     const { booking, latest } = await this.resolveReadableLatestTranscript({ bookingUid, userId });
 
     const passageRecords = await this.deps.transcriptRepository.findAllPassages(latest.transcript.id);
+    // Checked before rendering because the PDF is laid out in memory.
+    if (format === "pdf" && passageRecords.length > NOTETAKER_PDF_MAX_PASSAGES) {
+      throw ErrorWithCode.Factory.BadRequest(
+        `Transcript of booking ${bookingUid} is too long for PDF; download Markdown or HTML instead`
+      );
+    }
     const summaryRecord = await this.deps.summaryRepository.findByTranscriptId(latest.transcript.id);
     let summary: NotetakerSummaryDto | null = null;
     if (summaryRecord) summary = toNotetakerSummaryDto(summaryRecord);
@@ -401,8 +413,18 @@ export class NotetakerResultsService {
       bookingTitle: booking.title,
       bookingStartTime: booking.startTime,
       timeZone,
-      extension: format === "html" ? "html" : "md",
+      extension: EXPORT_FILE_EXTENSIONS[format],
     });
+
+    let pdfBytes: Uint8Array | null = null;
+    if (format === "pdf") {
+      pdfBytes = await this.deps.pdfRenderer.render(doc);
+      if (pdfBytes.byteLength > NOTETAKER_PDF_MAX_BYTES) {
+        throw ErrorWithCode.Factory.BadRequest(
+          `PDF of booking ${bookingUid} is too large; download Markdown or HTML instead`
+        );
+      }
+    }
 
     // Awaited before returning: an export that cannot be recorded is not handed out.
     await this.createUserActivity({
@@ -414,6 +436,14 @@ export class NotetakerResultsService {
       detail: { format },
     });
 
+    if (pdfBytes) {
+      return {
+        filename,
+        mimeType: "application/pdf",
+        encoding: "base64",
+        content: Buffer.from(pdfBytes).toString("base64"),
+      };
+    }
     if (format === "html") {
       return { filename, mimeType: "text/html", encoding: "utf8", content: renderNotetakerHtml(doc) };
     }
