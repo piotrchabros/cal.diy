@@ -9,7 +9,7 @@ import {
   PARTICIPANT_SPEAKER_KEY_PREFIX,
   UNKNOWN_SPEAKER_KEY_PREFIX,
 } from "../../services/NotetakerSessionEventService";
-import type { RecallBot, RecallStatusChange, RecallTranscriptEntry } from "./recallSchemas";
+import type { RecallBot, RecallRecording, RecallStatusChange, RecallTranscriptEntry } from "./recallSchemas";
 
 // Recall sends no sequence numbers, so each lifecycle step gets a fixed one and a replayed sync is a DUPLICATE.
 export const RECALL_EVENT_SEQUENCE = {
@@ -316,4 +316,12 @@ export function buildRecallEndedEvent(input: {
         : { speakerNamesAvailable: input.speakerNamesAvailable }),
     },
   };
+}
+
+export function sortRecallRecordingsByStartedAt(recordings: RecallRecording[]): RecallRecording[] {
+  return [...recordings].sort((a, b) => {
+    const aStart = a.started_at ? Date.parse(a.started_at) : Number.POSITIVE_INFINITY;
+    const bStart = b.started_at ? Date.parse(b.started_at) : Number.POSITIVE_INFINITY;
+    return aStart - bStart;
+  });
 }

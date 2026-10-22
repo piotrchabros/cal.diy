@@ -10,6 +10,7 @@ import {
   findRecallTerminalStatus,
   isRecallBotDone,
   mapRecallEndReason,
+  sortRecallRecordingsByStartedAt,
 } from "../bot/recall/recallEventTranslation";
 import type { RecallBot, RecallRecording, RecallWebhookEnvelope } from "../bot/recall/recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "../bot/recall/recallSchemas";
@@ -61,14 +62,6 @@ function getRecordingDurationMs(recording: RecallRecording | null): number | nul
   if (!recording?.started_at || !recording.completed_at) return null;
   const durationMs = Date.parse(recording.completed_at) - Date.parse(recording.started_at);
   return Number.isNaN(durationMs) ? null : Math.max(0, durationMs);
-}
-
-function sortByStartedAt(recordings: RecallRecording[]): RecallRecording[] {
-  return [...recordings].sort((a, b) => {
-    const aStart = a.started_at ? Date.parse(a.started_at) : Number.POSITIVE_INFINITY;
-    const bStart = b.started_at ? Date.parse(b.started_at) : Number.POSITIVE_INFINITY;
-    return aStart - bStart;
-  });
 }
 
 export const RECALL_HANDLED_EVENTS: ReadonlySet<string> = new Set([
@@ -242,7 +235,7 @@ export class RecallWebhookService {
         })
       : null;
 
-    const recordings = sortByStartedAt(bot.recordings);
+    const recordings = sortRecallRecordingsByStartedAt(bot.recordings);
     if (recordings.length > 1) {
       logger.warn("Recall bot has more than one recording, using the first", {
         ...context,

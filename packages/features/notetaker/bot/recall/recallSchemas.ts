@@ -20,12 +20,26 @@ export const recallTranscriptShortcutSchema = z.object({
 });
 export type RecallTranscriptShortcut = z.infer<typeof recallTranscriptShortcutSchema>;
 
+export const recallVideoMixedShortcutSchema = z.object({
+  id: z.string(),
+  status: recallCodeSchema.nullish(),
+  data: z.object({ download_url: z.string().nullish() }).nullish(),
+  format: z.string().nullish(),
+});
+export type RecallVideoMixedShortcut = z.infer<typeof recallVideoMixedShortcutSchema>;
+
 export const recallRecordingSchema = z.object({
   id: z.string(),
   started_at: z.string().nullish(),
   completed_at: z.string().nullish(),
   status: recallCodeSchema.nullish(),
-  media_shortcuts: z.object({ transcript: recallTranscriptShortcutSchema.nullish() }).nullish(),
+  expires_at: z.string().nullish(),
+  media_shortcuts: z
+    .object({
+      transcript: recallTranscriptShortcutSchema.nullish(),
+      video_mixed: recallVideoMixedShortcutSchema.nullish(),
+    })
+    .nullish(),
 });
 export type RecallRecording = z.infer<typeof recallRecordingSchema>;
 

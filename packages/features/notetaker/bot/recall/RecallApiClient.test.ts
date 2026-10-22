@@ -78,6 +78,39 @@ describe("RecallApiClient requests", () => {
     });
   });
 
+  it("parses a video_mixed shortcut and tolerates recordings without shortcuts", async () => {
+    const withVideo = {
+      id: "bot-1",
+      status_changes: [],
+      recordings: [
+        {
+          id: "rec-1",
+          expires_at: "2026-02-01T00:00:00Z",
+          media_shortcuts: {
+            video_mixed: {
+              id: "vid-1",
+              status: { code: "done" },
+              data: { download_url: PRESIGNED_URL },
+              format: "mp4",
+            },
+          },
+        },
+        { id: "rec-2" },
+        { id: "rec-3", media_shortcuts: {} },
+      ],
+    };
+    const { client } = setup([jsonResponse(200, withVideo)]);
+
+    const result = await client.retrieveBot("bot-1");
+
+    expect(result?.recordings[0]).toMatchObject({
+      expires_at: "2026-02-01T00:00:00Z",
+      media_shortcuts: { video_mixed: { id: "vid-1", format: "mp4", data: { download_url: PRESIGNED_URL } } },
+    });
+    expect(result?.recordings[1]?.media_shortcuts).toBeUndefined();
+    expect(result?.recordings[2]?.media_shortcuts?.video_mixed).toBeUndefined();
+  });
+
   it("retrieveBot gets by id and maps 404 to null", async () => {
     const { client, calls } = setup([jsonResponse(200, bot), jsonResponse(404, {})]);
     await expect(client.retrieveBot("bot-1")).resolves.toMatchObject({ id: "bot-1" });
