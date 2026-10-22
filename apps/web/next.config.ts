@@ -232,6 +232,11 @@ const nextConfig = (phase: string): NextConfig => {
       "formidable",
       "@boxyhq/saml-jackson",
       "jose",
+      // pdfkit reads its font metrics through fs and __dirname, which break once bundled. fontkit and
+      // linebreak read their data files the same way but are only reached through these two, so leaving
+      // pdfmake and pdfkit to Node's require keeps them unbundled as well.
+      "pdfmake",
+      "@foliojs-fork/pdfkit",
     ],
     experimental: {
       optimizePackageImports: ["@calcom/ui"],
