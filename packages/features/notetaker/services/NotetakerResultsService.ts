@@ -9,7 +9,9 @@ import type {
   NotetakerVideoDownloadResult,
 } from "../bot/INotetakerRecordingMediaGateway";
 import type { NotetakerExportLabels } from "../lib/exportDocument";
-import { exportMarkdown } from "../lib/exportMarkdown";
+import { buildNotetakerExportDocument, buildNotetakerExportFilename } from "../lib/exportDocument";
+import { renderNotetakerHtml } from "../lib/exportHtml";
+import { renderNotetakerMarkdown } from "../lib/exportMarkdown";
 import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
@@ -337,10 +339,10 @@ export class NotetakerResultsService {
 
   async export(params: {
     bookingUid: string;
-    format: "markdown";
+    format: "markdown" | "html";
     userId: number;
   }): Promise<NotetakerExportDto> {
-    const { bookingUid, userId } = params;
+    const { bookingUid, format, userId } = params;
 
     const { booking, latest } = await this.resolveReadableLatestTranscript({ bookingUid, userId });
 
@@ -382,7 +384,7 @@ export class NotetakerResultsService {
       unknownSpeaker: (number: number): string => t("notetaker_unknown_speaker", { number }),
     };
 
-    const { filename, content } = exportMarkdown({
+    const doc = buildNotetakerExportDocument({
       bookingTitle: booking.title,
       bookingStartTime: booking.startTime,
       locale,
@@ -395,6 +397,12 @@ export class NotetakerResultsService {
       passages: passageRecords.map(toPassageDto),
       labels,
     });
+    const filename = buildNotetakerExportFilename({
+      bookingTitle: booking.title,
+      bookingStartTime: booking.startTime,
+      timeZone,
+      extension: format === "html" ? "html" : "md",
+    });
 
     // Awaited before returning: an export that cannot be recorded is not handed out.
     await this.createUserActivity({
@@ -403,9 +411,13 @@ export class NotetakerResultsService {
       action: "EXPORTED",
       userId,
       actorName: actor?.name ?? null,
+      detail: { format },
     });
 
-    return { filename, mimeType: "text/markdown", content };
+    if (format === "html") {
+      return { filename, mimeType: "text/html", encoding: "utf8", content: renderNotetakerHtml(doc) };
+    }
+    return { filename, mimeType: "text/markdown", encoding: "utf8", content: renderNotetakerMarkdown(doc) };
   }
 
   // Readers of the video are exactly the readers of the transcript, so the access path is shared with export.

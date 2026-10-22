@@ -49,4 +49,9 @@ export const NotetakerTranscriptDtoSchema: z.ZodType<NotetakerTranscriptDto> = z
   speakerNamesAvailable: z.boolean().nullable().optional(),
 });
 
-export type NotetakerExportDto = { filename: string; mimeType: "text/markdown"; content: string };
+export type NotetakerExportDto = {
+  filename: string;
+  mimeType: "text/markdown" | "text/html" | "application/pdf";
+  encoding: "utf8" | "base64";
+  content: string;
+};
