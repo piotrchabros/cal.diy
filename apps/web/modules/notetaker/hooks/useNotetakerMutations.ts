@@ -4,7 +4,8 @@ import type { NotetakerIneligibilityReasonDto } from "@calcom/lib/dto/NotetakerS
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { showToast } from "@calcom/ui/components/toast";
-import { downloadTextFile } from "@calcom/web/modules/notetaker/lib/downloadTextFile";
+import { downloadExportFile } from "@calcom/web/modules/notetaker/lib/downloadExportFile";
+import { printHtmlDocument } from "@calcom/web/modules/notetaker/lib/printHtmlDocument";
 
 const INELIGIBILITY_REASONS: readonly string[] = [
   "FEATURE_DISABLED",
@@ -93,7 +94,18 @@ export function useNotetakerMutations() {
 
   const exportResults = trpc.viewer.notetaker.export.useMutation({
     onSuccess: async (data) => {
-      downloadTextFile(data);
+      downloadExportFile(data);
+      await utils.viewer.notetaker.getActivity.invalidate();
+    },
+    onError: (error) => {
+      showToast(getErrorMessage(error.message), "error");
+    },
+  });
+
+  // A separate mutation so a print does not share pending state with the download items.
+  const printResults = trpc.viewer.notetaker.export.useMutation({
+    onSuccess: async (data) => {
+      printHtmlDocument(data.content);
       await utils.viewer.notetaker.getActivity.invalidate();
     },
     onError: (error) => {
@@ -113,5 +125,5 @@ export function useNotetakerMutations() {
     },
   });
 
-  return { setEnabled, stop, regenerateSummary, setSharing, exportResults, deleteResults };
+  return { setEnabled, stop, regenerateSummary, setSharing, exportResults, printResults, deleteResults };
 }
