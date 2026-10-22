@@ -3,7 +3,9 @@
 import type { NotetakerStateDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { groupActionItemsByOwner } from "@calcom/lib/notetaker/groupActionItemsByOwner";
 import { Button } from "@calcom/ui/components/button";
+import { NotetakerSummaryTopics } from "@calcom/web/modules/notetaker/components/NotetakerSummaryTopics";
 
 export function NotetakerSummary({
   summary,
@@ -35,13 +37,18 @@ export function NotetakerSummary({
   }
 
   if (summary?.status === "READY") {
+    const actionItemGroups = groupActionItemsByOwner(summary.actionItems);
+    const isV2 = summary.formatVersion === 2;
+
     return (
       <section data-testid="notetaker-summary" className="flex flex-col gap-3">
         <h3 className="font-medium text-sm">{t("notetaker_summary_overview")}</h3>
         <p className="text-sm">{summary.overview}</p>
         {summary.keyPoints.length > 0 && (
           <>
-            <h3 className="font-medium text-sm">{t("notetaker_summary_key_points")}</h3>
+            <h3 className="font-medium text-sm">
+              {t(isV2 ? "notetaker_summary_key_findings" : "notetaker_summary_key_points")}
+            </h3>
             <ul className="list-disc pl-5 text-sm">
               {summary.keyPoints.map((point) => (
                 <li key={point}>{point}</li>
@@ -49,7 +56,7 @@ export function NotetakerSummary({
             </ul>
           </>
         )}
-        {summary.decisions.length > 0 && (
+        {!isV2 && summary.decisions.length > 0 && (
           <>
             <h3 className="font-medium text-sm">{t("notetaker_summary_decisions")}</h3>
             <ul className="list-disc pl-5 text-sm">
@@ -59,25 +66,27 @@ export function NotetakerSummary({
             </ul>
           </>
         )}
-        {summary.actionItems.length > 0 && (
+        {actionItemGroups.length > 0 && (
           <>
-            <h3 className="font-medium text-sm">{t("notetaker_summary_action_items")}</h3>
-            <ul className="list-disc pl-5 text-sm">
-              {summary.actionItems.map((item) => (
-                <li key={`${item.text}|${item.owner ?? ""}`}>
-                  {item.text}
-                  {item.owner !== null && (
-                    <span className="text-subtle">
-                      {" "}
-                      {t("notetaker_summary_owner", {
-                        name: item.owner,
-                        interpolation: { escapeValue: false },
-                      })}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <h3 className="font-medium text-sm">
+              {t(isV2 ? "notetaker_summary_next_steps" : "notetaker_summary_action_items")}
+            </h3>
+            {actionItemGroups.map((group) => (
+              <div key={group.owner ?? ""} data-testid="notetaker-summary-action-group">
+                <h4 className="text-sm text-subtle">{group.owner ?? t("notetaker_summary_unassigned")}</h4>
+                <ul className="list-disc pl-5 text-sm">
+                  {group.items.map((text, index) => (
+                    <li key={`${index}|${text}`}>{text}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </>
+        )}
+        {isV2 && summary.topics.length > 0 && (
+          <>
+            <h3 className="font-medium text-sm">{t("notetaker_summary_key_topics")}</h3>
+            <NotetakerSummaryTopics topics={summary.topics} />
           </>
         )}
       </section>

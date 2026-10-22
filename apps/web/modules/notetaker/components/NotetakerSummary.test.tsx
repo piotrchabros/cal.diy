@@ -1,5 +1,5 @@
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { NotetakerSummary } from "./NotetakerSummary";
 
@@ -73,12 +73,107 @@ describe("NotetakerSummary", () => {
       expect(items.some((item) => item.includes(text))).toBe(true);
     }
 
-    expect(
-      screen.getByText('notetaker_summary_owner {"name":"Ada","interpolation":{"escapeValue":false}}')
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/notetaker_summary_owner/)).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "notetaker_summary_unassigned" })).toBeInTheDocument();
     expect(screen.queryByTestId("notetaker-summary-regenerate")).not.toBeInTheDocument();
     expect(screen.queryByTestId("notetaker-summary-failed")).not.toBeInTheDocument();
+  });
+
+  describe("format version 2", () => {
+    const v2 = (overrides: Partial<NotetakerSummaryDto> = {}) =>
+      buildSummary({
+        formatVersion: 2,
+        decisions: [],
+        actionItems: [
+          { text: "Book the room", owner: null },
+          { text: "Send the notes", owner: "Ada" },
+          { text: "Review the budget", owner: "ada" },
+        ],
+        topics: [
+          { title: "Outage", category: "PROBLEM", details: ["Db was down"] },
+          { title: "Hiring", category: "UPDATE", details: ["Two offers out"] },
+          { title: "Pricing", category: "DECISION", details: ["Keep the price"] },
+          { title: "Misc", category: null, details: ["Lunch"] },
+        ],
+        ...overrides,
+      });
+
+    it("renders overview, key findings, next steps and key topics in order", () => {
+      renderSummary({ summary: v2() });
+
+      const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+      expect(names).toEqual([
+        "notetaker_summary_overview",
+        "notetaker_summary_key_findings",
+        "notetaker_summary_next_steps",
+        "notetaker_summary_key_topics",
+      ]);
+      expect(screen.queryByRole("heading", { name: "notetaker_summary_decisions" })).not.toBeInTheDocument();
+    });
+
+    it("groups next steps per owner with the unassigned group last", () => {
+      renderSummary({ summary: v2() });
+
+      const groups = screen.getAllByTestId("notetaker-summary-action-group");
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toHaveTextContent("Ada");
+      expect(groups[0]).toHaveTextContent("Send the notes");
+      expect(groups[0]).toHaveTextContent("Review the budget");
+      expect(groups[1]).toHaveTextContent("notetaker_summary_unassigned");
+      expect(groups[1]).toHaveTextContent("Book the room");
+    });
+
+    it("omits empty sections", () => {
+      renderSummary({ summary: v2({ keyPoints: [], actionItems: [], topics: [] }) });
+
+      expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(1);
+    });
+
+    it("renders topics collapsed and opens one on click", () => {
+      renderSummary({ summary: v2() });
+
+      const topics = screen.getAllByTestId("notetaker-summary-topic");
+      expect(topics).toHaveLength(4);
+      for (const topic of topics) expect(topic).not.toHaveAttribute("open");
+
+      const summaryEl = topics[0]?.querySelector("summary");
+      if (!summaryEl) throw new Error("missing summary element");
+      fireEvent.click(summaryEl);
+
+      expect(topics[0]).toHaveAttribute("open");
+      expect(topics[0]).toHaveTextContent("Db was down");
+      expect(topics[1]).not.toHaveAttribute("open");
+    });
+
+    it("shows a category badge per topic and none for a null category", () => {
+      renderSummary({ summary: v2() });
+
+      const topics = screen.getAllByTestId("notetaker-summary-topic");
+      expect(topics[0]).toHaveTextContent("notetaker_summary_topic_category_problem");
+      expect(topics[1]).toHaveTextContent("notetaker_summary_topic_category_update");
+      expect(topics[2]).toHaveTextContent("notetaker_summary_topic_category_decision");
+      expect(topics[3]?.querySelector('[data-testid="notetaker-summary-topic-badge"]')).toBeNull();
+      expect(screen.getAllByTestId("notetaker-summary-topic-badge")).toHaveLength(3);
+    });
+
+    it("opens every topic before printing and restores the closed ones afterwards", () => {
+      renderSummary({ summary: v2() });
+
+      const topics = screen.getAllByTestId("notetaker-summary-topic") as HTMLDetailsElement[];
+      const [, second] = topics;
+      if (!second) throw new Error("missing topic");
+      second.open = true;
+
+      act(() => {
+        window.dispatchEvent(new Event("beforeprint"));
+      });
+      for (const topic of topics) expect(topic.open).toBe(true);
+
+      act(() => {
+        window.dispatchEvent(new Event("afterprint"));
+      });
+      expect(topics.map((topic) => topic.open)).toEqual([false, true, false, false]);
+    });
   });
 
   it("hides the decisions heading when there are no decisions", () => {
