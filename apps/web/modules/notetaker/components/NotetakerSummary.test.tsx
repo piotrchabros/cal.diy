@@ -19,6 +19,8 @@ function buildSummary(overrides: Partial<NotetakerSummaryDto> = {}): NotetakerSu
     overview: "The team agreed the launch plan.",
     keyPoints: ["Launch is in March", "Budget is approved"],
     decisions: ["Ship the beta first"],
+    topics: [],
+    formatVersion: 1,
     actionItems: [
       { text: "Send the notes", owner: "Ada" },
       { text: "Book the room", owner: null },

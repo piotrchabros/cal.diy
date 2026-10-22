@@ -101,17 +101,43 @@ describe("NotetakerSummaryStatusDtoSchema", () => {
 
 describe("NotetakerSummaryDtoSchema", () => {
   const valid: NotetakerSummaryDto = {
+    formatVersion: 1,
     status: "READY",
     language: "en",
     overview: "Overview",
     keyPoints: ["Point"],
     decisions: [],
+    topics: [],
     actionItems: [{ text: "Send notes", owner: null }],
     generatedAt: "2026-03-04T10:15:00.000Z",
   };
 
   it("parses a valid object", () => {
     expect(NotetakerSummaryDtoSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("parses a version 2 summary with topics", () => {
+    const v2: NotetakerSummaryDto = {
+      ...valid,
+      formatVersion: 2,
+      topics: [{ title: "Pricing", category: "DECISION", details: ["Keep the current plan"] }],
+    };
+    expect(NotetakerSummaryDtoSchema.parse(v2)).toEqual(v2);
+  });
+
+  it("accepts a topic without a category", () => {
+    const withTopic: unknown = { ...valid, topics: [{ title: "Intro", category: null, details: [] }] };
+    expect(NotetakerSummaryDtoSchema.safeParse(withTopic).success).toBe(true);
+  });
+
+  it("rejects an unknown format version", () => {
+    const invalid: unknown = { ...valid, formatVersion: 3 };
+    expect(NotetakerSummaryDtoSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("rejects an unknown topic category", () => {
+    const invalid: unknown = { ...valid, topics: [{ title: "T", category: "RISK", details: [] }] };
+    expect(NotetakerSummaryDtoSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("rejects a generatedAt that is not a datetime", () => {

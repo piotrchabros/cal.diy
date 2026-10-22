@@ -196,6 +196,8 @@ export class NotetakerSummaryService {
       overview: parsed.data.overview,
       keyPoints: parsed.data.keyPoints,
       decisions: parsed.data.decisions,
+      topics: [],
+      formatVersion: 1,
       actionItems: parsed.data.actionItems,
       model: result.model,
       generatedAt: new Date(),

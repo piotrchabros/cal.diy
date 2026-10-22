@@ -1,7 +1,11 @@
-import { notetakerSummaryContentSchema } from "@calcom/lib/dto/NotetakerSummaryDto";
+import {
+  notetakerSummaryContentSchema,
+  notetakerSummaryTopicSchema,
+} from "@calcom/lib/dto/NotetakerSummaryDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { z } from "zod";
 import type {
   INotetakerSummaryRepository,
   NotetakerSummaryRecord,
@@ -15,6 +19,8 @@ const summarySelect = {
   overview: true,
   keyPoints: true,
   decisions: true,
+  topics: true,
+  formatVersion: true,
   actionItems: true,
   model: true,
   attempts: true,
@@ -23,11 +29,13 @@ const summarySelect = {
 } satisfies Prisma.NotetakerSummarySelect;
 
 // PENDING and FAILED rows have no language/overview, so only the JSON columns are validated.
-const summaryJsonColumnsSchema = notetakerSummaryContentSchema.pick({
-  keyPoints: true,
-  decisions: true,
-  actionItems: true,
-});
+const summaryJsonColumnsSchema = notetakerSummaryContentSchema
+  .pick({
+    keyPoints: true,
+    decisions: true,
+    actionItems: true,
+  })
+  .extend({ topics: z.array(notetakerSummaryTopicSchema) });
 
 export class PrismaNotetakerSummaryRepository implements INotetakerSummaryRepository {
   constructor(private readonly prismaClient: PrismaClient) {}
@@ -64,12 +72,22 @@ export class PrismaNotetakerSummaryRepository implements INotetakerSummaryReposi
     transcriptId: string,
     data: Pick<
       NotetakerSummaryRecord,
-      "status" | "language" | "overview" | "keyPoints" | "decisions" | "actionItems" | "model" | "generatedAt"
+      | "status"
+      | "language"
+      | "overview"
+      | "keyPoints"
+      | "decisions"
+      | "actionItems"
+      | "topics"
+      | "formatVersion"
+      | "model"
+      | "generatedAt"
     >
   ): Promise<NotetakerSummaryRecord> {
     const parsed = summaryJsonColumnsSchema.safeParse({
       keyPoints: data.keyPoints,
       decisions: data.decisions,
+      topics: data.topics,
       actionItems: data.actionItems,
     });
     if (!parsed.success) {
@@ -86,6 +104,8 @@ export class PrismaNotetakerSummaryRepository implements INotetakerSummaryReposi
         overview: data.overview,
         keyPoints: parsed.data.keyPoints,
         decisions: parsed.data.decisions,
+        topics: parsed.data.topics,
+        formatVersion: data.formatVersion,
         actionItems: parsed.data.actionItems,
         model: data.model,
         generatedAt: data.generatedAt,
@@ -113,11 +133,18 @@ export class PrismaNotetakerSummaryRepository implements INotetakerSummaryReposi
     const parsed = summaryJsonColumnsSchema.safeParse({
       keyPoints: row.keyPoints,
       decisions: row.decisions,
+      topics: row.topics,
       actionItems: row.actionItems,
     });
     if (!parsed.success) {
       throw ErrorWithCode.Factory.InternalServerError(
         `Stored notetaker summary for transcript ${row.transcriptId} has malformed JSON columns`
+      );
+    }
+
+    if (row.formatVersion !== 1 && row.formatVersion !== 2) {
+      throw ErrorWithCode.Factory.InternalServerError(
+        `Stored notetaker summary for transcript ${row.transcriptId} has unsupported format version ${row.formatVersion}`
       );
     }
 
@@ -129,6 +156,8 @@ export class PrismaNotetakerSummaryRepository implements INotetakerSummaryReposi
       overview: row.overview,
       keyPoints: parsed.data.keyPoints,
       decisions: parsed.data.decisions,
+      topics: parsed.data.topics,
+      formatVersion: row.formatVersion,
       actionItems: parsed.data.actionItems,
       model: row.model,
       attempts: row.attempts,

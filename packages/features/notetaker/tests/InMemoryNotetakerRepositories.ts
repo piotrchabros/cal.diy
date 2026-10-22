@@ -129,6 +129,7 @@ function copySummary(summary: NotetakerSummaryRecord): NotetakerSummaryRecord {
     ...summary,
     keyPoints: [...summary.keyPoints],
     decisions: [...summary.decisions],
+    topics: summary.topics.map((topic) => ({ ...topic, details: [...topic.details] })),
     actionItems: summary.actionItems.map((item) => ({ ...item })),
   };
 }
@@ -1385,6 +1386,8 @@ export class InMemoryNotetakerSummaryRepository implements INotetakerSummaryRepo
       overview: null,
       keyPoints: [],
       decisions: [],
+      topics: [],
+      formatVersion: 1,
       actionItems: [],
       model: null,
       attempts: 0,
@@ -1405,7 +1408,16 @@ export class InMemoryNotetakerSummaryRepository implements INotetakerSummaryRepo
     transcriptId: string,
     data: Pick<
       NotetakerSummaryRecord,
-      "status" | "language" | "overview" | "keyPoints" | "decisions" | "actionItems" | "model" | "generatedAt"
+      | "status"
+      | "language"
+      | "overview"
+      | "keyPoints"
+      | "decisions"
+      | "actionItems"
+      | "topics"
+      | "formatVersion"
+      | "model"
+      | "generatedAt"
     >
   ): Promise<NotetakerSummaryRecord> {
     const summary = this.require(transcriptId);
@@ -1414,6 +1426,8 @@ export class InMemoryNotetakerSummaryRepository implements INotetakerSummaryRepo
     summary.overview = data.overview;
     summary.keyPoints = [...data.keyPoints];
     summary.decisions = [...data.decisions];
+    summary.topics = data.topics.map((topic) => ({ ...topic, details: [...topic.details] }));
+    summary.formatVersion = data.formatVersion;
     summary.actionItems = data.actionItems.map((item) => ({ ...item }));
     summary.model = data.model;
     summary.generatedAt = data.generatedAt;
