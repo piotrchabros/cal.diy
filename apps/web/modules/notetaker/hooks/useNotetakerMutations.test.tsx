@@ -9,7 +9,7 @@ type MutationOptions<TData = unknown, TVariables = unknown> = {
 type MutationStub = { mutate: () => void; isPending: boolean };
 type UseMutationMock = ReturnType<typeof createUseMutationMock>;
 type HookKey = "setEnabled" | "stop" | "regenerateSummary" | "setSharing" | "exportResults" | "deleteResults";
-type DownloadFile = { filename: string; mimeType: string; content: string };
+type DownloadFile = { filename: string; mimeType: string; encoding: string; content: string };
 
 function createUseMutationMock() {
   return vi.fn<(options: MutationOptions) => MutationStub>();
@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => {
   const createUseMutation = () => vi.fn<(options: MutationOptions) => MutationStub>();
   return {
     showToast: vi.fn<(message: string, variant: string) => void>(),
-    downloadTextFile: vi.fn<(file: DownloadFile) => void>(),
+    downloadExportFile: vi.fn<(file: DownloadFile) => void>(),
+    printHtmlDocument: vi.fn<(html: string) => void>(),
     invalidateGetState: vi.fn<() => Promise<void>>(),
     invalidateGetActivity: vi.fn<() => Promise<void>>(),
     invalidateListPassages: vi.fn<() => Promise<void>>(),
@@ -39,8 +40,12 @@ vi.mock("@calcom/lib/hooks/useLocale", () => ({
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
 
-vi.mock("@calcom/web/modules/notetaker/lib/downloadTextFile", () => ({
-  downloadTextFile: mocks.downloadTextFile,
+vi.mock("@calcom/web/modules/notetaker/lib/downloadExportFile", () => ({
+  downloadExportFile: mocks.downloadExportFile,
+}));
+
+vi.mock("@calcom/web/modules/notetaker/lib/printHtmlDocument", () => ({
+  printHtmlDocument: mocks.printHtmlDocument,
 }));
 
 vi.mock("@calcom/trpc/react", () => ({
@@ -97,8 +102,8 @@ const stubs: Record<HookKey, MutationStub> = {
   deleteResults: { mutate: vi.fn(), isPending: false },
 };
 
-function getMutationOptions(useMutation: UseMutationMock): MutationOptions {
-  const options = useMutation.mock.calls[0]?.[0];
+function getMutationOptions(useMutation: UseMutationMock, callIndex = 0): MutationOptions {
+  const options = useMutation.mock.calls[callIndex]?.[0];
   if (!options) throw new Error("useMutation was not called with options");
   return options;
 }
@@ -122,11 +127,12 @@ describe("useNotetakerMutations", () => {
     mocks.invalidateListPassages.mockResolvedValue(undefined);
   });
 
-  it("returns the six mutations", () => {
+  it("returns the six mutations and the print mutation", () => {
     const { result } = renderMutations();
 
-    expect(Object.keys(result.current).sort()).toEqual([...HOOK_KEYS].sort());
+    expect(Object.keys(result.current).sort()).toEqual([...HOOK_KEYS, "printResults"].sort());
     for (const key of HOOK_KEYS) expect(result.current[key]).toBe(stubs[key]);
+    expect(result.current.printResults).toBe(stubs.exportResults);
   });
 
   it.each([
@@ -177,18 +183,40 @@ describe("useNotetakerMutations", () => {
   });
 
   it("export downloads the returned file and refreshes the activity list", async () => {
-    const file: DownloadFile = { filename: "meeting.md", mimeType: "text/markdown", content: "# Transcript" };
+    const file: DownloadFile = {
+      filename: "meeting.md",
+      mimeType: "text/markdown",
+      encoding: "utf8",
+      content: "# Transcript",
+    };
 
     await runSuccess("exportResults", file);
 
-    expect(mocks.downloadTextFile).toHaveBeenCalledTimes(1);
-    expect(mocks.downloadTextFile).toHaveBeenCalledWith({
-      filename: "meeting.md",
-      mimeType: "text/markdown",
-      content: "# Transcript",
-    });
+    expect(mocks.downloadExportFile).toHaveBeenCalledTimes(1);
+    expect(mocks.downloadExportFile).toHaveBeenCalledWith(file);
+    expect(mocks.printHtmlDocument).not.toHaveBeenCalled();
     expect(mocks.invalidateGetActivity).toHaveBeenCalledTimes(1);
     expect(mocks.invalidateGetState).not.toHaveBeenCalled();
+  });
+
+  it("printResults prints the returned html and refreshes the activity list", async () => {
+    renderMutations();
+    const data = { filename: "meeting.html", mimeType: "text/html", encoding: "utf8", content: "<p>Hi</p>" };
+
+    await getMutationOptions(mocks.exportResults, 1).onSuccess?.(data, {});
+
+    expect(mocks.printHtmlDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.printHtmlDocument).toHaveBeenCalledWith("<p>Hi</p>");
+    expect(mocks.downloadExportFile).not.toHaveBeenCalled();
+    expect(mocks.invalidateGetActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("printResults shows the localized error toast", () => {
+    renderMutations();
+
+    getMutationOptions(mocks.exportResults, 1).onError?.({ message: "boom" });
+
+    expect(mocks.showToast).toHaveBeenCalledWith("notetaker_update_failed", "error");
   });
 
   it("deleteResults stores the returned state and refreshes passages and activity", async () => {

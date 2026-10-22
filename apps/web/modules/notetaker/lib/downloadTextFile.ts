@@ -18,6 +18,17 @@ export function sanitizeDownloadFilename(filename: string): string {
   return withoutLeadingDots;
 }
 
+export function downloadBlob({ filename, blob }: { filename: string; blob: Blob }): void {
+  const url = URL.createObjectURL(blob);
+
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = sanitizeDownloadFilename(filename);
+  anchor.click();
+
+  URL.revokeObjectURL(url);
+}
+
 export function downloadTextFile({
   filename,
   mimeType,
@@ -27,13 +38,5 @@ export function downloadTextFile({
   mimeType: string;
   content: string;
 }): void {
-  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = sanitizeDownloadFilename(filename);
-  anchor.click();
-
-  URL.revokeObjectURL(url);
+  downloadBlob({ filename, blob: new Blob([content], { type: `${mimeType};charset=utf-8` }) });
 }

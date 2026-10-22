@@ -5,6 +5,13 @@ import type { NotetakerSessionStatusDto, NotetakerStateDto } from "@calcom/lib/d
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@calcom/ui/components/dropdown";
 import { useNotetakerMutations } from "@calcom/web/modules/notetaker/hooks/useNotetakerMutations";
 import { useState } from "react";
 
@@ -20,7 +27,7 @@ export function NotetakerResultsActions({
   sessionStatus: NotetakerSessionStatusDto | null;
 }) {
   const { t } = useLocale();
-  const { setSharing, exportResults, deleteResults } = useNotetakerMutations();
+  const { setSharing, exportResults, printResults, deleteResults } = useNotetakerMutations();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   const isHost = viewerRole === "HOST";
@@ -29,15 +36,45 @@ export function NotetakerResultsActions({
   return (
     <div className="flex flex-col gap-2" data-testid="notetaker-results-actions">
       <div className="flex">
-        <Button
-          type="button"
-          color="secondary"
-          size="sm"
-          loading={exportResults.isPending}
-          onClick={() => exportResults.mutate({ bookingUid, format: "markdown" })}
-          data-testid="notetaker-export-button">
-          {t("notetaker_export")}
-        </Button>
+        <Dropdown>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              color="secondary"
+              size="sm"
+              StartIcon="download"
+              loading={exportResults.isPending || printResults.isPending}
+              data-testid="notetaker-export-button">
+              {t("notetaker_export")}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>
+              <DropdownItem
+                type="button"
+                onClick={() => exportResults.mutate({ bookingUid, format: "markdown" })}
+                data-testid="notetaker-export-markdown">
+                {t("notetaker_export_markdown")}
+              </DropdownItem>
+            </DropdownMenuItem>
+            <DropdownMenuItem>
+              <DropdownItem
+                type="button"
+                onClick={() => exportResults.mutate({ bookingUid, format: "html" })}
+                data-testid="notetaker-export-html">
+                {t("notetaker_export_html")}
+              </DropdownItem>
+            </DropdownMenuItem>
+            <DropdownMenuItem>
+              <DropdownItem
+                type="button"
+                onClick={() => printResults.mutate({ bookingUid, format: "html" })}
+                data-testid="notetaker-print">
+                {t("notetaker_print")}
+              </DropdownItem>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </Dropdown>
       </div>
       {viewerRole === "SHARED_VIEWER" && (
         <p className="text-subtle text-xs" data-testid="notetaker-shared-viewer-notice">

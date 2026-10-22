@@ -7,9 +7,10 @@ const BOOKING_UID = "booking-uid-1";
 
 const mocks = vi.hoisted(() => ({
   setSharingMutate: vi.fn<(input: { bookingUid: string; shared: boolean }) => void>(),
-  exportMutate: vi.fn<(input: { bookingUid: string; format: "markdown" }) => void>(),
+  exportMutate: vi.fn<(input: { bookingUid: string; format: "markdown" | "html" }) => void>(),
+  printMutate: vi.fn<(input: { bookingUid: string; format: "markdown" | "html" }) => void>(),
   deleteMutate: vi.fn<(input: { bookingUid: string }) => void>(),
-  pending: { setSharing: false, exportResults: false, deleteResults: false },
+  pending: { setSharing: false, exportResults: false, printResults: false, deleteResults: false },
 }));
 
 // A plain function, not vi.fn: the shared setup runs vi.resetAllMocks() after each test, which would empty a mocked return value.
@@ -17,6 +18,7 @@ vi.mock("@calcom/web/modules/notetaker/hooks/useNotetakerMutations", () => ({
   useNotetakerMutations: () => ({
     setSharing: { mutate: mocks.setSharingMutate, isPending: mocks.pending.setSharing },
     exportResults: { mutate: mocks.exportMutate, isPending: mocks.pending.exportResults },
+    printResults: { mutate: mocks.printMutate, isPending: mocks.pending.printResults },
     deleteResults: { mutate: mocks.deleteMutate, isPending: mocks.pending.deleteResults },
   }),
 }));
@@ -40,6 +42,7 @@ describe("NotetakerResultsActions", () => {
     vi.clearAllMocks();
     mocks.pending.setSharing = false;
     mocks.pending.exportResults = false;
+    mocks.pending.printResults = false;
     mocks.pending.deleteResults = false;
   });
 
@@ -120,13 +123,54 @@ describe("NotetakerResultsActions", () => {
     expect(screen.getByTestId("notetaker-share-toggle")).toBeDisabled();
   });
 
-  it("exports the results as markdown", () => {
+  // Radix opens its menu on pointerdown, which fireEvent.click does not dispatch.
+  function openExportMenu() {
+    const trigger = screen.getByTestId("notetaker-export-button");
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  }
+
+  it("lists the markdown, html and print items in the export menu", () => {
     renderActions();
 
-    fireEvent.click(screen.getByTestId("notetaker-export-button"));
+    expect(screen.getByTestId("notetaker-export-button")).toHaveTextContent("notetaker_export");
+    openExportMenu();
+
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    expect(screen.getByTestId("notetaker-export-markdown")).toHaveTextContent("notetaker_export_markdown");
+    expect(screen.getByTestId("notetaker-export-html")).toHaveTextContent("notetaker_export_html");
+    expect(screen.getByTestId("notetaker-print")).toHaveTextContent("notetaker_print");
+  });
+
+  it("exports the results as markdown", () => {
+    renderActions();
+    openExportMenu();
+
+    fireEvent.click(screen.getByTestId("notetaker-export-markdown"));
 
     expect(mocks.exportMutate).toHaveBeenCalledTimes(1);
     expect(mocks.exportMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, format: "markdown" });
+  });
+
+  it("exports the results as html", () => {
+    renderActions();
+    openExportMenu();
+
+    fireEvent.click(screen.getByTestId("notetaker-export-html"));
+
+    expect(mocks.exportMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.exportMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, format: "html" });
+  });
+
+  it("prints the results through the print mutation", () => {
+    renderActions();
+    openExportMenu();
+
+    fireEvent.click(screen.getByTestId("notetaker-print"));
+
+    expect(mocks.printMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.printMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, format: "html" });
+    expect(mocks.exportMutate).not.toHaveBeenCalled();
   });
 
   it("opens the confirmation dialog without deleting", () => {
