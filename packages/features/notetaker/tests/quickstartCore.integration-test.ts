@@ -458,7 +458,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
   });
 
   describe("scenario 5: summary and its failure modes", () => {
-    it("happy summary is READY with overview, key points, decisions and action items", async () => {
+    it("happy summary is READY with overview, key points, topics and action items", async () => {
       const { booking } = await runScenario("happy", "core-summary");
 
       const state = await getState(booking);
@@ -466,7 +466,10 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       expect(state.summary?.overview).toEqual(expect.any(String));
       expect(state.summary?.overview?.length).toBeGreaterThan(0);
       expect(state.summary?.keyPoints).toHaveLength(3);
-      expect(state.summary?.decisions).toHaveLength(2);
+      expect(state.summary?.formatVersion).toBe(2);
+      expect(state.summary?.decisions).toEqual([]);
+      expect(state.summary?.topics).toHaveLength(2);
+      expect(state.summary?.topics.every((topic) => topic.category === "DECISION")).toBe(true);
       expect(state.summary?.actionItems).toEqual([
         { text: expect.stringContaining("release notes"), owner: "Sam Example" },
       ]);

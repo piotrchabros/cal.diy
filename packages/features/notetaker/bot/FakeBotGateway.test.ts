@@ -362,7 +362,7 @@ describe("FakeBotGateway", () => {
     if (!result.ok) throw new Error(`stub summary failed: ${result.failureCode}`);
     expect(result.content.overview.length).toBeGreaterThan(0);
     expect(result.content.keyPoints.length).toBeGreaterThan(0);
-    expect(result.content.decisions.length).toBeGreaterThan(0);
+    expect(result.content.topics.length).toBeGreaterThan(0);
     expect(result.content.actionItems.length).toBeGreaterThan(0);
   });
 });

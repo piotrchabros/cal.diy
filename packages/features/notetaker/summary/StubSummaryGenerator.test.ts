@@ -75,7 +75,7 @@ describe("StubSummaryGenerator", () => {
   it("passes the schema for an empty passage list", async () => {
     const { content } = await generateContent([]);
 
-    expect(content).toEqual({ language: "en", overview: "", keyPoints: [], decisions: [], actionItems: [] });
+    expect(content).toEqual({ language: "en", overview: "", keyPoints: [], actionItems: [], topics: [] });
     expect(notetakerSummaryContentSchema.safeParse(content).success).toBe(true);
   });
 
@@ -172,7 +172,7 @@ describe("StubSummaryGenerator", () => {
     expect(content.keyPoints[0].startsWith("Alex: ")).toBe(true);
   });
 
-  it("collects decisions case-insensitively, at most three", async () => {
+  it("turns decision passages into DECISION topics case-insensitively, at most three", async () => {
     const texts = [
       "We DECIDED to ship on Friday",
       "I agree with the plan",
@@ -182,7 +182,26 @@ describe("StubSummaryGenerator", () => {
     ];
     const { content } = await generateContent(texts.map((text, index) => buildPassage({ index, text })));
 
-    expect(content.decisions).toEqual(["We DECIDED to ship on Friday", "I agree with the plan", "Agreed"]);
+    expect(content.topics).toEqual([
+      {
+        title: "Alex: We DECIDED to ship on Friday",
+        category: "DECISION",
+        details: ["We DECIDED to ship on Friday"],
+      },
+      { title: "Alex: I agree with the plan", category: "DECISION", details: ["I agree with the plan"] },
+      { title: "Alex: Agreed", category: "DECISION", details: ["Agreed"] },
+    ]);
+    expect(content).not.toHaveProperty("decisions");
+  });
+
+  it("cuts each topic title to 80 characters and keeps the full text in its details", async () => {
+    const text = `We agreed ${"x".repeat(200)}`;
+    const { content } = await generateContent([buildPassage({ text })]);
+
+    expect(content.topics).toHaveLength(1);
+    expect(content.topics[0].title).toHaveLength(80);
+    expect(content.topics[0].title.startsWith("Alex: We agreed")).toBe(true);
+    expect(content.topics[0].details).toEqual([text]);
   });
 
   it("collects action items with the speaker name as owner, at most three", async () => {

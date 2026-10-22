@@ -10,6 +10,7 @@ const MAX_ITEMS = 3;
 const KEY_POINT_PASSAGE_WINDOW = 10;
 const OVERVIEW_MAX_LENGTH = 300;
 const KEY_POINT_MAX_LENGTH = 120;
+const TOPIC_TITLE_MAX_LENGTH = 80;
 
 export const STUB_SUMMARY_MODEL = "stub";
 
@@ -37,19 +38,23 @@ export class StubSummaryGenerator implements INotetakerSummaryGenerator {
       keyPoints.push(`${label}: ${passage.text}`.slice(0, KEY_POINT_MAX_LENGTH));
     }
 
-    const decisions: string[] = [];
+    const topics: NotetakerSummaryContent["topics"] = [];
     const actionItems: NotetakerSummaryContent["actionItems"] = [];
     for (const passage of passages) {
       const lower = passage.text.toLowerCase();
-      if (decisions.length < MAX_ITEMS && (lower.includes("decid") || lower.includes("agree"))) {
-        decisions.push(passage.text);
+      if (topics.length < MAX_ITEMS && (lower.includes("decid") || lower.includes("agree"))) {
+        topics.push({
+          title: `${getSpeakerLabel(passage)}: ${passage.text}`.slice(0, TOPIC_TITLE_MAX_LENGTH),
+          category: "DECISION",
+          details: [passage.text],
+        });
       }
       if (actionItems.length < MAX_ITEMS && (lower.includes(" will ") || lower.includes("action"))) {
         actionItems.push({ text: passage.text, owner: passage.speakerName });
       }
     }
 
-    const content: NotetakerSummaryContent = { language, overview, keyPoints, decisions, actionItems };
+    const content: NotetakerSummaryContent = { language, overview, keyPoints, actionItems, topics };
     return { ok: true, content, model: STUB_SUMMARY_MODEL };
   }
 }

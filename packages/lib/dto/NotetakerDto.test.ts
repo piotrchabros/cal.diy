@@ -151,12 +151,30 @@ describe("notetakerSummaryContentSchema", () => {
     language: "en",
     overview: "Overview",
     keyPoints: [],
-    decisions: ["Ship it"],
     actionItems: [{ text: "Send notes", owner: "Bob" }],
+    topics: [
+      { title: "Launch", category: "DECISION", details: ["Ship it"] },
+      { title: "Intro", category: null, details: [] },
+    ],
   };
 
   it("parses a valid object", () => {
     expect(notetakerSummaryContentSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("strips decisions, which version 2 content no longer carries", () => {
+    const withDecisions: unknown = { ...valid, decisions: ["Ship it"] };
+    expect(notetakerSummaryContentSchema.parse(withDecisions)).toEqual(valid);
+  });
+
+  it("rejects content without topics", () => {
+    const { topics: _topics, ...withoutTopics } = valid;
+    expect(notetakerSummaryContentSchema.safeParse(withoutTopics).success).toBe(false);
+  });
+
+  it("rejects a topic with an unknown category", () => {
+    const invalid: unknown = { ...valid, topics: [{ title: "T", category: "RISK", details: [] }] };
+    expect(notetakerSummaryContentSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("rejects a null language", () => {
