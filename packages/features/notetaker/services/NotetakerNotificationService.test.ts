@@ -313,6 +313,8 @@ describe("NotetakerNotificationService", () => {
         overview: SECRET_OVERVIEW,
         keyPoints: [SECRET_KEY_POINT],
         decisions: [],
+        topics: [],
+        formatVersion: 1,
         actionItems: [{ text: SECRET_ACTION_ITEM, owner: null }],
         model: "model-1",
         generatedAt: new Date("2026-10-12T10:40:00.000Z"),

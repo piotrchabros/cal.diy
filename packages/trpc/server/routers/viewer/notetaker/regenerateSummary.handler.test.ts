@@ -23,6 +23,8 @@ const summary: NotetakerSummaryDto = {
   overview: null,
   keyPoints: [],
   decisions: [],
+  topics: [],
+  formatVersion: 1,
   actionItems: [],
   generatedAt: null,
 };

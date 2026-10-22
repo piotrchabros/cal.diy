@@ -1,4 +1,8 @@
-import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
+import type {
+  NotetakerSummaryFormatVersionDto,
+  NotetakerSummaryStatusDto,
+  NotetakerSummaryTopicDto,
+} from "@calcom/lib/dto/NotetakerSummaryDto";
 
 export type NotetakerSummaryRecord = {
   id: string;
@@ -8,6 +12,8 @@ export type NotetakerSummaryRecord = {
   overview: string | null;
   keyPoints: string[];
   decisions: string[];
+  topics: NotetakerSummaryTopicDto[];
+  formatVersion: NotetakerSummaryFormatVersionDto;
   actionItems: { text: string; owner: string | null }[];
   model: string | null;
   attempts: number;
@@ -23,7 +29,16 @@ export interface INotetakerSummaryRepository {
     transcriptId: string,
     data: Pick<
       NotetakerSummaryRecord,
-      "status" | "language" | "overview" | "keyPoints" | "decisions" | "actionItems" | "model" | "generatedAt"
+      | "status"
+      | "language"
+      | "overview"
+      | "keyPoints"
+      | "decisions"
+      | "actionItems"
+      | "topics"
+      | "formatVersion"
+      | "model"
+      | "generatedAt"
     >
   ): Promise<NotetakerSummaryRecord>;
   setStatus(

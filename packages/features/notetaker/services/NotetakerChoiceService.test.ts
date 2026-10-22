@@ -1039,6 +1039,8 @@ describe("NotetakerChoiceService", () => {
         overview: "Overview text",
         keyPoints: ["Point one"],
         decisions: ["Decision one"],
+        topics: [],
+        formatVersion: 1,
         actionItems: [
           { text: "Send the notes", owner: "Alex" },
           { text: "Book a room", owner: null },
@@ -1055,6 +1057,8 @@ describe("NotetakerChoiceService", () => {
         overview: "Overview text",
         keyPoints: ["Point one"],
         decisions: ["Decision one"],
+        topics: [],
+        formatVersion: 1,
         actionItems: [
           { text: "Send the notes", owner: "Alex" },
           { text: "Book a room", owner: null },

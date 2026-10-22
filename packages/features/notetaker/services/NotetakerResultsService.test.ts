@@ -334,6 +334,8 @@ describe("NotetakerResultsService", () => {
       overview,
       keyPoints: [`${overview}KEYPOINT`],
       decisions: [`${overview}DECISION`],
+      topics: [],
+      formatVersion: 1,
       actionItems: [{ text: `${overview}ACTIONITEM`, owner: null }],
       model: "test-model",
       generatedAt: NOW,
