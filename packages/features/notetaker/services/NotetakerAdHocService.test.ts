@@ -1,4 +1,5 @@
 import { getTranslation } from "@calcom/i18n/server";
+import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,7 @@ import type { INotetakerUserLookup } from "../lib/userLookup";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import type { NotetakerAdHocErrorCode } from "./NotetakerAdHocService";
-import { NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY, NotetakerAdHocService } from "./NotetakerAdHocService";
+import { NotetakerAdHocService } from "./NotetakerAdHocService";
 
 vi.mock("@calcom/i18n/server", () => ({
   getTranslation: vi.fn(async (locale: string, _namespace: string) => (key: string) => `${locale}:${key}`),
@@ -37,6 +38,7 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
       heartbeatTimeoutSeconds: 180,
       summaryMinWords: 40,
     },
+    adHocLimits: { maxActiveMeetings: 10, maxMeetingsPerDay: 50 },
     enabledPlatforms: ["GOOGLE_MEET"],
     botProvider: "FAKE",
     botUrl: null,
@@ -53,6 +55,11 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
 function withMaxDurationSeconds(maxDurationSeconds: number): NotetakerConfig {
   const config = buildConfig();
   return { ...config, limits: { ...config.limits, maxDurationSeconds } };
+}
+
+function withAdHocLimits(adHocLimits: Partial<NotetakerConfig["adHocLimits"]>): NotetakerConfig {
+  const config = buildConfig();
+  return { ...config, adHocLimits: { ...config.adHocLimits, ...adHocLimits } };
 }
 
 async function expectAdHocError(promise: Promise<unknown>, code: NotetakerAdHocErrorCode) {
@@ -102,7 +109,8 @@ describe("NotetakerAdHocService", () => {
           return bookingNotetakerRepository.createAdHocBooking(data);
         },
         countAdHocByUserIdSince: (params) => bookingNotetakerRepository.countAdHocByUserIdSince(params),
-        findActiveAdHocByUserId: (params) => bookingNotetakerRepository.findActiveAdHocByUserId(params),
+        findAcceptedAdHocByUserIdIncludeLatestSession: (params) =>
+          bookingNotetakerRepository.findAcceptedAdHocByUserIdIncludeLatestSession(params),
       },
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       membershipLookup,
@@ -115,7 +123,13 @@ describe("NotetakerAdHocService", () => {
     });
   }
 
-  async function seedAdHoc(params: { createdAt: Date; endTime: Date; location?: string }) {
+  async function seedAdHoc(params: {
+    createdAt: Date;
+    endTime: Date;
+    location?: string;
+    sessionStatus?: NotetakerSessionStatusDto;
+    choice?: { enabled: boolean; pendingDispatch: boolean };
+  }) {
     const booking = await repositories.bookingNotetakerRepository.createAdHocBooking({
       uid: `seeded-${repositories.store.bookings.size + 1}`,
       userId: USER_ID,
@@ -126,6 +140,28 @@ describe("NotetakerAdHocService", () => {
       metadata: { notetakerAdHoc: "true" },
     });
     repositories.store.bookingCreatedAt.set(booking.id, params.createdAt);
+    if (params.choice) {
+      await repositories.bookingNotetakerRepository.upsert({
+        bookingId: booking.id,
+        ...params.choice,
+        source: "HOST",
+        appliedToSeries: false,
+        setByUserId: USER_ID,
+        setAt: params.createdAt,
+      });
+    }
+    if (params.sessionStatus) {
+      await repositories.sessionRepository.create({
+        bookingId: booking.id,
+        platform: "GOOGLE_MEET",
+        meetingUrl: params.location ?? OTHER_MEET_URL,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: params.createdAt,
+        dispatchedAt: params.createdAt,
+        status: params.sessionStatus,
+      });
+    }
     return booking;
   }
 
@@ -133,6 +169,17 @@ describe("NotetakerAdHocService", () => {
     for (let i = 0; i < count; i += 1) {
       await seedAdHoc({ createdAt, endTime: new Date(createdAt.getTime() + MINUTE_MS) });
     }
+  }
+
+  // Booked for an hour like the default, so only the session state tells whether it is still live.
+  function seedUnexpiredAdHoc(
+    params: Omit<Parameters<typeof seedAdHoc>[0], "createdAt" | "endTime"> = {}
+  ): ReturnType<typeof seedAdHoc> {
+    return seedAdHoc({
+      createdAt: new Date(NOW.getTime() - MINUTE_MS),
+      endTime: new Date(NOW.getTime() + 59 * MINUTE_MS),
+      ...params,
+    });
   }
 
   function adHocBookings() {
@@ -354,7 +401,10 @@ describe("NotetakerAdHocService", () => {
       });
 
       it("reuses the live meeting even when the daily limit is reached", async () => {
-        await seedEndedAdHoc(NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY, new Date(NOW.getTime() - DAY_MS / 2));
+        await seedEndedAdHoc(
+          buildConfig().adHocLimits.maxMeetingsPerDay,
+          new Date(NOW.getTime() - DAY_MS / 2)
+        );
         const live = await seedAdHoc({
           createdAt: new Date(NOW.getTime() - MINUTE_MS),
           endTime: new Date(NOW.getTime() + MINUTE_MS),
@@ -376,34 +426,105 @@ describe("NotetakerAdHocService", () => {
         expect(result.reused).toBe(false);
         expect(adHocBookings()).toHaveLength(2);
       });
+
+      it("reuses a meeting on the same link whose bot is still live", async () => {
+        const live = await seedUnexpiredAdHoc({ location: MEET_URL, sessionStatus: "TRANSCRIBING" });
+
+        await expect(dispatch()).resolves.toEqual({ bookingUid: live.uid, reused: true });
+        expect(dispatchForBooking).not.toHaveBeenCalled();
+      });
+
+      it("sends a new bot to the same link once the earlier one finished", async () => {
+        const finished = await seedUnexpiredAdHoc({
+          location: MEET_URL,
+          choice: { enabled: true, pendingDispatch: false },
+          sessionStatus: "READY",
+        });
+
+        const result = await dispatch();
+
+        expect(result.reused).toBe(false);
+        expect(result.bookingUid).not.toBe(finished.uid);
+        expect(adHocBookings()).toHaveLength(2);
+        expect(dispatchForBooking).toHaveBeenCalledWith({ bookingUid: result.bookingUid });
+      });
     });
 
     describe("limits", () => {
-      it("allows one live meeting at a time", async () => {
-        await seedAdHoc({
-          createdAt: new Date(NOW.getTime() - MINUTE_MS),
-          endTime: new Date(NOW.getTime() + MINUTE_MS),
-          location: OTHER_MEET_URL,
-        });
+      it.each([
+        "READY",
+        "ENDED_EARLY",
+        "FAILED",
+      ] as const)("does not count an earlier meeting whose bot finished with %s", async (sessionStatus) => {
+        service = buildService(withAdHocLimits({ maxActiveMeetings: 1 }));
+        await seedUnexpiredAdHoc({ choice: { enabled: true, pendingDispatch: false }, sessionStatus });
+
+        await expect(dispatch()).resolves.toMatchObject({ reused: false });
+      });
+
+      it.each([
+        ["waiting for its dispatch", { choice: { enabled: true, pendingDispatch: true } }],
+        ["with a SCHEDULED bot", { sessionStatus: "SCHEDULED" }],
+        ["with a TRANSCRIBING bot", { sessionStatus: "TRANSCRIBING" }],
+        [
+          "re-armed after its bot failed",
+          { choice: { enabled: true, pendingDispatch: true }, sessionStatus: "FAILED" },
+        ],
+      ] as const)("counts an earlier meeting %s", async (_label, seed) => {
+        service = buildService(withAdHocLimits({ maxActiveMeetings: 1 }));
+        await seedUnexpiredAdHoc(seed);
 
         await expectAdHocError(dispatch(), "AD_HOC_LIMIT_REACHED");
         expect(adHocBookings()).toHaveLength(1);
       });
 
-      it("rejects the meeting past the daily limit, counting one created exactly 24 hours ago", async () => {
-        await seedEndedAdHoc(
-          NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY - 1,
-          new Date(NOW.getTime() - MINUTE_MS * 120)
+      it("allows up to the configured number of live meetings at once", async () => {
+        service = buildService(withAdHocLimits({ maxActiveMeetings: 2 }));
+        await seedUnexpiredAdHoc({ sessionStatus: "TRANSCRIBING" });
+
+        await expect(dispatch()).resolves.toMatchObject({ reused: false });
+        await expectAdHocError(
+          dispatch({ meetingUrl: "https://meet.google.com/qrs-tuvw-xyz" }),
+          "AD_HOC_LIMIT_REACHED"
         );
+        expect(adHocBookings()).toHaveLength(2);
+      });
+
+      it("allows several live meetings by default", async () => {
+        await seedUnexpiredAdHoc({ sessionStatus: "TRANSCRIBING" });
+        await seedUnexpiredAdHoc({ sessionStatus: "WAITING_TO_BE_ADMITTED" });
+
+        await expect(dispatch()).resolves.toMatchObject({ reused: false });
+      });
+
+      it("counts finished and failed meetings towards the configured daily limit", async () => {
+        service = buildService(withAdHocLimits({ maxMeetingsPerDay: 3 }));
+        await seedUnexpiredAdHoc({
+          choice: { enabled: true, pendingDispatch: false },
+          sessionStatus: "READY",
+        });
+        await seedUnexpiredAdHoc({
+          choice: { enabled: true, pendingDispatch: false },
+          sessionStatus: "FAILED",
+        });
+        await seedEndedAdHoc(1, new Date(NOW.getTime() - MINUTE_MS * 120));
+
+        await expectAdHocError(dispatch(), "AD_HOC_LIMIT_REACHED");
+        expect(adHocBookings()).toHaveLength(3);
+      });
+
+      it("rejects the meeting past the daily limit, counting one created exactly 24 hours ago", async () => {
+        const { maxMeetingsPerDay } = buildConfig().adHocLimits;
+        await seedEndedAdHoc(maxMeetingsPerDay - 1, new Date(NOW.getTime() - MINUTE_MS * 120));
         await seedEndedAdHoc(1, new Date(NOW.getTime() - DAY_MS));
 
         await expectAdHocError(dispatch(), "AD_HOC_LIMIT_REACHED");
-        expect(adHocBookings()).toHaveLength(NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY);
+        expect(adHocBookings()).toHaveLength(maxMeetingsPerDay);
       });
 
       it("ignores meetings created more than 24 hours ago", async () => {
         await seedEndedAdHoc(
-          NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY - 1,
+          buildConfig().adHocLimits.maxMeetingsPerDay - 1,
           new Date(NOW.getTime() - MINUTE_MS * 120)
         );
         await seedEndedAdHoc(1, new Date(NOW.getTime() - DAY_MS - 1));
@@ -470,6 +591,7 @@ describe("NotetakerAdHocService", () => {
       });
 
       it("checks the limits before the team", async () => {
+        service = buildService(withAdHocLimits({ maxActiveMeetings: 1 }));
         await seedAdHoc({
           createdAt: new Date(NOW.getTime() - MINUTE_MS),
           endTime: new Date(NOW.getTime() + MINUTE_MS),

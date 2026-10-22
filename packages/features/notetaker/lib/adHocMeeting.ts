@@ -1,4 +1,6 @@
+import type { NotetakerAdHocBookingWithLatestSessionRecord } from "../repositories/interfaces/IBookingNotetakerRepository";
 import { classifyMeetingUrl } from "./eligibility";
+import { NOTETAKER_LIVE_SESSION_STATUSES } from "./sessionStateMachine";
 
 const GOOGLE_MEET_HOST = "meet.google.com";
 // Meet also serves a meeting under /meet/<code>, which some apps and invites link to.
@@ -70,4 +72,17 @@ export function readAdHocBookingMetadata(metadata: unknown): {
     isAdHoc: record[NOTETAKER_AD_HOC_KEY] === "true",
     sharingTeamId: teamId !== null && Number.isSafeInteger(teamId) ? teamId : null,
   };
+}
+
+// A booking without a session and without a disabled choice is still being dispatched, so it counts
+// as live; once the latest bot finished it stops counting unless the choice was armed again.
+export function isAdHocMeetingActive(
+  meeting: Pick<NotetakerAdHocBookingWithLatestSessionRecord, "choice" | "latestSessionStatus">
+): boolean {
+  const { choice, latestSessionStatus } = meeting;
+  const hasLiveSession =
+    latestSessionStatus !== null && NOTETAKER_LIVE_SESSION_STATUSES.includes(latestSessionStatus);
+  if (hasLiveSession) return true;
+  if (choice?.enabled && choice.pendingDispatch) return true;
+  return latestSessionStatus === null && choice?.enabled !== false;
 }

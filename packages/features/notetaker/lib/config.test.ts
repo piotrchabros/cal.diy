@@ -69,6 +69,28 @@ describe("getNotetakerConfig limits", () => {
   });
 });
 
+describe("getNotetakerConfig ad-hoc limits", () => {
+  const adHocLimitRows = [
+    ["NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS", "maxActiveMeetings", 10],
+    ["NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY", "maxMeetingsPerDay", 50],
+  ] as const;
+
+  it.each(adHocLimitRows)("%s defaults when unset or blank", (name, field, fallback) => {
+    expect(getNotetakerConfig(env()).adHocLimits[field]).toBe(fallback);
+    expect(getNotetakerConfig(env({ [name]: " " })).adHocLimits[field]).toBe(fallback);
+  });
+
+  it.each(adHocLimitRows)("%s parses a valid integer", (name, field) => {
+    expect(getNotetakerConfig(env({ [name]: " 3 " })).adHocLimits[field]).toBe(3);
+  });
+
+  it.each(adHocLimitRows)("%s throws for an invalid value", (name) => {
+    for (const value of ["abc", "-1", "1.5"]) {
+      expectConfigError({ [name]: value }, name);
+    }
+  });
+});
+
 describe("getNotetakerConfig platforms", () => {
   it("defaults to Google Meet", () => {
     expect(getNotetakerConfig(env()).enabledPlatforms).toEqual(["GOOGLE_MEET"]);

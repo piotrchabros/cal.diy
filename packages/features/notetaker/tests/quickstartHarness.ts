@@ -288,7 +288,8 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
       return new NotetakerAdHocService({
         // Wrapped so that cleanup also removes the ad-hoc bookings the service creates.
         bookingNotetakerRepository: {
-          findActiveAdHocByUserId: (params) => bookingNotetakerRepository.findActiveAdHocByUserId(params),
+          findAcceptedAdHocByUserIdIncludeLatestSession: (params) =>
+            bookingNotetakerRepository.findAcceptedAdHocByUserIdIncludeLatestSession(params),
           countAdHocByUserIdSince: (params) => bookingNotetakerRepository.countAdHocByUserIdSince(params),
           async createAdHocBooking(input) {
             const booking = await bookingNotetakerRepository.createAdHocBooking(input);

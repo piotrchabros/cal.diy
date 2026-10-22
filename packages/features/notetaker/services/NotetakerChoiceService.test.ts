@@ -83,6 +83,7 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
       heartbeatTimeoutSeconds: 180,
       summaryMinWords: 40,
     },
+    adHocLimits: { maxActiveMeetings: 10, maxMeetingsPerDay: 50 },
     enabledPlatforms: ["GOOGLE_MEET"],
     botProvider: "FAKE",
     botUrl: null,

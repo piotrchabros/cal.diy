@@ -1,5 +1,5 @@
 import type { NotetakerSharingModeDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
-import type { NotetakerChoiceSourceDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { NotetakerChoiceSourceDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 
 export type NotetakerBookingStatus = "CANCELLED" | "ACCEPTED" | "REJECTED" | "PENDING" | "AWAITING_HOST";
@@ -108,6 +108,14 @@ export type NotetakerAdHocBookingWithResultsSessionRecord = Omit<
   sharingTeamId: number;
   /** Null when the chosen team no longer exists. */
   sharingTeamName: string | null;
+};
+
+export type NotetakerAdHocBookingWithLatestSessionRecord = {
+  bookingUid: string;
+  location: string | null;
+  choice: { enabled: boolean; pendingDispatch: boolean } | null;
+  /** Status of the latest session (dispatchedAt desc, id desc); null when the booking has none. */
+  latestSessionStatus: NotetakerSessionStatusDto | null;
 };
 
 export interface IBookingNotetakerRepository {
@@ -232,9 +240,12 @@ export interface IBookingNotetakerRepository {
   }): Promise<{ id: number; uid: string }>;
   /** Counts the user's ad-hoc bookings (metadata notetakerAdHoc = "true") created at or after `since`. */
   countAdHocByUserIdSince(params: { userId: number; since: Date }): Promise<number>;
-  /** The user's ACCEPTED ad-hoc bookings whose endTime is after `now`. */
-  findActiveAdHocByUserId(params: {
+  /**
+   * The user's ACCEPTED ad-hoc bookings whose endTime is after `endTimeAfter`, ordered by id asc,
+   * with the choice flags and the status of the latest session (dispatchedAt desc, id desc).
+   */
+  findAcceptedAdHocByUserIdIncludeLatestSession(params: {
     userId: number;
-    now: Date;
-  }): Promise<{ bookingUid: string; location: string | null }[]>;
+    endTimeAfter: Date;
+  }): Promise<NotetakerAdHocBookingWithLatestSessionRecord[]>;
 }

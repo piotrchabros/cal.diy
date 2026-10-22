@@ -1506,7 +1506,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(AD_HOC_SUITE, () => {
     });
   });
 
-  describe("findActiveAdHocByUserId", () => {
+  describe("findAcceptedAdHocByUserIdIncludeLatestSession", () => {
     it("returns accepted ad-hoc bookings that have not ended and skips finished, cancelled and regular ones", async () => {
       const active = await createAdHoc();
       await createAdHoc({ endTime: new Date(NOW.getTime() - 1) });
@@ -1529,12 +1529,54 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(AD_HOC_SUITE, () => {
       });
       bookingIds.push(regular.id);
 
-      const found = await repository.findActiveAdHocByUserId({
+      const found = await repository.findAcceptedAdHocByUserIdIncludeLatestSession({
         userId: required(ownerId, "owner"),
-        now: NOW,
+        endTimeAfter: NOW,
       });
 
-      expect(found).toEqual([{ bookingUid: active.uid, location: MEET }]);
+      expect(found).toEqual([
+        { bookingUid: active.uid, location: MEET, choice: null, latestSessionStatus: null },
+      ]);
+    });
+
+    it("includes the choice flags and the status of the latest session", async () => {
+      const created = await createAdHoc();
+      await prisma.bookingNotetaker.create({
+        data: { bookingId: created.id, enabled: true, pendingDispatch: false, source: "HOST", setAt: NOW },
+        select: { bookingId: true },
+      });
+      for (const [status, dispatchedAt] of [
+        ["FAILED", new Date(NOW.getTime() - HOUR)],
+        ["READY", NOW],
+      ] as const) {
+        await prisma.notetakerSession.create({
+          data: {
+            bookingId: created.id,
+            platform: "GOOGLE_MEET",
+            meetingUrl: MEET,
+            botProvider: "FAKE",
+            displayName: "Notetaker",
+            scheduledStartAt: NOW,
+            dispatchedAt,
+            status,
+          },
+          select: { id: true },
+        });
+      }
+
+      const found = await repository.findAcceptedAdHocByUserIdIncludeLatestSession({
+        userId: required(ownerId, "owner"),
+        endTimeAfter: NOW,
+      });
+
+      expect(found).toEqual([
+        {
+          bookingUid: created.uid,
+          location: MEET,
+          choice: { enabled: true, pendingDispatch: false },
+          latestSessionStatus: "READY",
+        },
+      ]);
     });
   });
 

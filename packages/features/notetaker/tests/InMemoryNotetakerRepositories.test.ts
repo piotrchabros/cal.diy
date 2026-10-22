@@ -232,8 +232,53 @@ describe("InMemoryNotetakerRepositories", () => {
         bookingSeed({ id: 501, uid: "regular", endTime: new Date(NOW.getTime() + 1000) })
       );
 
-      expect(await repo.findActiveAdHocByUserId({ userId: OWNER_ID, now: NOW })).toEqual([
-        { bookingUid: "active", location: MEET },
+      expect(
+        await repo.findAcceptedAdHocByUserIdIncludeLatestSession({ userId: OWNER_ID, endTimeAfter: NOW })
+      ).toEqual([{ bookingUid: "active", location: MEET, choice: null, latestSessionStatus: null }]);
+    });
+
+    it("includes the choice flags and the status of the latest session", async () => {
+      const repo = repositories.bookingNotetakerRepository;
+      const created = await create({ uid: "with-sessions" });
+      await repo.upsert({
+        bookingId: created.id,
+        enabled: true,
+        pendingDispatch: false,
+        source: "HOST",
+        appliedToSeries: false,
+        setByUserId: OWNER_ID,
+        setAt: NOW,
+      });
+      await repositories.sessionRepository.create({
+        bookingId: created.id,
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: NOW,
+        status: "FAILED",
+        dispatchedAt: new Date(NOW.getTime() - 60 * 1000),
+      });
+      await repositories.sessionRepository.create({
+        bookingId: created.id,
+        platform: "GOOGLE_MEET",
+        meetingUrl: MEET,
+        botProvider: "FAKE",
+        displayName: "Notetaker",
+        scheduledStartAt: NOW,
+        status: "READY",
+        dispatchedAt: NOW,
+      });
+
+      expect(
+        await repo.findAcceptedAdHocByUserIdIncludeLatestSession({ userId: OWNER_ID, endTimeAfter: NOW })
+      ).toEqual([
+        {
+          bookingUid: "with-sessions",
+          location: MEET,
+          choice: { enabled: true, pendingDispatch: false },
+          latestSessionStatus: "READY",
+        },
       ]);
     });
   });

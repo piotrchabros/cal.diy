@@ -583,14 +583,16 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         code: ErrorCode.Forbidden,
       });
 
-      // Pasting the same link again while the meeting is live returns it instead of sending a second bot.
+      // The first bot has finished, so pasting the same link again starts a new meeting with a second bot.
       const again = await adHocService.dispatchToMeeting({
         userId: owner.id,
         meetingUrl: QUICKSTART_MEET_LINK,
         sharingTeamId: null,
       });
-      expect(again).toEqual({ bookingUid, reused: true });
-      expect(gateway.joinRequests).toHaveLength(1);
+      await harness.settle(gateway);
+      expect(again.reused).toBe(false);
+      expect(again.bookingUid).not.toBe(bookingUid);
+      expect(gateway.joinRequests).toHaveLength(2);
     });
   });
 
