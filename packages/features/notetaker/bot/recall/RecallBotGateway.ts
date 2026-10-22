@@ -40,7 +40,8 @@ export function buildRecallCreateBotRequest(
     automatic_leave: {
       waiting_room_timeout: input.limits.admissionTimeoutSeconds,
       noone_joined_timeout: input.limits.noShowTimeoutSeconds,
-      everyone_left_timeout: { timeout: input.limits.aloneTimeoutSeconds, activate_after: 0 },
+      // Recall rejects activate_after: 0 (minimum 1); omitting it stores null, which means no delay.
+      everyone_left_timeout: { timeout: input.limits.aloneTimeoutSeconds },
       in_call_recording_timeout: input.limits.maxDurationSeconds,
     },
   };

@@ -92,7 +92,7 @@ export type RecallCreateBotRequest = {
   automatic_leave: {
     waiting_room_timeout: number;
     noone_joined_timeout: number;
-    everyone_left_timeout: { timeout: number; activate_after: number };
+    everyone_left_timeout: { timeout: number };
     in_call_recording_timeout: number;
   };
 };
