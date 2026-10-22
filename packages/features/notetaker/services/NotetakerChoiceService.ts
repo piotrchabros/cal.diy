@@ -20,6 +20,7 @@ import { toNotetakerSharingSource } from "../lib/sharingScope";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup } from "../lib/userLookup";
+import { isNotetakerVideoDownloadable } from "../lib/videoAvailability";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
@@ -263,6 +264,9 @@ export class NotetakerChoiceService {
       session: stateSession ? toSessionDto(stateSession) : null,
       transcript: transcript ? toTranscriptDto(transcript) : null,
       summary: summary ? toNotetakerSummaryDto(summary) : null,
+      ...(transcript && latestWithTranscript
+        ? { videoAvailable: isNotetakerVideoDownloadable(latestWithTranscript.session) }
+        : {}),
       sharedWithAttendees: !isSharedViewer && sharingGrant !== null,
       ...(access ? { access } : {}),
     };

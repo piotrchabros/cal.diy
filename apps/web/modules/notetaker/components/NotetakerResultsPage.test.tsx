@@ -182,6 +182,21 @@ describe("NotetakerResultsPage", () => {
     expect(screen.queryByTestId("notetaker-started-late")).not.toBeInTheDocument();
   });
 
+  it.each([undefined, false])("hides the video download link when videoAvailable is %s", (videoAvailable) => {
+    renderPage(buildState({ videoAvailable }));
+
+    expect(screen.queryByTestId("notetaker-video-download")).not.toBeInTheDocument();
+  });
+
+  it("links the video download to the video route in a new tab when the video is available", () => {
+    renderPage(buildState({ bookingUid: "uid-1", videoAvailable: true }));
+
+    const link = screen.getByTestId("notetaker-video-download");
+    expect(link).toHaveAttribute("href", "/api/notetaker/video/uid-1");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("labels a truncated transcript and shows the length limit reason on the badge", () => {
     renderPage(
       buildState({
