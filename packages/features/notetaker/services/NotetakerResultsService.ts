@@ -4,13 +4,21 @@ import type { NotetakerActivityDto } from "@calcom/lib/dto/NotetakerActivityDto"
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerExportDto, NotetakerPassageDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import type {
+  INotetakerRecordingMediaGatewayResolver,
+  NotetakerVideoDownloadResult,
+} from "../bot/INotetakerRecordingMediaGateway";
 import type { NotetakerExportLabels } from "../lib/exportMarkdown";
 import { exportMarkdown } from "../lib/exportMarkdown";
 import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
 import type { INotetakerTasker } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
-import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
+import { isNotetakerVideoDownloadable } from "../lib/videoAvailability";
+import type {
+  IBookingNotetakerRepository,
+  NotetakerBookingContext,
+} from "../repositories/interfaces/IBookingNotetakerRepository";
 import type {
   IEventTypeNotetakerSettingsRepository,
   NotetakerSharingChangeRecord,
@@ -131,6 +139,7 @@ export interface INotetakerResultsServiceDeps {
   >;
   userRepository: INotetakerUserLookup;
   notetakerTasker: INotetakerTasker;
+  recordingMediaGatewayResolver: INotetakerRecordingMediaGatewayResolver;
   logger: ISimpleLogger;
 }
 
@@ -333,19 +342,7 @@ export class NotetakerResultsService {
   }): Promise<NotetakerExportDto> {
     const { bookingUid, userId } = params;
 
-    const { role, booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
-
-    const latest = await this.deps.sessionRepository.findLatestWithTranscriptByBookingId(booking.id);
-    if (!latest) {
-      throw ErrorWithCode.Factory.NotFound(`Booking ${bookingUid} has no notetaker transcript`);
-    }
-    if (latest.session.resultsDeletedAt !== null) {
-      throw ErrorWithCode.Factory.NotFound(
-        `Results of notetaker session ${latest.session.id} have been deleted`
-      );
-    }
-
-    this.assertSessionReadable(role, latest.session);
+    const { booking, latest } = await this.resolveReadableLatestTranscript({ bookingUid, userId });
 
     const passageRecords = await this.deps.transcriptRepository.findAllPassages(latest.transcript.id);
     const summaryRecord = await this.deps.summaryRepository.findByTranscriptId(latest.transcript.id);
@@ -402,6 +399,60 @@ export class NotetakerResultsService {
     });
 
     return { filename, mimeType: "text/markdown", content };
+  }
+
+  // Readers of the video are exactly the readers of the transcript, so the access path is shared with export.
+  async getVideoDownload(params: {
+    bookingUid: string;
+    userId: number;
+  }): Promise<NotetakerVideoDownloadResult> {
+    const { bookingUid, userId } = params;
+
+    const { booking, latest } = await this.resolveReadableLatestTranscript({ bookingUid, userId });
+    const { session } = latest;
+    if (!session.externalRef || !isNotetakerVideoDownloadable(session)) return { status: "UNAVAILABLE" };
+
+    const gateway = this.deps.recordingMediaGatewayResolver.forProvider(session.botProvider);
+    if (!gateway) return { status: "UNAVAILABLE" };
+
+    const result = await gateway.getVideoDownload(session.externalRef);
+    if (result.status !== "AVAILABLE") return result;
+
+    // Awaited before returning, like the transcript export; the presigned URL stays out of the row.
+    const actor = await this.findActor(userId);
+    await this.createUserActivity({
+      bookingId: booking.id,
+      sessionId: session.id,
+      action: "EXPORTED",
+      userId,
+      actorName: actor?.name ?? null,
+      detail: { format: "video" },
+    });
+
+    return result;
+  }
+
+  private async resolveReadableLatestTranscript(params: { bookingUid: string; userId: number }): Promise<{
+    booking: NotetakerBookingContext;
+    latest: { session: NotetakerSessionRecord; transcript: NotetakerTranscriptRecord };
+  }> {
+    const { bookingUid, userId } = params;
+
+    const { role, booking } = await this.deps.accessService.resolveViewerRole({ bookingUid, userId });
+
+    const latest = await this.deps.sessionRepository.findLatestWithTranscriptByBookingId(booking.id);
+    if (!latest) {
+      throw ErrorWithCode.Factory.NotFound(`Booking ${bookingUid} has no notetaker transcript`);
+    }
+    if (latest.session.resultsDeletedAt !== null) {
+      throw ErrorWithCode.Factory.NotFound(
+        `Results of notetaker session ${latest.session.id} have been deleted`
+      );
+    }
+
+    this.assertSessionReadable(role, latest.session);
+
+    return { booking, latest };
   }
 
   async getActivity(params: { bookingUid: string; userId: number }): Promise<NotetakerActivityDto[]> {
@@ -465,8 +516,9 @@ export class NotetakerResultsService {
     action: "SHARED" | "SHARING_REVOKED" | "EXPORTED" | "DELETED";
     userId: number;
     actorName: string | null;
+    detail?: Record<string, unknown>;
   }): Promise<void> {
-    const { bookingId, sessionId, action, userId, actorName } = params;
+    const { bookingId, sessionId, action, userId, actorName, detail = null } = params;
 
     await this.deps.activityRepository.create({
       bookingId,
@@ -475,7 +527,7 @@ export class NotetakerResultsService {
       actorType: "USER",
       actorUserId: userId,
       actorName,
-      detail: null,
+      detail,
     });
   }
 }
