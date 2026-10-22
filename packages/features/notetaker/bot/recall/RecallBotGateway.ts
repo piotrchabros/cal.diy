@@ -14,18 +14,20 @@ import { RECALL_SESSION_METADATA_KEY } from "./recallSchemas";
 const MAX_BOT_NAME_LENGTH = 100;
 // Google Meet caps chat messages at 500 characters, the lowest of the supported platforms.
 const MAX_CHAT_MESSAGE_LENGTH = 500;
+// Recall rejects a join_at in the past, so a start this close to now could already be past once
+// request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
+const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
 
 export function buildRecallCreateBotRequest(
   input: NotetakerBotJoinRequest,
   now: Date
 ): RecallCreateBotRequest {
   const scheduledStartMs = new Date(input.scheduledStartAt).getTime();
-  // Recall rejects a join_at in the past, and late dispatches still have to join right away.
-  const joinAt = new Date(Math.max(scheduledStartMs, now.getTime()));
+  const isScheduledJoin = scheduledStartMs > now.getTime() + IMMEDIATE_JOIN_MARGIN_MS;
   return {
     meeting_url: input.meetingUrl,
     bot_name: input.displayName.slice(0, MAX_BOT_NAME_LENGTH),
-    join_at: joinAt.toISOString(),
+    ...(isScheduledJoin ? { join_at: new Date(scheduledStartMs).toISOString() } : {}),
     metadata: { [RECALL_SESSION_METADATA_KEY]: input.sessionId },
     chat: {
       on_bot_join: {
