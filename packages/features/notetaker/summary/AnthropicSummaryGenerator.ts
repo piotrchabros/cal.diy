@@ -13,7 +13,8 @@ import type {
   MessageStreamParams,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
-import { notetakerSummaryContentSchema } from "@calcom/lib/dto/NotetakerSummaryDto";
+import type { NotetakerSummaryContent } from "@calcom/lib/dto/NotetakerSummaryDto";
+import { z } from "zod";
 import { buildSpeakerRoster, getSpeakerLabel } from "../lib/speakerLabel";
 import type {
   INotetakerSummaryGenerator,
@@ -65,7 +66,18 @@ export interface IAnthropicSummaryGeneratorDeps {
   logger: ISimpleLogger;
 }
 
-export const NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS = 8192;
+// Leaves room for the topic cap with several detail bullets each in long meetings.
+export const NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS = 16000;
+
+export const MAX_KEY_FINDINGS = 15;
+export const MAX_NEXT_STEP_GROUPS = 20;
+export const MAX_ITEMS_PER_GROUP = 15;
+export const MAX_TOPICS = 30;
+export const MAX_TOPIC_DETAILS = 8;
+
+const TOPIC_CATEGORIES = ["PROBLEM", "UPDATE", "DECISION"] as const;
+
+const stringArraySchema = { type: "array", items: { type: "string" } };
 
 // Hand-written because the SDK's zod helper needs a zod 4 schema and the DTO schema is zod 3.
 export const NOTETAKER_SUMMARY_OUTPUT_FORMAT: JSONOutputFormat = {
@@ -73,27 +85,89 @@ export const NOTETAKER_SUMMARY_OUTPUT_FORMAT: JSONOutputFormat = {
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["language", "overview", "keyPoints", "decisions", "actionItems"],
+    required: ["language", "overview", "keyFindings", "nextSteps", "topics"],
     properties: {
       language: { type: "string" },
       overview: { type: "string" },
-      keyPoints: { type: "array", items: { type: "string" } },
-      decisions: { type: "array", items: { type: "string" } },
-      actionItems: {
+      keyFindings: stringArraySchema,
+      nextSteps: {
         type: "array",
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["text", "owner"],
+          required: ["owner", "items"],
           properties: {
-            text: { type: "string" },
             owner: { anyOf: [{ type: "string" }, { type: "null" }] },
+            items: stringArraySchema,
+          },
+        },
+      },
+      topics: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "category", "details"],
+          properties: {
+            title: { type: "string" },
+            category: { anyOf: [{ type: "string", enum: [...TOPIC_CATEGORIES] }, { type: "null" }] },
+            details: stringArraySchema,
           },
         },
       },
     },
   },
 };
+
+const summaryOutputSchema = z.object({
+  language: z.string(),
+  overview: z.string(),
+  keyFindings: z.array(z.string()),
+  nextSteps: z.array(z.object({ owner: z.string().nullable(), items: z.array(z.string()) })),
+  topics: z.array(
+    z.object({
+      title: z.string(),
+      category: z.enum(TOPIC_CATEGORIES).nullable(),
+      details: z.array(z.string()),
+    })
+  ),
+});
+
+export type NotetakerSummaryOutput = z.infer<typeof summaryOutputSchema>;
+
+function cleanList(values: string[], max: number): string[] {
+  return values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .slice(0, max);
+}
+
+/** Over-long lists are sliced rather than rejected, so one verbose meeting never fails its summary. */
+export function toSummaryContent(output: NotetakerSummaryOutput): NotetakerSummaryContent {
+  const actionItems: NotetakerSummaryContent["actionItems"] = [];
+  for (const group of output.nextSteps.slice(0, MAX_NEXT_STEP_GROUPS)) {
+    const owner = group.owner?.trim() || null;
+    for (const text of cleanList(group.items, MAX_ITEMS_PER_GROUP)) {
+      actionItems.push({ text, owner });
+    }
+  }
+
+  const topics: NotetakerSummaryContent["topics"] = [];
+  for (const topic of output.topics) {
+    if (topics.length >= MAX_TOPICS) break;
+    const title = topic.title.trim();
+    if (title.length === 0) continue;
+    topics.push({ title, category: topic.category, details: cleanList(topic.details, MAX_TOPIC_DETAILS) });
+  }
+
+  return {
+    language: output.language.trim(),
+    overview: output.overview.trim(),
+    keyPoints: cleanList(output.keyFindings, MAX_KEY_FINDINGS),
+    actionItems,
+    topics,
+  };
+}
 
 export function buildSummaryPrompt(input: NotetakerSummaryGeneratorInput): { system: string; user: string } {
   const sentences = [
@@ -106,8 +180,21 @@ export function buildSummaryPrompt(input: NotetakerSummaryGeneratorInput): { sys
     );
   }
   sentences.push(
-    "Give an action item an owner only when the transcript states who is responsible; otherwise set owner to null.",
-    "Do not invent facts: include only points, decisions and action items the transcript supports, and leave a list empty when there is nothing to report.",
+    "overview: 3-6 sentences covering the meeting's purpose, its main outcomes and its overall tone.",
+    "keyFindings: the most important conclusions, findings and agreements, one sentence each, at most 15.",
+    "nextSteps: group the action items by the person or team responsible.",
+    "Write each owner exactly as the person is named in the speaker list or as the team is named in the transcript.",
+    "Give an action item an owner only when the transcript states who is responsible; put every item with no stated owner in a single group and set owner to null for it.",
+    "Start each item with a verb and include any deadline the transcript states.",
+    "topics: every substantive topic discussed, in chronological order, one entry per distinct topic (typically 5-20 for an hour-long meeting, at most 30).",
+    'title: short and specific, naming the people or organisations involved (for example "Lead: <name> (<org>) - <issue>").',
+    "details: 2-6 bullets covering the context, the proposals, any options with figures and prices exactly as stated, and the agreements or next actions on that topic.",
+    "category: choose from what was concluded about the topic.",
+    "DECISION when the participants reached a decision or agreement about it, even if a problem was also raised.",
+    "PROBLEM when it centred on an unresolved issue, blocker or risk.",
+    "UPDATE when it was mainly a status report or new information with nothing decided.",
+    "null when none of these clearly fits.",
+    "Do not invent facts: include only findings, topics, details and action items the transcript supports, and leave a list empty when there is nothing to report.",
     "Respond only with JSON matching the required schema."
   );
 
@@ -171,10 +258,10 @@ export class AnthropicSummaryGenerator implements INotetakerSummaryGenerator {
       } catch {
         return fail("INVALID_OUTPUT", true);
       }
-      const parsed = notetakerSummaryContentSchema.safeParse(json);
+      const parsed = summaryOutputSchema.safeParse(json);
       if (!parsed.success) return fail("INVALID_OUTPUT", true);
 
-      return { ok: true, content: parsed.data, model: message.model };
+      return { ok: true, content: toSummaryContent(parsed.data), model: message.model };
     } catch (error) {
       const { failureCode, retryable } = mapError(error);
       return fail(failureCode, retryable, {

@@ -19,20 +19,45 @@ import type { NotetakerPassageRecord } from "../repositories/interfaces/INotetak
 import {
   AnthropicSummaryGenerator,
   buildSummaryPrompt,
+  MAX_ITEMS_PER_GROUP,
+  MAX_KEY_FINDINGS,
+  MAX_NEXT_STEP_GROUPS,
+  MAX_TOPIC_DETAILS,
+  MAX_TOPICS,
   NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS,
   NOTETAKER_SUMMARY_OUTPUT_FORMAT,
+  type NotetakerSummaryOutput,
+  toSummaryContent,
 } from "./AnthropicSummaryGenerator";
 
 const SECRET = "zxqvsecretpassagetoken";
+
+const VALID_OUTPUT: NotetakerSummaryOutput = {
+  language: "en",
+  overview: "The team reviewed the launch plan.",
+  keyFindings: ["Launch is on track"],
+  nextSteps: [
+    { owner: null, items: ["Book a room"] },
+    { owner: "Sam", items: ["Send the notes", "Call the venue by Friday"] },
+  ],
+  topics: [
+    { title: "Launch date", category: "DECISION", details: ["Ship on Friday", "Marketing is ready"] },
+    { title: "Small talk", category: null, details: ["Weather"] },
+  ],
+};
 
 const VALID_CONTENT = {
   language: "en",
   overview: "The team reviewed the launch plan.",
   keyPoints: ["Launch is on track"],
-  decisions: ["Ship on Friday"],
   actionItems: [
     { text: "Book a room", owner: null },
     { text: "Send the notes", owner: "Sam" },
+    { text: "Call the venue by Friday", owner: "Sam" },
+  ],
+  topics: [
+    { title: "Launch date", category: "DECISION", details: ["Ship on Friday", "Marketing is ready"] },
+    { title: "Small talk", category: null, details: ["Weather"] },
   ],
 };
 
@@ -97,7 +122,7 @@ function createGenerator(finalMessage: () => Promise<Message>, model = "claude-c
 }
 
 function okMessage() {
-  return async () => textMessage(JSON.stringify(VALID_CONTENT));
+  return async () => textMessage(JSON.stringify(VALID_OUTPUT));
 }
 
 function getRequest(client: ReturnType<typeof createClient>): MessageStreamParams {
@@ -142,7 +167,7 @@ describe("AnthropicSummaryGenerator request", () => {
 
     await generator.generate({ passages: [buildPassage()], languageHint: null });
 
-    expect(NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS).toBe(8192);
+    expect(NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS).toBe(16000);
     expect(getRequest(client).max_tokens).toBe(NOTETAKER_SUMMARY_MAX_OUTPUT_TOKENS);
   });
 
@@ -240,6 +265,26 @@ describe("AnthropicSummaryGenerator request", () => {
     expect(system).not.toContain("detected language");
   });
 
+  it("states the section and category rules in the system prompt", () => {
+    const { system } = buildSummaryPrompt({ passages: [buildPassage()], languageHint: null });
+
+    expect(system).toContain("overview: 3-6 sentences");
+    expect(system).toContain("keyFindings:");
+    expect(system).toContain("at most 15");
+    expect(system).toContain("nextSteps: group the action items by the person or team responsible.");
+    expect(system).toContain("exactly as the person is named in the speaker list");
+    expect(system).toContain("Start each item with a verb");
+    expect(system).toContain("in chronological order");
+    expect(system).toContain("at most 30");
+    expect(system).toContain("details: 2-6 bullets");
+    expect(system).toContain("figures and prices exactly as stated");
+    expect(system).toContain("DECISION when the participants reached a decision or agreement");
+    expect(system).toContain("even if a problem was also raised");
+    expect(system).toContain("PROBLEM when it centred on an unresolved issue, blocker or risk.");
+    expect(system).toContain("UPDATE when it was mainly a status report");
+    expect(system).toContain("null when none of these clearly fits.");
+  });
+
   it("mentions the language hint only when there is one", () => {
     const withHint = buildSummaryPrompt({ passages: [buildPassage()], languageHint: "pl" });
 
@@ -259,24 +304,114 @@ describe("AnthropicSummaryGenerator request", () => {
 });
 
 describe("NOTETAKER_SUMMARY_OUTPUT_FORMAT", () => {
-  const expectedKeys = Object.keys(notetakerSummaryContentSchema.shape);
+  const { schema } = NOTETAKER_SUMMARY_OUTPUT_FORMAT;
+  const nullableString = { anyOf: [{ type: "string" }, { type: "null" }] };
 
-  it("mirrors the content schema", () => {
-    const { schema } = NOTETAKER_SUMMARY_OUTPUT_FORMAT;
+  it("requires every top-level field and forbids others", () => {
+    const expectedKeys = ["language", "overview", "keyFindings", "nextSteps", "topics"];
 
     expect(NOTETAKER_SUMMARY_OUTPUT_FORMAT.type).toBe("json_schema");
     expect(schema).toHaveProperty("required", expectedKeys);
     expect(Object.keys(schema.properties as object)).toEqual(expectedKeys);
     expect(schema).toHaveProperty("additionalProperties", false);
-    expect(schema).toHaveProperty("properties.actionItems.items.required", ["text", "owner"]);
-    expect(schema).toHaveProperty("properties.actionItems.items.additionalProperties", false);
-    expect(schema).toHaveProperty("properties.actionItems.items.properties.owner", {
-      anyOf: [{ type: "string" }, { type: "null" }],
+  });
+
+  it("groups next steps under a nullable owner", () => {
+    expect(schema).toHaveProperty("properties.nextSteps.items.required", ["owner", "items"]);
+    expect(schema).toHaveProperty("properties.nextSteps.items.additionalProperties", false);
+    expect(schema).toHaveProperty("properties.nextSteps.items.properties.owner", nullableString);
+  });
+
+  it("gives topics a nullable category limited to the three badges", () => {
+    expect(schema).toHaveProperty("properties.topics.items.required", ["title", "category", "details"]);
+    expect(schema).toHaveProperty("properties.topics.items.additionalProperties", false);
+    expect(schema).toHaveProperty("properties.topics.items.properties.category", {
+      anyOf: [{ type: "string", enum: ["PROBLEM", "UPDATE", "DECISION"] }, { type: "null" }],
     });
   });
 
-  it("accepts valid content in the Zod schema", () => {
-    expect(notetakerSummaryContentSchema.safeParse(VALID_CONTENT).success).toBe(true);
+  it("produces content that passes the content schema", () => {
+    expect(notetakerSummaryContentSchema.safeParse(toSummaryContent(VALID_OUTPUT)).success).toBe(true);
+  });
+});
+
+describe("toSummaryContent", () => {
+  it("flattens next steps into action items in order, keeping each group's owner", () => {
+    const content = toSummaryContent({
+      ...VALID_OUTPUT,
+      nextSteps: [
+        { owner: "Ada", items: ["First", "Second"] },
+        { owner: "  Ops team  ", items: ["Third"] },
+        { owner: "   ", items: ["Fourth"] },
+        { owner: null, items: ["Fifth"] },
+      ],
+    });
+
+    expect(content.actionItems).toEqual([
+      { text: "First", owner: "Ada" },
+      { text: "Second", owner: "Ada" },
+      { text: "Third", owner: "Ops team" },
+      { text: "Fourth", owner: null },
+      { text: "Fifth", owner: null },
+    ]);
+  });
+
+  it("trims strings and drops empty ones", () => {
+    const content = toSummaryContent({
+      language: " pl ",
+      overview: "  Przegląd  ",
+      keyFindings: [" Wniosek ", "", "   "],
+      nextSteps: [{ owner: "Ada", items: ["  Zadanie ", " "] }],
+      topics: [
+        { title: "  Temat  ", category: "UPDATE", details: [" Szczegół ", ""] },
+        { title: "   ", category: "PROBLEM", details: ["orphan detail"] },
+      ],
+    });
+
+    expect(content).toEqual({
+      language: "pl",
+      overview: "Przegląd",
+      keyPoints: ["Wniosek"],
+      actionItems: [{ text: "Zadanie", owner: "Ada" }],
+      topics: [{ title: "Temat", category: "UPDATE", details: ["Szczegół"] }],
+    });
+  });
+
+  it("keeps a null category", () => {
+    const content = toSummaryContent({
+      ...VALID_OUTPUT,
+      topics: [{ title: "Intro", category: null, details: ["Hello"] }],
+    });
+
+    expect(content.topics).toEqual([{ title: "Intro", category: null, details: ["Hello"] }]);
+  });
+
+  it("slices over-long lists to their caps instead of rejecting them", () => {
+    const strings = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, index) => `${prefix} ${index}`);
+    const content = toSummaryContent({
+      ...VALID_OUTPUT,
+      keyFindings: strings(MAX_KEY_FINDINGS + 5, "finding"),
+      nextSteps: Array.from({ length: MAX_NEXT_STEP_GROUPS + 3 }, (_, index) => ({
+        owner: `Owner ${index}`,
+        items: strings(MAX_ITEMS_PER_GROUP + 2, `item ${index}`),
+      })),
+      topics: Array.from({ length: MAX_TOPICS + 4 }, (_, index) => ({
+        title: `Topic ${index}`,
+        category: null,
+        details: strings(MAX_TOPIC_DETAILS + 3, "detail"),
+      })),
+    });
+
+    expect(content.keyPoints).toEqual(strings(MAX_KEY_FINDINGS, "finding"));
+    expect(content.actionItems).toHaveLength(MAX_NEXT_STEP_GROUPS * MAX_ITEMS_PER_GROUP);
+    expect(content.actionItems.at(-1)).toEqual({
+      text: `item ${MAX_NEXT_STEP_GROUPS - 1} ${MAX_ITEMS_PER_GROUP - 1}`,
+      owner: `Owner ${MAX_NEXT_STEP_GROUPS - 1}`,
+    });
+    expect(content.topics).toHaveLength(MAX_TOPICS);
+    expect(content.topics.at(-1)?.title).toBe(`Topic ${MAX_TOPICS - 1}`);
+    expect(content.topics.every((topic) => topic.details.length === MAX_TOPIC_DETAILS)).toBe(true);
   });
 });
 
@@ -290,7 +425,7 @@ describe("AnthropicSummaryGenerator results", () => {
   });
 
   it("concatenates text blocks and ignores thinking blocks", async () => {
-    const json = JSON.stringify(VALID_CONTENT);
+    const json = JSON.stringify(VALID_OUTPUT);
     const { generator } = createGenerator(async () =>
       buildMessage({
         content: [
@@ -308,7 +443,7 @@ describe("AnthropicSummaryGenerator results", () => {
 
   it("maps a refusal even when the content is valid", async () => {
     const { generator, logger } = createGenerator(async () =>
-      textMessage(JSON.stringify(VALID_CONTENT), {
+      textMessage(JSON.stringify(VALID_OUTPUT), {
         stop_reason: "refusal",
         stop_details: { type: "refusal", category: "cyber", explanation: null },
       })
@@ -344,8 +479,16 @@ describe("AnthropicSummaryGenerator results", () => {
     ["non-JSON text", async () => textMessage("not json")],
     [
       "JSON missing overview",
-      async () => textMessage(JSON.stringify({ ...VALID_CONTENT, overview: undefined })),
+      async () => textMessage(JSON.stringify({ ...VALID_OUTPUT, overview: undefined })),
     ],
+    [
+      "JSON with an unknown category",
+      async () =>
+        textMessage(
+          JSON.stringify({ ...VALID_OUTPUT, topics: [{ title: "T", category: "RISK", details: [] }] })
+        ),
+    ],
+    ["JSON in the old v1 shape", async () => textMessage(JSON.stringify(VALID_CONTENT))],
     ["empty content", async () => buildMessage({ content: [] })],
   ])("maps %s to a retryable INVALID_OUTPUT", async (_name, finalMessage) => {
     const { generator } = createGenerator(finalMessage);

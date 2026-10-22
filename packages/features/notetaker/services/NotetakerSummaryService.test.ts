@@ -41,10 +41,13 @@ const VALID_CONTENT: NotetakerSummaryContent = {
   language: "pl",
   overview: "Przegląd spotkania",
   keyPoints: ["Punkt"],
-  decisions: ["Decyzja"],
   actionItems: [
     { text: "Zadanie", owner: "Ada" },
     { text: "Drugie", owner: null },
+  ],
+  topics: [
+    { title: "Budżet", category: "DECISION", details: ["Decyzja"] },
+    { title: "Wstęp", category: null, details: [] },
   ],
 };
 
@@ -370,7 +373,9 @@ describe("NotetakerSummaryService", () => {
         language: "pl",
         overview: VALID_CONTENT.overview,
         keyPoints: VALID_CONTENT.keyPoints,
-        decisions: VALID_CONTENT.decisions,
+        decisions: [],
+        topics: VALID_CONTENT.topics,
+        formatVersion: 2,
         actionItems: VALID_CONTENT.actionItems,
         model: "scripted-model",
         generatedAt: NOW,
@@ -901,9 +906,9 @@ describe("NotetakerSummaryService", () => {
           language: "pl",
           overview: VALID_CONTENT.overview,
           keyPoints: VALID_CONTENT.keyPoints,
-          decisions: VALID_CONTENT.decisions,
-          topics: [],
-          formatVersion: 1,
+          decisions: [],
+          topics: VALID_CONTENT.topics,
+          formatVersion: 2,
           actionItems: VALID_CONTENT.actionItems,
           model: "scripted-model",
           generatedAt: NOW,

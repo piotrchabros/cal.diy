@@ -1,7 +1,4 @@
-import {
-  notetakerSummaryContentSchema,
-  notetakerSummaryTopicSchema,
-} from "@calcom/lib/dto/NotetakerSummaryDto";
+import { notetakerSummaryContentSchema } from "@calcom/lib/dto/NotetakerSummaryDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
@@ -29,13 +26,14 @@ const summarySelect = {
 } satisfies Prisma.NotetakerSummarySelect;
 
 // PENDING and FAILED rows have no language/overview, so only the JSON columns are validated.
+// decisions is v1-only and no longer part of the content schema, so it is validated here.
 const summaryJsonColumnsSchema = notetakerSummaryContentSchema
   .pick({
     keyPoints: true,
-    decisions: true,
     actionItems: true,
+    topics: true,
   })
-  .extend({ topics: z.array(notetakerSummaryTopicSchema) });
+  .extend({ decisions: z.array(z.string()) });
 
 export class PrismaNotetakerSummaryRepository implements INotetakerSummaryRepository {
   constructor(private readonly prismaClient: PrismaClient) {}

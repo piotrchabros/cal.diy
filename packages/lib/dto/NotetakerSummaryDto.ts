@@ -60,12 +60,13 @@ export const NotetakerSummaryDtoSchema: z.ZodType<NotetakerSummaryDto> = z.objec
   generatedAt: z.string().datetime().nullable(),
 });
 
+// Version 2 content: decisions are no longer generated (stored v1 rows keep theirs) and live in topics instead.
 export const notetakerSummaryContentSchema = z.object({
   language: z.string(),
   overview: z.string(),
   keyPoints: z.array(z.string()),
-  decisions: z.array(z.string()),
   actionItems: z.array(actionItemSchema),
+  topics: z.array(notetakerSummaryTopicSchema),
 });
 
 export type NotetakerSummaryContent = z.infer<typeof notetakerSummaryContentSchema>;
