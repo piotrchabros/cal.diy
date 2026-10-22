@@ -93,7 +93,7 @@ describe("buildRecallCreateBotRequest", () => {
       automatic_leave: {
         waiting_room_timeout: 600,
         noone_joined_timeout: 900,
-        everyone_left_timeout: { timeout: 120, activate_after: 0 },
+        everyone_left_timeout: { timeout: 120 },
         in_call_recording_timeout: 14400,
       },
     });
@@ -134,6 +134,13 @@ describe("buildRecallCreateBotRequest", () => {
 
   it("leaves recording_config out so Recall records by default", () => {
     expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW)).not.toHaveProperty("recording_config");
+  });
+
+  it("sends the alone timeout without activate_after, which Recall rejects at 0", () => {
+    const everyoneLeft = buildRecallCreateBotRequest(buildJoinRequest(), NOW).automatic_leave
+      .everyone_left_timeout;
+    expect(everyoneLeft).toStrictEqual({ timeout: 120 });
+    expect(everyoneLeft).not.toHaveProperty("activate_after");
   });
 });
 

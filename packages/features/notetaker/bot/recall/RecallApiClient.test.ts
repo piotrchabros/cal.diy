@@ -50,7 +50,7 @@ const createBotBody: RecallCreateBotRequest = {
   automatic_leave: {
     waiting_room_timeout: 600,
     noone_joined_timeout: 600,
-    everyone_left_timeout: { timeout: 60, activate_after: 60 },
+    everyone_left_timeout: { timeout: 60 },
     in_call_recording_timeout: 3600,
   },
 };
