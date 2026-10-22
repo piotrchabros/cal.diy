@@ -18,6 +18,18 @@ const NOTETAKER_FEATURE_SLUG = "notetaker";
 const translator = short();
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const NON_ASCII = /[^\x20-\x7E]/;
+const MAX_REPORTED_CODE_POINTS = 5;
+
+function listNonAsciiCodePoints(value: string): string[] {
+  const codePoints = new Set<string>();
+  for (const char of value) {
+    if (!NON_ASCII.test(char)) continue;
+    codePoints.add(`U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`);
+    if (codePoints.size >= MAX_REPORTED_CODE_POINTS) break;
+  }
+  return Array.from(codePoints);
+}
 
 function adHocError(code: NotetakerAdHocErrorCode): ErrorWithCode {
   // Only the message reaches the client, so it carries the code itself.
@@ -91,7 +103,15 @@ export class NotetakerAdHocService {
     if (!isNotetakerBotProviderUsable(this.deps.config)) throw adHocError("PROVIDER_UNAVAILABLE");
 
     const link = parseAdHocMeetingUrl(params.meetingUrl);
-    if (!link.ok) throw adHocError(link.reason);
+    if (!link.ok) {
+      // The link itself is user content, so only its shape is logged to tell paste artifacts from bad links.
+      logger.warn("Notetaker ad-hoc meeting link rejected", {
+        reason: link.reason,
+        rawLength: params.meetingUrl.length,
+        nonAsciiCodePoints: listNonAsciiCodePoints(params.meetingUrl),
+      });
+      throw adHocError(link.reason);
+    }
 
     const now = new Date();
     const active = await bookingNotetakerRepository.findActiveAdHocByUserId({ userId, now });

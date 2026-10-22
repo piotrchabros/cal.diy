@@ -259,6 +259,12 @@ describe("NotetakerAdHocService", () => {
       expect(adHocBookings()[0].location).toBe(MEET_URL);
     });
 
+    it("strips invisible characters from the meeting link", async () => {
+      await dispatch({ meetingUrl: "https://meet.google.com/abc-defg-hij\u200b" });
+
+      expect(adHocBookings()[0].location).toBe(MEET_URL);
+    });
+
     it("leaves sharing to the hosts when no team is chosen", async () => {
       await dispatch();
 
@@ -440,6 +446,20 @@ describe("NotetakerAdHocService", () => {
           dispatch({ meetingUrl: "https://meet.google.com/not-a-code" }),
           "INVALID_MEETING_LINK"
         );
+      });
+
+      it("logs a rejected link without leaking the link itself", async () => {
+        const meetingUrl = "https://meet.google.com/not-a-code\u00e9";
+
+        await expectAdHocError(dispatch({ meetingUrl }), "INVALID_MEETING_LINK");
+
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith("Notetaker ad-hoc meeting link rejected", {
+          reason: "INVALID_MEETING_LINK",
+          rawLength: meetingUrl.length,
+          nonAsciiCodePoints: ["U+00E9"],
+        });
+        expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("meet.google.com");
       });
 
       it("reports a link to another meeting platform", async () => {

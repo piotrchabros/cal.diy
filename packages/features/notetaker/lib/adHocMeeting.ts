@@ -3,6 +3,7 @@ import { classifyMeetingUrl } from "./eligibility";
 const GOOGLE_MEET_HOST = "meet.google.com";
 const MEET_CODE_PATH = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})\/?$/i;
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
+const INVISIBLE_FORMAT_CHARACTERS = new RegExp("\\p{Cf}", "gu");
 
 export const NOTETAKER_AD_HOC_KEY = "notetakerAdHoc";
 export const NOTETAKER_AD_HOC_SHARING_TEAM_KEY = "notetakerSharingTeamId";
@@ -19,11 +20,17 @@ function parseUrl(raw: string): URL | null {
   }
 }
 
+// Links copied from chat apps and documents often carry zero-width or direction marks that the URL
+// parser rejects; they are never part of a real Meet link.
+export function cleanMeetingLinkInput(raw: string): string {
+  return raw.replace(INVISIBLE_FORMAT_CHARACTERS, "").trim();
+}
+
 // The bot joins whatever URL we store, so only an exact Meet host with a real meeting code is accepted;
 // userinfo and ports are rejected because they can make a look-alike URL resolve elsewhere.
 export function parseAdHocMeetingUrl(raw: string): AdHocMeetingUrlResult {
   const invalid = { ok: false, reason: "INVALID_MEETING_LINK" } as const;
-  const parsed = parseUrl(raw.trim());
+  const parsed = parseUrl(cleanMeetingLinkInput(raw));
   if (!parsed) return invalid;
   if (parsed.protocol !== "https:") return invalid;
   if (parsed.username || parsed.password || parsed.port) return invalid;

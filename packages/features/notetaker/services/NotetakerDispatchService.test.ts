@@ -1188,6 +1188,30 @@ describe("NotetakerDispatchService", () => {
       });
       expect(tasker.notificationCalls).toEqual([failedNotice(bookingId, session.id)]);
       expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Notetaker join request rejected; the session is marked failed",
+        expect.objectContaining({ bookingId, sessionId: session.id, message: "unusable" })
+      );
+    });
+
+    it("does not retry a link the bot reported unusable on the next sweep", async () => {
+      await seedArmed();
+      const requestJoin = vi.fn(async () => {
+        throw createNotetakerBotGatewayError("LINK_UNUSABLE", "unusable");
+      });
+      const service = buildService(fakeBinding(createStubGateway({ requestJoin })));
+
+      await service.dispatchDue();
+
+      const session = onlySession();
+      expect(session).toMatchObject({ status: "FAILED", outcomeReason: "MEETING_LINK_UNUSABLE" });
+      expect(requestJoin).toHaveBeenCalledTimes(1);
+
+      await service.dispatchDue();
+
+      expect(requestJoin).toHaveBeenCalledTimes(1);
+      expect(repositories.store.sessions.size).toBe(1);
+      expect(repositories.store.sessions.get(session.id)?.status).toBe("FAILED");
     });
 
     it("enqueues one keyed FAILED notice when a supported type has no link", async () => {

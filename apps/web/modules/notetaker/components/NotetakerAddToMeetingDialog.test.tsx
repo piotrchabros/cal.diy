@@ -172,6 +172,25 @@ describe("NotetakerAddToMeetingDialog", () => {
     expect(screen.getByTestId("notetaker-ad-hoc-link-error")).toBeTruthy();
   });
 
+  it("strips invisible characters pasted around the link before validating and sending", async () => {
+    openDialog();
+    fillLink(`\u200b${LINK}\u200b`);
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    expect(mocks.dispatch).toHaveBeenCalledWith(expect.objectContaining({ meetingUrl: LINK }));
+    expect(screen.queryByTestId("notetaker-ad-hoc-link-error")).toBeNull();
+  });
+
+  it("keeps submit disabled when the link is only invisible characters", () => {
+    openDialog();
+    fillLink("\u200b");
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+
+    expect(sendButton().disabled).toBe(true);
+  });
+
   it("stays open and does not navigate when the dispatch fails", async () => {
     mocks.dispatch.mockResolvedValue(null);
     openDialog();
