@@ -787,6 +787,11 @@ export class NotetakerDispatchService {
         outcomeReason: "MEETING_LINK_UNUSABLE",
         endedAt: new Date(),
       });
+      logger.warn("Notetaker join request rejected; the session is marked failed", {
+        bookingId,
+        sessionId,
+        message: getErrorMessage(error),
+      });
       if (failed) await this.enqueueFailedNotice(bookingId, sessionId);
       return;
     }

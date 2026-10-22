@@ -17,6 +17,7 @@ const MAX_CHAT_MESSAGE_LENGTH = 500;
 // Recall rejects a join_at in the past, so a start this close to now could already be past once
 // request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
 const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
+const MAX_REPORTED_FIELDS = 10;
 
 export function buildRecallCreateBotRequest(
   input: NotetakerBotJoinRequest,
@@ -53,6 +54,12 @@ function isTerminal(bot: RecallBot): boolean {
   return findRecallTerminalStatus(bot) !== null || isRecallBotDone(bot);
 }
 
+function describeRecallBadRequest(fieldNames: string[]): string {
+  if (fieldNames.includes("meeting_url")) return "Recall rejected the meeting URL (status 400)";
+  const fields = fieldNames.length > 0 ? fieldNames.slice(0, MAX_REPORTED_FIELDS).join(", ") : "none";
+  return `Recall rejected the create bot request (status 400, fields: ${fields})`;
+}
+
 function toTransientError(error: unknown, operation: string): unknown {
   const info = getRecallApiErrorInfo(error);
   if (!info) return error;
@@ -81,8 +88,10 @@ export class RecallBotGateway implements INotetakerBotGateway {
       return { externalRef: bot.id };
     } catch (error) {
       const info = getRecallApiErrorInfo(error);
-      if (info?.kind === "BAD_REQUEST" && info.fieldNames.includes("meeting_url")) {
-        throw createNotetakerBotGatewayError("LINK_UNUSABLE", "Recall rejected the meeting URL");
+      // Recall answers 400 only to a request it will never accept, so the sweep's per-minute retry
+      // cannot succeed; the session fails instead. Only field names are reported: values can echo the URL.
+      if (info?.kind === "BAD_REQUEST") {
+        throw createNotetakerBotGatewayError("LINK_UNUSABLE", describeRecallBadRequest(info.fieldNames));
       }
       // The bot may have been created even though the response never arrived; a retry would add a second one.
       if (info?.kind === "NETWORK" || info?.kind === "TIMEOUT") {

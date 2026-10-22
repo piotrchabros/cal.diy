@@ -1,5 +1,6 @@
 "use client";
 
+import { cleanMeetingLinkInput } from "@calcom/features/notetaker/lib/adHocMeeting";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import {
@@ -62,19 +63,20 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
   );
   const selectedDuration = durationMinutes ?? data?.defaultDurationMinutes;
   const sharingTeamId = teamValue === ONLY_ME ? null : Number(teamValue);
-  const canSubmit = !!data && meetingUrl.trim() !== "" && acknowledged && !dispatchToMeeting.isPending;
+  const canSubmit =
+    !!data && cleanMeetingLinkInput(meetingUrl) !== "" && acknowledged && !dispatchToMeeting.isPending;
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const trimmedUrl = meetingUrl.trim();
+    const cleanedUrl = cleanMeetingLinkInput(meetingUrl);
     // A light check only: the server stays authoritative about which links are accepted.
-    if (!trimmedUrl.startsWith(MEET_LINK_PREFIX)) {
+    if (!cleanedUrl.startsWith(MEET_LINK_PREFIX)) {
       setLinkInvalid(true);
       return;
     }
     const trimmedTitle = title.trim();
     const bookingUid = await dispatch({
-      meetingUrl: trimmedUrl,
+      meetingUrl: cleanedUrl,
       title: trimmedTitle === "" ? undefined : trimmedTitle,
       durationMinutes: selectedDuration,
       sharingTeamId,
@@ -104,7 +106,9 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
             placeholder="https://meet.google.com/abc-defg-hij"
             value={meetingUrl}
             onChange={(event) => {
-              setMeetingUrl(event.target.value);
+              // Pasted links can carry zero-width marks that make the url input fail native
+              // validation, which silently blocks the submit before onSubmit runs.
+              setMeetingUrl(cleanMeetingLinkInput(event.target.value));
               setLinkInvalid(false);
             }}
             data-testid="notetaker-ad-hoc-link"

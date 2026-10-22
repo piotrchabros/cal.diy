@@ -159,9 +159,10 @@ describe("RecallBotGateway.requestJoin", () => {
 
     const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
     expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect((error as Error).message).toContain("Recall rejected the meeting URL (status 400)");
   });
 
-  it("reports TRANSIENT for a bad request that does not concern the meeting URL", async () => {
+  it("reports LINK_UNUSABLE for any bad request so the sweep does not retry it", async () => {
     const client = createFakeClient({
       createBot: vi
         .fn<IRecallApiClient["createBot"]>()
@@ -171,7 +172,46 @@ describe("RecallBotGateway.requestJoin", () => {
     });
 
     const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect((error as Error).message).toContain("fields: join_at");
+    expect(client.listBotsByMetadata).not.toHaveBeenCalled();
+  });
+
+  it("reports LINK_UNUSABLE for a bad request that names no fields", async () => {
+    const client = createFakeClient({
+      createBot: vi
+        .fn<IRecallApiClient["createBot"]>()
+        .mockRejectedValue(createRecallApiError("BAD_REQUEST", "bad", { status: 400, fieldNames: [] })),
+    });
+
+    const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect((error as Error).message).toContain("fields: none");
+  });
+
+  it("keeps the meeting URL out of the bad request error message", async () => {
+    const client = createFakeClient({
+      createBot: vi
+        .fn<IRecallApiClient["createBot"]>()
+        .mockRejectedValue(
+          createRecallApiError("BAD_REQUEST", "bad", { status: 400, fieldNames: ["meeting_url"] })
+        ),
+    });
+
+    const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
+    expect((error as Error).message).not.toContain(buildJoinRequest().meetingUrl);
+  });
+
+  it("reports TRANSIENT for a non-400 HTTP failure so only BAD_REQUEST is permanent", async () => {
+    const client = createFakeClient({
+      createBot: vi
+        .fn<IRecallApiClient["createBot"]>()
+        .mockRejectedValue(createRecallApiError("HTTP", "unprocessable", { status: 422 })),
+    });
+
+    const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
     expect(getNotetakerBotGatewayFailure(error)).toBe("TRANSIENT");
+    expect(client.listBotsByMetadata).not.toHaveBeenCalled();
   });
 
   it.each(["NETWORK", "TIMEOUT"] as const)("reuses a bot created despite a %s failure", async (kind) => {

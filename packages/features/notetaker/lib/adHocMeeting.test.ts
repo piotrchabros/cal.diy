@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildAdHocBookingMetadata, parseAdHocMeetingUrl, readAdHocBookingMetadata } from "./adHocMeeting";
+import {
+  buildAdHocBookingMetadata,
+  cleanMeetingLinkInput,
+  parseAdHocMeetingUrl,
+  readAdHocBookingMetadata,
+} from "./adHocMeeting";
 
 const ok = (meetingUrl: string) => ({ ok: true, platform: "GOOGLE_MEET", meetingUrl });
 const invalid = { ok: false, reason: "INVALID_MEETING_LINK" };
@@ -30,6 +35,21 @@ describe("parseAdHocMeetingUrl", () => {
   });
 
   it.each([
+    ["trailing zero-width space", "https://meet.google.com/xrs-kdyt-mzi\u200b"],
+    ["leading byte order mark", "\ufeffhttps://meet.google.com/xrs-kdyt-mzi"],
+    ["left-to-right marks around", "\u200ehttps://meet.google.com/xrs-kdyt-mzi\u200e"],
+    ["zero-width joiner inside the code", "https://meet.google.com/xrs-\u200dkdyt-mzi"],
+    ["right-to-left mark and word joiner inside", "https://meet.google.com/xrs-\u200fkdyt-\u2060mzi"],
+    ["no-break space and newline at the ends", "\u00a0https://meet.google.com/xrs-kdyt-mzi\n"],
+  ])("ignores invisible characters: %s", (_name, input) => {
+    expect(parseAdHocMeetingUrl(input)).toEqual(ok("https://meet.google.com/xrs-kdyt-mzi"));
+  });
+
+  it("still rejects a lookalike host that hides a zero-width space", () => {
+    expect(parseAdHocMeetingUrl("https://meet.google.com\u200b.evil.com/abc-defg-hij")).toEqual(invalid);
+  });
+
+  it.each([
     ["http protocol", "http://meet.google.com/abc-defg-hij"],
     ["suffix host", "https://meet.google.com.evil.com/abc-defg-hij"],
     ["host in path", "https://evil.com/meet.google.com/abc-defg-hij"],
@@ -51,6 +71,18 @@ describe("parseAdHocMeetingUrl", () => {
     "https://teams.live.com/meet/123",
   ])("reports a Teams link as an unsupported platform: %s", (input) => {
     expect(parseAdHocMeetingUrl(input)).toEqual({ ok: false, reason: "UNSUPPORTED_PLATFORM" });
+  });
+});
+
+describe("cleanMeetingLinkInput", () => {
+  it("strips format characters and trims", () => {
+    expect(cleanMeetingLinkInput(" \u200bhttps://meet.google.com/abc-defg-hij\u200e ")).toBe(
+      "https://meet.google.com/abc-defg-hij"
+    );
+  });
+
+  it("reduces input made only of invisible characters to an empty string", () => {
+    expect(cleanMeetingLinkInput("\u200b\u200d")).toBe("");
   });
 });
 
