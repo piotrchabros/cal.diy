@@ -56,6 +56,14 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
     </p>
   ) : null;
 
+  const hostBlocks =
+    state.viewerRole === "HOST" ? (
+      <>
+        {state.access && <NotetakerAccessSummary access={state.access} />}
+        <NotetakerActivityList bookingUid={bookingUid} />
+      </>
+    ) : null;
+
   const resultsDeleted = state.transcript === null && state.session?.resultsDeletedAt != null;
 
   return (
@@ -71,12 +79,14 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
       {/* No sessionId: the default of listPassages is the latest session with a transcript, the one getState describes; state.session can be a later session without one */}
       {state.transcript !== null ? (
         <>
-          <NotetakerResultsActions
-            bookingUid={bookingUid}
-            viewerRole={state.viewerRole}
-            sharedWithAttendees={state.sharedWithAttendees}
-            sessionStatus={state.session?.status ?? null}
-          />
+          <div className="print:hidden">
+            <NotetakerResultsActions
+              bookingUid={bookingUid}
+              viewerRole={state.viewerRole}
+              sharedWithAttendees={state.sharedWithAttendees}
+              sessionStatus={state.session?.status ?? null}
+            />
+          </div>
           {endedEarlyText !== null && (
             <p className="text-sm text-subtle" data-testid="notetaker-ended-early-label">
               {endedEarlyText}
@@ -94,6 +104,7 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
             onRegenerate={() => regenerateSummary.mutate({ bookingUid })}
             isRegenerating={regenerateSummary.isPending}
           />
+          {hostBlocks}
           <NotetakerTranscript
             bookingUid={bookingUid}
             speakerNamesAvailable={state.transcript.speakerNamesAvailable}
@@ -112,10 +123,9 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
           ) : (
             <p className="text-sm text-subtle">{t("notetaker_transcript_empty")}</p>
           )}
+          {hostBlocks}
         </>
       )}
-      {state.viewerRole === "HOST" && state.access && <NotetakerAccessSummary access={state.access} />}
-      {state.viewerRole === "HOST" && <NotetakerActivityList bookingUid={bookingUid} />}
     </div>
   );
 }

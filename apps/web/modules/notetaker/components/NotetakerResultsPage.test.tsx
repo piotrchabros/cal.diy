@@ -390,7 +390,7 @@ describe("NotetakerResultsPage sharing, export, deletion and activity", () => {
     expect(screen.getByTestId("results-actions-stub")).toHaveAttribute("data-session-status", "null");
   });
 
-  it("puts the actions first in the transcript block and the activity list last on the page", () => {
+  it("puts the actions first in the transcript block and the transcript last on the page", () => {
     renderPage(partialState("INTERRUPTED"));
 
     const actions = screen.getByTestId("results-actions-stub");
@@ -404,10 +404,10 @@ describe("NotetakerResultsPage sharing, export, deletion and activity", () => {
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     expect(
-      screen.getByTestId("transcript-stub").compareDocumentPosition(activity) &
+      activity.compareDocumentPosition(screen.getByTestId("transcript-stub")) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
-    expect(activity.parentElement?.lastElementChild).toBe(activity);
+    expect(activity.parentElement?.lastElementChild).toBe(screen.getByTestId("transcript-stub"));
   });
 
   it("gives an attendee the actions as an attendee and no activity list", () => {
