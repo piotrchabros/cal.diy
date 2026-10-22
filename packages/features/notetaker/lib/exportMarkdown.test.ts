@@ -1,14 +1,13 @@
 import type { NotetakerSummaryDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerPassageDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  buildNotetakerExportDocument,
   buildNotetakerExportFilename,
-  escapeMarkdown,
-  exportMarkdown,
-  formatExportTimestamp,
   type NotetakerExportInput,
   type NotetakerExportLabels,
-} from "./exportMarkdown";
+} from "./exportDocument";
+import { escapeMarkdown, exportMarkdown, renderNotetakerMarkdown } from "./exportMarkdown";
 
 const labels: NotetakerExportLabels = {
   summaryHeading: "Summary",
@@ -16,11 +15,15 @@ const labels: NotetakerExportLabels = {
   keyPointsHeading: "Key points",
   decisionsHeading: "Decisions",
   actionItemsHeading: "Action items",
+  keyFindingsHeading: "Key findings and agreements",
+  nextStepsHeading: "Next steps",
+  keyTopicsHeading: "Key topics",
+  unassignedOwner: "Unassigned",
+  topicCategory: { PROBLEM: "Problem", UPDATE: "Update", DECISION: "Decision" },
   transcriptHeading: "Transcript",
   noSummary: "No summary is available for this meeting.",
   partialNote: "This transcript is incomplete: the notetaker was removed.",
   truncatedNote: "This transcript was cut off at the maximum length.",
-  owner: (name: string) => `Owner: ${name}`,
   speakerNamesUnavailableNote: "Speaker names were not available.",
   unknownSpeaker: (number: number) => `Unknown speaker ${number}`,
 };
@@ -51,6 +54,18 @@ const buildSummary = (overrides: Partial<NotetakerSummaryDto> = {}): NotetakerSu
   generatedAt: "2026-10-12T10:40:00.000Z",
   ...overrides,
 });
+
+const buildV2Summary = (overrides: Partial<NotetakerSummaryDto> = {}): NotetakerSummaryDto =>
+  buildSummary({
+    formatVersion: 2,
+    decisions: [],
+    topics: [
+      { title: "Pricing", category: "PROBLEM", details: ["Too expensive", "Competitors are cheaper"] },
+      { title: "Hiring", category: null, details: ["Two new engineers"] },
+      { title: "Notes", category: "DECISION", details: [] },
+    ],
+    ...overrides,
+  });
 
 const buildInput = (overrides: Partial<NotetakerExportInput> = {}): NotetakerExportInput => ({
   bookingTitle: "Planning call",
@@ -100,7 +115,10 @@ describe("exportMarkdown", () => {
       "### Decisions",
       "- Ship v2",
       "### Action items",
-      "- Send the notes (Owner: Alex)\n- Book a room",
+      "#### Alex",
+      "- Send the notes",
+      "#### Unassigned",
+      "- Book a room",
       "## Transcript",
       "**[00:00:01] Alex:** Hello everyone",
       "**[00:01:01] Unknown speaker 2:** Sounds good",
@@ -149,21 +167,18 @@ describe("exportMarkdown", () => {
     expect(blankOverview).not.toContain("### Overview");
   });
 
-  it("prints an owner only where stated and passes the raw name to the label", () => {
-    const content = exportMarkdown(buildInput()).content;
-    expect(content).toContain("- Send the notes (Owner: Alex)");
-    expect(content).toContain("- Book a room\n");
-    expect(content).not.toContain("- Book a room (");
-
-    const owner = vi.fn((name: string) => `Owner: ${name}`);
-    const escaped = exportMarkdown(
+  it("groups action items under their owner with Unassigned last and escapes the owner", () => {
+    const content = exportMarkdown(
       buildInput({
-        summary: buildSummary({ actionItems: [{ text: "Do it", owner: "A*lex" }] }),
-        labels: { ...labels, owner },
+        summary: buildSummary({
+          actionItems: [
+            { text: "Book a room", owner: null },
+            { text: "Do it", owner: "A*lex" },
+          ],
+        }),
       })
     ).content;
-    expect(owner).toHaveBeenCalledWith("A*lex");
-    expect(escaped).toContain("(Owner: A\\*lex)");
+    expect(content).toContain("#### A\\*lex\n\n- Do it\n\n#### Unassigned\n\n- Book a room");
   });
 
   it("prints the no-summary line for a READY summary with nothing to show", () => {
@@ -255,6 +270,15 @@ describe("exportMarkdown", () => {
       ["decision", { summary: buildSummary({ decisions: [EVIL] }) }],
       ["overview", { summary: buildSummary({ overview: EVIL }) }],
       ["action item", { summary: buildSummary({ actionItems: [{ text: EVIL, owner: null }] }) }],
+      ["action item owner", { summary: buildSummary({ actionItems: [{ text: "x", owner: EVIL }] }) }],
+      [
+        "topic title",
+        { summary: buildV2Summary({ topics: [{ title: EVIL, category: null, details: [] }] }) },
+      ],
+      [
+        "topic detail",
+        { summary: buildV2Summary({ topics: [{ title: "t", category: "UPDATE", details: [EVIL] }] }) },
+      ],
     ];
     for (const [, overrides] of sites) {
       const content = exportMarkdown(buildInput(overrides)).content;
@@ -307,22 +331,51 @@ describe("exportMarkdown", () => {
         bookingTitle: input.bookingTitle,
         bookingStartTime: input.bookingStartTime,
         timeZone: input.timeZone,
+        extension: "md",
       })
     );
   });
+
+  it("renders the same content as renderNotetakerMarkdown over the document", () => {
+    const input = buildInput();
+    expect(exportMarkdown(input).content).toBe(renderNotetakerMarkdown(buildNotetakerExportDocument(input)));
+  });
 });
 
-describe("formatExportTimestamp", () => {
-  it.each([
-    [0, "00:00:00"],
-    [999, "00:00:00"],
-    [61000, "00:01:01"],
-    [3723456, "01:02:03"],
-    [90000000, "25:00:00"],
-    [360000000, "100:00:00"],
-    [-5, "00:00:00"],
-  ])("formats %d ms as %s", (ms, expected) => {
-    expect(formatExportTimestamp(ms)).toBe(expected);
+describe("exportMarkdown for a version 2 summary", () => {
+  it("builds the golden document", () => {
+    const { content } = exportMarkdown(buildInput({ summary: buildV2Summary() }));
+    const blocks = [
+      "# Planning call",
+      escapeMarkdown(expectedDate),
+      "## Summary",
+      "### Overview",
+      "We planned the launch\\.",
+      "### Key findings and agreements",
+      "- Launch in May",
+      "### Next steps",
+      "#### Alex",
+      "- Send the notes",
+      "#### Unassigned",
+      "- Book a room",
+      "### Key topics",
+      "#### Pricing · Problem",
+      "- Too expensive\n- Competitors are cheaper",
+      "#### Hiring",
+      "- Two new engineers",
+      "#### Notes · Decision",
+      "## Transcript",
+      "**[00:00:00] Alex:** Hello",
+    ];
+    expect(content).toBe(`${blocks.join("\n\n")}\n`);
+  });
+
+  it("does not print stored decisions", () => {
+    const content = exportMarkdown(
+      buildInput({ summary: buildV2Summary({ decisions: ["Old decision"] }) })
+    ).content;
+    expect(content).not.toContain("Old decision");
+    expect(content).not.toContain("### Decisions");
   });
 });
 
@@ -343,42 +396,5 @@ describe("escapeMarkdown", () => {
     ["   padded  ", "padded"],
   ])("escapes %j", (input, expected) => {
     expect(escapeMarkdown(input)).toBe(expected);
-  });
-});
-
-describe("buildNotetakerExportFilename", () => {
-  const start = new Date("2026-10-12T10:00:00.000Z");
-  const build = (bookingTitle: string, timeZone = "UTC", bookingStartTime = start): string =>
-    buildNotetakerExportFilename({ bookingTitle, bookingStartTime, timeZone });
-
-  it.each([
-    ["Planning call", "planning-call-2026-10-12.md"],
-    ["../../etc/passwd", "etc-passwd-2026-10-12.md"],
-    ["C:\\x", "c-x-2026-10-12.md"],
-    ["He said \"hi\" and 'bye'\u0000\nnext", "he-said-hi-and-bye-next-2026-10-12.md"],
-    ["\u{1F389}\u{1F389}", "transcript-2026-10-12.md"],
-    ["", "transcript-2026-10-12.md"],
-    ["R\u00E9union d'\u00E9quipe", "reunion-d-equipe-2026-10-12.md"],
-    [".hidden", "hidden-2026-10-12.md"],
-    ["x".repeat(70), `${"x".repeat(60)}-2026-10-12.md`],
-    [`${"a".repeat(59)} b c`, `${"a".repeat(59)}-2026-10-12.md`],
-  ])("builds a safe name for %j", (title, expected) => {
-    const filename = build(title);
-    expect(filename).toBe(expected);
-    expect(filename).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}\.md$/);
-  });
-
-  it("takes the date in the given zone", () => {
-    const lateUtc = new Date("2026-10-12T23:30:00.000Z");
-    expect(build("Call", "Asia/Tokyo", lateUtc)).toBe("call-2026-10-13.md");
-    expect(build("Call", "UTC", lateUtc)).toBe("call-2026-10-12.md");
-    expect(build("Call", "America/Los_Angeles", new Date("2026-10-12T02:00:00.000Z"))).toBe(
-      "call-2026-10-11.md"
-    );
-  });
-
-  it("falls back to UTC for an invalid zone", () => {
-    const lateUtc = new Date("2026-10-12T23:30:00.000Z");
-    expect(build("Call", "Not/AZone", lateUtc)).toBe(build("Call", "UTC", lateUtc));
   });
 });
