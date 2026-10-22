@@ -31,6 +31,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_BOT_GATEWAY_MODULE: Symbol("NotetakerBotGatewayModule"),
   NOTETAKER_SUMMARY_GENERATOR: Symbol("NotetakerSummaryGenerator"),
   NOTETAKER_SUMMARY_GENERATOR_MODULE: Symbol("NotetakerSummaryGeneratorModule"),
+  NOTETAKER_RECORDING_MEDIA_GATEWAY_RESOLVER: Symbol("NotetakerRecordingMediaGatewayResolver"),
+  NOTETAKER_RECORDING_MEDIA_GATEWAY_RESOLVER_MODULE: Symbol("NotetakerRecordingMediaGatewayResolverModule"),
   NOTETAKER_CONFIG: Symbol("NotetakerConfig"),
   NOTETAKER_CONFIG_MODULE: Symbol("NotetakerConfigModule"),
   NOTETAKER_CALENDAR_GUEST_GATEWAY: Symbol("NotetakerCalendarGuestGateway"),
