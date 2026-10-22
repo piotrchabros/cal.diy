@@ -38,7 +38,7 @@ export function NotetakerAddToMeetingDialog(): JSX.Element | null {
           {t("notetaker_add_to_meeting")}
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent enableOverflow>
         <AddToMeetingForm onClose={() => setOpen(false)} />
       </DialogContent>
     </Dialog>
