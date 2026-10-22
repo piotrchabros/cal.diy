@@ -99,12 +99,28 @@ describe("buildRecallCreateBotRequest", () => {
     });
   });
 
-  it("joins now when the scheduled start is already in the past", () => {
+  it("omits join_at so Recall joins immediately when the scheduled start is already in the past", () => {
     const body = buildRecallCreateBotRequest(
       buildJoinRequest({ scheduledStartAt: "2030-01-01T09:00:00.000Z" }),
       NOW
     );
-    expect(body.join_at).toBe(NOW.toISOString());
+    expect(body).not.toHaveProperty("join_at");
+  });
+
+  it("omits join_at when the scheduled start is within the immediate-join margin", () => {
+    const body = buildRecallCreateBotRequest(
+      buildJoinRequest({ scheduledStartAt: "2030-01-01T10:00:30.000Z" }),
+      NOW
+    );
+    expect(body).not.toHaveProperty("join_at");
+  });
+
+  it("keeps the exact join_at when the scheduled start is beyond the margin", () => {
+    const body = buildRecallCreateBotRequest(
+      buildJoinRequest({ scheduledStartAt: "2030-01-01T10:01:01.000Z" }),
+      NOW
+    );
+    expect(body.join_at).toBe("2030-01-01T10:01:01.000Z");
   });
 
   it("truncates the bot name and the chat notice to Recall's limits", () => {

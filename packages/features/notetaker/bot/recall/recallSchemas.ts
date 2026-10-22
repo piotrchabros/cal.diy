@@ -86,7 +86,7 @@ export type RecallWebhookEnvelope = z.infer<typeof recallWebhookEnvelopeSchema>;
 export type RecallCreateBotRequest = {
   meeting_url: string;
   bot_name: string;
-  join_at: string;
+  join_at?: string;
   metadata: Record<string, string>;
   chat: { on_bot_join: { send_to: "everyone"; message: string; pin: boolean } };
   automatic_leave: {
