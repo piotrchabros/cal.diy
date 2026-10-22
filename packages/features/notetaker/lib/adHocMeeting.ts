@@ -1,7 +1,8 @@
 import { classifyMeetingUrl } from "./eligibility";
 
 const GOOGLE_MEET_HOST = "meet.google.com";
-const MEET_CODE_PATH = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})\/?$/i;
+// Meet also serves a meeting under /meet/<code>, which some apps and invites link to.
+const MEET_CODE_PATH = /^(?:\/meet)?\/([a-z]{3}-[a-z]{4}-[a-z]{3})\/?$/i;
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
 const INVISIBLE_FORMAT_CHARACTERS = new RegExp("\\p{Cf}", "gu");
 

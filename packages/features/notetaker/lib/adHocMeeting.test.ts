@@ -35,6 +35,13 @@ describe("parseAdHocMeetingUrl", () => {
   });
 
   it.each([
+    "https://meet.google.com/meet/vgx-mcww-wqf",
+    "https://meet.google.com/meet/VGX-MCWW-WQF/",
+  ])("accepts the /meet/ path form and stores the canonical link: %s", (input) => {
+    expect(parseAdHocMeetingUrl(input)).toEqual(ok("https://meet.google.com/vgx-mcww-wqf"));
+  });
+
+  it.each([
     ["trailing zero-width space", "https://meet.google.com/xrs-kdyt-mzi\u200b"],
     ["leading byte order mark", "\ufeffhttps://meet.google.com/xrs-kdyt-mzi"],
     ["left-to-right marks around", "\u200ehttps://meet.google.com/xrs-kdyt-mzi\u200e"],
@@ -56,6 +63,8 @@ describe("parseAdHocMeetingUrl", () => {
     ["landing page", "https://meet.google.com/landing"],
     ["root path", "https://meet.google.com/"],
     ["extra path segment", "https://meet.google.com/abc-defg-hij/extra"],
+    ["other path prefix", "https://meet.google.com/foo/abc-defg-hij"],
+    ["doubled /meet/ prefix", "https://meet.google.com/meet/meet/abc-defg-hij"],
     ["userinfo", "https://user:pass@meet.google.com/abc-defg-hij"],
     ["username only", "https://user@meet.google.com/abc-defg-hij"],
     ["port", "https://meet.google.com:8443/abc-defg-hij"],
