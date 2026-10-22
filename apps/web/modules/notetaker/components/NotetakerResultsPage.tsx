@@ -2,6 +2,7 @@
 
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { Button } from "@calcom/ui/components/button";
 import { SkeletonText } from "@calcom/ui/components/skeleton";
 import { NotetakerAccessSummary } from "@calcom/web/modules/notetaker/components/NotetakerAccessSummary";
 import { NotetakerActivityList } from "@calcom/web/modules/notetaker/components/NotetakerActivityList";
@@ -86,6 +87,20 @@ export function NotetakerResultsPage({ bookingUid }: { bookingUid: string }): JS
               sharedWithAttendees={state.sharedWithAttendees}
               sessionStatus={state.session?.status ?? null}
             />
+            {state.videoAvailable === true && (
+              <div className="mt-2 flex">
+                <Button
+                  href={`/api/notetaker/video/${encodeURIComponent(bookingUid)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  color="secondary"
+                  size="sm"
+                  StartIcon="download"
+                  data-testid="notetaker-video-download">
+                  {t("notetaker_video_download")}
+                </Button>
+              </div>
+            )}
           </div>
           {endedEarlyText !== null && (
             <p className="text-sm text-subtle" data-testid="notetaker-ended-early-label">

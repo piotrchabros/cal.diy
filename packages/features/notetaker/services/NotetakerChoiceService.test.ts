@@ -994,6 +994,62 @@ describe("NotetakerChoiceService", () => {
       expect(state.transcript?.speakerNamesAvailable).toBe(value);
     });
 
+    describe("videoAvailable", () => {
+      async function stateWithTranscript(session: {
+        botProvider: NotetakerSessionRecord["botProvider"];
+        externalRef: string | null;
+        status: NotetakerSessionStatusDto;
+        resultsDeleted?: boolean;
+      }) {
+        repositories.store.addBooking(buildBooking());
+        await enable();
+        const created = await repositories.sessionRepository.create({
+          bookingId: BOOKING_ID,
+          platform: "GOOGLE_MEET",
+          meetingUrl: MEET_LINK,
+          botProvider: session.botProvider,
+          displayName: "Notetaker",
+          scheduledStartAt: new Date("2026-10-12T10:00:00.000Z"),
+          status: session.status,
+        });
+        await repositories.sessionRepository.update(created.id, {
+          externalRef: session.externalRef,
+          ...(session.resultsDeleted ? { resultsDeletedAt: new Date("2026-10-13T10:00:00.000Z") } : {}),
+        });
+        await repositories.transcriptRepository.createIfMissing({
+          sessionId: created.id,
+          bookingId: BOOKING_ID,
+        });
+        return getState();
+      }
+
+      it("is true for a ready Recall session", async () => {
+        const state = await stateWithTranscript({
+          botProvider: "RECALL",
+          externalRef: "bot-1",
+          status: "READY",
+        });
+
+        expect(state.videoAvailable).toBe(true);
+      });
+
+      it.each([
+        [
+          "results were deleted",
+          { botProvider: "RECALL", externalRef: "bot-1", status: "READY", resultsDeleted: true },
+        ],
+        ["the bot is not Recall", { botProvider: "FAKE", externalRef: "bot-1", status: "READY" }],
+        [
+          "the session is still live",
+          { botProvider: "RECALL", externalRef: "bot-1", status: "TRANSCRIBING" },
+        ],
+      ] as const)("is not offered when %s", async (_label, session) => {
+        const state = await stateWithTranscript(session);
+
+        expect(state.videoAvailable).not.toBe(true);
+      });
+    });
+
     it("maps the transcript and a pending summary", async () => {
       repositories.store.addBooking(buildBooking());
       await enable();

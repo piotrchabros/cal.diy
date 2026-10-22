@@ -4972,6 +4972,7 @@
   "notetaker_shared_status": "The transcript and summary are shared with the attendees of this booking.",
   "notetaker_share_success": "The transcript and summary are now shared with attendees.",
   "notetaker_stop_sharing_success": "The transcript and summary are no longer shared.",
+  "notetaker_video_download": "Download meeting video",
   "notetaker_export": "Export",
   "notetaker_delete_results": "Delete transcript and summary",
   "notetaker_delete_results_confirm_title": "Delete the transcript and summary?",

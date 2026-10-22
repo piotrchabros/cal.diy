@@ -80,6 +80,7 @@ export type NotetakerStateDto = {
   } | null;
   transcript: NotetakerTranscriptDto | null;
   summary: NotetakerSummaryDto | null;
+  videoAvailable?: boolean;
   sharedWithAttendees: boolean;
   access?: NotetakerAccessDto;
 };
