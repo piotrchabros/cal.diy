@@ -7,7 +7,7 @@ const BOOKING_UID = "booking-uid-1";
 
 const mocks = vi.hoisted(() => ({
   setSharingMutate: vi.fn<(input: { bookingUid: string; shared: boolean }) => void>(),
-  exportMutate: vi.fn<(input: { bookingUid: string; format: "markdown" | "html" }) => void>(),
+  exportMutate: vi.fn<(input: { bookingUid: string; format: "markdown" | "html" | "pdf" }) => void>(),
   printMutate: vi.fn<(input: { bookingUid: string; format: "markdown" | "html" }) => void>(),
   deleteMutate: vi.fn<(input: { bookingUid: string }) => void>(),
   pending: { setSharing: false, exportResults: false, printResults: false, deleteResults: false },
@@ -130,15 +130,16 @@ describe("NotetakerResultsActions", () => {
     fireEvent.keyDown(trigger, { key: "Enter" });
   }
 
-  it("lists the markdown, html and print items in the export menu", () => {
+  it("lists the markdown, html, pdf and print items in the export menu", () => {
     renderActions();
 
     expect(screen.getByTestId("notetaker-export-button")).toHaveTextContent("notetaker_export");
     openExportMenu();
 
-    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(4);
     expect(screen.getByTestId("notetaker-export-markdown")).toHaveTextContent("notetaker_export_markdown");
     expect(screen.getByTestId("notetaker-export-html")).toHaveTextContent("notetaker_export_html");
+    expect(screen.getByTestId("notetaker-export-pdf")).toHaveTextContent("notetaker_export_pdf");
     expect(screen.getByTestId("notetaker-print")).toHaveTextContent("notetaker_print");
   });
 
@@ -160,6 +161,16 @@ describe("NotetakerResultsActions", () => {
 
     expect(mocks.exportMutate).toHaveBeenCalledTimes(1);
     expect(mocks.exportMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, format: "html" });
+  });
+
+  it("exports the results as pdf", () => {
+    renderActions();
+    openExportMenu();
+
+    fireEvent.click(screen.getByTestId("notetaker-export-pdf"));
+
+    expect(mocks.exportMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.exportMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID, format: "pdf" });
   });
 
   it("prints the results through the print mutation", () => {

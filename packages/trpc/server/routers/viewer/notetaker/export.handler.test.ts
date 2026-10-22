@@ -40,6 +40,10 @@ describe("exportHandler", () => {
     expect(mocks.export).toHaveBeenCalledWith({ bookingUid, format: "markdown", userId: 7 });
   });
 
+  it("accepts the pdf format in the input schema", () => {
+    expect(ZExportInputSchema.parse({ bookingUid, format: "pdf" }).format).toBe("pdf");
+  });
+
   it("returns the service result unchanged", async () => {
     const result = await run();
 
@@ -76,8 +80,7 @@ describe("ZExportInputSchema", () => {
     expect(ZExportInputSchema.safeParse({ format: "markdown" }).success).toBe(false);
   });
 
-  it("rejects a format that is not supported yet", () => {
-    expect(ZExportInputSchema.safeParse({ bookingUid, format: "pdf" }).success).toBe(false);
+  it("rejects a format that is not supported", () => {
     expect(ZExportInputSchema.safeParse({ bookingUid, format: "garbage" }).success).toBe(false);
   });
 

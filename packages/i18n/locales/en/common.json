@@ -4976,6 +4976,7 @@
   "notetaker_export": "Export",
   "notetaker_export_markdown": "Download Markdown",
   "notetaker_export_html": "Download HTML",
+  "notetaker_export_pdf": "Download PDF",
   "notetaker_print": "Print",
   "notetaker_delete_results": "Delete transcript and summary",
   "notetaker_delete_results_confirm_title": "Delete the transcript and summary?",

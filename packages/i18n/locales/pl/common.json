@@ -4730,6 +4730,7 @@
   "notetaker_export": "Eksportuj",
   "notetaker_export_markdown": "Pobierz Markdown",
   "notetaker_export_html": "Pobierz HTML",
+  "notetaker_export_pdf": "Pobierz PDF",
   "notetaker_print": "Drukuj",
   "notetaker_delete_results": "Usuń transkrypcję i podsumowanie",
   "notetaker_delete_results_confirm_title": "Usunąć transkrypcję i podsumowanie?",
