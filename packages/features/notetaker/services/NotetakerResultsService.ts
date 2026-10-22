@@ -8,7 +8,7 @@ import type {
   INotetakerRecordingMediaGatewayResolver,
   NotetakerVideoDownloadResult,
 } from "../bot/INotetakerRecordingMediaGateway";
-import type { NotetakerExportLabels } from "../lib/exportMarkdown";
+import type { NotetakerExportLabels } from "../lib/exportDocument";
 import { exportMarkdown } from "../lib/exportMarkdown";
 import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
 import { toNotetakerSummaryDto } from "../lib/summaryDto";
@@ -355,13 +355,22 @@ export class NotetakerResultsService {
     const t = await getTranslation(locale, "common");
 
     const reasonKey = `notetaker_reason_${(latest.session.outcomeReason ?? "INTERRUPTED").toLowerCase()}`;
-    // Values are interpolated unescaped because the target is Markdown, which exportMarkdown escapes itself.
+    // Values are interpolated unescaped because each export renderer escapes for its own format.
     const labels: NotetakerExportLabels = {
       summaryHeading: t("notetaker_export_summary_heading"),
       overviewHeading: t("notetaker_summary_overview"),
       keyPointsHeading: t("notetaker_summary_key_points"),
       decisionsHeading: t("notetaker_summary_decisions"),
       actionItemsHeading: t("notetaker_summary_action_items"),
+      keyFindingsHeading: t("notetaker_summary_key_findings"),
+      nextStepsHeading: t("notetaker_summary_next_steps"),
+      keyTopicsHeading: t("notetaker_summary_key_topics"),
+      unassignedOwner: t("notetaker_summary_unassigned"),
+      topicCategory: {
+        PROBLEM: t("notetaker_summary_topic_category_problem"),
+        UPDATE: t("notetaker_summary_topic_category_update"),
+        DECISION: t("notetaker_summary_topic_category_decision"),
+      },
       transcriptHeading: t("notetaker_export_transcript_heading"),
       noSummary: t("notetaker_export_no_summary"),
       partialNote: t("notetaker_transcript_incomplete", {
@@ -370,8 +379,6 @@ export class NotetakerResultsService {
       }),
       truncatedNote: t("notetaker_transcript_truncated"),
       speakerNamesUnavailableNote: t("notetaker_speaker_names_unavailable"),
-      owner: (name: string): string =>
-        t("notetaker_summary_owner", { name, interpolation: { escapeValue: false } }),
       unknownSpeaker: (number: number): string => t("notetaker_unknown_speaker", { number }),
     };
 
