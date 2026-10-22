@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAdHocBookingMetadata,
   cleanMeetingLinkInput,
+  isAdHocMeetingActive,
   parseAdHocMeetingUrl,
   readAdHocBookingMetadata,
 } from "./adHocMeeting";
@@ -135,5 +136,30 @@ describe("ad-hoc booking metadata", () => {
     {},
   ])("rejects sharing team id %j", (value) => {
     expect(readAdHocBookingMetadata({ notetakerSharingTeamId: value }).sharingTeamId).toBeNull();
+  });
+});
+
+describe("isAdHocMeetingActive", () => {
+  const armed = { enabled: true, pendingDispatch: true };
+  const dispatched = { enabled: true, pendingDispatch: false };
+  const disabled = { enabled: false, pendingDispatch: false };
+
+  it.each([
+    ["no choice and no session yet", null, null, true],
+    ["an armed choice without a session", armed, null, true],
+    ["a dispatched choice without a session", dispatched, null, true],
+    ["a disabled choice without a session", disabled, null, false],
+    ["a SCHEDULED session", dispatched, "SCHEDULED", true],
+    ["a WAITING_TO_BE_ADMITTED session", dispatched, "WAITING_TO_BE_ADMITTED", true],
+    ["a TRANSCRIBING session", dispatched, "TRANSCRIBING", true],
+    ["a PROCESSING session", dispatched, "PROCESSING", true],
+    ["a live session after the choice was disabled", disabled, "TRANSCRIBING", true],
+    ["a READY session", dispatched, "READY", false],
+    ["an ENDED_EARLY session", dispatched, "ENDED_EARLY", false],
+    ["a FAILED session", dispatched, "FAILED", false],
+    ["a READY session without a choice", null, "READY", false],
+    ["a FAILED session re-armed for another dispatch", armed, "FAILED", true],
+  ] as const)("%s", (_label, choice, latestSessionStatus, expected) => {
+    expect(isAdHocMeetingActive({ choice, latestSessionStatus })).toBe(expected);
   });
 });

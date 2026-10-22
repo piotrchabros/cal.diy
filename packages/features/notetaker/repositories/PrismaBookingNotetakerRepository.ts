@@ -11,6 +11,7 @@ import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAdHocBookingWithLatestSessionRecord,
   NotetakerAdHocBookingWithResultsSessionRecord,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
@@ -653,20 +654,34 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
     });
   }
 
-  async findActiveAdHocByUserId(params: {
+  async findAcceptedAdHocByUserIdIncludeLatestSession(params: {
     userId: number;
-    now: Date;
-  }): Promise<{ bookingUid: string; location: string | null }[]> {
+    endTimeAfter: Date;
+  }): Promise<NotetakerAdHocBookingWithLatestSessionRecord[]> {
     const rows = await this.prismaClient.booking.findMany({
       where: {
         userId: params.userId,
         status: "ACCEPTED",
-        endTime: { gt: params.now },
+        endTime: { gt: params.endTimeAfter },
         metadata: adHocFilter,
       },
       orderBy: { id: "asc" },
-      select: { uid: true, location: true },
+      select: {
+        uid: true,
+        location: true,
+        notetaker: { select: { enabled: true, pendingDispatch: true } },
+        notetakerSessions: {
+          orderBy: [{ dispatchedAt: "desc" }, { id: "desc" }],
+          take: 1,
+          select: { status: true },
+        },
+      },
     });
-    return rows.map((row) => ({ bookingUid: row.uid, location: row.location }));
+    return rows.map((row) => ({
+      bookingUid: row.uid,
+      location: row.location,
+      choice: row.notetaker,
+      latestSessionStatus: row.notetakerSessions[0]?.status ?? null,
+    }));
   }
 }

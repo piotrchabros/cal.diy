@@ -12,6 +12,7 @@ import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
   BookingNotetakerRecord,
   IBookingNotetakerRepository,
+  NotetakerAdHocBookingWithLatestSessionRecord,
   NotetakerAdHocBookingWithResultsSessionRecord,
   NotetakerAttendeeRecord,
   NotetakerBookingContext,
@@ -583,20 +584,31 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
     ).length;
   }
 
-  async findActiveAdHocByUserId(params: {
+  async findAcceptedAdHocByUserIdIncludeLatestSession(params: {
     userId: number;
-    now: Date;
-  }): Promise<{ bookingUid: string; location: string | null }[]> {
+    endTimeAfter: Date;
+  }): Promise<NotetakerAdHocBookingWithLatestSessionRecord[]> {
     return Array.from(this.store.bookings.values())
       .filter(
         (booking) =>
           booking.userId === params.userId &&
           booking.status === "ACCEPTED" &&
-          booking.endTime.getTime() > params.now.getTime() &&
+          booking.endTime.getTime() > params.endTimeAfter.getTime() &&
           this.isAdHoc(booking)
       )
       .sort((a, b) => compareNumbers(a.id, b.id))
-      .map((booking) => ({ bookingUid: booking.uid, location: booking.location }));
+      .map((booking) => {
+        const choice = this.store.choices.get(booking.id);
+        const [latestSession] = Array.from(this.store.sessions.values())
+          .filter((session) => session.bookingId === booking.id)
+          .sort(compareLatestSessionFirst);
+        return {
+          bookingUid: booking.uid,
+          location: booking.location,
+          choice: choice ? { enabled: choice.enabled, pendingDispatch: choice.pendingDispatch } : null,
+          latestSessionStatus: latestSession?.status ?? null,
+        };
+      });
   }
 
   private isAdHoc(booking: InMemoryBookingSeed): boolean {

@@ -4,7 +4,7 @@ import { getTranslation } from "@calcom/i18n/server";
 import type { NotetakerSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import short from "short-uuid";
-import { buildAdHocBookingMetadata, parseAdHocMeetingUrl } from "../lib/adHocMeeting";
+import { buildAdHocBookingMetadata, isAdHocMeetingActive, parseAdHocMeetingUrl } from "../lib/adHocMeeting";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
@@ -36,8 +36,6 @@ function adHocError(code: NotetakerAdHocErrorCode): ErrorWithCode {
   return ErrorWithCode.Factory.BadRequest(code);
 }
 
-export const NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS = 1;
-export const NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY = 10;
 export const NOTETAKER_AD_HOC_DEFAULT_DURATION_MINUTES = 60;
 export const NOTETAKER_AD_HOC_MIN_DURATION_MINUTES = 15;
 export const NOTETAKER_AD_HOC_MAX_DURATION_MINUTES = 240;
@@ -61,7 +59,7 @@ export type NotetakerAdHocOptions = {
 export interface INotetakerAdHocServiceDeps {
   bookingNotetakerRepository: Pick<
     IBookingNotetakerRepository,
-    "createAdHocBooking" | "countAdHocByUserIdSince" | "findActiveAdHocByUserId"
+    "createAdHocBooking" | "countAdHocByUserIdSince" | "findAcceptedAdHocByUserIdIncludeLatestSession"
   >;
   eventTypeNotetakerSettingsRepository: Pick<IEventTypeNotetakerSettingsRepository, "findTeamsByIds">;
   membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
@@ -114,17 +112,25 @@ export class NotetakerAdHocService {
     }
 
     const now = new Date();
-    const active = await bookingNotetakerRepository.findActiveAdHocByUserId({ userId, now });
+    const { adHocLimits } = this.deps.config;
+    // endTime is the duration the user picked, not when the bot left, so finished meetings are filtered out by session state.
+    const active = (
+      await bookingNotetakerRepository.findAcceptedAdHocByUserIdIncludeLatestSession({
+        userId,
+        endTimeAfter: now,
+      })
+    ).filter(isAdHocMeetingActive);
     // Pasting the same link again, e.g. after a reload, returns the live meeting instead of a second bot.
     const sameMeeting = active.find((meeting) => meeting.location === link.meetingUrl);
     if (sameMeeting) return { bookingUid: sameMeeting.bookingUid, reused: true };
 
-    if (active.length >= NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS) throw adHocError("AD_HOC_LIMIT_REACHED");
+    if (active.length >= adHocLimits.maxActiveMeetings) throw adHocError("AD_HOC_LIMIT_REACHED");
     const createdToday = await bookingNotetakerRepository.countAdHocByUserIdSince({
       userId,
       since: new Date(now.getTime() - DAY_MS),
     });
-    if (createdToday >= NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY) throw adHocError("AD_HOC_LIMIT_REACHED");
+    // Every attempt counts, including finished and failed ones, because each one dispatched a paid bot.
+    if (createdToday >= adHocLimits.maxMeetingsPerDay) throw adHocError("AD_HOC_LIMIT_REACHED");
 
     if (sharingTeamId !== null) {
       const teamIds = await membershipLookup.listAcceptedTeamIds({ userId });

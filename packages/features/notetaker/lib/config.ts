@@ -30,6 +30,10 @@ type NotetakerConfig = {
     heartbeatTimeoutSeconds: number;
     summaryMinWords: number;
   };
+  adHocLimits: {
+    maxActiveMeetings: number;
+    maxMeetingsPerDay: number;
+  };
   enabledPlatforms: NotetakerPlatformDto[];
   // null means unset in production, which the feature reports as disabled
   botProvider: NotetakerBotProviderDto | null;
@@ -145,6 +149,8 @@ const configObjectSchema = z.object({
   NOTETAKER_JOIN_LEAD_SECONDS: limitSchema(120),
   NOTETAKER_HEARTBEAT_TIMEOUT_SECONDS: limitSchema(180),
   NOTETAKER_SUMMARY_MIN_WORDS: limitSchema(40),
+  NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS: limitSchema(10),
+  NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY: limitSchema(50),
   NOTETAKER_ENABLED_PLATFORMS: platformsSchema,
   NOTETAKER_BOT_PROVIDER: botProviderSchema,
   NOTETAKER_BOT_URL: botUrlSchema,
@@ -218,6 +224,10 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
       joinLeadSeconds: parsed.NOTETAKER_JOIN_LEAD_SECONDS,
       heartbeatTimeoutSeconds: parsed.NOTETAKER_HEARTBEAT_TIMEOUT_SECONDS,
       summaryMinWords: parsed.NOTETAKER_SUMMARY_MIN_WORDS,
+    },
+    adHocLimits: {
+      maxActiveMeetings: parsed.NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS,
+      maxMeetingsPerDay: parsed.NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY,
     },
     enabledPlatforms: parsed.NOTETAKER_ENABLED_PLATFORMS,
     botProvider: parsed.NOTETAKER_BOT_PROVIDER ?? getDefaultBotProvider(env),
