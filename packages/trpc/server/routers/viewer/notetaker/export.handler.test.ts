@@ -20,6 +20,7 @@ const user = { id: 7 } as NonNullable<TrpcSessionUser>;
 const exported: NotetakerExportDto = {
   filename: "meeting-2026-01-01.md",
   mimeType: "text/markdown",
+  encoding: "utf8",
   content: "# Meeting",
 };
 
@@ -75,8 +76,13 @@ describe("ZExportInputSchema", () => {
     expect(ZExportInputSchema.safeParse({ format: "markdown" }).success).toBe(false);
   });
 
-  it("rejects a format other than markdown", () => {
+  it("rejects a format that is not supported yet", () => {
     expect(ZExportInputSchema.safeParse({ bookingUid, format: "pdf" }).success).toBe(false);
+    expect(ZExportInputSchema.safeParse({ bookingUid, format: "garbage" }).success).toBe(false);
+  });
+
+  it("accepts a bookingUid with the html format", () => {
+    expect(ZExportInputSchema.safeParse({ bookingUid, format: "html" }).success).toBe(true);
   });
 
   it("rejects a missing format", () => {

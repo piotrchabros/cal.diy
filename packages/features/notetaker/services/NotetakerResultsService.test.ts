@@ -1606,13 +1606,56 @@ describe("NotetakerResultsService", () => {
       return service.export({ bookingUid, format: "markdown", userId });
     }
 
+    it("renders the HTML export with its own mime type, filename and the format in the activity detail", async () => {
+      await seedFinishedSession({ passages: buildPassages(2) });
+
+      const result = await service.export({ bookingUid: BOOKING_UID, format: "html", userId: ORGANIZER_ID });
+
+      expect(result.mimeType).toBe("text/html");
+      expect(result.encoding).toBe("utf8");
+      expect(result.filename).toBe("planning-call-2026-10-12.html");
+      expect(result.content).toContain("<!doctype html>");
+      expect(result.content).toContain("Planning call");
+      expect(result.content).toContain("passage 0");
+      expect(activitiesOf()).toHaveLength(1);
+      expect(activitiesOf()[0]).toMatchObject({ action: "EXPORTED", detail: { format: "html" } });
+    });
+
+    it("escapes the booking title in the HTML export", async () => {
+      await seedFinishedSession({ passages: buildPassages(1) });
+      repositories.store.addBooking(buildBooking({ title: "<script>alert(1)</script>" }));
+
+      const result = await service.export({ bookingUid: BOOKING_UID, format: "html", userId: ORGANIZER_ID });
+
+      expect(result.content).not.toContain("<script>alert(1)</script>");
+      expect(result.content).toContain("&lt;script&gt;");
+    });
+
+    it("keeps enforcing access and deletion for the HTML format", async () => {
+      const seeded = await seedFinishedSession({ passages: buildPassages(2) });
+
+      const forbidden = await captureError(
+        service.export({ bookingUid: BOOKING_UID, format: "html", userId: STRANGER_ID })
+      );
+      expect(forbidden.code).not.toBeUndefined();
+
+      await repositories.sessionRepository.setResultsDeletedAtByIds([seeded.session.id], DELETED_AT);
+      const deleted = await captureError(
+        service.export({ bookingUid: BOOKING_UID, format: "html", userId: ORGANIZER_ID })
+      );
+      expect(deleted.code).toBe(ErrorCode.NotFound);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
     it("gives the host the file and records one EXPORTED row for the session", async () => {
       const seeded = await seedFinishedSession({ passages: buildPassages(2) });
 
       const result = await exportAs();
 
-      expect(Object.keys(result).sort()).toEqual(["content", "filename", "mimeType"]);
+      expect(Object.keys(result).sort()).toEqual(["content", "encoding", "filename", "mimeType"]);
       expect(result.mimeType).toBe("text/markdown");
+      expect(result.encoding).toBe("utf8");
+      expect(activitiesOf()[0]).toMatchObject({ detail: { format: "markdown" } });
       expect(result.filename).toMatch(EXPORT_FILENAME_PATTERN);
       expect(result.filename).toBe("planning-call-2026-10-12.md");
       expect(result.content).toContain("# Planning call");
@@ -1629,7 +1672,7 @@ describe("NotetakerResultsService", () => {
         actorType: "USER",
         actorUserId: ORGANIZER_ID,
         actorName: ORGANIZER_NAME,
-        detail: null,
+        detail: { format: "markdown" },
       });
       expect(tasker.sendNotificationCalls).toHaveLength(0);
       const logged = loggedText();
@@ -1673,7 +1716,7 @@ describe("NotetakerResultsService", () => {
         actorType: "USER",
         actorUserId: ATTENDEE_USER_ID,
         actorName: ATTENDEE_NAME,
-        detail: null,
+        detail: { format: "markdown" },
       });
     });
 
