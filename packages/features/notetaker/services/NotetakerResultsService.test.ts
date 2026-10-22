@@ -1,7 +1,11 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { getTranslation } from "@calcom/i18n/server";
 import type { NotetakerActivityActionDto, NotetakerActivityDto } from "@calcom/lib/dto/NotetakerActivityDto";
-import type { NotetakerOutcomeReasonDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type {
+  NotetakerBotProviderDto,
+  NotetakerOutcomeReasonDto,
+  NotetakerSessionStatusDto,
+} from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type {
   NotetakerExportDto,
@@ -11,6 +15,11 @@ import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { TriggerOptions } from "@trigger.dev/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  INotetakerRecordingMediaGateway,
+  INotetakerRecordingMediaGatewayResolver,
+  NotetakerVideoDownloadResult,
+} from "../bot/INotetakerRecordingMediaGateway";
 import type {
   INotetakerTasker,
   NotetakerFinalizeSessionPayload,
@@ -62,6 +71,8 @@ const ATTENDEE_NAME = "Anna Attendee";
 
 const MEET_LINK = "https://meet.google.com/abc-defg-hij";
 const EXPORT_FILENAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}\.md$/;
+const RECALL_BOT_ID = "recall-bot-1";
+const VIDEO_URL = "https://recall.example.com/video.mp4?X-Amz-Signature=VIDEOURLSENTINEL";
 const SHARED_NOTICE_ENQUEUE_FAILED = "Failed to enqueue the notetaker shared notice";
 
 // The export escapes Markdown punctuation, so a sentinel holding "-", "." or "_" could leak
@@ -171,6 +182,26 @@ class RecordingNotetakerTasker implements INotetakerTasker {
   }
 }
 
+class FakeRecordingMediaGateway implements INotetakerRecordingMediaGateway {
+  result: NotetakerVideoDownloadResult = { status: "AVAILABLE", url: VIDEO_URL };
+  externalRefs: string[] = [];
+
+  async getVideoDownload(externalRef: string): Promise<NotetakerVideoDownloadResult> {
+    this.externalRefs.push(externalRef);
+    return this.result;
+  }
+}
+
+class FakeRecordingMediaGatewayResolver implements INotetakerRecordingMediaGatewayResolver {
+  gateway: FakeRecordingMediaGateway | null = new FakeRecordingMediaGateway();
+  providers: NotetakerBotProviderDto[] = [];
+
+  forProvider(provider: NotetakerBotProviderDto): INotetakerRecordingMediaGateway | null {
+    this.providers.push(provider);
+    return this.gateway;
+  }
+}
+
 function createLogger() {
   return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } satisfies ISimpleLogger;
 }
@@ -184,6 +215,7 @@ describe("NotetakerResultsService", () => {
   let membershipLookup: InMemoryNotetakerMembershipLookup;
   let tasker: RecordingNotetakerTasker;
   let logger: ReturnType<typeof createLogger>;
+  let mediaGatewayResolver: FakeRecordingMediaGatewayResolver;
 
   beforeEach(() => {
     vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
@@ -201,6 +233,7 @@ describe("NotetakerResultsService", () => {
     repositories = createInMemoryNotetakerRepositories();
     tasker = new RecordingNotetakerTasker();
     logger = createLogger();
+    mediaGatewayResolver = new FakeRecordingMediaGatewayResolver();
     const {
       bookingNotetakerRepository,
       sessionRepository,
@@ -228,6 +261,7 @@ describe("NotetakerResultsService", () => {
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       userRepository,
       notetakerTasker: tasker,
+      recordingMediaGatewayResolver: mediaGatewayResolver,
       logger,
     });
     repositories.store.addBooking(buildBooking());
@@ -1397,6 +1431,170 @@ describe("NotetakerResultsService", () => {
       expect(actionsOf(OTHER_BOOKING_ID)).toEqual([]);
       const otherList = await service.listPassages({ bookingUid: OTHER_BOOKING_UID, userId: ORGANIZER_ID });
       expect(otherList.passages).toHaveLength(3);
+    });
+  });
+
+  describe("getVideoDownload", () => {
+    function downloadAs(userId: number = ORGANIZER_ID): Promise<NotetakerVideoDownloadResult> {
+      return service.getVideoDownload({ bookingUid: BOOKING_UID, userId });
+    }
+
+    async function seedRecordedSession(
+      options: Parameters<typeof seedFinishedSession>[0] & { botProvider?: NotetakerBotProviderDto } = {}
+    ): Promise<NotetakerSessionRecord> {
+      const { session } = await seedFinishedSession({ passages: buildPassages(1), ...options });
+      await repositories.sessionRepository.update(session.id, {
+        botProvider: options.botProvider ?? "RECALL",
+        externalRef: RECALL_BOT_ID,
+      });
+      return session;
+    }
+
+    it("gives the host the video URL and records an EXPORTED row with the video format", async () => {
+      const session = await seedRecordedSession();
+
+      const result = await downloadAs();
+
+      expect(result).toEqual({ status: "AVAILABLE", url: VIDEO_URL });
+      expect(mediaGatewayResolver.providers).toEqual(["RECALL"]);
+      expect(mediaGatewayResolver.gateway?.externalRefs).toEqual([RECALL_BOT_ID]);
+      expect(activitiesOf()).toHaveLength(1);
+      expect(activitiesOf()[0]).toMatchObject({
+        bookingId: BOOKING_ID,
+        sessionId: session.id,
+        action: "EXPORTED",
+        actorType: "USER",
+        actorUserId: ORGANIZER_ID,
+        actorName: ORGANIZER_NAME,
+        detail: { format: "video" },
+      });
+    });
+
+    it("never stores or logs the video URL", async () => {
+      await seedRecordedSession();
+
+      await downloadAs();
+
+      expect(JSON.stringify(repositories.store.activities)).not.toContain("VIDEOURLSENTINEL");
+      expect(loggedText()).not.toContain("VIDEOURLSENTINEL");
+    });
+
+    it("lets a granted attendee download the video", async () => {
+      await seedRecordedSession();
+      await grantAttendee();
+
+      const result = await downloadAs(ATTENDEE_USER_ID);
+
+      expect(result).toEqual({ status: "AVAILABLE", url: VIDEO_URL });
+      expect(activitiesOf()[0]).toMatchObject({ action: "EXPORTED", actorUserId: ATTENDEE_USER_ID });
+    });
+
+    it("refuses an attendee without a grant and asks no provider", async () => {
+      await seedRecordedSession();
+      repositories.store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+
+      const error = await captureError(downloadAs(ATTENDEE_USER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+      expect(mediaGatewayResolver.providers).toEqual([]);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
+    it("refuses an unrelated user", async () => {
+      await seedRecordedSession();
+
+      const error = await captureError(downloadAs(STRANGER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+      expect(mediaGatewayResolver.providers).toEqual([]);
+    });
+
+    it("lets a shared viewer download the video of a disclosed session", async () => {
+      makeColleagueShared();
+      await seedRecordedSession({ colleagueSharingDisclosed: true });
+
+      const result = await downloadAs(COLLEAGUE_ID);
+
+      expect(result).toEqual({ status: "AVAILABLE", url: VIDEO_URL });
+      expect(activitiesOf()[0]).toMatchObject({ action: "EXPORTED", actorUserId: COLLEAGUE_ID });
+    });
+
+    it("refuses a shared viewer when the latest session was recorded without the colleague notice", async () => {
+      makeColleagueShared();
+      await seedRecordedSession({ colleagueSharingDisclosed: false });
+
+      const error = await captureError(downloadAs(COLLEAGUE_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+      expect(error.message).toBe(NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE);
+      expect(mediaGatewayResolver.providers).toEqual([]);
+    });
+
+    it("rejects with NotFound when the booking has no transcript", async () => {
+      const error = await captureError(downloadAs());
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+    });
+
+    it("rejects with NotFound once the results were deleted", async () => {
+      const session = await seedRecordedSession();
+      await repositories.sessionRepository.setResultsDeletedAtByIds([session.id], DELETED_AT);
+
+      const error = await captureError(downloadAs());
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+      expect(mediaGatewayResolver.providers).toEqual([]);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
+    it("reports a session of another provider as unavailable without asking a gateway", async () => {
+      await seedRecordedSession({ botProvider: "SELF_HOSTED" });
+
+      const result = await downloadAs();
+
+      expect(result).toEqual({ status: "UNAVAILABLE" });
+      expect(mediaGatewayResolver.providers).toEqual([]);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
+    it("reports a failed session as unavailable", async () => {
+      await seedRecordedSession({ status: "FAILED", outcomeReason: "INTERRUPTED" });
+
+      expect(await downloadAs()).toEqual({ status: "UNAVAILABLE" });
+      expect(mediaGatewayResolver.providers).toEqual([]);
+    });
+
+    it("reports unavailable when no gateway serves the provider", async () => {
+      await seedRecordedSession();
+      mediaGatewayResolver.gateway = null;
+
+      const result = await downloadAs();
+
+      expect(result).toEqual({ status: "UNAVAILABLE" });
+      expect(mediaGatewayResolver.providers).toEqual(["RECALL"]);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
+    it.each<NotetakerVideoDownloadResult>([
+      { status: "PROCESSING" },
+      { status: "UNAVAILABLE" },
+    ])("passes $status through and records nothing", async (gatewayResult) => {
+      await seedRecordedSession();
+      if (mediaGatewayResolver.gateway) mediaGatewayResolver.gateway.result = gatewayResult;
+
+      const result = await downloadAs();
+
+      expect(result).toEqual(gatewayResult);
+      expect(repositories.store.activities).toHaveLength(0);
+    });
+
+    it("lets a gateway error through and records nothing", async () => {
+      await seedRecordedSession();
+      const failure = ErrorWithCode.Factory.InternalServerError("Recall video lookup failed: network");
+      vi.spyOn(FakeRecordingMediaGateway.prototype, "getVideoDownload").mockRejectedValue(failure);
+
+      await expect(downloadAs()).rejects.toBe(failure);
+      expect(repositories.store.activities).toHaveLength(0);
     });
   });
 
