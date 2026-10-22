@@ -3044,21 +3044,24 @@ model NotetakerTranscriptPassage {
 }
 
 model NotetakerSummary {
-  id           String                 @id @default(uuid())
-  transcriptId String                 @unique
-  transcript   NotetakerTranscript    @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
-  status       NotetakerSummaryStatus @default(PENDING)
-  language     String?
-  overview     String?                @db.Text
-  keyPoints    Json                   @default("[]")
-  decisions    Json                   @default("[]")
-  actionItems  Json                   @default("[]")
-  model        String?
-  attempts     Int                    @default(0)
-  failureCode  String?
-  generatedAt  DateTime?
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
+  id            String                 @id @default(uuid())
+  transcriptId  String                 @unique
+  transcript    NotetakerTranscript    @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  status        NotetakerSummaryStatus @default(PENDING)
+  language      String?
+  overview      String?                @db.Text
+  keyPoints     Json                   @default("[]")
+  decisions     Json                   @default("[]")
+  actionItems   Json                   @default("[]")
+  // Key topics with a category, written by summary format version 2; version 1 rows keep the default.
+  topics        Json                   @default("[]")
+  formatVersion Int                    @default(1)
+  model         String?
+  attempts      Int                    @default(0)
+  failureCode   String?
+  generatedAt   DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 }
 
 model NotetakerSharingGrant {
