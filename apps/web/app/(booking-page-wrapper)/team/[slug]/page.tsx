@@ -1,9 +1,11 @@
+import { getTeamPublicMembersService } from "@calcom/features/teams/di/TeamPublicMembersService.container";
 import { TeamProfileService } from "@calcom/features/teams/services/TeamProfileService";
 import { prisma } from "@calcom/prisma";
 import type { PageProps } from "app/_types";
 import { _generateMetadataForStaticPage } from "app/_utils";
 import { notFound } from "next/navigation";
 import type { ReactElement } from "react";
+import { cache } from "react";
 import { TeamPublicView } from "~/teams/views/team-public-view";
 
 const safeDecodeSlug = (slug: string): string | null => {
@@ -14,15 +16,16 @@ const safeDecodeSlug = (slug: string): string | null => {
   }
 };
 
-const getPublicTeam = async (slug: string) => {
+const getPublicTeam = cache(async (slug: string) => {
   const decoded = safeDecodeSlug(slug);
   if (!decoded) return null;
   const service = new TeamProfileService(prisma);
   return service.getPublicTeamBySlug({ slug: decoded });
-};
+});
 
-const Page = async ({ params }: PageProps): Promise<ReactElement> => {
+const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> => {
   const { slug } = await params;
+  const { member } = await searchParams;
   if (typeof slug !== "string" || !slug) {
     return notFound();
   }
@@ -30,7 +33,16 @@ const Page = async ({ params }: PageProps): Promise<ReactElement> => {
   if (!team) {
     return notFound();
   }
-  return <TeamPublicView team={team} />;
+  const members = team.hideBookATeamMember
+    ? []
+    : await getTeamPublicMembersService().listByTeamId({ teamId: team.id });
+  return (
+    <TeamPublicView
+      team={team}
+      members={members}
+      initialMemberUsername={typeof member === "string" ? member : null}
+    />
+  );
 };
 
 export const generateMetadata = async ({ params }: PageProps) => {

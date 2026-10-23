@@ -5072,5 +5072,8 @@
   "notetaker_activity_sharing_team_detail": "Shared with the team {{teamName}}",
   "notetaker_transcript_and_summary": "Transcript and summary",
   "team_event_type_creator_is_host": "You will be the host of this event type. You can add other team members as hosts later in the Assignment tab.",
+  "team_page_whole_team": "Whole team",
+  "team_page_view_member_profile": "View profile",
+  "team_page_no_team_event_types": "This team has no public event types yet.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
