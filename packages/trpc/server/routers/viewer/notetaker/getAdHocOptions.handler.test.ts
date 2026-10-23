@@ -1,3 +1,4 @@
+import type { NotetakerAdHocOptions } from "@calcom/features/notetaker/services/NotetakerAdHocService";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,9 +13,10 @@ vi.mock("@calcom/features/notetaker/di/NotetakerAdHocService.container", () => (
 }));
 
 const user = { id: 7 } as NonNullable<TrpcSessionUser>;
-const options = {
+const options: NotetakerAdHocOptions = {
   featureEnabled: true,
   teamOptions: [],
+  enabledPlatforms: ["GOOGLE_MEET"],
   defaultDurationMinutes: 60,
   maxDurationMinutes: 240,
 };

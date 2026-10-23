@@ -2,6 +2,7 @@ import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.s
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import { getTranslation } from "@calcom/i18n/server";
 import type { NotetakerSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
+import type { NotetakerPlatformDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import short from "short-uuid";
 import { buildAdHocBookingMetadata, isAdHocMeetingActive, parseAdHocMeetingUrl } from "../lib/adHocMeeting";
@@ -45,6 +46,7 @@ export type NotetakerAdHocErrorCode =
   | "PROVIDER_UNAVAILABLE"
   | "INVALID_MEETING_LINK"
   | "UNSUPPORTED_PLATFORM"
+  | "WRAPPED_MEETING_LINK"
   | "AD_HOC_LIMIT_REACHED"
   | "TEAM_NOT_ALLOWED"
   | "INVALID_DURATION";
@@ -52,6 +54,7 @@ export type NotetakerAdHocErrorCode =
 export type NotetakerAdHocOptions = {
   featureEnabled: boolean;
   teamOptions: NotetakerSharingTeamOptionDto[];
+  enabledPlatforms: NotetakerPlatformDto[];
   defaultDurationMinutes: number;
   maxDurationMinutes: number;
 };
@@ -81,6 +84,7 @@ export class NotetakerAdHocService {
     return {
       featureEnabled,
       teamOptions,
+      enabledPlatforms: featureEnabled ? [...this.deps.config.enabledPlatforms] : [],
       defaultDurationMinutes: this.defaultDurationMinutes(),
       maxDurationMinutes: this.maxDurationMinutes(),
     };
@@ -100,7 +104,7 @@ export class NotetakerAdHocService {
     if (!(await this.hasFeature(userId))) throw adHocError("FEATURE_DISABLED");
     if (!isNotetakerBotProviderUsable(this.deps.config)) throw adHocError("PROVIDER_UNAVAILABLE");
 
-    const link = parseAdHocMeetingUrl(params.meetingUrl);
+    const link = parseAdHocMeetingUrl(params.meetingUrl, this.deps.config.enabledPlatforms);
     if (!link.ok) {
       // The link itself is user content, so only its shape is logged to tell paste artifacts from bad links.
       logger.warn("Notetaker ad-hoc meeting link rejected", {

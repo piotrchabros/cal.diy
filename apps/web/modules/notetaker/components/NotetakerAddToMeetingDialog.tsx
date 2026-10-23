@@ -1,6 +1,7 @@
 "use client";
 
-import { cleanMeetingLinkInput } from "@calcom/features/notetaker/lib/adHocMeeting";
+import type { AdHocMeetingUrlRejection } from "@calcom/features/notetaker/lib/adHocMeeting";
+import { cleanMeetingLinkInput, parseAdHocMeetingUrl } from "@calcom/features/notetaker/lib/adHocMeeting";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import {
@@ -13,10 +14,9 @@ import {
 import { Input } from "@calcom/ui/components/form";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useNotetakerAdHoc } from "../hooks/useNotetakerAdHoc";
+import { getAdHocLinkCopyKeys, getAdHocLinkCopyVariant, useNotetakerAdHoc } from "../hooks/useNotetakerAdHoc";
 import { useNotetakerFeatureEnabled } from "../lib/NotetakerFeatureContext";
 
-const MEET_LINK_PREFIX = "https://meet.google.com/";
 const TITLE_MAX_LENGTH = 200;
 const DURATION_CHOICES_MINUTES = [15, 30, 45, 60, 90, 120, 180, 240];
 const ONLY_ME = "";
@@ -54,9 +54,15 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
   const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
   const [teamValue, setTeamValue] = useState(ONLY_ME);
   const [acknowledged, setAcknowledged] = useState(false);
-  const [linkInvalid, setLinkInvalid] = useState(false);
+  const [linkError, setLinkError] = useState<AdHocMeetingUrlRejection | null>(null);
 
   const data = options.data;
+  const copyKeys = getAdHocLinkCopyKeys(getAdHocLinkCopyVariant(data?.enabledPlatforms));
+  const linkErrorKeys: Record<AdHocMeetingUrlRejection, string> = {
+    INVALID_MEETING_LINK: copyKeys.invalid,
+    UNSUPPORTED_PLATFORM: copyKeys.unsupported,
+    WRAPPED_MEETING_LINK: "notetaker_ad_hoc_wrapped_link",
+  };
   const teamOptions = data?.teamOptions ?? [];
   const durationChoices = DURATION_CHOICES_MINUTES.filter(
     (minutes) => minutes <= (data?.maxDurationMinutes ?? 0)
@@ -69,9 +75,10 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const cleanedUrl = cleanMeetingLinkInput(meetingUrl);
-    // A light check only: the server stays authoritative about which links are accepted.
-    if (!cleanedUrl.startsWith(MEET_LINK_PREFIX)) {
-      setLinkInvalid(true);
+    // Gives instant feedback only: the server re-validates and stays authoritative.
+    const link = parseAdHocMeetingUrl(cleanedUrl, data?.enabledPlatforms ?? []);
+    if (!link.ok) {
+      setLinkError(link.reason);
       return;
     }
     const trimmedTitle = title.trim();
@@ -89,33 +96,30 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
 
   return (
     <form onSubmit={onSubmit} data-testid="notetaker-add-to-meeting-form">
-      <DialogHeader
-        title={t("notetaker_add_to_meeting_title")}
-        subtitle={t("notetaker_add_to_meeting_description")}
-      />
+      <DialogHeader title={t("notetaker_add_to_meeting_title")} subtitle={t(copyKeys.description)} />
       <div className="stack-y-4">
         <div>
           <label htmlFor="notetaker-ad-hoc-link" className="block font-medium text-emphasis text-sm">
-            {t("notetaker_meeting_link_label")}
+            {t(copyKeys.label)}
           </label>
           <Input
             id="notetaker-ad-hoc-link"
             type="url"
             required
             className="mt-1"
-            placeholder="https://meet.google.com/abc-defg-hij"
+            placeholder={copyKeys.placeholder}
             value={meetingUrl}
             onChange={(event) => {
               // Pasted links can carry zero-width marks that make the url input fail native
               // validation, which silently blocks the submit before onSubmit runs.
               setMeetingUrl(cleanMeetingLinkInput(event.target.value));
-              setLinkInvalid(false);
+              setLinkError(null);
             }}
             data-testid="notetaker-ad-hoc-link"
           />
-          {linkInvalid ? (
+          {linkError ? (
             <p className="mt-1 text-error text-sm" data-testid="notetaker-ad-hoc-link-error">
-              {t("notetaker_ad_hoc_invalid_link")}
+              {t(linkErrorKeys[linkError])}
             </p>
           ) : null}
         </div>
