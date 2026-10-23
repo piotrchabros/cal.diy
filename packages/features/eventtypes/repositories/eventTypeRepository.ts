@@ -1904,4 +1904,35 @@ export class EventTypeRepository implements IEventTypesRepository {
 
     return eventTypeResult;
   }
+
+  async findPublicPersonalByUserIds({ userIds }: { userIds: number[] }) {
+    if (userIds.length === 0) return [];
+
+    const eventTypes = await this.prismaClient.eventType.findMany({
+      where: {
+        teamId: null,
+        hidden: false,
+        OR: [
+          { userId: { in: userIds } },
+          { userId: { not: null }, users: { some: { id: { in: userIds } } } },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        length: true,
+        userId: true,
+        metadata: true,
+        users: { where: { id: { in: userIds } }, select: { id: true } },
+      },
+      orderBy: [{ position: "desc" }, { id: "asc" }],
+    });
+
+    // Same as getEventTypesPublic: an event type with malformed metadata is not bookable, so it is left out.
+    return eventTypes.flatMap(({ metadata, ...eventType }) =>
+      EventTypeMetaDataSchema.safeParse(metadata ?? {}).success ? [eventType] : []
+    );
+  }
 }
