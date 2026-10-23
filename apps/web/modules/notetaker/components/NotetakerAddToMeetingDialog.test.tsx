@@ -1,13 +1,9 @@
+import type { NotetakerAdHocOptions } from "@calcom/features/notetaker/services/NotetakerAdHocService";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotetakerAddToMeetingDialog } from "./NotetakerAddToMeetingDialog";
 
-type Options = {
-  featureEnabled: boolean;
-  teamOptions: { teamId: number; name: string }[];
-  defaultDurationMinutes: number;
-  maxDurationMinutes: number;
-};
+type Options = NotetakerAdHocOptions;
 
 const mocks = vi.hoisted(() => ({
   enabled: true,
@@ -28,7 +24,8 @@ vi.mock("../lib/NotetakerFeatureContext", () => ({
   useNotetakerFeatureEnabled: () => mocks.enabled,
 }));
 
-vi.mock("../hooks/useNotetakerAdHoc", () => ({
+vi.mock("../hooks/useNotetakerAdHoc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useNotetakerAdHoc")>()),
   useNotetakerAdHoc: () => ({
     options: { data: mocks.options },
     dispatch: mocks.dispatch,
@@ -37,10 +34,12 @@ vi.mock("../hooks/useNotetakerAdHoc", () => ({
 }));
 
 const LINK = "https://meet.google.com/abc-defg-hij";
+const TEAMS_LINK = "https://teams.microsoft.com/meet/123456789012?p=AbCdEf";
 
 const OPTIONS: Options = {
   featureEnabled: true,
   teamOptions: [{ teamId: 7, name: "Sales" }],
+  enabledPlatforms: ["GOOGLE_MEET"],
   defaultDurationMinutes: 60,
   maxDurationMinutes: 120,
 };
@@ -169,7 +168,77 @@ describe("NotetakerAddToMeetingDialog", () => {
     submit();
 
     expect(mocks.dispatch).not.toHaveBeenCalled();
-    expect(screen.getByTestId("notetaker-ad-hoc-link-error")).toBeTruthy();
+    expect(screen.getByTestId("notetaker-ad-hoc-link-error").textContent).toBe(
+      "notetaker_ad_hoc_invalid_link"
+    );
+  });
+
+  it("shows the Meet copy when only Meet is enabled", () => {
+    openDialog();
+
+    expect(screen.getByText("notetaker_meeting_link_label")).toBeTruthy();
+    expect(screen.getByText("notetaker_add_to_meeting_description")).toBeTruthy();
+    expect(screen.getByTestId("notetaker-ad-hoc-link").getAttribute("placeholder")).toBe(LINK);
+  });
+
+  it("shows the combined copy when Meet and Teams are enabled", () => {
+    openDialog({ ...OPTIONS, enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] });
+
+    expect(screen.getByText("notetaker_meeting_link_label_any")).toBeTruthy();
+    expect(screen.getByText("notetaker_add_to_meeting_description_any")).toBeTruthy();
+  });
+
+  it("shows the Teams placeholder when only Teams is enabled", () => {
+    openDialog({ ...OPTIONS, enabledPlatforms: ["MICROSOFT_TEAMS"] });
+
+    expect(screen.getByText("notetaker_meeting_link_label_teams")).toBeTruthy();
+    expect(screen.getByTestId("notetaker-ad-hoc-link").getAttribute("placeholder")).toBe(TEAMS_LINK);
+  });
+
+  it("dispatches a Teams short link when Teams is enabled", async () => {
+    openDialog({ ...OPTIONS, enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] });
+    fillLink(TEAMS_LINK);
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    expect(mocks.dispatch).toHaveBeenCalledWith(expect.objectContaining({ meetingUrl: TEAMS_LINK }));
+  });
+
+  it("reports a Teams link as unsupported when only Meet is enabled", () => {
+    openDialog();
+    fillLink(TEAMS_LINK);
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("notetaker-ad-hoc-link-error").textContent).toBe(
+      "notetaker_ad_hoc_unsupported_platform"
+    );
+  });
+
+  it("asks for the original link when it is wrapped by an email security service", () => {
+    openDialog({ ...OPTIONS, enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] });
+    fillLink(`https://eur01.safelinks.protection.outlook.com/?url=${encodeURIComponent(TEAMS_LINK)}`);
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("notetaker-ad-hoc-link-error").textContent).toBe(
+      "notetaker_ad_hoc_wrapped_link"
+    );
+  });
+
+  it("shows the combined invalid-link message for garbage when both platforms are enabled", () => {
+    openDialog({ ...OPTIONS, enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] });
+    fillLink("https://example.com/whatever");
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("notetaker-ad-hoc-link-error").textContent).toBe(
+      "notetaker_ad_hoc_invalid_link_any"
+    );
   });
 
   it("strips invisible characters pasted around the link before validating and sending", async () => {

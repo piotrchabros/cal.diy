@@ -26,6 +26,7 @@ const PENDING_TEAM_ID = 22;
 
 const MEET_URL = "https://meet.google.com/abc-defg-hij";
 const OTHER_MEET_URL = "https://meet.google.com/xyz-wxyz-xyz";
+const TEAMS_URL = "https://teams.microsoft.com/meet/123456789012?p=AbCdEf";
 
 function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig {
   return {
@@ -234,6 +235,7 @@ describe("NotetakerAdHocService", () => {
           { teamId: TEAM_ID, name: "Sales" },
           { teamId: OTHER_TEAM_ID, name: "Support" },
         ],
+        enabledPlatforms: ["GOOGLE_MEET"],
         defaultDurationMinutes: 60,
         maxDurationMinutes: 240,
       });
@@ -244,7 +246,15 @@ describe("NotetakerAdHocService", () => {
 
       const options = await service.getOptions({ userId: USER_ID });
 
-      expect(options).toMatchObject({ featureEnabled: false, teamOptions: [] });
+      expect(options).toMatchObject({ featureEnabled: false, teamOptions: [], enabledPlatforms: [] });
+    });
+
+    it("lists every enabled platform", async () => {
+      service = buildService(buildConfig({ enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] }));
+
+      const options = await service.getOptions({ userId: USER_ID });
+
+      expect(options.enabledPlatforms).toEqual(["GOOGLE_MEET", "MICROSOFT_TEAMS"]);
     });
 
     it("reports the feature as off when the bot provider is unusable", async () => {
@@ -310,6 +320,26 @@ describe("NotetakerAdHocService", () => {
       await dispatch({ meetingUrl: "https://meet.google.com/abc-defg-hij\u200b" });
 
       expect(adHocBookings()[0].location).toBe(MEET_URL);
+    });
+
+    it("dispatches a Teams link and stores it in canonical form when Teams is enabled", async () => {
+      service = buildService(buildConfig({ enabledPlatforms: ["GOOGLE_MEET", "MICROSOFT_TEAMS"] }));
+
+      const result = await dispatch({ meetingUrl: `${TEAMS_URL}&anon=true#join` });
+
+      expect(result.reused).toBe(false);
+      expect(adHocBookings()[0].location).toBe(TEAMS_URL);
+      expect(dispatchForBooking).toHaveBeenCalledWith({ bookingUid: result.bookingUid });
+    });
+
+    it("reuses the live Teams meeting when the same link is pasted with different extra params", async () => {
+      service = buildService(buildConfig({ enabledPlatforms: ["MICROSOFT_TEAMS"] }));
+
+      const first = await dispatch({ meetingUrl: `${TEAMS_URL}&anon=true` });
+      const second = await dispatch({ meetingUrl: `${TEAMS_URL}&launchAgent=join_launcher#x` });
+
+      expect(second).toEqual({ bookingUid: first.bookingUid, reused: true });
+      expect(adHocBookings()).toHaveLength(1);
     });
 
     it("leaves sharing to the hosts when no team is chosen", async () => {
@@ -583,11 +613,15 @@ describe("NotetakerAdHocService", () => {
         expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("meet.google.com");
       });
 
-      it("reports a link to another meeting platform", async () => {
-        await expectAdHocError(
-          dispatch({ meetingUrl: "https://teams.microsoft.com/l/meetup-join/abc" }),
-          "UNSUPPORTED_PLATFORM"
-        );
+      it("reports a Teams link as unsupported when only Meet is enabled", async () => {
+        await expectAdHocError(dispatch({ meetingUrl: TEAMS_URL }), "UNSUPPORTED_PLATFORM");
+      });
+
+      it("reports a link wrapped by an email security service", async () => {
+        const meetingUrl = `https://eur01.safelinks.protection.outlook.com/?url=${encodeURIComponent(MEET_URL)}`;
+
+        await expectAdHocError(dispatch({ meetingUrl }), "WRAPPED_MEETING_LINK");
+        expect(adHocBookings()).toHaveLength(0);
       });
 
       it("checks the limits before the team", async () => {
