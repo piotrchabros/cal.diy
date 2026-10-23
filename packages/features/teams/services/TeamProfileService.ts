@@ -25,6 +25,7 @@ export type PublicTeamEventType = Pick<EventType, "id" | "title" | "slug" | "des
 export type PublicTeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | "bio"> & {
   location: string | null;
   socialLinks: { platform: string; url: string }[];
+  hideBookATeamMember: boolean;
   eventTypes: PublicTeamEventType[];
 };
 
@@ -36,6 +37,7 @@ const publicTeamProfileSelect = {
   bio: true,
   metadata: true,
   isPrivate: true,
+  hideBookATeamMember: true,
   eventTypes: {
     where: { hidden: false },
     select: {
@@ -201,6 +203,7 @@ export class TeamProfileService {
       bio: team.bio,
       location: profileMeta.location ?? null,
       socialLinks: profileMeta.socialLinks ?? [],
+      hideBookATeamMember: team.hideBookATeamMember,
       eventTypes: team.eventTypes,
     };
   }

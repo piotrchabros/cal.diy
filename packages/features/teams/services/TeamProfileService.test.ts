@@ -139,6 +139,7 @@ describe("TeamProfileService", () => {
     const publicTeam = {
       ...baseTeam,
       isPrivate: false,
+      hideBookATeamMember: false,
       eventTypes: [
         { id: 1, title: "Demo", slug: "demo", description: "Schedule a demo call with us", length: 15 },
       ],
@@ -162,6 +163,7 @@ describe("TeamProfileService", () => {
       expect(args.where).toEqual({ slug: "bluebee", isPrivate: false });
       expect(args.select).not.toHaveProperty("credentials");
       expect(args.select).not.toHaveProperty("members");
+      expect(args.select.hideBookATeamMember).toBe(true);
       expect(args.select.eventTypes.where).toEqual({ hidden: false });
       expect(args.select.eventTypes.select).toEqual({
         id: true,
@@ -187,6 +189,7 @@ describe("TeamProfileService", () => {
         slug: "bluebee",
         location: "London, UK",
         socialLinks: [{ platform: "x", url: "https://x.com/bluebee" }],
+        hideBookATeamMember: false,
       });
       expect(profile?.eventTypes).toHaveLength(1);
       expect(profile).not.toHaveProperty("credentials");

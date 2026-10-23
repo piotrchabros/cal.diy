@@ -941,4 +941,30 @@ export class MembershipRepository {
     });
     return !!membership;
   }
+
+  async findAcceptedPublicMembersByTeamId({ teamId }: { teamId: number }) {
+    return this.prismaClient.membership.findMany({
+      where: {
+        teamId,
+        accepted: true,
+        user: {
+          username: { not: null },
+          locked: false,
+          isPlatformManaged: false,
+          organizationId: null,
+        },
+      },
+      select: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+      orderBy: { user: { id: "asc" } },
+    });
+  }
 }
