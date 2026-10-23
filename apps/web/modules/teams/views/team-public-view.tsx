@@ -1,14 +1,25 @@
 "use client";
 
 import type { PublicTeamProfile } from "@calcom/features/teams/services/TeamProfileService";
+import type { PublicTeamMemberDto } from "@calcom/lib/dto/PublicTeamMemberDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
 import EmptyPage from "@calcom/web/modules/event-types/components/EmptyPage";
 import { Clock, MapPin } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { ReactElement } from "react";
-import { getTeamEventBookingUrl } from "~/teams/lib/teamPublicUtils";
-import { getTeamInitials } from "~/teams/lib/teamsListUtils";
+import { useState } from "react";
+import { TeamMembersTabs } from "../components/TeamMembersTabs";
+import {
+  buildMemberSearch,
+  getMemberEventBookingUrl,
+  getMemberProfileUrl,
+  getTeamEventBookingUrl,
+  resolveSelectedMember,
+} from "../lib/teamPublicUtils";
+import { getTeamInitials } from "../lib/teamsListUtils";
 
 function TeamAvatar({ name, logoUrl }: { name: string; logoUrl: string | null }): ReactElement {
   return (
@@ -47,13 +58,14 @@ function TeamSocialLinks({
   );
 }
 
-function EventTypeRow({
-  teamSlug,
-  event,
-}: {
-  teamSlug: string | null;
-  event: PublicTeamProfile["eventTypes"][number];
-}): ReactElement {
+type EventTypeRowEvent = {
+  id: number;
+  title: string;
+  description: string | null;
+  length: number;
+};
+
+function EventTypeRow({ href, event }: { href: string; event: EventTypeRowEvent }): ReactElement {
   const { t } = useLocale();
   return (
     <div
@@ -69,19 +81,74 @@ function EventTypeRow({
         </p>
         {event.description && <p className="text-subtle truncate text-xs">{event.description}</p>}
       </div>
-      <Button
-        href={getTeamEventBookingUrl(teamSlug, event.slug)}
-        color="secondary"
-        data-testid={`book-event-${event.id}`}
-        className="shrink-0">
+      <Button href={href} color="secondary" data-testid={`book-event-${event.id}`} className="shrink-0">
         {t("book_now")} →
       </Button>
     </div>
   );
 }
 
-export function TeamPublicView({ team }: { team: PublicTeamProfile }): ReactElement {
+type TeamPublicViewProps = {
+  team: PublicTeamProfile;
+  members: PublicTeamMemberDto[];
+  initialMemberUsername: string | null;
+};
+
+function TeamEventList({ team }: { team: PublicTeamProfile }): ReactElement {
+  return (
+    <div className="border-subtle rounded-md border" data-testid="event-types">
+      {team.eventTypes.map((event) => (
+        <EventTypeRow key={event.id} href={getTeamEventBookingUrl(team.slug, event.slug)} event={event} />
+      ))}
+    </div>
+  );
+}
+
+function MemberEventList({ member }: { member: PublicTeamMemberDto }): ReactElement {
+  const { t } = useLocale();
+  return (
+    <div data-testid="member-event-types">
+      <div className="mb-2 flex justify-end">
+        <Link
+          href={getMemberProfileUrl(member.username)}
+          data-testid="member-profile-link"
+          className="text-subtle hover:text-emphasis text-sm underline-offset-2 hover:underline">
+          {t("team_page_view_member_profile")}
+        </Link>
+      </div>
+      {member.eventTypes.length > 0 && (
+        <div className="border-subtle rounded-md border">
+          {member.eventTypes.map((event) => (
+            <EventTypeRow
+              key={event.id}
+              href={getMemberEventBookingUrl(member.username, event.slug)}
+              event={event}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function TeamPublicView({ team, members, initialMemberUsername }: TeamPublicViewProps): ReactElement {
+  const { t } = useLocale();
+  const pathname = usePathname();
+  const [selectedUsername, setSelectedUsername] = useState<string | null>(
+    resolveSelectedMember(members, initialMemberUsername)?.username ?? null
+  );
+  const hasMembers = members.length > 0;
   const isEventListEmpty = team.eventTypes.length === 0;
+  const selectedMember = resolveSelectedMember(members, selectedUsername);
+
+  const handleSelect = (username: string | null): void => {
+    setSelectedUsername(username);
+    window.history.replaceState(
+      null,
+      "",
+      `${pathname}${buildMemberSearch(window.location.search, username)}`
+    );
+  };
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
@@ -107,15 +174,23 @@ export function TeamPublicView({ team }: { team: PublicTeamProfile }): ReactElem
           </div>
         </div>
 
-        {!isEventListEmpty && (
-          <div className="border-subtle rounded-md border" data-testid="event-types">
-            {team.eventTypes.map((event) => (
-              <EventTypeRow key={event.id} teamSlug={team.slug} event={event} />
-            ))}
-          </div>
+        {hasMembers && (
+          <>
+            <TeamMembersTabs members={members} selectedUsername={selectedUsername} onSelect={handleSelect} />
+            {selectedMember ? (
+              <MemberEventList member={selectedMember} />
+            ) : isEventListEmpty ? (
+              <p className="text-subtle text-sm" data-testid="team-no-event-types">
+                {t("team_page_no_team_event_types")}
+              </p>
+            ) : (
+              <TeamEventList team={team} />
+            )}
+          </>
         )}
 
-        {isEventListEmpty && <EmptyPage name={team.name} />}
+        {!hasMembers && !isEventListEmpty && <TeamEventList team={team} />}
+        {!hasMembers && isEventListEmpty && <EmptyPage name={team.name} />}
       </main>
     </div>
   );

@@ -27,7 +27,7 @@ export class TeamPublicMembersService {
     for (const { userId, users: coHosts, ...eventType } of eventTypes) {
       const attributedUserIds = new Set(coHosts.map((coHost) => coHost.id));
       if (userId !== null) attributedUserIds.add(userId);
-      for (const attributedUserId of attributedUserIds) {
+      for (const attributedUserId of Array.from(attributedUserIds)) {
         const userEventTypes = eventTypesByUserId.get(attributedUserId) ?? new Map();
         userEventTypes.set(eventType.id, {
           id: eventType.id,
@@ -48,7 +48,7 @@ export class TeamPublicMembersService {
         username: user.username,
         name: user.name?.trim() || user.username,
         avatarUrl: getUserAvatarUrl({ avatarUrl: user.avatarUrl }),
-        eventTypes: [...userEventTypes.values()],
+        eventTypes: Array.from(userEventTypes.values()),
       });
     }
 
