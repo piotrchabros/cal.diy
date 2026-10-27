@@ -416,21 +416,19 @@ function MembersView({ teamId, viewerId: _viewerId, canManage, isPendingInvite }
           <div className="space-y-4">
             <Table>
               <Table.Header>
-                <Table.Row>
-                  <Table.ColumnTitle widthClassNames="w-10">
-                    <Checkbox
-                      checked={data.items.every((item) => selectedIds.has(item.user.id))}
-                      onCheckedChange={() => toggleAll(data.items)}
-                      aria-label={t("select_all_members")}
-                    />
-                  </Table.ColumnTitle>
-                  <Table.ColumnTitle>{t("member")}</Table.ColumnTitle>
-                  {showRole && <Table.ColumnTitle>{t("role")}</Table.ColumnTitle>}
-                  {showLastActive && <Table.ColumnTitle>{t("last_active")}</Table.ColumnTitle>}
-                  <Table.ColumnTitle>
-                    <span className="sr-only">{t("actions")}</span>
-                  </Table.ColumnTitle>
-                </Table.Row>
+                <Table.ColumnTitle widthClassNames="w-10">
+                  <Checkbox
+                    checked={data.items.every((item) => selectedIds.has(item.user.id))}
+                    onCheckedChange={() => toggleAll(data.items)}
+                    aria-label={t("select_all_members")}
+                  />
+                </Table.ColumnTitle>
+                <Table.ColumnTitle>{t("member")}</Table.ColumnTitle>
+                {showRole && <Table.ColumnTitle>{t("role")}</Table.ColumnTitle>}
+                {showLastActive && <Table.ColumnTitle>{t("last_active")}</Table.ColumnTitle>}
+                <Table.ColumnTitle>
+                  <span className="sr-only">{t("actions")}</span>
+                </Table.ColumnTitle>
               </Table.Header>
               <Table.Body>
                 {data.items.map((item) => (
