@@ -10,8 +10,7 @@ import { availabilityUserSelect } from "@calcom/prisma";
 import type { DestinationCalendar, SelectedCalendar, User as UserType } from "@calcom/prisma/client";
 import { Prisma } from "@calcom/prisma/client";
 import type { IdentityProvider } from "@calcom/prisma/enums";
-import type { CreationSource } from "@calcom/prisma/enums";
-import { BookingStatus, MembershipRole } from "@calcom/prisma/enums";
+import { BookingStatus, CreationSource, MembershipRole } from "@calcom/prisma/enums";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import { userSelect as prismaUserSelect } from "@calcom/prisma/selects/user";
 import { userMetadata } from "@calcom/prisma/zod-utils";
@@ -278,7 +277,7 @@ export class UserRepository {
   }
 
   async findInviteeByEmail({ email }: { email: string }) {
-    return await this.prismaClient.user.findUnique({
+    const user = await this.prismaClient.user.findUnique({
       where: {
         email: email.toLowerCase(),
       },
@@ -287,7 +286,55 @@ export class UserRepository {
         email: true,
         name: true,
         locale: true,
+        identityProvider: true,
+        password: { select: { userId: true } },
       },
+    });
+    if (!user) return null;
+    const { password, ...rest } = user;
+    return { ...rest, hasPassword: !!password };
+  }
+
+  async createInvitedWithPendingTeamMembership({
+    email,
+    teamId,
+    role,
+  }: {
+    email: string;
+    teamId: number;
+    role: MembershipRole;
+  }) {
+    const user = await this.create({
+      email: email.toLowerCase(),
+      username: null,
+      organizationId: null,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+      invitedTo: teamId,
+      teams: {
+        create: {
+          role,
+          accepted: false,
+          team: { connect: { id: teamId } },
+        },
+      },
+    });
+    return { id: user.id, email: user.email, locale: user.locale };
+  }
+
+  async setPasswordAndVerifyEmail({ id, hashedPassword }: { id: number; hashedPassword: string }) {
+    await this.prismaClient.user.update({
+      where: { id },
+      data: {
+        emailVerified: new Date(),
+        password: {
+          upsert: {
+            create: { hash: hashedPassword },
+            update: { hash: hashedPassword },
+          },
+        },
+      },
+      select: { id: true },
     });
   }
 
@@ -1433,7 +1480,7 @@ export class UserRepository {
     });
   }
 
-  async deleteMany({ userIds }: {userIds: number[]}){
+  async deleteMany({ userIds }: { userIds: number[] }) {
     await this.prismaClient.user.deleteMany({
       where: {
         id: { in: userIds },
@@ -1502,15 +1549,15 @@ export class UserRepository {
     });
   }
 
-  async findByEmailWithInvitedTo({ email }: { email: string } ) {
+  async findByEmailWithInvitedTo({ email }: { email: string }) {
     return this.prismaClient.user.findUnique({
       where: {
-        email: email.toLowerCase()
+        email: email.toLowerCase(),
       },
       select: {
-        invitedTo: true
-      }
-    })
+        invitedTo: true,
+      },
+    });
   }
 
   async findByUsernameAndOrganizationId({
@@ -1518,20 +1565,20 @@ export class UserRepository {
     organizationId,
     excludeEmail,
   }: {
-    username: string,
-    organizationId: number | null,
-    excludeEmail: string
+    username: string;
+    organizationId: number | null;
+    excludeEmail: string;
   }) {
     return this.prismaClient.user.findFirst({
       where: {
         username,
         organizationId,
-        NOT: { email: excludeEmail }
+        NOT: { email: excludeEmail },
       },
       select: {
-        id: true
-      }
-    })
+        id: true,
+      },
+    });
   }
 
   async lockByEmail({ email }: { email: string }) {
@@ -1616,26 +1663,26 @@ export class UserRepository {
     const trimmedSearchTerm = searchTerm?.trim();
     const searchFilters: Prisma.UserWhereInput = trimmedSearchTerm
       ? {
-        AND: [
-          // To bypass the excludeLockedUsersExtension
-          bothLockedAndUnlockedWhere,
-          {
-            OR: [
-              { email: { contains: trimmedSearchTerm, mode: "insensitive" } },
-              { username: { contains: trimmedSearchTerm, mode: "insensitive" } },
-              {
-                profiles: {
-                  some: {
-                    username: { contains: trimmedSearchTerm, mode: "insensitive" },
+          AND: [
+            // To bypass the excludeLockedUsersExtension
+            bothLockedAndUnlockedWhere,
+            {
+              OR: [
+                { email: { contains: trimmedSearchTerm, mode: "insensitive" } },
+                { username: { contains: trimmedSearchTerm, mode: "insensitive" } },
+                {
+                  profiles: {
+                    some: {
+                      username: { contains: trimmedSearchTerm, mode: "insensitive" },
+                    },
                   },
                 },
-              },
-            ],
-          },
-        ],
-      }
-      // To bypass the excludeLockedUsersExtension
-      : bothLockedAndUnlockedWhere;
+              ],
+            },
+          ],
+        }
+      : // To bypass the excludeLockedUsersExtension
+        bothLockedAndUnlockedWhere;
 
     const hasLimit = limit !== undefined && limit !== null;
     const take = hasLimit ? limit + 1 : undefined; // +1 lets us detect "has more" for the cursor

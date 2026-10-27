@@ -59,6 +59,20 @@ export class TeamRepository {
     });
   }
 
+  async findTeamInviteByToken({ token }: { token: string }) {
+    return await this.prismaClient.verificationToken.findFirst({
+      where: {
+        token,
+        teamId: { not: null },
+      },
+      select: {
+        identifier: true,
+        teamId: true,
+        expires: true,
+      },
+    });
+  }
+
   async findTeamInviteTokensByEmail({ email }: { email: string }) {
     return await this.prismaClient.verificationToken.findMany({
       where: {

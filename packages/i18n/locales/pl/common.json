@@ -4828,5 +4828,12 @@
   "team_page_whole_team": "Cały zespół",
   "team_page_view_member_profile": "Zobacz profil",
   "team_page_no_team_event_types": "Ten zespół nie ma jeszcze publicznych typów wydarzeń.",
+  "join_team_name": "Dołącz do {{teamName}}",
+  "team_invite_set_password_description": "Zaproszono Cię do zespołu {{teamName}}. Ustaw hasło, aby aktywować konto.",
+  "team_invite_set_password_submit": "Ustaw hasło i dołącz",
+  "team_invite_link_invalid": "Ten link z zaproszeniem jest nieprawidłowy lub wygasł. Poproś administratora zespołu o ponowne wysłanie zaproszenia.",
+  "passwords_do_not_match": "Hasła nie są takie same",
+  "resend_invite": "Wyślij zaproszenie ponownie",
+  "invite_resent": "Zaproszenie wysłane ponownie",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
