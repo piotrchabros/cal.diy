@@ -5075,5 +5075,10 @@
   "team_page_whole_team": "Whole team",
   "team_page_view_member_profile": "View profile",
   "team_page_no_team_event_types": "This team has no public event types yet.",
+  "join_team_name": "Join {{teamName}}",
+  "team_invite_set_password_description": "You've been invited to join {{teamName}}. Set a password to activate your account.",
+  "team_invite_set_password_submit": "Set password and join",
+  "team_invite_link_invalid": "This invitation link is invalid or has expired. Ask a team admin to resend the invitation.",
+  "passwords_do_not_match": "Passwords do not match",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

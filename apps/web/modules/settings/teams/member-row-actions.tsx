@@ -1,7 +1,5 @@
 "use client";
 
-import { useState } from "react";
-
 import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -17,13 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "@calcom/ui/components/dropdown";
 import { showToast } from "@calcom/ui/components/toast";
-
+import { useState } from "react";
 import type { MemberItem } from "./members-view";
 
-type ConfirmState =
-  | { type: "role"; role: MembershipRole }
-  | { type: "remove" }
-  | null;
+type ConfirmState = { type: "role"; role: MembershipRole } | { type: "remove" } | null;
 
 const roleName = (role: MembershipRole, t: (key: string) => string) => {
   if (role === MembershipRole.OWNER) return t("owner");
@@ -81,6 +76,17 @@ export default function MemberRowActions({
 
   return (
     <>
+      {!item.accepted && (
+        <Button
+          type="button"
+          color="secondary"
+          size="sm"
+          StartIcon="mail"
+          loading={resendMutation.isPending}
+          onClick={() => resendMutation.mutate({ teamId, email: item.user.email })}>
+          {t("resend_invite")}
+        </Button>
+      )}
       <Dropdown>
         <DropdownMenuTrigger asChild>
           <Button type="button" variant="icon" color="minimal" size="sm" StartIcon="ellipsis" />
@@ -95,20 +101,6 @@ export default function MemberRowActions({
                 </DropdownItem>
               </DropdownMenuItem>
             ))}
-          {!item.accepted && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <DropdownItem
-                  type="button"
-                  StartIcon="mail"
-                  onClick={() => resendMutation.mutate({ teamId, email: item.user.email })}
-                  disabled={resendMutation.isPending}>
-                  {t("resend_invite")}
-                </DropdownItem>
-              </DropdownMenuItem>
-            </>
-          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem>
             <DropdownItem
@@ -130,9 +122,7 @@ export default function MemberRowActions({
             confirmBtnText={t("confirm")}
             cancelBtnText={t("cancel")}
             isPending={updateRoleMutation.isPending}
-            onConfirm={() =>
-              updateRoleMutation.mutate({ teamId, userId: item.user.id, role: confirm.role })
-            }>
+            onConfirm={() => updateRoleMutation.mutate({ teamId, userId: item.user.id, role: confirm.role })}>
             {t("change_role_to_description", {
               name: displayName,
               role: roleName(confirm.role, t),
