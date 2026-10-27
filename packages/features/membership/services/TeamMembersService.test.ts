@@ -33,7 +33,7 @@ const makeTeamRepo = (overrides: Record<string, unknown> = {}) => ({
 const makeUserRepo = (overrides: Record<string, unknown> = {}) => ({
   findInviteeByEmail: vi.fn(),
   createInvitedWithPendingTeamMembership: vi.fn(),
-  setPasswordAndVerifyEmail: vi.fn(),
+  switchToPasswordLogin: vi.fn(),
   ...overrides,
 });
 
@@ -642,6 +642,23 @@ describe("TeamMembersService", () => {
       expect(result?.needsPassword).toBe(false);
     });
 
+    it("asks a passwordless external-provider account to set a password", async () => {
+      const service = new TeamMembersService(
+        makeMembershipRepo() as never,
+        makeTeamRepo({
+          findTeamInviteByToken: vi.fn().mockResolvedValue(validInvite),
+          findBasicById: vi.fn().mockResolvedValue(team),
+        }) as never,
+        makeUserRepo({
+          findInviteeByEmail: vi.fn().mockResolvedValue({ ...invitee, identityProvider: "GOOGLE" }),
+        }) as never,
+        vi.fn()
+      );
+
+      const result = await service.getInviteByToken({ token: "t" });
+      expect(result?.needsPassword).toBe(true);
+    });
+
     it("returns null for an expired token", async () => {
       const service = new TeamMembersService(
         makeMembershipRepo() as never,
@@ -678,7 +695,7 @@ describe("TeamMembersService", () => {
       const result = await service.completeInviteSignup({ token: "t", password: "Secret123" });
 
       expect(result).toEqual({ email: "ada@example.com", teamId: 7 });
-      expect(userRepo.setPasswordAndVerifyEmail).toHaveBeenCalledWith({
+      expect(userRepo.switchToPasswordLogin).toHaveBeenCalledWith({
         id: 11,
         hashedPassword: "hashed:Secret123",
       });
@@ -703,7 +720,7 @@ describe("TeamMembersService", () => {
       await expect(
         service.completeInviteSignup({ token: "t", password: "Secret123" })
       ).rejects.toBeInstanceOf(ErrorWithCode);
-      expect(userRepo.setPasswordAndVerifyEmail).not.toHaveBeenCalled();
+      expect(userRepo.switchToPasswordLogin).not.toHaveBeenCalled();
     });
 
     it("rejects a weak password", async () => {
@@ -721,7 +738,7 @@ describe("TeamMembersService", () => {
       await expect(service.completeInviteSignup({ token: "t", password: "short" })).rejects.toBeInstanceOf(
         ErrorWithCode
       );
-      expect(userRepo.setPasswordAndVerifyEmail).not.toHaveBeenCalled();
+      expect(userRepo.switchToPasswordLogin).not.toHaveBeenCalled();
     });
   });
 
