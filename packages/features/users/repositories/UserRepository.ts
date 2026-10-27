@@ -9,8 +9,7 @@ import type { PrismaClient } from "@calcom/prisma";
 import { availabilityUserSelect } from "@calcom/prisma";
 import type { DestinationCalendar, SelectedCalendar, User as UserType } from "@calcom/prisma/client";
 import { Prisma } from "@calcom/prisma/client";
-import type { IdentityProvider } from "@calcom/prisma/enums";
-import { BookingStatus, CreationSource, MembershipRole } from "@calcom/prisma/enums";
+import { BookingStatus, CreationSource, IdentityProvider, MembershipRole } from "@calcom/prisma/enums";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import { userSelect as prismaUserSelect } from "@calcom/prisma/selects/user";
 import { userMetadata } from "@calcom/prisma/zod-utils";
@@ -322,11 +321,13 @@ export class UserRepository {
     return { id: user.id, email: user.email, locale: user.locale };
   }
 
-  async setPasswordAndVerifyEmail({ id, hashedPassword }: { id: number; hashedPassword: string }) {
+  async switchToPasswordLogin({ id, hashedPassword }: { id: number; hashedPassword: string }) {
     await this.prismaClient.user.update({
       where: { id },
       data: {
         emailVerified: new Date(),
+        identityProvider: IdentityProvider.CAL,
+        identityProviderId: null,
         password: {
           upsert: {
             create: { hash: hashedPassword },

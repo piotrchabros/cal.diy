@@ -9,7 +9,7 @@ import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { prisma } from "@calcom/prisma";
-import { IdentityProvider, MembershipRole } from "@calcom/prisma/enums";
+import { MembershipRole } from "@calcom/prisma/enums";
 
 export const TEAM_MEMBER_ROLES = [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER] as const;
 export type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
@@ -254,8 +254,9 @@ export class TeamMembersService {
       teamId: team.id,
       teamName: team.name,
       email: invitee.email,
-      // Accounts that sign in through an external identity provider must keep doing so.
-      needsPassword: !invitee.hasPassword && invitee.identityProvider === IdentityProvider.CAL,
+      // Passwordless accounts include admin-created GOOGLE ones, which cannot sign in while
+      // Google login is disabled; the emailed token proves mailbox ownership like a reset link.
+      needsPassword: !invitee.hasPassword,
     };
   }
 
@@ -274,7 +275,7 @@ export class TeamMembersService {
     if (!invitee) {
       throw ErrorWithCode.Factory.NotFound("This invitation link is invalid or has expired");
     }
-    await this.userRepository.setPasswordAndVerifyEmail({
+    await this.userRepository.switchToPasswordLogin({
       id: invitee.id,
       hashedPassword: await hashPassword(password),
     });
