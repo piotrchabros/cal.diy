@@ -4825,7 +4825,6 @@
   "notetaker_sharing_error_no_team": "Nie należysz do żadnego zespołu, więc nie ma komu udostępniać.",
   "notetaker_activity_sharing_team_detail": "Udostępniono zespołowi {{teamName}}",
   "notetaker_transcript_and_summary": "Transkrypcja i podsumowanie",
-  "team_page_whole_team": "Cały zespół",
   "team_page_view_member_profile": "Zobacz profil",
   "team_page_no_team_event_types": "Ten zespół nie ma jeszcze publicznych typów wydarzeń.",
   "join_team_name": "Dołącz do {{teamName}}",
@@ -4835,5 +4834,7 @@
   "passwords_do_not_match": "Hasła nie są takie same",
   "resend_invite": "Wyślij zaproszenie ponownie",
   "invite_resent": "Zaproszenie wysłane ponownie",
+  "team_page_no_member_event_types": "Ta osoba nie ma jeszcze publicznych typów wydarzeń.",
+  "team_page_back": "Cofnij",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

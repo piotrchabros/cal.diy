@@ -25,7 +25,7 @@ const getPublicTeam = cache(async (slug: string) => {
 
 const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> => {
   const { slug } = await params;
-  const { member } = await searchParams;
+  const { member, view } = await searchParams;
   if (typeof slug !== "string" || !slug) {
     return notFound();
   }
@@ -41,6 +41,7 @@ const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> 
       team={team}
       members={members}
       initialMemberUsername={typeof member === "string" ? member : null}
+      initialView={typeof view === "string" ? view : null}
     />
   );
 };

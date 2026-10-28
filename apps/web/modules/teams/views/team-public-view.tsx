@@ -10,13 +10,15 @@ import { Clock, MapPin } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactElement } from "react";
-import { useState } from "react";
-import { TeamMembersTabs } from "../components/TeamMembersTabs";
+import { useEffect, useState } from "react";
+import { TeamMemberTiles } from "../components/TeamMemberTiles";
+import type { TeamPageSelection } from "../lib/teamPublicUtils";
 import {
-  buildMemberSearch,
+  buildSelectionSearch,
   getMemberEventBookingUrl,
   getMemberProfileUrl,
   getTeamEventBookingUrl,
+  parseSelection,
   resolveSelectedMember,
 } from "../lib/teamPublicUtils";
 import { getTeamInitials } from "../lib/teamsListUtils";
@@ -92,6 +94,7 @@ type TeamPublicViewProps = {
   team: PublicTeamProfile;
   members: PublicTeamMemberDto[];
   initialMemberUsername: string | null;
+  initialView: string | null;
 };
 
 function TeamEventList({ team }: { team: PublicTeamProfile }): ReactElement {
@@ -116,7 +119,7 @@ function MemberEventList({ member }: { member: PublicTeamMemberDto }): ReactElem
           {t("team_page_view_member_profile")}
         </Link>
       </div>
-      {member.eventTypes.length > 0 && (
+      {member.eventTypes.length > 0 ? (
         <div className="border-subtle rounded-md border">
           {member.eventTypes.map((event) => (
             <EventTypeRow
@@ -126,29 +129,71 @@ function MemberEventList({ member }: { member: PublicTeamMemberDto }): ReactElem
             />
           ))}
         </div>
+      ) : (
+        <p className="text-subtle text-sm" data-testid="member-no-event-types">
+          {t("team_page_no_member_event_types")}
+        </p>
       )}
     </div>
   );
 }
 
-export function TeamPublicView({ team, members, initialMemberUsername }: TeamPublicViewProps): ReactElement {
+function SelectionHeader({
+  name,
+  avatar,
+  onBack,
+}: {
+  name: string;
+  avatar: ReactElement;
+  onBack: () => void;
+}): ReactElement {
+  const { t } = useLocale();
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      <Button color="minimal" StartIcon="arrow-left" onClick={onBack} data-testid="team-page-back">
+        {t("team_page_back")}
+      </Button>
+      <div className="flex min-w-0 items-center gap-2" data-testid="team-page-selection">
+        {avatar}
+        <h2 className="text-emphasis truncate text-base font-semibold">{name}</h2>
+      </div>
+    </div>
+  );
+}
+
+function readSelectionFromLocation(members: PublicTeamMemberDto[]): TeamPageSelection {
+  const params = new URLSearchParams(window.location.search);
+  return parseSelection(members, { member: params.get("member"), view: params.get("view") });
+}
+
+export function TeamPublicView({
+  team,
+  members,
+  initialMemberUsername,
+  initialView,
+}: TeamPublicViewProps): ReactElement {
   const { t } = useLocale();
   const pathname = usePathname();
-  const [selectedUsername, setSelectedUsername] = useState<string | null>(
-    resolveSelectedMember(members, initialMemberUsername)?.username ?? null
+  const [selection, setSelection] = useState<TeamPageSelection>(() =>
+    parseSelection(members, { member: initialMemberUsername, view: initialView })
   );
   const hasMembers = members.length > 0;
   const isEventListEmpty = team.eventTypes.length === 0;
-  const selectedMember = resolveSelectedMember(members, selectedUsername);
+  const selectedMember =
+    selection.kind === "member" ? resolveSelectedMember(members, selection.username) : null;
 
-  const handleSelect = (username: string | null): void => {
-    setSelectedUsername(username);
-    window.history.replaceState(
-      null,
-      "",
-      `${pathname}${buildMemberSearch(window.location.search, username)}`
-    );
+  useEffect(() => {
+    // Tiles push history entries, so the browser back button returns to the previous view.
+    const onPopState = (): void => setSelection(readSelectionFromLocation(members));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [members]);
+
+  const select = (next: TeamPageSelection): void => {
+    setSelection(next);
+    window.history.pushState(null, "", `${pathname}${buildSelectionSearch(window.location.search, next)}`);
   };
+  const backToOverview = (): void => select({ kind: "overview" });
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
@@ -174,18 +219,54 @@ export function TeamPublicView({ team, members, initialMemberUsername }: TeamPub
           </div>
         </div>
 
-        {hasMembers && (
+        {hasMembers && selection.kind === "overview" && (
+          <TeamMemberTiles
+            teamName={team.name}
+            teamLogoUrl={team.logoUrl}
+            members={members}
+            onSelectTeam={() => select({ kind: "team" })}
+            onSelectMember={(username) => select({ kind: "member", username })}
+          />
+        )}
+
+        {hasMembers && selection.kind === "team" && (
           <>
-            <TeamMembersTabs members={members} selectedUsername={selectedUsername} onSelect={handleSelect} />
-            {selectedMember ? (
-              <MemberEventList member={selectedMember} />
-            ) : isEventListEmpty ? (
+            <SelectionHeader
+              name={team.name}
+              onBack={backToOverview}
+              avatar={
+                <Avatar
+                  size="sm"
+                  alt={team.name}
+                  imageSrc={team.logoUrl ?? undefined}
+                  fallback={<span aria-hidden="true">{getTeamInitials(team.name)}</span>}
+                />
+              }
+            />
+            {isEventListEmpty ? (
               <p className="text-subtle text-sm" data-testid="team-no-event-types">
                 {t("team_page_no_team_event_types")}
               </p>
             ) : (
               <TeamEventList team={team} />
             )}
+          </>
+        )}
+
+        {hasMembers && selectedMember && (
+          <>
+            <SelectionHeader
+              name={selectedMember.name}
+              onBack={backToOverview}
+              avatar={
+                <Avatar
+                  size="sm"
+                  alt={selectedMember.name}
+                  imageSrc={selectedMember.avatarUrl || undefined}
+                />
+              }
+            />
+            <MemberEventList member={selectedMember} />
           </>
         )}
 
