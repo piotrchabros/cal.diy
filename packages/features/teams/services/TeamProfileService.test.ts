@@ -1,7 +1,6 @@
-import { MembershipRole } from "@calcom/prisma/enums";
 import type { PrismaClient } from "@calcom/prisma/client";
+import { MembershipRole } from "@calcom/prisma/enums";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import { TeamProfileService } from "./TeamProfileService";
 
 type PrismaMock = Pick<PrismaClient, "membership" | "team">;
@@ -11,8 +10,7 @@ const buildPrismaMock = () => ({
   team: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
 });
 
-const asPrisma = (mock: ReturnType<typeof buildPrismaMock>): PrismaMock =>
-  mock as unknown as PrismaMock;
+const asPrisma = (mock: ReturnType<typeof buildPrismaMock>): PrismaMock => mock as unknown as PrismaMock;
 
 const ownerMembership = { id: 1, teamId: 10, userId: 7, accepted: true, role: MembershipRole.OWNER };
 const adminMembership = { ...ownerMembership, role: MembershipRole.ADMIN };
@@ -31,11 +29,13 @@ const baseTeam = {
 describe("TeamProfileService", () => {
   let db: ReturnType<typeof buildPrismaMock>;
   let service: TeamProfileService;
+  let uploadTeamLogo: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     db = buildPrismaMock();
-    service = new TeamProfileService(asPrisma(db));
+    uploadTeamLogo = vi.fn().mockResolvedValue("/api/avatar/new-logo.png");
+    service = new TeamProfileService(asPrisma(db), uploadTeamLogo);
   });
 
   describe("getTeamProfile", () => {
@@ -56,9 +56,7 @@ describe("TeamProfileService", () => {
     it("throws not_found when the team no longer exists", async () => {
       db.membership.findUnique.mockResolvedValue(memberMembership);
       db.team.findUnique.mockResolvedValue(null);
-      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
-        /does not exist/
-      );
+      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(/does not exist/);
     });
 
     it("returns the profile with parsed location, map flag and socials", async () => {
@@ -135,6 +133,46 @@ describe("TeamProfileService", () => {
     });
   });
 
+  describe("updateTeamProfile logo", () => {
+    const input = { teamId: 10, name: "BlueBee", slug: "bluebee" };
+
+    const allowUpdate = () => {
+      db.membership.findUnique.mockResolvedValue(ownerMembership);
+      db.team.findUnique.mockResolvedValue(baseTeam);
+      db.team.findFirst.mockResolvedValue(null);
+      db.team.update.mockResolvedValue(baseTeam);
+    };
+
+    it("uploads an image data URL and stores the avatar URL", async () => {
+      allowUpdate();
+      await service.updateTeamProfile({
+        teamId: 10,
+        userId: 7,
+        input: { ...input, logoUrl: "data:image/png;base64,iVBORw0KGgo=" },
+      });
+      expect(uploadTeamLogo).toHaveBeenCalledWith({ teamId: 10, logo: "data:image/png;base64,iVBORw0KGgo=" });
+      expect(db.team.update.mock.calls[0][0].data.logoUrl).toBe("/api/avatar/new-logo.png");
+    });
+
+    it("keeps an existing logo URL without uploading", async () => {
+      allowUpdate();
+      await service.updateTeamProfile({
+        teamId: 10,
+        userId: 7,
+        input: { ...input, logoUrl: "/api/avatar/old-logo.png" },
+      });
+      expect(uploadTeamLogo).not.toHaveBeenCalled();
+      expect(db.team.update.mock.calls[0][0].data.logoUrl).toBe("/api/avatar/old-logo.png");
+    });
+
+    it("clears the logo when it is removed", async () => {
+      allowUpdate();
+      await service.updateTeamProfile({ teamId: 10, userId: 7, input: { ...input, logoUrl: null } });
+      expect(uploadTeamLogo).not.toHaveBeenCalled();
+      expect(db.team.update.mock.calls[0][0].data.logoUrl).toBeNull();
+    });
+  });
+
   describe("getPublicTeamBySlug", () => {
     const publicTeam = {
       ...baseTeam,
@@ -206,17 +244,13 @@ describe("TeamProfileService", () => {
   describe("disbandTeam", () => {
     it("rejects admins: only owners can disband", async () => {
       db.membership.findUnique.mockResolvedValue(adminMembership);
-      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(
-        /not the team owner/
-      );
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/not the team owner/);
       expect(db.team.delete).not.toHaveBeenCalled();
     });
 
     it("rejects members: only owners can disband", async () => {
       db.membership.findUnique.mockResolvedValue(memberMembership);
-      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(
-        /not the team owner/
-      );
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/not the team owner/);
     });
 
     it("deletes the team for the owner", async () => {

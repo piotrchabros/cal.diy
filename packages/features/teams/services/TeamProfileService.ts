@@ -1,15 +1,19 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import { MembershipRole } from "@calcom/prisma/enums";
-import type { EventType, Membership, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
+import { uploadLogo } from "@calcom/lib/server/avatar";
+import { isBase64Image, resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
 import slugify from "@calcom/lib/slugify";
-
+import type { EventType, Membership, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
+import { MembershipRole } from "@calcom/prisma/enums";
 import type {
   TDisbandTeamInput,
   TTeamProfileMetadata,
   TUpdateTeamProfileInput,
 } from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
-import { ZTeamProfileMetadataSchema } from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
+import {
+  TEAM_LOGO_DATA_URL_PATTERN,
+  ZTeamProfileMetadataSchema,
+} from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
 
 type PrismaLike = Pick<PrismaClient, "membership" | "team">;
 
@@ -69,8 +73,19 @@ const parseProfileMetadata = (metadata: unknown): TTeamProfileMetadata => {
   return parsed.data;
 };
 
+export type UploadTeamLogo = (input: { teamId: number; logo: string }) => Promise<string>;
+
+const defaultUploadTeamLogo: UploadTeamLogo = async ({ teamId, logo }) => {
+  // SVGs skip resizing: uploadLogo rasterises them to PNG itself.
+  const resized = isBase64Image(logo) ? await resizeBase64Image(logo) : logo;
+  return await uploadLogo({ teamId, logo: resized });
+};
+
 export class TeamProfileService {
-  constructor(private prisma: PrismaLike) {}
+  constructor(
+    private prisma: PrismaLike,
+    private uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo
+  ) {}
 
   private async getAcceptedMembership(userId: number, teamId: number): Promise<Membership> {
     const membership = await this.prisma.membership.findUnique({
@@ -159,13 +174,20 @@ export class TeamProfileService {
       socialLinks: input.socialLinks ?? existingMeta.socialLinks,
     };
 
+    // Uploaded images arrive as data URLs; they are stored in the Avatar table and the team keeps
+    // a short /api/avatar URL, the same way user avatars are handled.
+    const logoUrl =
+      input.logoUrl && TEAM_LOGO_DATA_URL_PATTERN.test(input.logoUrl)
+        ? await this.uploadTeamLogo({ teamId, logo: input.logoUrl })
+        : (input.logoUrl ?? null);
+
     const updated = await this.prisma.team.update({
       where: { id: teamId },
       data: {
         name: input.name,
         slug,
         bio: input.bio ?? null,
-        logoUrl: input.logoUrl ?? null,
+        logoUrl,
         metadata: metadata as Prisma.InputJsonValue,
       },
       select: teamProfileSelect,
