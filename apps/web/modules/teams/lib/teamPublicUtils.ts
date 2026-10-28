@@ -12,6 +12,13 @@ export function getMemberProfileUrl(username: string): string {
   return `/${encodeURIComponent(username)}`;
 }
 
+export type TeamPageSelection =
+  | { kind: "overview" }
+  | { kind: "team" }
+  | { kind: "member"; username: string };
+
+export const TEAM_VIEW_PARAM_VALUE = "team";
+
 export function resolveSelectedMember(
   members: PublicTeamMemberDto[],
   username: string | null
@@ -20,12 +27,24 @@ export function resolveSelectedMember(
   return members.find((member) => member.username === username) ?? null;
 }
 
-export function buildMemberSearch(currentSearch: string, username: string | null): string {
+export function parseSelection(
+  members: PublicTeamMemberDto[],
+  { member, view }: { member: string | null; view: string | null }
+): TeamPageSelection {
+  const selectedMember = resolveSelectedMember(members, member);
+  if (selectedMember) return { kind: "member", username: selectedMember.username };
+  if (view === TEAM_VIEW_PARAM_VALUE) return { kind: "team" };
+  return { kind: "overview" };
+}
+
+export function buildSelectionSearch(currentSearch: string, selection: TeamPageSelection): string {
   const params = new URLSearchParams(currentSearch);
-  if (username) {
-    params.set("member", username);
-  } else {
-    params.delete("member");
+  params.delete("member");
+  params.delete("view");
+  if (selection.kind === "member") {
+    params.set("member", selection.username);
+  } else if (selection.kind === "team") {
+    params.set("view", TEAM_VIEW_PARAM_VALUE);
   }
   const search = params.toString();
   return search ? `?${search}` : "";

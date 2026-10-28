@@ -1,10 +1,11 @@
 import type { PublicTeamMemberDto } from "@calcom/lib/dto/PublicTeamMemberDto";
 import { describe, expect, it } from "vitest";
 import {
-  buildMemberSearch,
+  buildSelectionSearch,
   getMemberEventBookingUrl,
   getMemberProfileUrl,
   getTeamEventBookingUrl,
+  parseSelection,
   resolveSelectedMember,
 } from "./teamPublicUtils";
 
@@ -45,15 +46,39 @@ describe("teamPublicUtils", () => {
     });
   });
 
-  describe("buildMemberSearch", () => {
-    it("sets the member param and keeps others", () => {
-      expect(buildMemberSearch("", "anna")).toBe("?member=anna");
-      expect(buildMemberSearch("?a=1&member=jan", "anna")).toBe("?a=1&member=anna");
+  describe("parseSelection", () => {
+    it("selects a known member", () => {
+      expect(parseSelection(members, { member: "jan", view: null })).toEqual({
+        kind: "member",
+        username: "jan",
+      });
     });
 
-    it("removes the member param", () => {
-      expect(buildMemberSearch("?member=anna", null)).toBe("");
-      expect(buildMemberSearch("?a=1&member=anna", null)).toBe("?a=1");
+    it("selects the whole team view", () => {
+      expect(parseSelection(members, { member: null, view: "team" })).toEqual({ kind: "team" });
+    });
+
+    it("falls back to the overview for unknown or missing values", () => {
+      expect(parseSelection(members, { member: "nobody", view: null })).toEqual({ kind: "overview" });
+      expect(parseSelection(members, { member: null, view: "other" })).toEqual({ kind: "overview" });
+    });
+  });
+
+  describe("buildSelectionSearch", () => {
+    it("sets the member param and keeps others", () => {
+      expect(buildSelectionSearch("", { kind: "member", username: "anna" })).toBe("?member=anna");
+      expect(buildSelectionSearch("?a=1&view=team", { kind: "member", username: "anna" })).toBe(
+        "?a=1&member=anna"
+      );
+    });
+
+    it("sets the team view param", () => {
+      expect(buildSelectionSearch("?member=anna", { kind: "team" })).toBe("?view=team");
+    });
+
+    it("clears both params for the overview", () => {
+      expect(buildSelectionSearch("?member=anna", { kind: "overview" })).toBe("");
+      expect(buildSelectionSearch("?a=1&view=team", { kind: "overview" })).toBe("?a=1");
     });
   });
 });
