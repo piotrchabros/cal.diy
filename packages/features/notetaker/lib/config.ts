@@ -45,6 +45,8 @@ type NotetakerConfig = {
   fakeScenario: NotetakerFakeScenario;
   // null means unset: the app then never touches a calendar event for the notetaker
   googleAccountEmail: string | null;
+  // null means unset: the bot is then named after the app and the booking organizer
+  botName: string | null;
   // null means neither RECALL_API_KEY nor RECALL_WEBHOOK_VERIFICATION_SECRET is set
   recall: NotetakerRecallConfig | null;
 };
@@ -175,6 +177,11 @@ const configObjectSchema = z.object({
     .email("must be an email address")
     .optional()
     .transform((value) => value?.toLowerCase() ?? null),
+  NOTETAKER_BOT_NAME: z
+    .string()
+    .max(100, "must be at most 100 characters")
+    .optional()
+    .transform((value) => value ?? null),
   RECALL_API_KEY: z.string().optional(),
   RECALL_REGION: z
     .enum(RECALL_REGIONS, { errorMap: () => ({ message: `must be one of ${RECALL_REGIONS.join(", ")}` }) })
@@ -237,6 +244,7 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     fakeScenario: parsed.NOTETAKER_FAKE_SCENARIO,
     googleAccountEmail: parsed.NOTETAKER_GOOGLE_ACCOUNT_EMAIL,
+    botName: parsed.NOTETAKER_BOT_NAME,
     recall:
       parsed.RECALL_API_KEY !== undefined && parsed.RECALL_WEBHOOK_VERIFICATION_SECRET !== undefined
         ? {
