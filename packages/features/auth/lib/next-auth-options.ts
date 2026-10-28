@@ -443,10 +443,10 @@ export const getOptions = ({
       const autoMergeIdentities = async () => {
         const existingUser = await prisma.user.findFirst({
           where: { email: token.email! },
+          // avatarUrl is left out: everything selected here is spread into the JWT cookie.
           select: {
             id: true,
             username: true,
-            avatarUrl: true,
             name: true,
             email: true,
             role: true,
@@ -740,7 +740,6 @@ export const getOptions = ({
           name: existingUser.name,
           username: existingUser.username,
           email: existingUser.email,
-          avatarUrl: existingUser.avatarUrl,
           role: existingUser.role,
           belongsToActiveTeam: token?.belongsToActiveTeam as boolean,
           impersonatedBy: token.impersonatedBy,
