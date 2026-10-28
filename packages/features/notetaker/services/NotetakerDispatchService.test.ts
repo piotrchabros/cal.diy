@@ -200,7 +200,10 @@ describe("NotetakerDispatchService", () => {
     vi.unstubAllEnvs();
   });
 
-  function buildService(binding: NotetakerBotGatewayBinding | null): NotetakerDispatchService {
+  function buildService(
+    binding: NotetakerBotGatewayBinding | null,
+    serviceConfig: NotetakerConfig = config
+  ): NotetakerDispatchService {
     const userRepository: INotetakerUserLookup = {
       findByIds: async ({ ids }) => users.filter((user) => ids.includes(user.id)),
     };
@@ -216,7 +219,7 @@ describe("NotetakerDispatchService", () => {
       sessionRepository: repositories.sessionRepository,
       activityRepository: repositories.activityRepository,
       botGatewayResolver: { resolve: () => binding },
-      config,
+      config: serviceConfig,
       logger,
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
@@ -349,6 +352,17 @@ describe("NotetakerDispatchService", () => {
   }
 
   describe("dispatchDue", () => {
+    it("uses the configured bot name instead of the default one", async () => {
+      await seedArmed();
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway), { ...config, botName: "BlueBee Notetaker" }).dispatchDue();
+      await settle(gateway);
+
+      expect(onlySession().displayName).toBe("BlueBee Notetaker");
+      expect(gateway.joinRequests[0].displayName).toBe("BlueBee Notetaker");
+    });
+
     it("creates a SCHEDULED session and one join request for a due booking", async () => {
       const bookingId = await seedArmed();
       const gateway = fake();

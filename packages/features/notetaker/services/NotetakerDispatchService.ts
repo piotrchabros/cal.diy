@@ -745,7 +745,8 @@ export class NotetakerDispatchService {
   }> {
     const t = await getTranslation(booking.organizer?.locale ?? "en", "common");
     const hostName = getNotetakerHostName(booking.organizer);
-    const displayName = t("notetaker_display_name", { appName: APP_NAME, hostName });
+    const displayName =
+      this.deps.config.botName ?? t("notetaker_display_name", { appName: APP_NAME, hostName });
     return { t, hostName, displayName };
   }
 

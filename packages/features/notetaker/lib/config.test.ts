@@ -240,6 +240,21 @@ describe("getNotetakerConfig other fields", () => {
     expect(JSON.stringify(error.data ?? {})).not.toContain("test-anthropic-key");
   });
 
+  it("returns a null bot name when unset or blank", () => {
+    expect(getNotetakerConfig(env()).botName).toBeNull();
+    expect(getNotetakerConfig(env({ NOTETAKER_BOT_NAME: "   " })).botName).toBeNull();
+  });
+
+  it("returns the bot name trimmed", () => {
+    expect(getNotetakerConfig(env({ NOTETAKER_BOT_NAME: "  BlueBee Notetaker  " })).botName).toBe(
+      "BlueBee Notetaker"
+    );
+  });
+
+  it("throws for a bot name longer than 100 characters", () => {
+    expectConfigError({ NOTETAKER_BOT_NAME: "x".repeat(101) }, "NOTETAKER_BOT_NAME");
+  });
+
   it("returns a null Google account email when unset or blank", () => {
     expect(getNotetakerConfig(env()).googleAccountEmail).toBeNull();
     expect(getNotetakerConfig(env({ NOTETAKER_GOOGLE_ACCOUNT_EMAIL: "" })).googleAccountEmail).toBeNull();
