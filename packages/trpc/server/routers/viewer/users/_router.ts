@@ -6,6 +6,7 @@ import { router } from "@calcom/trpc/server/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { isImageDataUrl, storeAdminUserAvatar } from "./adminUserAvatar";
 
 export type UserAdminRouter = typeof userAdminRouter;
 export type UserAdminRouterOutputs = inferRouterOutputs<UserAdminRouter>;
@@ -62,16 +63,33 @@ export const userAdminRouter = router({
   }),
   add: authedAdminProcedure.input(userBodySchema).mutation(async ({ ctx, input }) => {
     const { prisma } = ctx;
-    const user = await prisma.user.create({ data: { ...input, creationSource: CreationSource.WEBAPP } });
+    const { avatarUrl, ...rest } = input;
+    const hasUploadedAvatar = isImageDataUrl(avatarUrl);
+    const created = await prisma.user.create({
+      data: {
+        ...rest,
+        avatarUrl: hasUploadedAvatar ? null : avatarUrl,
+        creationSource: CreationSource.WEBAPP,
+      },
+    });
+    const user = hasUploadedAvatar
+      ? await prisma.user.update({
+          where: { id: created.id },
+          data: { avatarUrl: await storeAdminUserAvatar(created.id, avatarUrl) },
+        })
+      : created;
     return { user, message: `User with id: ${user.id} added successfully` };
   }),
   update: authedAdminProcedureWithRequestedUser
     .input(userBodySchema.partial())
     .mutation(async ({ ctx, input }) => {
       const { prisma, requestedUser } = ctx;
+      const data = isImageDataUrl(input.avatarUrl)
+        ? { ...input, avatarUrl: await storeAdminUserAvatar(requestedUser.id, input.avatarUrl) }
+        : input;
 
       const user = await prisma.$transaction(async (tx) => {
-        const userInternal = await tx.user.update({ where: { id: requestedUser.id }, data: input });
+        const userInternal = await tx.user.update({ where: { id: requestedUser.id }, data });
 
         // If the profile has been moved to an Org -> we can easily access the profile we need to update
         if (requestedUser.movedToProfileId && input.username) {
