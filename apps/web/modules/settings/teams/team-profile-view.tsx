@@ -9,6 +9,7 @@ import { md } from "@calcom/lib/markdownIt";
 import turndown from "@calcom/lib/turndownService";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
+import { ZTeamLogoUrlSchema } from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
 import { Editor } from "@calcom/ui/components/editor";
@@ -40,7 +41,7 @@ const formSchema = z.object({
     .max(100)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   bio: z.string().max(2000).optional(),
-  logoUrl: z.string().url().max(2048).nullable().optional(),
+  logoUrl: ZTeamLogoUrlSchema.nullable().optional(),
   location: z.string().trim().max(255).optional(),
   showMap: z.boolean().optional(),
   socialLinks: z.array(socialLinkSchema).max(10).optional(),
