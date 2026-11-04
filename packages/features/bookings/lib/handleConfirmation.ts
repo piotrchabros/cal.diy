@@ -2,6 +2,9 @@ import { eventTypeAppMetadataOptionalSchema } from "@calcom/app-store/zod-utils"
 import { sendScheduledEmailsAndSMS } from "@calcom/emails/email-manager";
 import type { EventManagerUser } from "@calcom/features/bookings/lib/EventManager";
 import EventManager from "@calcom/features/bookings/lib/EventManager";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import getWebhooks from "@calcom/features/webhooks/lib/getWebhooks";
 import { scheduleTrigger } from "@calcom/features/webhooks/lib/scheduleTrigger";
 import sendPayload from "@calcom/features/webhooks/lib/sendOrSchedulePayload";
@@ -311,6 +314,39 @@ export async function handleConfirmation(args: {
   const triggerForUser = true;
   const userId = booking.userId;
 
+  let memberSharingTeamIds: number[] = [];
+  try {
+    const sharingBooking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        userId: true,
+        metadata: true,
+        eventType: {
+          select: {
+            teamId: true,
+            userId: true,
+            team: { select: { id: true, name: true, parentId: true } },
+            notetakerSettings: {
+              select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (sharingBooking) {
+      memberSharingTeamIds = await resolveMemberSharingTeamIds(
+        {
+          ownerUserId: sharingBooking.userId,
+          eventType: sharingBooking.eventType,
+          bookingMetadata: sharingBooking.metadata,
+        },
+        new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma))
+      );
+    }
+  } catch {
+    tracingLogger.error(`Failed to resolve member sharing team ids, bookingId: ${bookingId}`);
+  }
+
   try {
     const subscribersBookingCreated = await getWebhooks({
       userId,
@@ -319,6 +355,7 @@ export async function handleConfirmation(args: {
       teamId: null,
       orgId: null,
       oAuthClientId: platformClientParams?.platformClientId,
+      memberSharingTeamIds,
     });
     const subscribersMeetingStarted = await getWebhooks({
       userId,
@@ -327,6 +364,7 @@ export async function handleConfirmation(args: {
       teamId: null,
       orgId: null,
       oAuthClientId: platformClientParams?.platformClientId,
+      memberSharingTeamIds,
     });
     const subscribersMeetingEnded = await getWebhooks({
       userId,
@@ -335,6 +373,7 @@ export async function handleConfirmation(args: {
       teamId: null,
       orgId: null,
       oAuthClientId: platformClientParams?.platformClientId,
+      memberSharingTeamIds,
     });
 
     const scheduleTriggerPromises: Promise<unknown>[] = [];

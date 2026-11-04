@@ -7,4 +7,6 @@ export interface GetSubscribersOptions {
   teamId?: number | number[] | null;
   orgId?: number | null;
   oAuthClientId?: string | null;
+  /** Teams whose webhooks opted into member meetings (includeMemberMeetings) also receive this event. */
+  memberSharingTeamIds?: number[];
 }

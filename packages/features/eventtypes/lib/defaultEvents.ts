@@ -102,6 +102,7 @@ const commons = {
   recurringEvent: null,
   destinationCalendar: null,
   team: null,
+  notetakerSettings: null,
   lockTimeZoneToggleOnBookingPage: false,
   lockedTimeZone: null,
   requiresConfirmation: false,
