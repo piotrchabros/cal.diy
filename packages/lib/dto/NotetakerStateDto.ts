@@ -22,7 +22,7 @@ export type NotetakerOutcomeReasonDto =
 
 export type NotetakerPlatformDto = "GOOGLE_MEET" | "MICROSOFT_TEAMS";
 
-export type NotetakerChoiceSourceDto = "HOST" | "EVENT_TYPE_DEFAULT";
+export type NotetakerChoiceSourceDto = "HOST" | "EVENT_TYPE_DEFAULT" | "CALENDAR_AUTO_JOIN";
 
 export type NotetakerBotProviderDto = "SELF_HOSTED" | "RECALL" | "FAKE";
 

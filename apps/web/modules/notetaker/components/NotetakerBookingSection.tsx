@@ -95,6 +95,8 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
     if (state.choice.enabled) {
       if (state.choice.source === "EVENT_TYPE_DEFAULT")
         return t("notetaker_enabled_by_event_type_default", { date });
+      if (state.choice.source === "CALENDAR_AUTO_JOIN")
+        return t("notetaker_enabled_by_calendar_auto_join", { date });
       if (name) return t("notetaker_enabled_by", { name, date, interpolation: { escapeValue: false } });
       return t("notetaker_enabled_at", { date });
     }
