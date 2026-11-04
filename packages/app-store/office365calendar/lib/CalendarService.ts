@@ -25,6 +25,7 @@ import { getTokenObjectFromCredential } from "../../_utils/oauth/getTokenObjectF
 import { OAuthManager } from "../../_utils/oauth/OAuthManager";
 import { oAuthManagerHelper } from "../../_utils/oauth/oAuthManagerHelper";
 import metadata from "../_metadata";
+import type { Office365CalendarEventsReader, Office365CalendarViewEvent } from "../types/Office365Calendar";
 import { getOfficeAppKeys } from "./getOfficeAppKeys";
 
 interface IRequest {
@@ -46,6 +47,13 @@ interface ISettledResponse {
 interface IBatchResponse {
   responses: ISettledResponse[];
 }
+
+// A day of one calendar never comes close to 1000 events; the cap only guards against a runaway page loop.
+const CALENDAR_VIEW_MAX_PAGES = 10;
+const CALENDAR_VIEW_SELECT =
+  "id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,isOnlineMeeting," +
+  "onlineMeeting,onlineMeetingUrl,location,attendees,organizer,bodyPreview,body,seriesMasterId";
+
 interface BodyValue {
   showAs: string;
   end: { dateTime: string };
@@ -53,7 +61,7 @@ interface BodyValue {
   start: { dateTime: string };
 }
 
-class Office365CalendarService implements Calendar {
+class Office365CalendarService implements Calendar, Office365CalendarEventsReader {
   private url = "";
   private integrationName = "";
   private log: typeof logger;
@@ -470,6 +478,34 @@ class Office365CalendarService implements Calendar {
     });
   }
 
+  async listEventsWithMeetingDetails(p: {
+    calendarId: string;
+    timeMin: Date;
+    timeMax: Date;
+  }): Promise<Office365CalendarViewEvent[]> {
+    const filter = `startDateTime=${encodeURIComponent(p.timeMin.toISOString())}&endDateTime=${encodeURIComponent(
+      p.timeMax.toISOString()
+    )}`;
+    let requestLink: string | undefined =
+      `${await this.getUserEndpoint()}/calendars/${p.calendarId}/calendarView?${filter}` +
+      `&$select=${CALENDAR_VIEW_SELECT}&$top=100`;
+
+    const events: Office365CalendarViewEvent[] = [];
+    for (let page = 0; page < CALENDAR_VIEW_MAX_PAGES && requestLink; page++) {
+      const response = await this.fetcher(requestLink, {
+        // Without the UTC preference Graph returns times in each event's own zone, with only a zone name.
+        headers: { Prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"' },
+      });
+      const responseBody = await handleErrorsJson<{
+        value?: Office365CalendarViewEvent[];
+        "@odata.nextLink"?: string;
+      }>(response);
+      events.push(...(responseBody.value ?? []));
+      requestLink = responseBody["@odata.nextLink"]?.replace(this.apiGraphUrl, "");
+    }
+    return events;
+  }
+
   private translateEvent = (event: CalendarServiceEvent, rescheduledEvent?: Event) => {
     const isOnlineMeeting = event.location === MSTeamsLocationType;
     const isRescheduledOnlineMeeting = rescheduledEvent ? rescheduledEvent.isOnlineMeeting : false;
@@ -800,5 +836,14 @@ class Office365CalendarService implements Calendar {
  * all Microsoft Graph SDK declaration files when type-checking dependent packages.
  */
 export default function BuildCalendarService(credential: CredentialForCalendarServiceWithTenantId): Calendar {
+  return new Office365CalendarService(credential);
+}
+
+/**
+ * Like BuildCalendarService, but also exposes the event listing the notetaker needs to find meetings to join.
+ */
+export function createOffice365CalendarServiceWithEventsReader(
+  credential: CredentialForCalendarServiceWithTenantId
+): Calendar & Office365CalendarEventsReader {
   return new Office365CalendarService(credential);
 }
