@@ -27,6 +27,7 @@ import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerAccessService } from "./NotetakerAccessService";
 import { NOTETAKER_SUMMARY_MAX_ATTEMPTS, NotetakerSummaryService } from "./NotetakerSummaryService";
+import type { INotetakerTranscriptWebhookNotifier } from "./NotetakerTranscriptWebhookService";
 
 const BOOKING_ID = 100;
 const BOOKING_UID = "booking-uid-1";
@@ -161,6 +162,14 @@ class ScriptedSummaryGenerator implements INotetakerSummaryGenerator {
   }
 }
 
+class RecordingTranscriptWebhook implements INotetakerTranscriptWebhookNotifier {
+  sendOnceCalls: { transcriptId: string }[] = [];
+
+  async sendOnce(params: { transcriptId: string }): Promise<void> {
+    this.sendOnceCalls.push(params);
+  }
+}
+
 function createLogger() {
   return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } satisfies ISimpleLogger;
 }
@@ -175,6 +184,7 @@ describe("NotetakerSummaryService", () => {
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
   let tasker: RecordingNotetakerTasker;
   let generator: ScriptedSummaryGenerator;
+  let transcriptWebhook: RecordingTranscriptWebhook;
   let logger: ReturnType<typeof createLogger>;
   let users: NotetakerUserRecord[];
   let service: NotetakerSummaryService;
@@ -189,6 +199,7 @@ describe("NotetakerSummaryService", () => {
     repositories.store.addBooking(buildBooking());
     tasker = new RecordingNotetakerTasker();
     generator = new ScriptedSummaryGenerator();
+    transcriptWebhook = new RecordingTranscriptWebhook();
     logger = createLogger();
     users = [
       {
@@ -214,6 +225,7 @@ describe("NotetakerSummaryService", () => {
       userRepository,
       summaryGenerator: generator,
       notetakerTasker: tasker,
+      transcriptWebhook,
       config: getNotetakerConfig({ NODE_ENV: "test", NOTETAKER_SUMMARY_MIN_WORDS: "5" }),
       logger,
     });
@@ -679,6 +691,73 @@ describe("NotetakerSummaryService", () => {
       expect(logger.error).toHaveBeenCalledWith(expect.anything(), {
         sessionId: session.id,
         bookingId: BOOKING_ID,
+      });
+    });
+
+    describe("transcript webhook", () => {
+      it("sends once when its own guard sets NOT_ENOUGH_CONTENT", async () => {
+        const { transcript } = await seedTranscript({ passages: buildTooFewPassages() });
+
+        await service.generate({ transcriptId: transcript.id, requestedByUserId: null });
+
+        expect(transcriptWebhook.sendOnceCalls).toEqual([{ transcriptId: transcript.id }]);
+      });
+
+      it("sends once when the summary is saved READY", async () => {
+        const { transcript } = await seedTranscript();
+
+        await service.generate({ transcriptId: transcript.id, requestedByUserId: null });
+
+        expect(transcriptWebhook.sendOnceCalls).toEqual([{ transcriptId: transcript.id }]);
+      });
+
+      it("sends once when a disabled generator settles the summary as FAILED", async () => {
+        const { transcript } = await seedTranscript();
+        generator.queue.push({ ok: false, failureCode: "GENERATOR_DISABLED", retryable: false });
+
+        await expect(
+          service.generate({ transcriptId: transcript.id, requestedByUserId: null })
+        ).resolves.toBeUndefined();
+
+        expect((await readSummary(transcript.id))?.failureCode).toBe("GENERATOR_DISABLED");
+        expect(transcriptWebhook.sendOnceCalls).toEqual([{ transcriptId: transcript.id }]);
+      });
+
+      it("does not send on a retryable failure that will be retried, and sends when the last attempt settles", async () => {
+        const { transcript } = await seedTranscript();
+        generator.queue.push(RETRYABLE_PROVIDER_ERROR, RETRYABLE_PROVIDER_ERROR, RETRYABLE_PROVIDER_ERROR);
+
+        await expect(
+          service.generate({ transcriptId: transcript.id, requestedByUserId: null })
+        ).rejects.toBeInstanceOf(ErrorWithCode);
+        await expect(
+          service.generate({ transcriptId: transcript.id, requestedByUserId: null })
+        ).rejects.toBeInstanceOf(ErrorWithCode);
+        expect(transcriptWebhook.sendOnceCalls).toHaveLength(0);
+
+        await service.generate({ transcriptId: transcript.id, requestedByUserId: null });
+
+        expect(transcriptWebhook.sendOnceCalls).toEqual([{ transcriptId: transcript.id }]);
+      });
+
+      it("sends on a host re-request too", async () => {
+        const { transcript } = await seedTranscript();
+        await seedSummary(transcript.id, { status: "FAILED", failureCode: "REFUSED", attempts: 3 });
+
+        await service.generate({ transcriptId: transcript.id, requestedByUserId: ORGANIZER_ID });
+
+        expect((await readSummary(transcript.id))?.status).toBe("READY");
+        expect(tasker.sendNotificationCalls).toHaveLength(0);
+        expect(transcriptWebhook.sendOnceCalls).toEqual([{ transcriptId: transcript.id }]);
+      });
+
+      it("does not send when the summary is already settled", async () => {
+        const { transcript } = await seedTranscript();
+        await seedSummary(transcript.id, { status: "READY", attempts: 1 });
+
+        await service.generate({ transcriptId: transcript.id, requestedByUserId: null });
+
+        expect(transcriptWebhook.sendOnceCalls).toHaveLength(0);
       });
     });
 

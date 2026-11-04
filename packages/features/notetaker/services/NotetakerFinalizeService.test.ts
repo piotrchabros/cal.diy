@@ -106,6 +106,7 @@ describe("NotetakerFinalizeService", () => {
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
   let tasker: RecordingNotetakerTasker;
   let logger: ReturnType<typeof createLogger>;
+  let transcriptWebhook: { sendOnce: ReturnType<typeof vi.fn> };
   let service: NotetakerFinalizeService;
 
   beforeEach(() => {
@@ -114,11 +115,13 @@ describe("NotetakerFinalizeService", () => {
     repositories.store.addBooking(buildBooking());
     tasker = new RecordingNotetakerTasker();
     logger = createLogger();
+    transcriptWebhook = { sendOnce: vi.fn().mockResolvedValue(undefined) };
     service = new NotetakerFinalizeService({
       sessionRepository: repositories.sessionRepository,
       transcriptRepository: repositories.transcriptRepository,
       summaryRepository: repositories.summaryRepository,
       notetakerTasker: tasker,
+      transcriptWebhook,
       config: getNotetakerConfig({ NODE_ENV: "test" }),
       logger,
     });
@@ -638,6 +641,8 @@ describe("NotetakerFinalizeService", () => {
       });
       expect(tasker.finalizeSessionCalls).toHaveLength(0);
       expect(tasker.generateSummaryCalls).toHaveLength(0);
+      expect(transcriptWebhook.sendOnce).toHaveBeenCalledTimes(1);
+      expect(transcriptWebhook.sendOnce).toHaveBeenCalledWith({ transcriptId });
     });
 
     it("is enqueued only after the status was written", async () => {
@@ -750,6 +755,7 @@ describe("NotetakerFinalizeService", () => {
 
       expect(tasker.generateSummaryCalls).toEqual([{ transcriptId, requestedByUserId: null }]);
       expect(tasker.sendNotificationCalls).toHaveLength(0);
+      expect(transcriptWebhook.sendOnce).not.toHaveBeenCalled();
       expect(await repositories.summaryRepository.findByTranscriptId(transcriptId ?? "")).toBeNull();
       expect((await readSession(sessionId))?.status).toBe(name);
     });
@@ -769,6 +775,7 @@ describe("NotetakerFinalizeService", () => {
         transcriptRepository: repositories.transcriptRepository,
         summaryRepository: repositories.summaryRepository,
         notetakerTasker: tasker,
+        transcriptWebhook,
         config: getNotetakerConfig({ NODE_ENV: "test", NOTETAKER_SUMMARY_MIN_WORDS: "50" }),
         logger,
       });
@@ -786,6 +793,7 @@ describe("NotetakerFinalizeService", () => {
         transcriptRepository: repositories.transcriptRepository,
         summaryRepository: repositories.summaryRepository,
         notetakerTasker: tasker,
+        transcriptWebhook,
         config: getNotetakerConfig({ NODE_ENV: "test", NOTETAKER_SUMMARY_MIN_WORDS: "51" }),
         logger,
       });
@@ -812,10 +820,12 @@ describe("NotetakerFinalizeService", () => {
 
     it("logs a task-failed summary run instead of throwing", async () => {
       tasker.generateSummaryRunId = "task-failed";
-      const { sessionId } = await seedProcessingSession({ passages: buildLongPassages() });
+      const { sessionId, transcriptId } = await seedProcessingSession({ passages: buildLongPassages() });
 
       await expect(service.finalize({ sessionId })).resolves.toBeUndefined();
 
+      expect(transcriptWebhook.sendOnce).toHaveBeenCalledTimes(1);
+      expect(transcriptWebhook.sendOnce).toHaveBeenCalledWith({ transcriptId });
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect((await readSession(sessionId))?.status).toBe("READY");
       expect(tasker.sendNotificationCalls).toHaveLength(0);

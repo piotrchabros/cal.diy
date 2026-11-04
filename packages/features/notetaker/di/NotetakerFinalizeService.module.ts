@@ -2,6 +2,7 @@ import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calc
 import { moduleLoader as loggerServiceModuleLoader } from "@calcom/features/di/shared/services/logger.service";
 import { NotetakerFinalizeService } from "@calcom/features/notetaker/services/NotetakerFinalizeService";
 import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
+import { moduleLoader as notetakerTranscriptWebhookServiceModuleLoader } from "./NotetakerTranscriptWebhookService.module";
 import { moduleLoader as notetakerSessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
 import { moduleLoader as notetakerSummaryRepositoryModuleLoader } from "./PrismaNotetakerSummaryRepository.module";
 import { moduleLoader as notetakerTranscriptRepositoryModuleLoader } from "./PrismaNotetakerTranscriptRepository.module";
@@ -22,6 +23,7 @@ const loadModule = bindModuleToClassOnToken({
     transcriptRepository: notetakerTranscriptRepositoryModuleLoader,
     summaryRepository: notetakerSummaryRepositoryModuleLoader,
     notetakerTasker: notetakerTaskerModuleLoader,
+    transcriptWebhook: notetakerTranscriptWebhookServiceModuleLoader,
     config: configModuleLoader,
     logger: loggerServiceModuleLoader,
   },

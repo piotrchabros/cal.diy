@@ -5,6 +5,7 @@ import { NotetakerSummaryService } from "@calcom/features/notetaker/services/Not
 import { moduleLoader as accessServiceModuleLoader } from "./NotetakerAccessService.module";
 import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
 import { moduleLoader as summaryGeneratorModuleLoader } from "./NotetakerSummaryGenerator.module";
+import { moduleLoader as transcriptWebhookServiceModuleLoader } from "./NotetakerTranscriptWebhookService.module";
 import { moduleLoader as activityRepositoryModuleLoader } from "./PrismaNotetakerActivityRepository.module";
 import { moduleLoader as sessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
 import { moduleLoader as summaryRepositoryModuleLoader } from "./PrismaNotetakerSummaryRepository.module";
@@ -30,6 +31,7 @@ const loadModule = bindModuleToClassOnToken({
     userRepository: userRepositoryModuleLoader,
     summaryGenerator: summaryGeneratorModuleLoader,
     notetakerTasker: notetakerTaskerModuleLoader,
+    transcriptWebhook: transcriptWebhookServiceModuleLoader,
     config: configModuleLoader,
     logger: loggerServiceModuleLoader,
   },

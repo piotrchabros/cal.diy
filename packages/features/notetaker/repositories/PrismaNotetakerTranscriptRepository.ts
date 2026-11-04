@@ -159,6 +159,22 @@ export class PrismaNotetakerTranscriptRepository implements INotetakerTranscript
     return result.count;
   }
 
+  async claimWebhookDispatch(id: string, at: Date): Promise<boolean> {
+    const result = await this.prismaClient.notetakerTranscript.updateMany({
+      where: { id, webhookDispatchedAt: null },
+      data: { webhookDispatchedAt: at },
+    });
+    return result.count === 1;
+  }
+
+  async isWebhookDispatched(id: string): Promise<boolean> {
+    const row = await this.prismaClient.notetakerTranscript.findUnique({
+      where: { id },
+      select: { webhookDispatchedAt: true },
+    });
+    return row?.webhookDispatchedAt != null;
+  }
+
   async deleteById(id: string): Promise<void> {
     // deleteMany keeps this idempotent; passages and summary are removed by FK cascade.
     await this.prismaClient.notetakerTranscript.deleteMany({ where: { id } });

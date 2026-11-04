@@ -59,6 +59,9 @@ export interface INotetakerTranscriptRepository {
     resolvedSpeakerKey: string;
     speakerName: string;
   }): Promise<number>;
+  /** Resolves to true only for the caller that first sets webhookDispatchedAt; every later call gets false. */
+  claimWebhookDispatch(id: string, at: Date): Promise<boolean>;
+  isWebhookDispatched(id: string): Promise<boolean>;
   deleteById(id: string): Promise<void>;
   deleteByBookingId(bookingId: number): Promise<number>;
 }
