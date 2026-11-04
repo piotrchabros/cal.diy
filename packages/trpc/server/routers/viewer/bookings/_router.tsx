@@ -6,6 +6,7 @@ import { router } from "../../../trpc";
 import { ZAddGuestsInputSchema } from "./addGuests.schema";
 import { ZConfirmInputSchema } from "./confirm.schema";
 import { ZEditLocationInputSchema } from "./editLocation.schema";
+import { ZExternalCalendarEventsInputSchema } from "./externalCalendarEvents.schema";
 import { ZFindInputSchema } from "./find.schema";
 import { ZGetInputSchema } from "./get.schema";
 import { ZGetBookingAttendeesInputSchema } from "./getBookingAttendees.schema";
@@ -28,6 +29,17 @@ export const bookingsRouter = router({
       input,
     });
   }),
+
+  externalCalendarEvents: authedProcedure
+    .input(ZExternalCalendarEventsInputSchema)
+    .query(async ({ input, ctx }) => {
+      const { externalCalendarEventsHandler } = await import("./externalCalendarEvents.handler");
+
+      return externalCalendarEventsHandler({
+        ctx,
+        input,
+      });
+    }),
 
   requestReschedule: authedProcedure.input(ZRequestRescheduleInputSchema).mutation(async ({ input, ctx }) => {
     const { requestRescheduleHandler } = await import("./requestReschedule.handler");
