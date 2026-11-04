@@ -1,6 +1,7 @@
 import type { NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
 import type { NotetakerBookingStatus } from "./interfaces/IBookingNotetakerRepository";
 import type {
   INotetakerSessionRepository,
@@ -120,6 +121,21 @@ export class PrismaNotetakerSessionRepository implements INotetakerSessionReposi
   ): Promise<NotetakerSessionRecord | null> {
     return await this.prismaClient.notetakerSession.findFirst({
       where: { bookingId, status: { in: statuses } },
+      orderBy: latestOrder,
+      select: sessionSelect,
+    });
+  }
+
+  async findLiveByMeetingUrlExcludingBooking(params: {
+    meetingUrl: string;
+    excludeBookingId: number;
+  }): Promise<NotetakerSessionRecord | null> {
+    return await this.prismaClient.notetakerSession.findFirst({
+      where: {
+        meetingUrl: params.meetingUrl,
+        status: { in: NOTETAKER_LIVE_SESSION_STATUSES },
+        bookingId: { not: params.excludeBookingId },
+      },
       orderBy: latestOrder,
       select: sessionSelect,
     });
