@@ -925,6 +925,7 @@ model Booking {
   notetakerSharingGrant    NotetakerSharingGrant?
   notetakerActivities      NotetakerActivity[]
   notetakerCalendarMeeting NotetakerCalendarMeeting?
+  notetakerMeetingContacts NotetakerMeetingContact[]
 
   // @@partial_index([reassignById])
 
@@ -1177,6 +1178,8 @@ model Webhook {
   time                  Int?
   timeUnit              TimeUnit?
   version               String                     @default("2021-10-20")
+  // Team webhooks only: also deliver meetings members shared with this team via notetaker sharing
+  includeMemberMeetings Boolean                    @default(false)
 
   @@unique([userId, subscriberUrl], name: "courseIdentifier")
   @@unique([platformOAuthClientId, subscriberUrl], name: "oauthclientwebhook")
@@ -2939,6 +2942,11 @@ enum NotetakerSharingMode {
   SELECTED_PEOPLE
 }
 
+enum NotetakerMeetingContactSource {
+  MANUAL
+  CALENDAR
+}
+
 model EventTypeNotetakerSettings {
   eventTypeId        Int                  @id
   eventType          EventType            @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
@@ -3025,6 +3033,8 @@ model NotetakerTranscript {
   passageCount          Int                             @default(0)
   // null: made before speaker names existed. false: nobody could be identified
   speakerNamesAvailable Boolean?
+  // Claimed once before the transcript webhook is sent, so concurrent or repeated settles deliver it at most once
+  webhookDispatchedAt   DateTime?
   createdAt             DateTime                        @default(now())
   updatedAt             DateTime                        @updatedAt
   passages              NotetakerTranscriptPassage[]
@@ -3092,6 +3102,22 @@ model NotetakerActivity {
   createdAt   DateTime                @default(now())
 
   @@index([bookingId, createdAt])
+}
+
+// Customer contacts of meetings without an event type, delivered to the CRM webhook only.
+// Kept out of Attendee so they get no attendee emails, transcript access or booking visibility.
+model NotetakerMeetingContact {
+  id        String                        @id @default(uuid())
+  bookingId Int
+  booking   Booking                       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  email     String
+  name      String?
+  source    NotetakerMeetingContactSource
+  createdAt DateTime                      @default(now())
+  updatedAt DateTime                      @updatedAt
+
+  @@unique([bookingId, email])
+  @@index([bookingId])
 }
 
 model NotetakerCalendarAutoJoin {

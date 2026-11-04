@@ -1,16 +1,13 @@
-import { v4 } from "uuid";
-
 import { updateTriggerForExistingBookings } from "@calcom/features/webhooks/lib/scheduleTrigger";
 import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
 import { prisma } from "@calcom/prisma";
-import type { Webhook } from "@calcom/prisma/client";
-import type { Prisma } from "@calcom/prisma/client";
+import type { Prisma, Webhook } from "@calcom/prisma/client";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import { TRPCError } from "@trpc/server";
-
+import { v4 } from "uuid";
 import type { TCreateInputSchema } from "./create.schema";
+import { assertMemberMeetingsScope, assertTeamAdminForMemberMeetings } from "./memberMeetings";
 
 type CreateOptions = {
   ctx: {
@@ -39,7 +36,13 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 
-  if (!input.platform && !input.eventTypeId) {
+  if (input.includeMemberMeetings) {
+    const teamId = await assertMemberMeetingsScope(input);
+    await assertTeamAdminForMemberMeetings({ userId: user.id, teamId });
+  }
+
+  // Member-meeting webhooks belong to the team, not their creator, so they keep firing if the creator leaves.
+  if (!input.platform && !input.eventTypeId && !input.includeMemberMeetings) {
     webhookData.user = { connect: { id: user.id } };
   }
 

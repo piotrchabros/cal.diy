@@ -1,18 +1,19 @@
-import { v4 } from "uuid";
-
 import { DailyLocationType, getHumanReadableLocationValue } from "@calcom/app-store/locations";
 import { selectOOOEntries } from "@calcom/app-store/zapier/api/subscriptions/listOOOEntries";
 import dayjs from "@calcom/dayjs";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
+import { NOTETAKER_AD_HOC_SHARING_TEAM_KEY } from "@calcom/features/notetaker/lib/adHocMeeting";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import tasker from "@calcom/features/tasker";
+import { getTranslation } from "@calcom/i18n/server";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { withReporting } from "@calcom/lib/sentryWrapper";
-import { getTranslation } from "@calcom/i18n/server";
 import { prisma } from "@calcom/prisma";
-import type { Prisma, Webhook, Booking, ApiKey } from "@calcom/prisma/client";
+import type { ApiKey, Booking, Prisma, Webhook } from "@calcom/prisma/client";
 import { BookingStatus, WebhookTriggerEvents } from "@calcom/prisma/enums";
 import { bookingMetadataSchema } from "@calcom/prisma/zod-utils";
+import { v4 } from "uuid";
 import { DEFAULT_WEBHOOK_VERSION, type WebhookVersion } from "./interface/IWebhookRepository";
 
 const SCHEDULING_TRIGGER: WebhookTriggerEvents[] = [
@@ -381,8 +382,72 @@ export const deleteWebhookScheduledTriggers = withReporting(
   "deleteWebhookScheduledTriggers"
 );
 
+/**
+ * Future accepted bookings owned by accepted members of the team whose notetaker results are shared with the whole team.
+ * Known gap: rows scheduled here are not removed when the owner later leaves the team or stops sharing with it.
+ */
+async function fetchMemberSharingBookings(teamId: number, excludeBookingIds: number[]): Promise<Booking[]> {
+  const currentTime = new Date();
+  const memberships = await prisma.membership.findMany({
+    where: { teamId, accepted: true },
+    select: { userId: true },
+  });
+  const memberIds = new Set(memberships.map((membership) => membership.userId));
+  if (memberIds.size === 0) return [];
+
+  const candidates = await prisma.booking.findMany({
+    where: {
+      status: BookingStatus.ACCEPTED,
+      startTime: { gt: currentTime },
+      endTime: { gt: currentTime },
+      userId: { in: Array.from(memberIds) },
+      id: { notIn: excludeBookingIds },
+      OR: [
+        {
+          eventTypeId: null,
+          metadata: { path: [NOTETAKER_AD_HOC_SHARING_TEAM_KEY], equals: String(teamId) },
+        },
+        { eventType: { teamId: null, notetakerSettings: { sharingMode: "TEAM", sharingTeamId: teamId } } },
+      ],
+    },
+    select: {
+      id: true,
+      userId: true,
+      metadata: true,
+      eventType: {
+        select: {
+          teamId: true,
+          userId: true,
+          team: { select: { id: true, name: true, parentId: true } },
+          notetakerSettings: {
+            select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  // Memberships were loaded once above, so each candidate is resolved without another query.
+  const membershipLookup = {
+    isAcceptedMember: async (params: { userId: number; teamId: number }) =>
+      params.teamId === teamId && memberIds.has(params.userId),
+  };
+  const matchedIds: number[] = [];
+  for (const candidate of candidates) {
+    const sharingTeamIds = await resolveMemberSharingTeamIds(
+      { ownerUserId: candidate.userId, eventType: candidate.eventType, bookingMetadata: candidate.metadata },
+      membershipLookup
+    );
+    if (sharingTeamIds.includes(teamId)) matchedIds.push(candidate.id);
+  }
+  if (matchedIds.length === 0) return [];
+
+  return prisma.booking.findMany({ where: { id: { in: matchedIds } } });
+}
+
 async function fetchBookingsFromWebhook(
-  webhook: Pick<Webhook, "id" | "userId" | "teamId" | "eventTypeId">
+  webhook: Pick<Webhook, "id" | "userId" | "teamId" | "eventTypeId"> &
+    Partial<Pick<Webhook, "includeMemberMeetings">>
 ): Promise<Booking[]> {
   const currentTime = new Date();
   const where: Prisma.BookingWhereInput = {
@@ -473,14 +538,81 @@ async function fetchBookingsFromWebhook(
     }
   }
 
+  if (webhook.teamId && webhook.includeMemberMeetings) {
+    try {
+      const memberBookings = await fetchMemberSharingBookings(
+        webhook.teamId,
+        bookings.map((booking) => booking.id)
+      );
+      bookings = bookings.concat(memberBookings);
+    } catch {
+      log.error(
+        "Failed to fetch member bookings shared with the team",
+        safeStringify({ webhookId: webhook.id, teamId: webhook.teamId })
+      );
+    }
+  }
+
   return bookings;
 }
 
+async function reconcileMemberMeetingTriggers(webhook: Webhook, keptEventTriggers: WebhookTriggerEvents[]) {
+  if (!webhook.teamId) return;
+  try {
+    const teamBookings = await fetchBookingsFromWebhook({ ...webhook, includeMemberMeetings: false });
+    const memberBookings = await fetchMemberSharingBookings(
+      webhook.teamId,
+      teamBookings.map((booking) => booking.id)
+    );
+    if (memberBookings.length === 0) return;
+
+    if (webhook.includeMemberMeetings) {
+      await Promise.all(
+        memberBookings.flatMap((booking) =>
+          keptEventTriggers.map((triggerEvent) =>
+            scheduleTrigger({
+              booking,
+              subscriberUrl: webhook.subscriberUrl,
+              subscriber: webhook,
+              triggerEvent,
+            })
+          )
+        )
+      );
+      return;
+    }
+
+    await prisma.webhookScheduledTriggers.deleteMany({
+      where: { webhookId: webhook.id, bookingId: { in: memberBookings.map((booking) => booking.id) } },
+    });
+  } catch {
+    log.error(
+      "Failed to reconcile member meeting triggers",
+      safeStringify({ webhookId: webhook.id, teamId: webhook.teamId })
+    );
+  }
+}
+
+/**
+ * Pass `previousIncludeMemberMeetings` when editing so that toggling the flag adds or removes the scheduled
+ * MEETING_* rows of member bookings shared with the team for triggers that stay selected.
+ */
 export async function updateTriggerForExistingBookings(
   webhook: Webhook,
   existingEventTriggers: WebhookTriggerEvents[],
-  updatedEventTriggers: WebhookTriggerEvents[]
+  updatedEventTriggers: WebhookTriggerEvents[],
+  previousIncludeMemberMeetings?: boolean
 ) {
+  if (
+    previousIncludeMemberMeetings !== undefined &&
+    Boolean(previousIncludeMemberMeetings) !== Boolean(webhook.includeMemberMeetings)
+  ) {
+    const keptEventTriggers = updatedEventTriggers.filter(
+      (trigger) => existingEventTriggers.includes(trigger) && SCHEDULING_TRIGGER.includes(trigger)
+    );
+    await reconcileMemberMeetingTriggers(webhook, keptEventTriggers);
+  }
+
   const addedEventTriggers = updatedEventTriggers.filter(
     (trigger) => !existingEventTriggers.includes(trigger) && SCHEDULING_TRIGGER.includes(trigger)
   );

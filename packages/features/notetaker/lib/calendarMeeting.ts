@@ -21,6 +21,7 @@ export type NotetakerCalendarEvent = {
   selfResponse: "accepted" | "tentative" | "needsAction" | "declined" | "organizer" | null;
   organizerEmail: string | null;
   attendeeEmails: string[];
+  attendees?: { email: string; name: string | null }[];
   // Ordered by trust: conference link first, then location, then links found in free text.
   candidateLinks: string[];
 };

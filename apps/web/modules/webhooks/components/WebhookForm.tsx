@@ -1,8 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
-
 import SectionBottomActions from "@calcom/features/settings/SectionBottomActions";
 import customTemplate, { hasTemplateIntegration } from "@calcom/features/webhooks/lib/integrationTemplate";
 import { WebhookVersion } from "@calcom/features/webhooks/lib/interface/IWebhookRepository";
@@ -11,15 +8,9 @@ import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { TimeUnit, WebhookTriggerEvents } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
-import { Select } from "@calcom/ui/components/form";
-import { TextArea } from "@calcom/ui/components/form";
-import { ToggleGroup } from "@calcom/ui/components/form";
-import { Form } from "@calcom/ui/components/form";
-import { Label } from "@calcom/ui/components/form";
-import { TextField } from "@calcom/ui/components/form";
-import { Switch } from "@calcom/ui/components/form";
-
-
+import { Form, Label, Select, Switch, TextArea, TextField, ToggleGroup } from "@calcom/ui/components/form";
+import { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import WebhookTestDisclosure from "./WebhookTestDisclosure";
 
 export type TWebhook = RouterOutputs["viewer"]["webhook"]["list"][number];
@@ -34,6 +25,7 @@ export type WebhookFormData = {
   time?: number | null;
   timeUnit?: TimeUnit | null;
   version: WebhookVersion;
+  includeMemberMeetings?: boolean;
 };
 
 export type WebhookFormSubmitData = WebhookFormData & {
@@ -239,6 +231,7 @@ export type WebhookFormValues = {
   time?: number | null;
   timeUnit?: TimeUnit | null;
   version: WebhookVersion;
+  includeMemberMeetings?: boolean;
 };
 
 const WebhookForm = (props: {
@@ -247,6 +240,10 @@ const WebhookForm = (props: {
   overrideTriggerOptions?: (typeof WEBHOOK_TRIGGER_EVENTS_GROUPED_BY_APP_V2)["core"];
   onSubmit: (event: WebhookFormSubmitData) => void;
   onCancel?: () => void;
+  /** Set only for team-scoped webhooks that are not platform or event-type scoped. */
+  teamId?: number | null;
+  /** Whether the current user is admin or owner of `teamId`. Defaults to true; the server enforces it. */
+  canManageMemberMeetings?: boolean;
   headerWrapper?: (
     formMethods: ReturnType<typeof useForm<WebhookFormValues>>,
     children: React.ReactNode
@@ -284,10 +281,17 @@ const WebhookForm = (props: {
       timeUnit: props?.webhook?.timeUnit || undefined,
       time: props?.webhook?.time || undefined,
       version: props?.webhook?.version || WebhookVersion.V_2021_10_20,
+      includeMemberMeetings:
+        props?.webhook && "includeMemberMeetings" in props.webhook
+          ? !!props.webhook.includeMemberMeetings
+          : false,
     },
   });
 
   formMethods.register("version");
+
+  const showMemberMeetingsToggle = !!props.teamId;
+  const canManageMemberMeetings = props.canManageMemberMeetings ?? true;
 
   const triggers = formMethods.watch("eventTriggers") || [];
   const subscriberUrl = formMethods.watch("subscriberUrl");
@@ -397,6 +401,33 @@ const WebhookForm = (props: {
             </div>
           )}
         />
+        {showMemberMeetingsToggle && (
+          <Controller
+            name="includeMemberMeetings"
+            control={formMethods.control}
+            render={({ field: { value } }) => (
+              <div className="mt-6">
+                <div className="font-sm text-emphasis font-medium">
+                  <Switch
+                    data-testid="include-member-meetings-switch"
+                    label={t("webhook_include_member_meetings")}
+                    checked={!!value}
+                    disabled={!canManageMemberMeetings}
+                    onCheckedChange={(checked) => {
+                      formMethods.setValue("includeMemberMeetings", checked, { shouldDirty: true });
+                    }}
+                  />
+                </div>
+                <p className="text-subtle mt-2 text-sm">{t("webhook_include_member_meetings_description")}</p>
+                {!canManageMemberMeetings && (
+                  <p className="text-subtle mt-1 text-sm" data-testid="include-member-meetings-admin-only">
+                    {t("webhook_include_member_meetings_admin_only")}
+                  </p>
+                )}
+              </div>
+            )}
+          />
+        )}
         <Controller
           name="eventTriggers"
           control={formMethods.control}

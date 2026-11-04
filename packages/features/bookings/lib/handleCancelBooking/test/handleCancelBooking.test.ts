@@ -2,28 +2,36 @@ import {
   BookingLocations,
   createBookingScenario,
   getBooker,
+  getDate,
   getGoogleCalendarCredential,
   getOrganizer,
   getScenarioData,
   mockCalendarToHaveNoBusySlots,
   mockSuccessfulVideoMeetingCreation,
   TestData,
-  getDate,
 } from "@calcom/testing/lib/bookingScenario/bookingScenario";
-import {
-  expectBookingCancelledWebhookToHaveBeenFired,
-} from "@calcom/testing/lib/bookingScenario/expects";
-import { setupAndTeardown } from "@calcom/testing/lib/bookingScenario/setupAndTeardown";
-
-import { describe, expect, vi } from "vitest";
-
 import { processPaymentRefund } from "@calcom/features/bookings/lib/payment/processPaymentRefund";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
+import getWebhooks from "@calcom/features/webhooks/lib/getWebhooks";
 import { BookingStatus } from "@calcom/prisma/enums";
+import { expectBookingCancelledWebhookToHaveBeenFired } from "@calcom/testing/lib/bookingScenario/expects";
+import { setupAndTeardown } from "@calcom/testing/lib/bookingScenario/setupAndTeardown";
 import { test } from "@calcom/testing/lib/fixtures/fixtures";
+import { describe, expect, vi } from "vitest";
 
 vi.mock("@calcom/features/bookings/lib/payment/processPaymentRefund", () => ({
   processPaymentRefund: vi.fn(),
 }));
+
+vi.mock("@calcom/features/notetaker/lib/webhookSharingTeam", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/features/notetaker/lib/webhookSharingTeam")>();
+  return { ...actual, resolveMemberSharingTeamIds: vi.fn(actual.resolveMemberSharingTeamIds) };
+});
+
+vi.mock("@calcom/features/webhooks/lib/getWebhooks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/features/webhooks/lib/getWebhooks")>();
+  return { ...actual, default: vi.fn(actual.default) };
+});
 
 describe("Cancel Booking", () => {
   setupAndTeardown();
@@ -371,7 +379,11 @@ describe("Cancel Booking", () => {
     );
     mockSuccessfulVideoMeetingCreation({
       metadataLookupKey: "dailyvideo",
-      videoMeetingData: { id: "MOCK_ID", password: "MOCK_PASS", url: `http://mock-dailyvideo.example.com/meeting-1` },
+      videoMeetingData: {
+        id: "MOCK_ID",
+        password: "MOCK_PASS",
+        url: `http://mock-dailyvideo.example.com/meeting-1`,
+      },
     });
     mockCalendarToHaveNoBusySlots("googlecalendar", {
       create: { id: "MOCKED_GOOGLE_CALENDAR_EVENT_ID" },
@@ -2123,6 +2135,87 @@ describe("Cancel Booking", () => {
       });
 
       expect(result.success).toBe(true);
+    });
+  });
+  describe("Member sharing team webhooks", () => {
+    async function createCancellableBooking() {
+      const booker = getBooker({ email: "booker@example.com", name: "Booker" });
+      const organizer = getOrganizer({
+        name: "Organizer",
+        email: "organizer@example.com",
+        id: 101,
+        schedules: [TestData.schedules.IstWorkHours],
+        credentials: [getGoogleCalendarCredential()],
+        selectedCalendars: [TestData.selectedCalendars.google],
+      });
+      const { dateString: plus1DateString } = getDate({ dateIncrement: 1 });
+
+      await createBookingScenario(
+        getScenarioData({
+          eventTypes: [{ id: 1, slotInterval: 30, length: 30, users: [{ id: 101 }] }],
+          bookings: [
+            {
+              id: 3020,
+              uid: "member-sharing-cancel-uid",
+              attendees: [{ email: booker.email, timeZone: "Asia/Kolkata" }],
+              eventTypeId: 1,
+              userId: 101,
+              responses: { email: booker.email, name: booker.name },
+              status: BookingStatus.ACCEPTED,
+              startTime: `${plus1DateString}T05:00:00.000Z`,
+              endTime: `${plus1DateString}T05:15:00.000Z`,
+            },
+          ],
+          organizer,
+        })
+      );
+      mockCalendarToHaveNoBusySlots("googlecalendar", { create: { id: "MOCKED_GOOGLE_CALENDAR_EVENT_ID" } });
+
+      return { organizer, bookingId: 3020, bookingUid: "member-sharing-cancel-uid" };
+    }
+
+    test("passes the resolved member sharing team ids to getWebhooks", async () => {
+      const handleCancelBooking = (await import("@calcom/features/bookings/lib/handleCancelBooking")).default;
+      const { organizer, bookingId, bookingUid } = await createCancellableBooking();
+      vi.mocked(resolveMemberSharingTeamIds).mockResolvedValueOnce([55]);
+
+      const result = await handleCancelBooking({
+        bookingData: {
+          id: bookingId,
+          uid: bookingUid,
+          cancelledBy: organizer.email,
+          cancellationReason: "x",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(resolveMemberSharingTeamIds).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerUserId: 101 }),
+        expect.anything()
+      );
+      expect(getWebhooks).toHaveBeenCalledWith(
+        expect.objectContaining({ triggerEvent: "BOOKING_CANCELLED", memberSharingTeamIds: [55] })
+      );
+    });
+
+    test("falls back to no member sharing teams when resolving them fails", async () => {
+      const handleCancelBooking = (await import("@calcom/features/bookings/lib/handleCancelBooking")).default;
+      const { organizer, bookingId, bookingUid } = await createCancellableBooking();
+      vi.mocked(resolveMemberSharingTeamIds).mockRejectedValueOnce(new Error("lookup failed"));
+
+      const result = await handleCancelBooking({
+        bookingData: {
+          id: bookingId,
+          uid: bookingUid,
+          cancelledBy: organizer.email,
+          cancellationReason: "x",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(getWebhooks).toHaveBeenCalledWith(
+        expect.objectContaining({ triggerEvent: "BOOKING_CANCELLED", memberSharingTeamIds: [] })
+      );
     });
   });
 });

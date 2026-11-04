@@ -69,6 +69,7 @@ export interface IWebhookRepository {
     time: number | null;
     timeUnit: string | null;
     version: WebhookVersion;
+    includeMemberMeetings: boolean;
   }>;
   findByOrgIdAndTrigger(options: {
     orgId: number;

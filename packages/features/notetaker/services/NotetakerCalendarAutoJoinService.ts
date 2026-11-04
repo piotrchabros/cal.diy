@@ -12,13 +12,17 @@ import type { NotetakerCalendarEvent } from "../lib/calendarMeeting";
 import { decideCalendarEvent, NOTETAKER_CALENDAR_MEETING_KEY } from "../lib/calendarMeeting";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
+import type { MeetingContact } from "../lib/meetingContacts";
+import { MAX_CALENDAR_CONTACTS, normalizeMeetingContacts } from "../lib/meetingContacts";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
+import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { INotetakerCalendarAutoJoinRepository } from "../repositories/interfaces/INotetakerCalendarAutoJoinRepository";
 import type {
   INotetakerCalendarMeetingRepository,
   NotetakerCalDiyBookingMatchRecord,
   NotetakerCalendarMeetingRecord,
 } from "../repositories/interfaces/INotetakerCalendarMeetingRepository";
+import type { INotetakerMeetingContactRepository } from "../repositories/interfaces/INotetakerMeetingContactRepository";
 
 const NOTETAKER_FEATURE_SLUG = "notetaker";
 const CALENDAR_AUTO_JOIN_FEATURE_SLUG = "notetaker-calendar-auto-join";
@@ -72,6 +76,11 @@ function activeParticipantsExcept(meeting: NotetakerCalendarMeetingRecord, userI
   return meeting.participants.filter((p) => p.userId !== userId && p.removedAt === null);
 }
 
+function calendarEventContacts(event: NotetakerCalendarEvent): MeetingContact[] {
+  const contacts = event.attendees ?? event.attendeeEmails.map((email) => ({ email, name: null }));
+  return event.organizerEmail ? [...contacts, { email: event.organizerEmail, name: null }] : contacts;
+}
+
 function hasActiveParticipant(meeting: NotetakerCalendarMeetingRecord, userId: number): boolean {
   return meeting.participants.some((p) => p.userId === userId && p.removedAt === null);
 }
@@ -91,6 +100,8 @@ export type NotetakerCalendarPollCounts = NotetakerCalendarSyncCounts & {
 export interface INotetakerCalendarAutoJoinServiceDeps {
   autoJoinRepository: Pick<INotetakerCalendarAutoJoinRepository, "findDueForPoll" | "markPolled">;
   calendarMeetingRepository: Omit<INotetakerCalendarMeetingRepository, "isParticipant">;
+  meetingContactRepository: Pick<INotetakerMeetingContactRepository, "replaceForSource">;
+  bookingNotetakerRepository: Pick<IBookingNotetakerRepository, "findVerifiedEmailsByUserId">;
   eventsGatewayResolver: INotetakerCalendarEventsGatewayResolver;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   userRepository: INotetakerUserLookup;
@@ -318,6 +329,7 @@ export class NotetakerCalendarAutoJoinService {
         });
       }
       await calendarMeetingRepository.touchParticipant({ meetingId: existing.id, userId, seenAt: now });
+      await this.storeCalendarContacts(ctx, existing, event);
       return;
     }
 
@@ -339,6 +351,7 @@ export class NotetakerCalendarAutoJoinService {
         selectedCalendarId: calendar.selectedCalendarId,
       });
       await calendarMeetingRepository.touchParticipant({ meetingId: existing.id, userId, seenAt: now });
+      await this.storeCalendarContacts(ctx, { ...existing, endTime: target.endTime }, event);
       return;
     }
     // Another meeting already holds the new link and time, so this user joins it and leaves the old one.
@@ -407,6 +420,7 @@ export class NotetakerCalendarAutoJoinService {
         bookingId: result.bookingId,
         selectedCalendarId: calendar.selectedCalendarId,
       });
+      await this.storeCalendarContacts(ctx, result, event);
       return;
     }
     // Another calendar created the same meeting between the lookup and the insert.
@@ -486,6 +500,61 @@ export class NotetakerCalendarAutoJoinService {
       bookingId: meeting.bookingId,
       selectedCalendarId: calendar.selectedCalendarId,
     });
+  }
+
+  // Contacts go only to the CRM, never into Attendee rows, which would email them and grant them access.
+  private async storeCalendarContacts(
+    ctx: SyncContext,
+    meeting: NotetakerCalendarMeetingRecord,
+    event: NotetakerCalendarEvent
+  ): Promise<void> {
+    const { meetingContactRepository, logger } = this.deps;
+    const { calendar, now } = ctx;
+    // Only the owner's calendar feeds the contacts, so participants with differing invites do not overwrite each other.
+    if (meeting.ownerUserId !== calendar.userId) return;
+    if (meeting.endTime.getTime() <= now.getTime()) return;
+    try {
+      const excludedEmails = await this.calDiyUserEmails(ctx, meeting, event);
+      const contacts = normalizeMeetingContacts(
+        calendarEventContacts(event),
+        excludedEmails,
+        MAX_CALENDAR_CONTACTS
+      );
+      await meetingContactRepository.replaceForSource({
+        bookingId: meeting.bookingId,
+        source: "CALENDAR",
+        contacts,
+      });
+    } catch (error) {
+      // The error text can carry the emails being written, so only ids are logged.
+      logger.warn("Notetaker calendar meeting contacts could not be stored", {
+        meetingId: meeting.id,
+        bookingId: meeting.bookingId,
+        selectedCalendarId: calendar.selectedCalendarId,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
+
+  private async calDiyUserEmails(
+    ctx: SyncContext,
+    meeting: NotetakerCalendarMeetingRecord,
+    event: NotetakerCalendarEvent
+  ): Promise<string[]> {
+    const { bookingNotetakerRepository, userRepository } = this.deps;
+    const { user } = ctx;
+    const otherUserIds = Array.from(
+      new Set(meeting.participants.map((p) => p.userId).filter((id) => id !== user.id))
+    );
+    const [verifiedEmails, otherUsers] = await Promise.all([
+      Promise.all(
+        [user.id, ...otherUserIds].map((id) => bookingNotetakerRepository.findVerifiedEmailsByUserId(id))
+      ),
+      otherUserIds.length > 0 ? userRepository.findByIds({ ids: otherUserIds }) : Promise.resolve([]),
+    ]);
+    const emails = [user.email, ...verifiedEmails.flat(), ...otherUsers.map((other) => other.email)];
+    if (event.selfResponse === "organizer" && event.organizerEmail) emails.push(event.organizerEmail);
+    return emails;
   }
 
   private async isDailyCapReached(ctx: SyncContext): Promise<boolean> {

@@ -39,6 +39,12 @@ import { getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
 import { getEventName, updateHostInEventName } from "@calcom/features/eventtypes/lib/eventNaming";
 import { getFullName } from "@calcom/features/form-builder/utils";
 import type { HashedLinkService } from "@calcom/features/hashedLink/lib/service/HashedLinkService";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
+import {
+  type MemberSharingTeamInput,
+  resolveMemberSharingTeamIds,
+} from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { handleAnalyticsEvents } from "@calcom/features/tasker/tasks/analytics/handleAnalyticsEvents";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
@@ -418,6 +424,49 @@ function buildBookingCreatedPayload({
       },
     },
   };
+}
+
+type MemberSharingTeamEventType = NonNullable<MemberSharingTeamInput["eventType"]>;
+
+/** Teams whose member-meeting webhooks receive this booking's events; [] for dynamic events or on failure. */
+export async function getMemberSharingTeamIds({
+  eventType,
+  ownerUserId,
+  prismaClient,
+  logger,
+}: {
+  eventType: Omit<MemberSharingTeamEventType, "notetakerSettings"> & {
+    id: number;
+    notetakerSettings?: MemberSharingTeamEventType["notetakerSettings"];
+  };
+  ownerUserId: number;
+  prismaClient: PrismaClient;
+  logger: Pick<ReturnType<typeof distributedTracing.getTracingLogger>, "error">;
+}): Promise<number[]> {
+  if (!eventType.id) return [];
+  try {
+    return await resolveMemberSharingTeamIds(
+      {
+        ownerUserId,
+        eventType: {
+          teamId: eventType.teamId,
+          userId: eventType.userId,
+          team: eventType.team
+            ? { id: eventType.team.id, name: eventType.team.name, parentId: eventType.team.parentId }
+            : null,
+          notetakerSettings: eventType.notetakerSettings ?? null,
+        },
+        bookingMetadata: null,
+      },
+      new MembershipRepositoryNotetakerLookup(new MembershipRepository(prismaClient))
+    );
+  } catch {
+    logger.error(
+      "Error resolving member sharing team ids",
+      safeStringify({ eventTypeId: eventType.id, ownerUserId })
+    );
+    return [];
+  }
 }
 
 export interface IBookingServiceDependencies {
@@ -1458,6 +1507,13 @@ async function handler(
     length: dayjs(reqBody.end).diff(dayjs(reqBody.start), "minutes"),
   };
 
+  const memberSharingTeamIds = await getMemberSharingTeamIds({
+    eventType,
+    ownerUserId: organizerUser.id,
+    prismaClient: deps.prismaClient,
+    logger: tracingLogger,
+  });
+
   const subscriberOptions: GetSubscriberOptions = {
     userId: organizerUser.id,
     eventTypeId,
@@ -1465,6 +1521,7 @@ async function handler(
     teamId: null,
     orgId: null,
     oAuthClientId: platformClientId,
+    memberSharingTeamIds,
   };
 
   const eventTrigger: WebhookTriggerEvents = rescheduleUid
@@ -1480,6 +1537,7 @@ async function handler(
     teamId: null,
     orgId: null,
     oAuthClientId: platformClientId,
+    memberSharingTeamIds,
   };
 
   const subscriberOptionsMeetingStarted = {
@@ -1489,6 +1547,7 @@ async function handler(
     teamId: null,
     orgId: null,
     oAuthClientId: platformClientId,
+    memberSharingTeamIds,
   };
 
   const spamCheckResult = await spamCheckService.waitForCheck();

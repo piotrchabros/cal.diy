@@ -75,6 +75,9 @@ export async function getBookingToDelete(id: number | undefined, uid: string | u
             },
           },
           userId: true,
+          notetakerSettings: {
+            select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } },
+          },
           recurringEvent: true,
           title: true,
           eventName: true,

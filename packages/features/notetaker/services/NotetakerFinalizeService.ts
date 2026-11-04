@@ -9,12 +9,14 @@ import type {
   INotetakerTranscriptRepository,
   NotetakerPassageRecord,
 } from "../repositories/interfaces/INotetakerTranscriptRepository";
+import type { INotetakerTranscriptWebhookNotifier } from "./NotetakerTranscriptWebhookService";
 
 export interface INotetakerFinalizeServiceDeps {
   sessionRepository: INotetakerSessionRepository;
   transcriptRepository: INotetakerTranscriptRepository;
   summaryRepository: INotetakerSummaryRepository;
   notetakerTasker: INotetakerTasker;
+  transcriptWebhook: INotetakerTranscriptWebhookNotifier;
   config: NotetakerConfig;
   logger: ISimpleLogger;
 }
@@ -45,8 +47,15 @@ export class NotetakerFinalizeService {
 
   async finalize(params: { sessionId: string }): Promise<void> {
     const { sessionId } = params;
-    const { sessionRepository, transcriptRepository, summaryRepository, notetakerTasker, config, logger } =
-      this.deps;
+    const {
+      sessionRepository,
+      transcriptRepository,
+      summaryRepository,
+      notetakerTasker,
+      transcriptWebhook,
+      config,
+      logger,
+    } = this.deps;
 
     const session = await sessionRepository.findById(sessionId);
     if (!session || session.status !== "PROCESSING") return;
@@ -130,6 +139,7 @@ export class NotetakerFinalizeService {
           bookingId: session.bookingId,
           transcriptId: transcript.id,
         });
+        await transcriptWebhook.sendOnce({ transcriptId: transcript.id });
       }
       return;
     }
@@ -137,6 +147,7 @@ export class NotetakerFinalizeService {
     // The results email reads the summary status, so the row must exist before the notification is enqueued.
     await summaryRepository.upsertPending(transcript.id);
     await summaryRepository.setStatus(transcript.id, "NOT_ENOUGH_CONTENT", null);
+    await transcriptWebhook.sendOnce({ transcriptId: transcript.id });
 
     const result = await notetakerTasker.sendNotification(
       { kind: "RESULTS_READY", bookingId: session.bookingId, sessionId },

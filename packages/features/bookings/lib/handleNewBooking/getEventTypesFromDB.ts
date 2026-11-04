@@ -51,6 +51,12 @@ const getEventTypesFromDBSelect = {
       parent: { select: { hideBranding: true } },
     },
   },
+  notetakerSettings: {
+    select: {
+      sharingMode: true,
+      sharingTeam: { select: { id: true, name: true } },
+    },
+  },
   bookingFields: true,
   title: true,
   length: true,

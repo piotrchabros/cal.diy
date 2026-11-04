@@ -1,11 +1,15 @@
 import { createHmac } from "node:crypto";
-import { compile } from "handlebars";
-
 import type { TGetTranscriptAccessLink } from "@calcom/app-store/dailyvideo/zod";
 import { getHumanReadableLocationValue } from "@calcom/app-store/locations";
-import type { WebhookSubscriber, PaymentData } from "@calcom/features/webhooks/lib/dto/types";
+import type { NotetakerMeetingBookingPayload } from "@calcom/features/notetaker/lib/meetingBookingPayload";
+import type { PaymentData, WebhookSubscriber } from "@calcom/features/webhooks/lib/dto/types";
 import { getUTCOffsetByTimezone } from "@calcom/lib/dayjs";
+import type {
+  NotetakerBookingSource,
+  NotetakerTranscriptWebhookPayload,
+} from "@calcom/lib/dto/NotetakerTranscriptWebhookDto";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
+import { compile } from "handlebars";
 
 // Minimal webhook shape for sending payloads (subset of WebhookSubscriber)
 type WebhookForPayload = Pick<WebhookSubscriber, "subscriberUrl" | "appId" | "payloadTemplate" | "version">;
@@ -47,6 +51,10 @@ export type TranscriptionGeneratedPayload = {
   };
 };
 
+export type NotetakerTranscriptGeneratedPayload = {
+  notetaker?: NotetakerTranscriptWebhookPayload;
+};
+
 export type OOOEntryPayloadType = {
   oooEntry: {
     id: number;
@@ -80,10 +88,12 @@ export type OOOEntryPayloadType = {
 
 export type EventPayloadType = Omit<CalendarEvent, "assignmentReason"> &
   TranscriptionGeneratedPayload &
+  NotetakerTranscriptGeneratedPayload &
   EventTypeInfo & {
     uid?: string | null;
     metadata?: { [key: string]: string | number | boolean | null };
     bookingId?: number;
+    source?: NotetakerBookingSource;
     status?: string;
     smsReminderNumber?: string;
     rescheduleId?: number;
@@ -103,8 +113,12 @@ export type EventPayloadType = Omit<CalendarEvent, "assignmentReason"> &
       | null;
   };
 
+export type NotetakerMeetingTranscriptPayload = NotetakerMeetingBookingPayload &
+  NotetakerTranscriptGeneratedPayload;
+
 export type WebhookPayloadType =
   | EventPayloadType
+  | NotetakerMeetingTranscriptPayload
   | OOOEntryPayloadType
   | BookingNoShowUpdatedPayload;
 
@@ -238,10 +252,7 @@ const sendPayload = async (
   }
 
   if (body === undefined) {
-    if (
-      template &&
-      (isOOOEntryPayload(data) || isEventPayload(data) || isNoShowPayload(data))
-    ) {
+    if (template && (isOOOEntryPayload(data) || isEventPayload(data) || isNoShowPayload(data))) {
       body = applyTemplate(template, { ...data, triggerEvent, createdAt }, contentType);
     } else {
       body = JSON.stringify({

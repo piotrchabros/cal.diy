@@ -18,6 +18,7 @@ import type {
   NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
   NotetakerBookingWithResultsSessionRecord,
+  NotetakerMeetingForWebhookRecord,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
@@ -151,6 +152,22 @@ function toResultsSessionRecord(
       : null,
   };
 }
+
+const meetingForWebhookSelect = {
+  id: true,
+  uid: true,
+  title: true,
+  startTime: true,
+  endTime: true,
+  status: true,
+  location: true,
+  metadata: true,
+  user: { select: { name: true, email: true, timeZone: true, locale: true } },
+  notetakerMeetingContacts: {
+    orderBy: [{ createdAt: "asc" }, { email: "asc" }],
+    select: { email: true, name: true },
+  },
+} satisfies Prisma.BookingSelect;
 
 const bookingContextSelect = {
   ...bookingBaseSelect,
@@ -683,5 +700,15 @@ export class PrismaBookingNotetakerRepository implements IBookingNotetakerReposi
       choice: row.notetaker,
       latestSessionStatus: row.notetakerSessions[0]?.status ?? null,
     }));
+  }
+
+  async findMeetingForWebhook(bookingId: number): Promise<NotetakerMeetingForWebhookRecord | null> {
+    const row = await this.prismaClient.booking.findUnique({
+      where: { id: bookingId },
+      select: meetingForWebhookSelect,
+    });
+    if (!row) return null;
+    const { user, notetakerMeetingContacts, ...booking } = row;
+    return { booking, owner: user, contacts: notetakerMeetingContacts };
   }
 }

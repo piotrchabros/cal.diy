@@ -185,6 +185,22 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
     expect(again.completeness).toBe("PARTIAL");
   });
 
+  it("claimWebhookDispatch is granted once and refused afterwards", async () => {
+    const ids = requireIds();
+
+    const first = await repository.claimWebhookDispatch(ids.transcriptId, new Date());
+    const second = await repository.claimWebhookDispatch(ids.transcriptId, new Date());
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
+
+  it("claimWebhookDispatch is refused for an unknown transcript", async () => {
+    expect(await repository.claimWebhookDispatch("00000000-0000-4000-8000-000000000000", new Date())).toBe(
+      false
+    );
+  });
+
   it("deleteById cascades to passages and summary but keeps the session", async () => {
     const ids = requireIds();
     await repository.insertPassages(

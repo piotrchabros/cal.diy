@@ -5,8 +5,10 @@ import { moduleLoader as loggerModuleLoader } from "@calcom/features/di/shared/s
 import { NotetakerCalendarAutoJoinService } from "@calcom/features/notetaker/services/NotetakerCalendarAutoJoinService";
 import { moduleLoader as eventsGatewayResolverModuleLoader } from "./NotetakerCalendarEventsGatewayResolver.module";
 import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
+import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as autoJoinRepositoryModuleLoader } from "./PrismaNotetakerCalendarAutoJoinRepository.module";
 import { moduleLoader as calendarMeetingRepositoryModuleLoader } from "./PrismaNotetakerCalendarMeetingRepository.module";
+import { moduleLoader as meetingContactRepositoryModuleLoader } from "./PrismaNotetakerMeetingContactRepository.module";
 import { NOTETAKER_DI_TOKENS } from "./tokens";
 
 const thisModule = createModule();
@@ -21,6 +23,8 @@ const loadModule = bindModuleToClassOnToken({
   depsMap: {
     autoJoinRepository: autoJoinRepositoryModuleLoader,
     calendarMeetingRepository: calendarMeetingRepositoryModuleLoader,
+    meetingContactRepository: meetingContactRepositoryModuleLoader,
+    bookingNotetakerRepository: bookingNotetakerRepositoryModuleLoader,
     eventsGatewayResolver: eventsGatewayResolverModuleLoader,
     featuresRepository: featuresRepositoryModuleLoader,
     userRepository: userRepositoryModuleLoader,

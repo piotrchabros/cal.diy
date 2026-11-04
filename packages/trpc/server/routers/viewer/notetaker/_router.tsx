@@ -16,6 +16,7 @@ import { ZSetCalendarAutoJoinInputSchema } from "./setCalendarAutoJoin.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
 import { ZSetEventTypeDefaultInputSchema } from "./setEventTypeDefault.schema";
 import { ZSetEventTypeSharingInputSchema } from "./setEventTypeSharing.schema";
+import { ZSetMeetingContactsInputSchema } from "./setMeetingContacts.schema";
 import { ZSetSharingInputSchema } from "./setSharing.schema";
 import { ZStopInputSchema } from "./stop.schema";
 
@@ -136,6 +137,13 @@ export const notetakerRouter = router({
     const { dispatchToMeetingHandler } = await import("./dispatchToMeeting.handler");
     return dispatchToMeetingHandler({ ctx, input });
   }),
+
+  setMeetingContacts: authedProcedure
+    .input(ZSetMeetingContactsInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setMeetingContactsHandler } = await import("./setMeetingContacts.handler");
+      return setMeetingContactsHandler({ ctx, input });
+    }),
 
   listCalendarAutoJoin: authedProcedure.query(async ({ ctx }) => {
     const { listCalendarAutoJoinHandler } = await import("./listCalendarAutoJoin.handler");

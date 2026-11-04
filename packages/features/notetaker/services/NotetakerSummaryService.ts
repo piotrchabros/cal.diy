@@ -21,6 +21,7 @@ import type {
   NotetakerSummaryResult,
 } from "../summary/INotetakerSummaryGenerator";
 import type { NotetakerAccessService } from "./NotetakerAccessService";
+import type { INotetakerTranscriptWebhookNotifier } from "./NotetakerTranscriptWebhookService";
 
 type NotetakerSummaryFailure = { failureCode: NotetakerSummaryFailureCode; retryable: boolean };
 
@@ -37,6 +38,7 @@ export interface INotetakerSummaryServiceDeps {
   userRepository: INotetakerUserLookup;
   summaryGenerator: INotetakerSummaryGenerator;
   notetakerTasker: INotetakerTasker;
+  transcriptWebhook: INotetakerTranscriptWebhookNotifier;
   config: NotetakerConfig;
   logger: ISimpleLogger;
 }
@@ -66,14 +68,14 @@ export class NotetakerSummaryService {
     // Finalize decides this first with the same function; this is a guard for a direct enqueue.
     if (countTranscriptWords(passages) < config.limits.summaryMinWords) {
       await summaryRepository.setStatus(transcriptId, "NOT_ENOUGH_CONTENT", null);
-      await this.notifyIfAutomatic(transcript, requestedByUserId);
+      await this.settle(transcript, requestedByUserId);
       return;
     }
 
     const result = await this.runGenerator(transcript, passages);
     const failure = await this.saveIfValid(transcriptId, result);
     if (!failure) {
-      await this.notifyIfAutomatic(transcript, requestedByUserId);
+      await this.settle(transcript, requestedByUserId);
       return;
     }
 
@@ -84,7 +86,7 @@ export class NotetakerSummaryService {
     logger.warn("Notetaker summary generation failed", { transcriptId, failureCode, attempts, settled });
 
     if (settled) {
-      await this.notifyIfAutomatic(transcript, requestedByUserId);
+      await this.settle(transcript, requestedByUserId);
       return;
     }
 
@@ -203,6 +205,15 @@ export class NotetakerSummaryService {
       generatedAt: new Date(),
     });
     return null;
+  }
+
+  // The webhook goes out on a host re-request too: the claim in sendOnce keeps it once per transcript.
+  private async settle(
+    transcript: NotetakerTranscriptRecord,
+    requestedByUserId: number | null
+  ): Promise<void> {
+    await this.notifyIfAutomatic(transcript, requestedByUserId);
+    await this.deps.transcriptWebhook.sendOnce({ transcriptId: transcript.id });
   }
 
   private async notifyIfAutomatic(

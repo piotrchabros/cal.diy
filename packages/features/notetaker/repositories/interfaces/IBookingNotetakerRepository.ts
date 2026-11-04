@@ -118,6 +118,23 @@ export type NotetakerAdHocBookingWithLatestSessionRecord = {
   latestSessionStatus: NotetakerSessionStatusDto | null;
 };
 
+export type NotetakerMeetingForWebhookRecord = {
+  booking: {
+    id: number;
+    uid: string;
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    status: NotetakerBookingStatus;
+    location: string | null;
+    metadata: unknown;
+  };
+  /** Null when the booking has no owner. */
+  owner: { name: string | null; email: string; timeZone: string; locale: string | null } | null;
+  /** NotetakerMeetingContact rows, ordered by createdAt asc, then email asc. */
+  contacts: { email: string; name: string | null }[];
+};
+
 export interface IBookingNotetakerRepository {
   findByBookingId(bookingId: number): Promise<BookingNotetakerRecord | null>;
   findByBookingUidIncludeBooking(bookingUid: string): Promise<NotetakerBookingContext | null>;
@@ -248,4 +265,6 @@ export interface IBookingNotetakerRepository {
     userId: number;
     endTimeAfter: Date;
   }): Promise<NotetakerAdHocBookingWithLatestSessionRecord[]>;
+  /** The booking, its owner and its meeting contacts, for the transcript webhook of a booking without an event type. */
+  findMeetingForWebhook(bookingId: number): Promise<NotetakerMeetingForWebhookRecord | null>;
 }

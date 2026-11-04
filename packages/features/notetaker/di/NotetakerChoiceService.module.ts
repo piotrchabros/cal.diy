@@ -9,6 +9,7 @@ import { moduleLoader as membershipLookupModuleLoader } from "./NotetakerMembers
 import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as eventTypeNotetakerSettingsRepositoryModuleLoader } from "./PrismaEventTypeNotetakerSettingsRepository.module";
 import { moduleLoader as activityRepositoryModuleLoader } from "./PrismaNotetakerActivityRepository.module";
+import { moduleLoader as meetingContactRepositoryModuleLoader } from "./PrismaNotetakerMeetingContactRepository.module";
 import { moduleLoader as sessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
 import { moduleLoader as summaryRepositoryModuleLoader } from "./PrismaNotetakerSummaryRepository.module";
 import { moduleLoader as transcriptRepositoryModuleLoader } from "./PrismaNotetakerTranscriptRepository.module";
@@ -31,6 +32,7 @@ const loadModule = bindModuleToClassOnToken({
     transcriptRepository: transcriptRepositoryModuleLoader,
     summaryRepository: summaryRepositoryModuleLoader,
     activityRepository: activityRepositoryModuleLoader,
+    meetingContactRepository: meetingContactRepositoryModuleLoader,
     accessService: accessServiceModuleLoader,
     membershipLookup: membershipLookupModuleLoader,
     featuresRepository: featuresRepositoryModuleLoader,

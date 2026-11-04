@@ -5,13 +5,25 @@ import type { NotetakerSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEve
 import type { NotetakerPlatformDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import short from "short-uuid";
-import { buildAdHocBookingMetadata, isAdHocMeetingActive, parseAdHocMeetingUrl } from "../lib/adHocMeeting";
+import {
+  buildAdHocBookingMetadata,
+  isAdHocMeetingActive,
+  parseAdHocMeetingUrl,
+  readAdHocBookingMetadata,
+} from "../lib/adHocMeeting";
+import { isCalendarMeetingBookingMetadata } from "../lib/calendarMeeting";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
+import { MAX_MANUAL_CONTACTS, normalizeMeetingContactEmails } from "../lib/meetingContacts";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import type { IBookingNotetakerRepository } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type {
+  INotetakerMeetingContactRepository,
+  NotetakerMeetingContactRecord,
+} from "../repositories/interfaces/INotetakerMeetingContactRepository";
+import type { NotetakerAccessService } from "./NotetakerAccessService";
 import type { NotetakerChoiceService } from "./NotetakerChoiceService";
 import type { NotetakerDispatchService } from "./NotetakerDispatchService";
 
@@ -50,7 +62,8 @@ export type NotetakerAdHocErrorCode =
   | "AD_HOC_LIMIT_REACHED"
   | "TEAM_NOT_ALLOWED"
   | "INVALID_DURATION"
-  | "MEETING_ALREADY_RECORDED";
+  | "MEETING_ALREADY_RECORDED"
+  | "MEETING_CONTACTS_NOT_SUPPORTED";
 
 export type NotetakerAdHocOptions = {
   featureEnabled: boolean;
@@ -63,13 +76,18 @@ export type NotetakerAdHocOptions = {
 export interface INotetakerAdHocServiceDeps {
   bookingNotetakerRepository: Pick<
     IBookingNotetakerRepository,
-    "createAdHocBooking" | "countAdHocByUserIdSince" | "findAcceptedAdHocByUserIdIncludeLatestSession"
+    | "createAdHocBooking"
+    | "countAdHocByUserIdSince"
+    | "findAcceptedAdHocByUserIdIncludeLatestSession"
+    | "findVerifiedEmailsByUserId"
   >;
   eventTypeNotetakerSettingsRepository: Pick<IEventTypeNotetakerSettingsRepository, "findTeamsByIds">;
   membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   choiceService: Pick<NotetakerChoiceService, "setEnabled">;
   dispatchService: Pick<NotetakerDispatchService, "dispatchForBooking" | "isMeetingLinkTaken">;
+  accessService: Pick<NotetakerAccessService, "assertHost">;
+  meetingContactRepository: Pick<INotetakerMeetingContactRepository, "listByBookingId" | "replaceForSource">;
   userRepository: INotetakerUserLookup;
   config: NotetakerConfig;
   logger: ISimpleLogger;
@@ -97,6 +115,7 @@ export class NotetakerAdHocService {
     title?: string;
     durationMinutes?: number;
     sharingTeamId: number | null;
+    contactEmails?: string[];
   }): Promise<{ bookingUid: string; reused: boolean }> {
     const { userId, sharingTeamId } = params;
     const { bookingNotetakerRepository, membershipLookup, choiceService, dispatchService, logger } =
@@ -165,6 +184,13 @@ export class NotetakerAdHocService {
       location: link.meetingUrl,
       metadata: buildAdHocBookingMetadata({ sharingTeamId }),
     });
+    if (params.contactEmails && params.contactEmails.length > 0) {
+      await this.replaceManualContacts({
+        bookingId: booking.id,
+        ownerUserId: userId,
+        emails: params.contactEmails,
+      });
+    }
 
     await choiceService.setEnabled({ bookingUid: booking.uid, enabled: true, scope: "THIS_BOOKING", userId });
     try {
@@ -176,6 +202,45 @@ export class NotetakerAdHocService {
     }
 
     return { bookingUid: booking.uid, reused: false };
+  }
+
+  // Contacts are kept apart from Attendee rows, which would trigger notices, shared results and booking visibility.
+  async setMeetingContacts(params: {
+    userId: number;
+    bookingUid: string;
+    emails: string[];
+  }): Promise<{ meetingContacts: NotetakerMeetingContactRecord[] }> {
+    const { userId, bookingUid, emails } = params;
+    const booking = await this.deps.accessService.assertHost({ bookingUid, userId });
+    // Bookings with an event type carry their attendees already, so only meetings without one take contacts.
+    if (
+      !readAdHocBookingMetadata(booking.metadata).isAdHoc &&
+      !isCalendarMeetingBookingMetadata(booking.metadata)
+    ) {
+      throw adHocError("MEETING_CONTACTS_NOT_SUPPORTED");
+    }
+    await this.replaceManualContacts({
+      bookingId: booking.id,
+      ownerUserId: booking.userId ?? userId,
+      emails,
+    });
+    return { meetingContacts: await this.deps.meetingContactRepository.listByBookingId(booking.id) };
+  }
+
+  private async replaceManualContacts(params: {
+    bookingId: number;
+    ownerUserId: number;
+    emails: string[];
+  }): Promise<void> {
+    const ownerEmails = await this.deps.bookingNotetakerRepository.findVerifiedEmailsByUserId(
+      params.ownerUserId
+    );
+    const emails = normalizeMeetingContactEmails(params.emails, ownerEmails, MAX_MANUAL_CONTACTS);
+    await this.deps.meetingContactRepository.replaceForSource({
+      bookingId: params.bookingId,
+      source: "MANUAL",
+      contacts: emails.map((email) => ({ email, name: null })),
+    });
   }
 
   private async hasFeature(userId: number): Promise<boolean> {

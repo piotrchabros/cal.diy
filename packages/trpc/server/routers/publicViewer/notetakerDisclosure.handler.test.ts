@@ -98,6 +98,7 @@ describe("notetakerDisclosureHandler", () => {
       transcriptRepository: repositories.transcriptRepository,
       summaryRepository: repositories.summaryRepository,
       activityRepository: repositories.activityRepository,
+      meetingContactRepository: repositories.meetingContactRepository,
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository: repositories.bookingNotetakerRepository,
         sessionRepository: repositories.sessionRepository,

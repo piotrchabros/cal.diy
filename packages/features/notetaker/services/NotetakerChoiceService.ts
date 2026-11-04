@@ -33,6 +33,7 @@ import type {
   NotetakerEventTypeContext,
 } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
+import type { INotetakerMeetingContactRepository } from "../repositories/interfaces/INotetakerMeetingContactRepository";
 import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
@@ -90,6 +91,7 @@ export interface INotetakerChoiceServiceDeps {
   transcriptRepository: INotetakerTranscriptRepository;
   summaryRepository: INotetakerSummaryRepository;
   activityRepository: INotetakerActivityRepository;
+  meetingContactRepository: Pick<INotetakerMeetingContactRepository, "listByBookingId">;
   accessService: NotetakerAccessService;
   membershipLookup: Pick<INotetakerMembershipLookup, "findAcceptedUserIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
@@ -245,6 +247,15 @@ export class NotetakerChoiceService {
         }
       : null;
 
+    const hostMeetingDetails = isHost
+      ? {
+          meetingContacts: await this.deps.meetingContactRepository.listByBookingId(booking.id),
+          transcriptWebhookSent: transcript
+            ? await this.deps.transcriptRepository.isWebhookDispatched(transcript.id)
+            : false,
+        }
+      : null;
+
     return {
       bookingUid: booking.uid,
       featureEnabled,
@@ -274,6 +285,7 @@ export class NotetakerChoiceService {
         : {}),
       sharedWithAttendees: !isSharedViewer && sharingGrant !== null,
       ...(access ? { access } : {}),
+      ...(hostMeetingDetails ?? {}),
     };
   }
 

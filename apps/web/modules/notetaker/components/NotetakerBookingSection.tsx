@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useNotetakerMutations } from "../hooks/useNotetakerMutations";
 import { useNotetakerState } from "../hooks/useNotetakerState";
+import { NotetakerMeetingContactsEditor } from "./NotetakerMeetingContactsEditor";
 import { NotetakerStatusBadge } from "./NotetakerStatusBadge";
 
 const INELIGIBILITY_REASON_KEYS: Record<NotetakerIneligibilityReasonDto, string> = {
@@ -231,6 +232,9 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
       )}
       {state.canStop && <NotetakerStopControl bookingUid={bookingUid} />}
       {choiceText !== null && <p className="text-subtle text-xs">{choiceText}</p>}
+      {(state.isAdHoc || state.isCalendarMeeting) && (
+        <NotetakerMeetingContactsEditor bookingUid={bookingUid} state={state} />
+      )}
       {state.transcript === null && state.session?.resultsDeletedAt != null && (
         <p className="text-sm text-subtle" data-testid="notetaker-results-deleted">
           {t("notetaker_results_deleted")}

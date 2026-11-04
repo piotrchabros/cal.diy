@@ -8,19 +8,22 @@ import { sendRequestRescheduleEmailAndSMS } from "@calcom/emails/email-manager";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
 import { BookingRepository } from "@calcom/features/bookings/repositories/BookingRepository";
 import { deleteMeeting } from "@calcom/features/conferencing/lib/videoClient";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import getWebhooks from "@calcom/features/webhooks/lib/getWebhooks";
 import {
   cancelNoShowTasksForBooking,
   deleteWebhookScheduledTriggers,
 } from "@calcom/features/webhooks/lib/scheduleTrigger";
 import sendPayload from "@calcom/features/webhooks/lib/sendOrSchedulePayload";
+import { getTranslation } from "@calcom/i18n/server";
 import { CalendarEventBuilder } from "@calcom/lib/builders/CalendarEvent/builder";
 import { CalendarEventDirector } from "@calcom/lib/builders/CalendarEvent/director";
 import getOrgIdFromMemberOrTeamId from "@calcom/lib/getOrgIdFromMemberOrTeamId";
 import { getTeamIdFromEventType } from "@calcom/lib/getTeamIdFromEventType";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { getTranslation } from "@calcom/i18n/server";
 import { BookingWebhookFactory } from "@calcom/lib/server/service/BookingWebhookFactory";
 import { prisma } from "@calcom/prisma";
 import type { BookingReference, EventType } from "@calcom/prisma/client";
@@ -93,7 +96,6 @@ export const requestRescheduleHandler = async ({ ctx, input, source }: RequestRe
   await Promise.all(webhookPromises).catch((error) => {
     log.error("Error while deleting scheduled webhook triggers", JSON.stringify({ error }));
   });
-
 
   const [mainAttendee] = bookingToReschedule.attendees;
   // @NOTE: Should we assume attendees language?
@@ -236,9 +238,7 @@ export const requestRescheduleHandler = async ({ ctx, input, source }: RequestRe
     uid: bookingToReschedule.uid,
     location: bookingToReschedule.location,
     destinationCalendar: bookingToReschedule.destinationCalendar,
-    cancellationReason: [tAttendees("please_reschedule"), cancellationReason]
-    .filter(Boolean)
-    .join(" "),
+    cancellationReason: [tAttendees("please_reschedule"), cancellationReason].filter(Boolean).join(" "),
     iCalUID: bookingToReschedule.iCalUID,
     ...(bookingToReschedule.smsReminderNumber && {
       smsReminderNumber: bookingToReschedule.smsReminderNumber,
@@ -265,6 +265,23 @@ export const requestRescheduleHandler = async ({ ctx, input, source }: RequestRe
   const userId = triggerForUser ? bookingToReschedule.userId : null;
   const orgId = await getOrgIdFromMemberOrTeamId({ memberId: userId, teamId });
 
+  let memberSharingTeamIds: number[] = [];
+  try {
+    memberSharingTeamIds = await resolveMemberSharingTeamIds(
+      {
+        ownerUserId: bookingToReschedule.userId,
+        eventType: bookingToReschedule.eventType,
+        bookingMetadata: bookingToReschedule.metadata,
+      },
+      new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma))
+    );
+  } catch {
+    log.error(
+      "Failed to resolve notetaker sharing team",
+      safeStringify({ bookingId: bookingToReschedule.id })
+    );
+  }
+
   // Send Webhook call if hooked to BOOKING.CANCELLED
   const subscriberOptions = {
     userId,
@@ -272,6 +289,7 @@ export const requestRescheduleHandler = async ({ ctx, input, source }: RequestRe
     triggerEvent: eventTrigger,
     teamId: teamId ? [teamId] : null,
     orgId,
+    memberSharingTeamIds,
   };
   const webhooks = await getWebhooks(subscriberOptions);
 
@@ -284,5 +302,4 @@ export const requestRescheduleHandler = async ({ ctx, input, source }: RequestRe
     })
   );
   await Promise.all(promises);
-
 };

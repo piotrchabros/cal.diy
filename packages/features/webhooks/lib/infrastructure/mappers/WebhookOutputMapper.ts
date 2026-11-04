@@ -1,5 +1,4 @@
 import type { TimeUnit, WebhookTriggerEvents } from "@calcom/prisma/enums";
-
 import type { Webhook, WebhookSubscriber } from "../../dto/types";
 import { parseWebhookVersion } from "../../interface/IWebhookRepository";
 
@@ -23,6 +22,7 @@ type PrismaWebhookFull = {
   createdAt: Date;
   platform: boolean;
   platformOAuthClientId: string | null;
+  includeMemberMeetings: boolean;
 };
 
 /**
@@ -62,6 +62,7 @@ export class WebhookOutputMapper {
       createdAt: prismaWebhook.createdAt,
       platform: prismaWebhook.platform,
       platformOAuthClientId: prismaWebhook.platformOAuthClientId,
+      includeMemberMeetings: prismaWebhook.includeMemberMeetings,
     };
   }
 

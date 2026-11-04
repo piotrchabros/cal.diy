@@ -1262,4 +1262,76 @@ describe("InMemoryNotetakerRepositories", () => {
       ).toBe(false);
     });
   });
+
+  describe("meeting contacts", () => {
+    beforeEach(() => {
+      repositories.store.addBooking(bookingSeed());
+    });
+
+    it("replaceForSource replaces only the given source", async () => {
+      const repo = repositories.meetingContactRepository;
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "CALENDAR",
+        contacts: [{ email: "cal@example.com", name: "Cal" }],
+      });
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "MANUAL",
+        contacts: [{ email: "old@example.com", name: null }],
+      });
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "MANUAL",
+        contacts: [{ email: "new@example.com", name: null }],
+      });
+
+      expect(await repo.listByBookingId(100)).toEqual([
+        { email: "cal@example.com", name: "Cal", source: "CALENDAR" },
+        { email: "new@example.com", name: null, source: "MANUAL" },
+      ]);
+    });
+
+    it("keeps the other source's row when an email is already stored there", async () => {
+      const repo = repositories.meetingContactRepository;
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "CALENDAR",
+        contacts: [{ email: "shared@example.com", name: "From calendar" }],
+      });
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "MANUAL",
+        contacts: [
+          { email: "shared@example.com", name: null },
+          { email: "manual@example.com", name: null },
+          { email: "manual@example.com", name: null },
+        ],
+      });
+
+      expect(await repo.listByBookingId(100)).toEqual([
+        { email: "shared@example.com", name: "From calendar", source: "CALENDAR" },
+        { email: "manual@example.com", name: null, source: "MANUAL" },
+      ]);
+    });
+
+    it("an empty list clears the source and removeBooking drops the contacts", async () => {
+      const repo = repositories.meetingContactRepository;
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "MANUAL",
+        contacts: [{ email: "manual@example.com", name: null }],
+      });
+      await repo.replaceForSource({ bookingId: 100, source: "MANUAL", contacts: [] });
+      expect(await repo.listByBookingId(100)).toEqual([]);
+
+      await repo.replaceForSource({
+        bookingId: 100,
+        source: "CALENDAR",
+        contacts: [{ email: "cal@example.com", name: null }],
+      });
+      repositories.store.removeBooking(100);
+      expect(await repo.listByBookingId(100)).toEqual([]);
+    });
+  });
 });

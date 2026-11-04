@@ -114,8 +114,8 @@ describe("Office365CalendarEventsGateway", () => {
           organizer: { emailAddress: { address: "Boss@Example.com" } },
           attendees: [
             { emailAddress: { address: "Owner@Example.com" } },
-            { emailAddress: { address: "boss@example.com" } },
-            { emailAddress: { address: null } },
+            { emailAddress: { address: "boss@example.com", name: " Big Boss " } },
+            { emailAddress: { address: null, name: "No Email" } },
           ],
         })
       );
@@ -132,6 +132,10 @@ describe("Office365CalendarEventsGateway", () => {
         selfResponse: "accepted",
         organizerEmail: "boss@example.com",
         attendeeEmails: ["owner@example.com", "boss@example.com"],
+        attendees: [
+          { email: "owner@example.com", name: null },
+          { email: "boss@example.com", name: "Big Boss" },
+        ],
         candidateLinks: [TEAMS_LINK],
       });
     });

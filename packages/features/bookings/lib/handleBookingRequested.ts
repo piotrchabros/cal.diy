@@ -1,9 +1,13 @@
 import { sendAttendeeRequestEmailAndSMS, sendOrganizerRequestEmail } from "@calcom/emails/email-manager";
 import { getWebhookPayloadForBooking } from "@calcom/features/bookings/lib/getWebhookPayloadForBooking";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import getWebhooks from "@calcom/features/webhooks/lib/getWebhooks";
 import sendPayload from "@calcom/features/webhooks/lib/sendOrSchedulePayload";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
+import prisma from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
 import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
@@ -44,6 +48,39 @@ export async function handleBookingRequested(args: {
     booking?.eventType?.metadata as EventTypeMetadata
   );
 
+  let memberSharingTeamIds: number[] = [];
+  try {
+    const sharingBooking = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      select: {
+        userId: true,
+        metadata: true,
+        eventType: {
+          select: {
+            teamId: true,
+            userId: true,
+            team: { select: { id: true, name: true, parentId: true } },
+            notetakerSettings: {
+              select: { sharingMode: true, sharingTeam: { select: { id: true, name: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (sharingBooking) {
+      memberSharingTeamIds = await resolveMemberSharingTeamIds(
+        {
+          ownerUserId: sharingBooking.userId,
+          eventType: sharingBooking.eventType,
+          bookingMetadata: sharingBooking.metadata,
+        },
+        new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma))
+      );
+    }
+  } catch {
+    log.error(`Failed to resolve member sharing team ids, bookingId: ${booking.id}`);
+  }
+
   try {
     const subscribersBookingRequested = await getWebhooks({
       userId: booking.userId,
@@ -51,6 +88,7 @@ export async function handleBookingRequested(args: {
       triggerEvent: WebhookTriggerEvents.BOOKING_REQUESTED,
       teamId: null,
       orgId: undefined,
+      memberSharingTeamIds,
     });
 
     const webhookPayload = getWebhookPayloadForBooking({

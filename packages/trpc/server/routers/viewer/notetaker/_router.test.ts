@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   getActivityHandler: vi.fn(),
   getAdHocOptionsHandler: vi.fn(),
   dispatchToMeetingHandler: vi.fn(),
+  setMeetingContactsHandler: vi.fn(),
   listCalendarAutoJoinHandler: vi.fn(),
   setCalendarAutoJoinHandler: vi.fn(),
 }));
@@ -74,6 +75,9 @@ vi.mock("./getAdHocOptions.handler", () => ({ getAdHocOptionsHandler: mocks.getA
 vi.mock("./dispatchToMeeting.handler", () => ({
   dispatchToMeetingHandler: mocks.dispatchToMeetingHandler,
 }));
+vi.mock("./setMeetingContacts.handler", () => ({
+  setMeetingContactsHandler: mocks.setMeetingContactsHandler,
+}));
 vi.mock("./listCalendarAutoJoin.handler", () => ({
   listCalendarAutoJoinHandler: mocks.listCalendarAutoJoinHandler,
 }));
@@ -109,6 +113,7 @@ const handlerMocks = [
   mocks.getActivityHandler,
   mocks.getAdHocOptionsHandler,
   mocks.dispatchToMeetingHandler,
+  mocks.setMeetingContactsHandler,
   mocks.listCalendarAutoJoinHandler,
   mocks.setCalendarAutoJoinHandler,
 ];
@@ -243,6 +248,12 @@ const procedures: {
         sharingTeamId: null,
         acknowledgedNotice: true,
       }),
+  },
+  {
+    name: "setMeetingContacts",
+    handler: mocks.setMeetingContactsHandler,
+    expectedInput: { bookingUid: "b1", emails: ["client@example.com"] },
+    invoke: (caller) => caller.setMeetingContacts({ bookingUid: "b1", emails: [" Client@Example.com "] }),
   },
   {
     name: "listCalendarAutoJoin",

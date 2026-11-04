@@ -1,8 +1,7 @@
 import { prisma } from "@calcom/prisma";
-
 import { TRPCError } from "@trpc/server";
-
 import authedProcedure from "../../../procedures/authedProcedure";
+import { assertTeamAdminForMemberMeetings } from "./memberMeetings";
 import { webhookIdAndEventTypeIdSchema } from "./types";
 
 export const createWebhookProcedure = () => {
@@ -19,6 +18,7 @@ export const createWebhookProcedure = () => {
         select: {
           id: true,
           userId: true,
+          teamId: true,
           eventTypeId: true,
         },
       });
@@ -46,6 +46,9 @@ export const createWebhookProcedure = () => {
         }
       } else if (webhook.userId && webhook.userId !== ctx.user.id) {
         throw new TRPCError({ code: "FORBIDDEN" });
+      } else if (!webhook.userId && webhook.teamId != null) {
+        // Team-owned (member-meetings) webhooks have no owner to compare against, so only team admins may access them.
+        await assertTeamAdminForMemberMeetings({ userId: ctx.user.id, teamId: webhook.teamId });
       }
     } else if (eventTypeId) {
       const eventType = await prisma.eventType.findUnique({

@@ -46,6 +46,12 @@ export type NotetakerAccessDto = {
     | { route: "SELECTED_PEOPLE"; people: { name: string }[] };
 };
 
+export type NotetakerMeetingContactDto = {
+  email: string;
+  name: string | null;
+  source: "MANUAL" | "CALENDAR";
+};
+
 export type NotetakerStateDto = {
   bookingUid: string;
   featureEnabled: boolean;
@@ -84,6 +90,10 @@ export type NotetakerStateDto = {
   videoAvailable?: boolean;
   sharedWithAttendees: boolean;
   access?: NotetakerAccessDto;
+  /** Host only: the meeting's CRM contacts, which are not attendees and receive no email. */
+  meetingContacts?: NotetakerMeetingContactDto[];
+  /** Host only: whether the latest transcript was already delivered to the transcript webhook. */
+  transcriptWebhookSent?: boolean;
 };
 
 export type NotetakerEventTypeDefaultDto = {

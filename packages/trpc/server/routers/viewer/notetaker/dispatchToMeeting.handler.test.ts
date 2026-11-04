@@ -63,6 +63,7 @@ describe("dispatchToMeetingHandler", () => {
       title: "Standup",
       durationMinutes: 90,
       sharingTeamId: 5,
+      contactEmails: undefined,
     });
   });
 
@@ -75,7 +76,16 @@ describe("dispatchToMeetingHandler", () => {
       title: undefined,
       durationMinutes: undefined,
       sharingTeamId: null,
+      contactEmails: undefined,
     });
+  });
+
+  it("passes the contact emails trimmed and lowercased", async () => {
+    await run({ ...baseInput, contactEmails: [" Client@Example.com "] });
+
+    expect(mocks.dispatchToMeeting).toHaveBeenCalledWith(
+      expect.objectContaining({ contactEmails: ["client@example.com"] })
+    );
   });
 
   it("returns only bookingUid and reused", async () => {
@@ -142,5 +152,13 @@ describe("ZDispatchToMeetingInputSchema", () => {
     expect(ZDispatchToMeetingInputSchema.safeParse({ meetingUrl, acknowledgedNotice: true }).success).toBe(
       false
     );
+  });
+
+  it("accepts up to 20 valid contact emails and rejects more or invalid ones", () => {
+    const emails = Array.from({ length: 20 }, (_, i) => `p${i}@example.com`);
+    expect(parse({ contactEmails: emails })).toBe(true);
+    expect(parse({ contactEmails: [...emails, "extra@example.com"] })).toBe(false);
+    expect(parse({ contactEmails: ["not-an-email"] })).toBe(false);
+    expect(parse({ contactEmails: [`${"a".repeat(320)}@example.com`] })).toBe(false);
   });
 });

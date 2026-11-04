@@ -1,16 +1,13 @@
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { WebhookRepository } from "@calcom/features/webhooks/lib/repository/WebhookRepository";
+import { APP_NAME } from "@calcom/lib/constants";
+import prisma from "@calcom/prisma";
+import { MembershipRole } from "@calcom/prisma/enums";
+import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import type { PageProps } from "app/_types";
 import { _generateMetadata } from "app/_utils";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { WebhookRepository } from "@calcom/features/webhooks/lib/repository/WebhookRepository";
-import prisma from "@calcom/prisma";
-import { APP_NAME } from "@calcom/lib/constants";
-import { MembershipRole } from "@calcom/prisma/enums";
-
-import { buildLegacyRequest } from "@lib/buildLegacyCtx";
-
 import { EditWebhookView } from "~/webhooks/views/webhook-edit-view";
 
 export const generateMetadata = async ({ params }: { params: Promise<{ id: string }> }) =>
@@ -34,6 +31,8 @@ const Page = async ({ params: _params }: PageProps) => {
   const webhookRepository = WebhookRepository.getInstance();
   const webhook = await webhookRepository.findByWebhookId(id);
 
+  let canManageMemberMeetings = true;
+
   // Ownership check: verify user has access to this webhook
   if (webhook.teamId) {
     const membership = await prisma.membership.findFirst({
@@ -42,16 +41,17 @@ const Page = async ({ params: _params }: PageProps) => {
         teamId: webhook.teamId,
         role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER, MembershipRole.MEMBER] },
       },
-      select: { id: true },
+      select: { id: true, role: true },
     });
     if (!membership) {
       notFound();
     }
+    canManageMemberMeetings = membership.role !== MembershipRole.MEMBER;
   } else if (webhook.userId !== session.user.id) {
     notFound();
   }
 
-  return <EditWebhookView webhook={webhook} />;
+  return <EditWebhookView webhook={webhook} canManageMemberMeetings={canManageMemberMeetings} />;
 };
 
 export default Page;

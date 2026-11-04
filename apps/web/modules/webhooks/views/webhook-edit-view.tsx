@@ -26,9 +26,16 @@ type WebhookProps = {
   secret: string | null;
   platform: boolean;
   version: WebhookVersion;
+  includeMemberMeetings?: boolean;
 };
 
-export function EditWebhookView({ webhook }: { webhook?: WebhookProps }) {
+export function EditWebhookView({
+  webhook,
+  canManageMemberMeetings,
+}: {
+  webhook?: WebhookProps;
+  canManageMemberMeetings?: boolean;
+}) {
   const { t } = useLocale();
   const router = useRouter();
   const { data: installedApps, isPending } = trpc.viewer.apps.integrations.useQuery(
@@ -56,9 +63,13 @@ export function EditWebhookView({ webhook }: { webhook?: WebhookProps }) {
 
   if (isPending || !webhook) return <WebhookFormSkeleton titleKey="edit_webhook" />;
 
+  const memberMeetingsTeamId = webhook.teamId && !webhook.platform ? webhook.teamId : undefined;
+
   return (
     <WebhookForm
       webhook={webhook}
+      teamId={memberMeetingsTeamId}
+      canManageMemberMeetings={canManageMemberMeetings}
       headerWrapper={(formMethods, children) => (
         <>
           <WebhookFormHeader titleKey="edit_webhook" CTA={<WebhookVersionCTA formMethods={formMethods} />} />
@@ -100,6 +111,9 @@ export function EditWebhookView({ webhook }: { webhook?: WebhookProps }) {
           time: values.time,
           timeUnit: values.timeUnit,
           version: values.version,
+          ...(memberMeetingsTeamId && canManageMemberMeetings !== false
+            ? { includeMemberMeetings: !!values.includeMemberMeetings }
+            : {}),
         });
       }}
       apps={installedApps?.items.map((app) => app.slug)}

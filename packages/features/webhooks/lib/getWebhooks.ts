@@ -1,8 +1,7 @@
 import { withReporting } from "@calcom/lib/sentryWrapper";
-import defaultPrisma from "@calcom/prisma";
 import type { PrismaClient } from "@calcom/prisma";
+import defaultPrisma from "@calcom/prisma";
 import type { WebhookTriggerEvents } from "@calcom/prisma/enums";
-
 import type { WebhookSubscriber } from "./dto/types";
 import { WebhookOutputMapper } from "./infrastructure/mappers/WebhookOutputMapper";
 
@@ -13,6 +12,8 @@ export type GetSubscriberOptions = {
   teamId?: number | number[] | null;
   orgId?: number | null;
   oAuthClientId?: string | null;
+  /** Teams whose webhooks opted into member meetings (includeMemberMeetings) also receive this event. */
+  memberSharingTeamIds?: number[];
 };
 
 const getWebhooks = async (
@@ -25,6 +26,7 @@ const getWebhooks = async (
   const teamIds = Array.isArray(teamId) ? teamId : [teamId ?? 0];
   const orgId = options.orgId ?? 0;
   const oAuthClientId = options.oAuthClientId ?? "";
+  const memberSharingTeamIds = options.memberSharingTeamIds ?? [];
 
   const managedChildEventType = await prisma.eventType.findFirst({
     where: {
@@ -62,6 +64,9 @@ const getWebhooks = async (
           },
         },
         { platformOAuthClientId: oAuthClientId },
+        ...(memberSharingTeamIds.length > 0
+          ? [{ teamId: { in: memberSharingTeamIds }, includeMemberMeetings: true }]
+          : []),
       ],
       AND: {
         eventTriggers: {

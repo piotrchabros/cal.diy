@@ -20,6 +20,7 @@ import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingN
 import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
 import { PrismaNotetakerCalendarMeetingRepository } from "../repositories/PrismaNotetakerCalendarMeetingRepository";
+import { PrismaNotetakerMeetingContactRepository } from "../repositories/PrismaNotetakerMeetingContactRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
 import { NotetakerAccessService } from "../services/NotetakerAccessService";
 import { NotetakerAdHocService } from "../services/NotetakerAdHocService";
@@ -293,6 +294,8 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
           findAcceptedAdHocByUserIdIncludeLatestSession: (params) =>
             bookingNotetakerRepository.findAcceptedAdHocByUserIdIncludeLatestSession(params),
           countAdHocByUserIdSince: (params) => bookingNotetakerRepository.countAdHocByUserIdSince(params),
+          findVerifiedEmailsByUserId: (userId) =>
+            bookingNotetakerRepository.findVerifiedEmailsByUserId(userId),
           async createAdHocBooking(input) {
             const booking = await bookingNotetakerRepository.createAdHocBooking(input);
             bookingIds.push(booking.id);
@@ -304,6 +307,8 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
         featuresRepository: new FeaturesRepository(prisma),
         choiceService: getNotetakerChoiceService(),
         dispatchService: dispatch,
+        accessService,
+        meetingContactRepository: new PrismaNotetakerMeetingContactRepository(prisma),
         userRepository,
         // The stock config has no bot provider, and the service refuses to dispatch without a usable one.
         config: getNotetakerConfig(withFakeBotProvider(testEnv)),

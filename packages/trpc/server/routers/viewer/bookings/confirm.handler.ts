@@ -3,7 +3,6 @@ import type { LocationObject } from "@calcom/app-store/locations";
 import { getLocationValueForDB } from "@calcom/app-store/locations";
 import { sendDeclinedEmailsAndSMS } from "@calcom/emails/email-manager";
 import { getAllCredentialsIncludeServiceAccountKey } from "@calcom/features/bookings/lib/getAllCredentialsForUsersOnEvent/getAllCredentials";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { getAssignmentReasonCategory } from "@calcom/features/bookings/lib/getAssignmentReasonCategory";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
 import { handleConfirmation } from "@calcom/features/bookings/lib/handleConfirmation";
@@ -14,13 +13,17 @@ import {
   type EventTypeBrandingData,
   getEventTypeService,
 } from "@calcom/features/eventtypes/di/EventTypeService.container";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
+import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
 import type { GetSubscriberOptions } from "@calcom/features/webhooks/lib/getWebhooks";
 import type { EventPayloadType, EventTypeInfo } from "@calcom/features/webhooks/lib/sendPayload";
+import { getTranslation } from "@calcom/i18n/server";
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import getOrgIdFromMemberOrTeamId from "@calcom/lib/getOrgIdFromMemberOrTeamId";
 import { getTeamIdFromEventType } from "@calcom/lib/getTeamIdFromEventType";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
-import { getTranslation } from "@calcom/i18n/server";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
@@ -79,6 +82,7 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
           id: true,
           owner: true,
           teamId: true,
+          userId: true,
           recurringEvent: true,
           title: true,
           slug: true,
@@ -113,6 +117,12 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
           parent: {
             select: {
               teamId: true,
+            },
+          },
+          notetakerSettings: {
+            select: {
+              sharingMode: true,
+              sharingTeam: { select: { id: true, name: true } },
             },
           },
         },
@@ -450,6 +460,20 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
 
     const orgId = await getOrgIdFromMemberOrTeamId({ memberId: booking.userId, teamId });
 
+    let memberSharingTeamIds: number[] = [];
+    try {
+      memberSharingTeamIds = await resolveMemberSharingTeamIds(
+        {
+          ownerUserId: booking.userId,
+          eventType: booking.eventType,
+          bookingMetadata: booking.metadata,
+        },
+        new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma))
+      );
+    } catch {
+      log.error("Failed to resolve notetaker sharing team", safeStringify({ bookingId }));
+    }
+
     // send BOOKING_REJECTED webhooks
     const subscriberOptions: GetSubscriberOptions = {
       userId: booking.userId,
@@ -458,6 +482,7 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
       teamId,
       orgId,
       oAuthClientId: platformClientParams?.platformClientId,
+      memberSharingTeamIds,
     };
     const eventTrigger: WebhookTriggerEvents = WebhookTriggerEvents.BOOKING_REJECTED;
     const eventTypeInfo: EventTypeInfo = {
@@ -477,7 +502,6 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
       smsReminderNumber: booking.smsReminderNumber || undefined,
     };
     await handleWebhookTrigger({ subscriberOptions, eventTrigger, webhookData, traceContext });
-
   }
 
   const message = confirmed ? "Booking confirmed" : "Booking rejected";
