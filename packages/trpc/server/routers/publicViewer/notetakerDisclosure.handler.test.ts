@@ -103,6 +103,7 @@ describe("notetakerDisclosureHandler", () => {
         sessionRepository: repositories.sessionRepository,
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup: new InMemoryNotetakerMembershipLookup(),
+        calendarMeetingRepository: { isParticipant: async () => false },
       }),
       membershipLookup: new InMemoryNotetakerMembershipLookup(),
       featuresRepository: { checkIfUserHasFeature: async () => true },

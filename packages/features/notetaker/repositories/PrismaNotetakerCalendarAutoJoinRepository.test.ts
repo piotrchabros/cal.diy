@@ -69,3 +69,41 @@ describe("PrismaNotetakerCalendarAutoJoinRepository.findDueForPoll", () => {
     });
   });
 });
+
+describe("PrismaNotetakerCalendarAutoJoinRepository.findUserLevelSelectedCalendarsIncludeAutoJoin", () => {
+  function buildSelectedCalendarRepository(rows: unknown[]) {
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const prismaClient = { selectedCalendar: { findMany } } as unknown as PrismaClient;
+    return { repository: new PrismaNotetakerCalendarAutoJoinRepository(prismaClient), findMany };
+  }
+
+  it("lists only the user's calendars without an event type", async () => {
+    const { repository, findMany } = buildSelectedCalendarRepository([]);
+
+    await repository.findUserLevelSelectedCalendarsIncludeAutoJoin({ userId: 7 });
+
+    expect(findMany.mock.calls[0][0].where).toEqual({ userId: 7, eventTypeId: null });
+  });
+
+  it("renames the relation to autoJoin and keeps null for calendars without a row", async () => {
+    const { repository } = buildSelectedCalendarRepository([
+      {
+        id: "sc-1",
+        integration: "google_calendar",
+        externalId: "a@b.c",
+        notetakerAutoJoin: { enabled: true, sharingTeamId: 3, lastPollError: null },
+      },
+      { id: "sc-2", integration: "office365_calendar", externalId: "x@y.z", notetakerAutoJoin: null },
+    ]);
+
+    await expect(repository.findUserLevelSelectedCalendarsIncludeAutoJoin({ userId: 7 })).resolves.toEqual([
+      {
+        id: "sc-1",
+        integration: "google_calendar",
+        externalId: "a@b.c",
+        autoJoin: { enabled: true, sharingTeamId: 3, lastPollError: null },
+      },
+      { id: "sc-2", integration: "office365_calendar", externalId: "x@y.z", autoJoin: null },
+    ]);
+  });
+});

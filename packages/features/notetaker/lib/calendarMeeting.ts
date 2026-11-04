@@ -4,6 +4,11 @@ import { parseAdHocMeetingUrl } from "./adHocMeeting";
 // Stored in Booking.metadata, which only allows string values.
 export const NOTETAKER_CALENDAR_MEETING_KEY = "notetakerCalendarMeeting";
 
+export function isCalendarMeetingBookingMetadata(metadata: unknown): boolean {
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
+  return (metadata as Record<string, unknown>)[NOTETAKER_CALENDAR_MEETING_KEY] === "true";
+}
+
 export type NotetakerCalendarEvent = {
   externalId: string;
   iCalUID: string | null;

@@ -39,6 +39,7 @@ const state: NotetakerStateDto = {
   canStop: false,
   isRecurring: false,
   isAdHoc: false,
+  isCalendarMeeting: false,
   session: {
     id: "session-1",
     status: "READY",

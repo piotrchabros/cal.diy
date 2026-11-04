@@ -79,6 +79,7 @@ function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
       sessionRepository,
       eventTypeNotetakerSettingsRepository,
       membershipLookup: new InMemoryNotetakerMembershipLookup(),
+      calendarMeetingRepository: { isParticipant: async () => false },
     }),
     userRepository: { findByIds: async () => [] },
     notetakerTasker: stubTasker,

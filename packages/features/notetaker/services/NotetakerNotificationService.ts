@@ -13,6 +13,7 @@ import { WEBAPP_URL } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { z } from "zod";
+import { isCalendarMeetingBookingMetadata } from "../lib/calendarMeeting";
 import { getNotetakerHostName } from "../lib/hostName";
 import type { NotetakerSendNotificationPayload } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
@@ -22,6 +23,7 @@ import type {
   NotetakerBookingContext,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { INotetakerActivityRepository } from "../repositories/interfaces/INotetakerActivityRepository";
+import type { INotetakerCalendarMeetingRepository } from "../repositories/interfaces/INotetakerCalendarMeetingRepository";
 import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
@@ -55,6 +57,7 @@ export interface INotetakerNotificationServiceDeps {
   transcriptRepository: INotetakerTranscriptRepository;
   summaryRepository: INotetakerSummaryRepository;
   userRepository: INotetakerUserLookup;
+  calendarMeetingRepository: Pick<INotetakerCalendarMeetingRepository, "listActiveParticipantUserIds">;
   logger: ISimpleLogger;
 }
 
@@ -408,7 +411,7 @@ export class NotetakerNotificationService {
     const summary = await summaryRepository.findByTranscriptId(transcript.id);
     const summaryStatus = summary?.status ?? null;
 
-    const recipients = await this.resolveHostRecipients(booking);
+    const recipients = await this.resolveResultsRecipients(booking);
     if (recipients.length === 0) {
       logger.warn("Notetaker results notification skipped: no recipient", { bookingId, sessionId });
       return;
@@ -471,6 +474,12 @@ export class NotetakerNotificationService {
         bookingId,
         status: booking.status,
       });
+      return;
+    }
+    // A calendar meeting can include outside guests who never dealt with Cal.diy; the bot's
+    // in-meeting chat message is their notice instead.
+    if (isCalendarMeetingBookingMetadata(booking.metadata)) {
+      logger.info("Notetaker attendee notice skipped: calendar meeting", { bookingId });
       return;
     }
 
@@ -629,15 +638,41 @@ export class NotetakerNotificationService {
     return recipients;
   }
 
-  private async resolveHostRecipients(booking: NotetakerBookingContext): Promise<NotetakerUserRecord[]> {
-    const { activityRepository, userRepository, logger } = this.deps;
-
-    let ids = await activityRepository.findDistinctActorUserIdsByBookingIdAndAction({
+  private async resolveHostUserIds(booking: NotetakerBookingContext): Promise<number[]> {
+    const ids = await this.deps.activityRepository.findDistinctActorUserIdsByBookingIdAndAction({
       bookingId: booking.id,
       action: "ENABLED",
     });
     // No host enabled it by hand, so the choice was inherited from the event type: the organizer owns it.
-    if (ids.length === 0 && booking.userId !== null) ids = [booking.userId];
+    if (ids.length === 0 && booking.userId !== null) return [booking.userId];
+    return ids;
+  }
+
+  private async resolveHostRecipients(booking: NotetakerBookingContext): Promise<NotetakerUserRecord[]> {
+    return this.findRecipientsByIds(booking, await this.resolveHostUserIds(booking));
+  }
+
+  // Every Cal.diy user in a calendar meeting can read its results, so each is told they are ready.
+  private async resolveResultsRecipients(booking: NotetakerBookingContext): Promise<NotetakerUserRecord[]> {
+    const hostIds = await this.resolveHostUserIds(booking);
+    if (!isCalendarMeetingBookingMetadata(booking.metadata))
+      return this.findRecipientsByIds(booking, hostIds);
+
+    const participantIds = await this.deps.calendarMeetingRepository.listActiveParticipantUserIds({
+      bookingId: booking.id,
+    });
+    // The owner is a participant too; a repeated id would be reported as a missing recipient.
+    const ids = new Set(hostIds);
+    for (let i = 0; i < participantIds.length; i++) ids.add(participantIds[i]);
+    return this.findRecipientsByIds(booking, Array.from(ids));
+  }
+
+  private async findRecipientsByIds(
+    booking: NotetakerBookingContext,
+    ids: number[]
+  ): Promise<NotetakerUserRecord[]> {
+    const { userRepository, logger } = this.deps;
+
     if (ids.length === 0) return [];
 
     const users = await userRepository.findByIds({ ids });

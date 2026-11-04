@@ -36,7 +36,7 @@ export type NotetakerIneligibilityReasonDto =
   | "MEETING_ENDED"
   | "REJOIN_BLOCKED";
 
-export type NotetakerViewerRoleDto = "HOST" | "ATTENDEE" | "SHARED_VIEWER";
+export type NotetakerViewerRoleDto = "HOST" | "PARTICIPANT" | "ATTENDEE" | "SHARED_VIEWER";
 
 export type NotetakerAccessDto = {
   attendees: boolean;
@@ -67,6 +67,7 @@ export type NotetakerStateDto = {
   canStop: boolean;
   isRecurring: boolean;
   isAdHoc: boolean;
+  isCalendarMeeting: boolean;
   session: {
     id: string;
     status: NotetakerSessionStatusDto;

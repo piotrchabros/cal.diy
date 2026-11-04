@@ -1,4 +1,5 @@
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isCalendarMeetingBookingMetadata } from "../lib/calendarMeeting";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
 import type { NotetakerSharingScope, NotetakerSharingSource } from "../lib/sharingScope";
 import { resolveNotetakerSharingScope } from "../lib/sharingScope";
@@ -7,6 +8,7 @@ import type {
   NotetakerBookingContext,
 } from "../repositories/interfaces/IBookingNotetakerRepository";
 import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
+import type { INotetakerCalendarMeetingRepository } from "../repositories/interfaces/INotetakerCalendarMeetingRepository";
 import type { INotetakerSessionRepository } from "../repositories/interfaces/INotetakerSessionRepository";
 
 function normalizeEmail(email: string): string {
@@ -19,14 +21,17 @@ export const NOTETAKER_RESULTS_ACCESS_DENIED_MESSAGE =
 // Membership grants read access in exactly one case: a colleague under the event
 // type's sharing mode, for a session whose participants were told about it.
 // A team or organization role never makes a host.
+// A participant of a calendar auto-join meeting reads the results and may stop the bot, but
+// deleting results, sharing and the choice itself stay with the owner (booking.userId).
 export interface INotetakerAccessServiceDeps {
   bookingNotetakerRepository: IBookingNotetakerRepository;
   sessionRepository: Pick<INotetakerSessionRepository, "findLatestWithTranscriptByBookingId">;
   eventTypeNotetakerSettingsRepository: Pick<IEventTypeNotetakerSettingsRepository, "hasSharingMember">;
   membershipLookup: Pick<INotetakerMembershipLookup, "isAcceptedMember">;
+  calendarMeetingRepository: Pick<INotetakerCalendarMeetingRepository, "isParticipant">;
 }
 
-export type NotetakerViewerRole = "HOST" | "ATTENDEE" | "SHARED_VIEWER";
+export type NotetakerViewerRole = "HOST" | "PARTICIPANT" | "ATTENDEE" | "SHARED_VIEWER";
 
 export class NotetakerAccessService {
   constructor(private readonly deps: INotetakerAccessServiceDeps) {}
@@ -41,6 +46,9 @@ export class NotetakerAccessService {
     const booking = await this.getBookingOrThrow(bookingUid);
 
     if (this.isHost(userId, booking)) return { role: "HOST", booking };
+
+    // Ahead of the grant check: a participant who is also a listed attendee keeps the right to stop.
+    if (await this.isCalendarMeetingParticipant(userId, booking)) return { role: "PARTICIPANT", booking };
 
     // Read on every call rather than cached, so revoking the grant takes effect immediately.
     const sharingGrant = await this.deps.bookingNotetakerRepository.findSharingGrant(booking.id);
@@ -66,6 +74,19 @@ export class NotetakerAccessService {
     }
 
     return booking;
+  }
+
+  async assertCanStop(params: { bookingUid: string; userId: number }): Promise<NotetakerBookingContext> {
+    const { bookingUid, userId } = params;
+
+    const booking = await this.getBookingOrThrow(bookingUid);
+
+    if (this.isHost(userId, booking)) return booking;
+    if (await this.isCalendarMeetingParticipant(userId, booking)) return booking;
+
+    throw ErrorWithCode.Factory.Forbidden(
+      "Only a host or a participant of this meeting can stop the notetaker"
+    );
   }
 
   private async getBookingOrThrow(bookingUid: string): Promise<NotetakerBookingContext> {
@@ -110,6 +131,16 @@ export class NotetakerAccessService {
     // The list can name anyone in the organization, so a listed person is checked against
     // the organization when there is one. Being listed alone is not enough after they leave.
     return this.deps.membershipLookup.isAcceptedMember({ userId, teamId: scope.eligibilityTeamId });
+  }
+
+  private async isCalendarMeetingParticipant(
+    userId: number,
+    booking: NotetakerBookingContext
+  ): Promise<boolean> {
+    // The metadata marker keeps the query off every other booking.
+    if (!isCalendarMeetingBookingMetadata(booking.metadata)) return false;
+    // Read on every call, so a participant who left the meeting loses access immediately.
+    return this.deps.calendarMeetingRepository.isParticipant({ bookingId: booking.id, userId });
   }
 
   private isHost(userId: number, booking: NotetakerBookingContext): boolean {

@@ -19,6 +19,7 @@ import { MembershipRepositoryNotetakerLookup } from "../lib/MembershipRepository
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
 import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
+import { PrismaNotetakerCalendarMeetingRepository } from "../repositories/PrismaNotetakerCalendarMeetingRepository";
 import { PrismaNotetakerSessionRepository } from "../repositories/PrismaNotetakerSessionRepository";
 import { NotetakerAccessService } from "../services/NotetakerAccessService";
 import { NotetakerAdHocService } from "../services/NotetakerAdHocService";
@@ -52,6 +53,7 @@ function buildAccessService(
     eventTypeNotetakerSettingsRepository: new PrismaEventTypeNotetakerSettingsRepository(prisma),
     // The real lookup: the dispatch decides whether the team was disclosed from the owner's membership.
     membershipLookup: createMembershipLookup(),
+    calendarMeetingRepository: new PrismaNotetakerCalendarMeetingRepository(prisma),
   });
 }
 

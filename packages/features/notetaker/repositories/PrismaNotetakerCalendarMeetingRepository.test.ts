@@ -17,6 +17,7 @@ function buildRepository(overrides: Record<string, unknown> = {}) {
     notetakerActivity: { create: vi.fn() },
     notetakerCalendarMeeting: { create: vi.fn(), update: vi.fn() },
     notetakerCalendarMeetingParticipant: { upsert: vi.fn() },
+    bookingNotetaker: { upsert: vi.fn() },
     ...overrides,
   };
   const findFirst = vi.fn();
@@ -208,5 +209,78 @@ describe("PrismaNotetakerCalendarMeetingRepository.findCalDiyBookingForEvent", (
     await expect(
       repository.findCalDiyBookingForEvent({ iCalUID: null, externalEventId: "evt-1" })
     ).resolves.toEqual({ bookingId: 4, hostUserId: 9, hasNotetakerChoice: true });
+  });
+});
+
+describe("PrismaNotetakerCalendarMeetingRepository.listActiveParticipantUserIds", () => {
+  it("lists the user ids of participants not removed from the booking's meeting", async () => {
+    const findMany = vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 7 }]);
+    const prismaClient = { notetakerCalendarMeetingParticipant: { findMany } } as unknown as PrismaClient;
+    const repository = new PrismaNotetakerCalendarMeetingRepository(prismaClient);
+
+    await expect(repository.listActiveParticipantUserIds({ bookingId: 10 })).resolves.toEqual([1, 7]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { removedAt: null, meeting: { bookingId: 10 } },
+      select: { userId: true },
+    });
+  });
+});
+
+describe("PrismaNotetakerCalendarMeetingRepository.revive", () => {
+  const params = {
+    meetingId: "m-1",
+    bookingId: 10,
+    userId: 2,
+    email: "p@x.com",
+    name: "P",
+    timeZone: "UTC",
+    selectedCalendarId: "sc-2",
+    externalEventId: "evt-2",
+    seenAt: new Date("2026-11-04T10:00:00.000Z"),
+  };
+
+  it("accepts the booking under the user, re-arms the choice, logs a system activity and revives the participant", async () => {
+    const { repository, tx } = buildRepository();
+
+    await repository.revive(params);
+
+    expect(tx.booking.update).toHaveBeenCalledWith({
+      where: { id: 10 },
+      data: { status: "ACCEPTED", userId: 2 },
+      select: { id: true },
+    });
+    expect(tx.notetakerCalendarMeeting.update).toHaveBeenCalledWith({
+      where: { id: "m-1" },
+      data: { ownerUserId: 2 },
+      select: { id: true },
+    });
+    const choice = {
+      enabled: true,
+      pendingDispatch: true,
+      rejoinBlocked: false,
+      source: "CALENDAR_AUTO_JOIN",
+      setByUserId: null,
+      setAt: params.seenAt,
+    };
+    expect(tx.bookingNotetaker.upsert).toHaveBeenCalledWith({
+      where: { bookingId: 10 },
+      create: { bookingId: 10, ...choice },
+      update: choice,
+      select: { bookingId: true },
+    });
+    expect(tx.notetakerActivity.create.mock.calls[0][0].data).toMatchObject({
+      bookingId: 10,
+      action: "ENABLED",
+      actorType: "SYSTEM",
+      detail: { source: "CALENDAR_AUTO_JOIN" },
+    });
+    const upsert = tx.notetakerCalendarMeetingParticipant.upsert.mock.calls[0][0];
+    expect(upsert.where).toEqual({ meetingId_userId: { meetingId: "m-1", userId: 2 } });
+    expect(upsert.update).toEqual({
+      selectedCalendarId: "sc-2",
+      externalEventId: "evt-2",
+      lastSeenAt: params.seenAt,
+      removedAt: null,
+    });
   });
 });

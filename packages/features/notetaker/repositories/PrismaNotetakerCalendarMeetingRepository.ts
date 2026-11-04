@@ -254,11 +254,77 @@ export class PrismaNotetakerCalendarMeetingRepository implements INotetakerCalen
     });
   }
 
+  async revive(params: Parameters<INotetakerCalendarMeetingRepository["revive"]>[0]): Promise<void> {
+    const { meetingId, bookingId, userId } = params;
+    const choice = {
+      enabled: true,
+      pendingDispatch: true,
+      rejoinBlocked: false,
+      source: "CALENDAR_AUTO_JOIN",
+      setByUserId: null,
+      setAt: params.seenAt,
+    } as const;
+    await this.prismaClient.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: "ACCEPTED", userId },
+        select: { id: true },
+      });
+      await tx.notetakerCalendarMeeting.update({
+        where: { id: meetingId },
+        data: { ownerUserId: userId },
+        select: { id: true },
+      });
+      await tx.bookingNotetaker.upsert({
+        where: { bookingId },
+        create: { bookingId, ...choice },
+        update: choice,
+        select: { bookingId: true },
+      });
+      await tx.notetakerActivity.create({
+        data: {
+          bookingId,
+          action: "ENABLED",
+          actorType: "SYSTEM",
+          actorUserId: null,
+          actorName: null,
+          detail: { source: "CALENDAR_AUTO_JOIN" },
+        },
+        select: { id: true },
+      });
+      await tx.notetakerCalendarMeetingParticipant.upsert({
+        where: { meetingId_userId: { meetingId, userId } },
+        create: {
+          meetingId,
+          userId,
+          selectedCalendarId: params.selectedCalendarId,
+          externalEventId: params.externalEventId,
+          lastSeenAt: params.seenAt,
+        },
+        update: {
+          selectedCalendarId: params.selectedCalendarId,
+          externalEventId: params.externalEventId,
+          lastSeenAt: params.seenAt,
+          removedAt: null,
+        },
+        select: { userId: true },
+      });
+    });
+  }
+
   async isParticipant(params: { bookingId: number; userId: number }): Promise<boolean> {
     const count = await this.prismaClient.notetakerCalendarMeetingParticipant.count({
       where: { userId: params.userId, removedAt: null, meeting: { bookingId: params.bookingId } },
     });
     return count > 0;
+  }
+
+  async listActiveParticipantUserIds(params: { bookingId: number }): Promise<number[]> {
+    const rows = await this.prismaClient.notetakerCalendarMeetingParticipant.findMany({
+      where: { removedAt: null, meeting: { bookingId: params.bookingId } },
+      select: { userId: true },
+    });
+    return rows.map((row) => row.userId);
   }
 
   async countCreatedByOwnerSince(params: { userId: number; since: Date }): Promise<number> {

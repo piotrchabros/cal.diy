@@ -415,7 +415,8 @@ export class NotetakerDispatchService {
   private async stopByHost(params: { bookingUid: string; userId: number }): Promise<void> {
     const { accessService, sessionRepository, botGatewayResolver } = this.deps;
 
-    const booking = await accessService.assertHost(params);
+    // A calendar meeting participant may stop the bot for everyone; turning the choice off stays with the host.
+    const booking = await accessService.assertCanStop(params);
 
     const session = await sessionRepository.findByBookingIdAndStatusIn(booking.id, [
       "SCHEDULED",

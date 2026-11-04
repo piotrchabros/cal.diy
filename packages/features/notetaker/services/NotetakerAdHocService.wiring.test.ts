@@ -95,6 +95,7 @@ describe("NotetakerAdHocService wiring with the real choice and dispatch service
       sessionRepository: repositories.sessionRepository,
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       membershipLookup,
+      calendarMeetingRepository: { isParticipant: async () => false },
     });
     const choiceService = new NotetakerChoiceService({
       bookingNotetakerRepository: repositories.bookingNotetakerRepository,

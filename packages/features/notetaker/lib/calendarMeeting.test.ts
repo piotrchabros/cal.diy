@@ -4,6 +4,7 @@ import {
   buildMeetingKey,
   decideCalendarEvent,
   extractMeetingLinksFromText,
+  isCalendarMeetingBookingMetadata,
   NOTETAKER_CALENDAR_MEETING_KEY,
   type NotetakerCalendarEvent,
 } from "./calendarMeeting";
@@ -168,5 +169,20 @@ describe("extractMeetingLinksFromText", () => {
     const links = extractMeetingLinksFromText(`<div>Call: <a href="${MEET}">${MEET}</a></div>`);
     expect(links).toEqual([MEET]);
     expect(decide(buildEvent({ candidateLinks: links }))).toMatchObject({ join: true });
+  });
+});
+
+describe("isCalendarMeetingBookingMetadata", () => {
+  it("is true only for the string marker", () => {
+    expect(isCalendarMeetingBookingMetadata({ [NOTETAKER_CALENDAR_MEETING_KEY]: "true" })).toBe(true);
+    expect(isCalendarMeetingBookingMetadata({ [NOTETAKER_CALENDAR_MEETING_KEY]: true })).toBe(false);
+    expect(isCalendarMeetingBookingMetadata({ [NOTETAKER_CALENDAR_MEETING_KEY]: "false" })).toBe(false);
+    expect(isCalendarMeetingBookingMetadata({})).toBe(false);
+  });
+
+  it("is false for metadata that is not an object", () => {
+    expect(isCalendarMeetingBookingMetadata(null)).toBe(false);
+    expect(isCalendarMeetingBookingMetadata("true")).toBe(false);
+    expect(isCalendarMeetingBookingMetadata([NOTETAKER_CALENDAR_MEETING_KEY])).toBe(false);
   });
 });

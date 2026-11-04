@@ -3,6 +3,7 @@ import { NotetakerAccessService } from "@calcom/features/notetaker/services/Note
 import { moduleLoader as membershipLookupModuleLoader } from "./NotetakerMembershipLookup.module";
 import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as eventTypeNotetakerSettingsRepositoryModuleLoader } from "./PrismaEventTypeNotetakerSettingsRepository.module";
+import { moduleLoader as calendarMeetingRepositoryModuleLoader } from "./PrismaNotetakerCalendarMeetingRepository.module";
 import { moduleLoader as sessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
 import { NOTETAKER_DI_TOKENS } from "./tokens";
 
@@ -20,6 +21,7 @@ const loadModule = bindModuleToClassOnToken({
     sessionRepository: sessionRepositoryModuleLoader,
     eventTypeNotetakerSettingsRepository: eventTypeNotetakerSettingsRepositoryModuleLoader,
     membershipLookup: membershipLookupModuleLoader,
+    calendarMeetingRepository: calendarMeetingRepositoryModuleLoader,
   },
 });
 
