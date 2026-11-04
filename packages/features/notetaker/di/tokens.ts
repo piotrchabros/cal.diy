@@ -39,6 +39,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_CONFIG_MODULE: Symbol("NotetakerConfigModule"),
   NOTETAKER_CALENDAR_GUEST_GATEWAY: Symbol("NotetakerCalendarGuestGateway"),
   NOTETAKER_CALENDAR_GUEST_GATEWAY_MODULE: Symbol("NotetakerCalendarGuestGatewayModule"),
+  NOTETAKER_CALENDAR_EVENTS_GATEWAY_RESOLVER: Symbol("NotetakerCalendarEventsGatewayResolver"),
+  NOTETAKER_CALENDAR_EVENTS_GATEWAY_RESOLVER_MODULE: Symbol("NotetakerCalendarEventsGatewayResolverModule"),
   NOTETAKER_CALENDAR_INVITE_SERVICE: Symbol("NotetakerCalendarInviteService"),
   NOTETAKER_CALENDAR_INVITE_SERVICE_MODULE: Symbol("NotetakerCalendarInviteServiceModule"),
   NOTETAKER_MEMBERSHIP_LOOKUP: Symbol("NotetakerMembershipLookup"),
