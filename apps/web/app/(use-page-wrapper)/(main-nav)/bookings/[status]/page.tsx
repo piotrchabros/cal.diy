@@ -42,11 +42,13 @@ const Page = async ({ params }: PageProps) => {
   // No teams in cal.diy, so canReadOthersBookings is always false.
   const canReadOthersBookings = false;
 
-  const [bookingAuditEnabled, bookingsV3Enabled, notetakerEnabled] = await Promise.all([
-    featuresRepository.checkIfUserHasFeature(userId, "booking-audit"),
-    featuresRepository.checkIfUserHasFeature(userId, "bookings-v3"),
-    featuresRepository.checkIfUserHasFeature(userId, "notetaker"),
-  ]);
+  const [bookingAuditEnabled, bookingsV3Enabled, notetakerEnabled, externalCalendarEventsEnabled] =
+    await Promise.all([
+      featuresRepository.checkIfUserHasFeature(userId, "booking-audit"),
+      featuresRepository.checkIfUserHasFeature(userId, "bookings-v3"),
+      featuresRepository.checkIfUserHasFeature(userId, "notetaker"),
+      featuresRepository.checkIfUserHasFeature(userId, "bookings-external-calendar-events"),
+    ]);
 
   return (
     <ShellMainAppDir
@@ -63,6 +65,7 @@ const Page = async ({ params }: PageProps) => {
         bookingsV3Enabled={bookingsV3Enabled}
         bookingAuditEnabled={bookingAuditEnabled}
         notetakerEnabled={notetakerEnabled}
+        externalCalendarEventsEnabled={externalCalendarEventsEnabled}
       />
     </ShellMainAppDir>
   );

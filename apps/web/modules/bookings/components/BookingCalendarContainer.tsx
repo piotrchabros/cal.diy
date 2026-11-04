@@ -1,6 +1,7 @@
 "use client";
 
 import dayjs from "@calcom/dayjs";
+import type { ExternalCalendarEventDto } from "@calcom/lib/dto/ExternalCalendarEventDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import useMeQuery from "@calcom/trpc/react/hooks/useMeQuery";
@@ -18,6 +19,7 @@ import { useCurrentWeekStart } from "~/bookings/hooks/useCurrentWeekStart";
 import { useFacetedUniqueValues } from "~/bookings/hooks/useFacetedUniqueValues";
 import { DataTableFilters } from "~/data-table/components/filters";
 import { buildFilterColumns, getFilterColumnVisibility } from "../columns/filterColumns";
+import { useExternalCalendarEvents } from "../hooks/useExternalCalendarEvents";
 import { getWeekStart } from "../lib/weekUtils";
 import { BookingDetailsSheetStoreProvider } from "../store/bookingDetailsSheetStore";
 import type { BookingListingStatus, BookingsGetOutput, RowData } from "../types";
@@ -35,6 +37,7 @@ interface BookingCalendarContainerProps {
     canReadOthersBookings: boolean;
   };
   bookingsV3Enabled: boolean;
+  externalCalendarEventsEnabled: boolean;
 }
 
 interface BookingCalendarInnerProps extends BookingCalendarContainerProps {
@@ -50,12 +53,14 @@ interface BookingCalendarInnerProps extends BookingCalendarContainerProps {
   hasNextPage: boolean;
   isFetched: boolean;
   isFetchingNextPage: boolean;
+  externalEvents?: ExternalCalendarEventDto[];
 }
 
 function BookingCalendarInner({
   status,
   permissions,
   bookingsV3Enabled,
+  externalCalendarEventsEnabled,
   data,
   allowedFilterIds,
   hasError,
@@ -63,6 +68,7 @@ function BookingCalendarInner({
   hasNextPage,
   isFetched,
   isFetchingNextPage,
+  externalEvents,
 }: BookingCalendarInnerProps) {
   const { t } = useLocale();
   const user = useMeQuery().data;
@@ -153,6 +159,7 @@ function BookingCalendarInner({
           bookings={bookings}
           currentWeekStart={currentWeekStart}
           onWeekStartChange={setCurrentWeekStart}
+          externalEvents={externalCalendarEventsEnabled ? externalEvents : undefined}
         />
       )}
 
@@ -170,10 +177,14 @@ export function BookingCalendarContainer(props: BookingCalendarContainerProps) {
   const { canReadOthersBookings } = props.permissions;
   const { userIds } = useBookingFilters();
   const { currentWeekStart, setCurrentWeekStart, userWeekStart } = useCurrentWeekStart();
+  const viewerId = useMeQuery().data?.id;
 
   const allowedFilterIds = useCalendarAllowedFilters({
     canReadOthersBookings,
   });
+
+  const weekFrom = useMemo(() => currentWeekStart.startOf("day").toDate(), [currentWeekStart]);
+  const weekTo = useMemo(() => currentWeekStart.add(6, "day").endOf("day").toDate(), [currentWeekStart]);
 
   const query = trpc.viewer.bookings.get.useInfiniteQuery(
     {
@@ -182,8 +193,8 @@ export function BookingCalendarContainer(props: BookingCalendarContainerProps) {
         statuses: STATUSES,
         userIds,
         // Always fetch only the current week for calendar view
-        afterStartDate: currentWeekStart.startOf("day").toISOString(),
-        beforeEndDate: currentWeekStart.add(6, "day").endOf("day").toISOString(),
+        afterStartDate: weekFrom.toISOString(),
+        beforeEndDate: weekTo.toISOString(),
       },
     },
     {
@@ -194,6 +205,15 @@ export function BookingCalendarContainer(props: BookingCalendarContainerProps) {
   );
 
   const { isFetched, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+
+  // External events only ever belong to the viewer, so a people filter that leaves them out hides them too.
+  const userFilterIncludesViewer =
+    !userIds || userIds.length === 0 || (viewerId !== undefined && userIds.includes(viewerId));
+  const externalEventsQuery = useExternalCalendarEvents({
+    enabled: props.externalCalendarEventsEnabled && userFilterIncludesViewer,
+    from: weekFrom,
+    to: weekTo,
+  });
 
   // Automatically fetch all pages until no more data
   useEffect(() => {
@@ -241,6 +261,7 @@ export function BookingCalendarContainer(props: BookingCalendarContainerProps) {
         hasNextPage={hasNextPage}
         isFetched={isFetched}
         isFetchingNextPage={isFetchingNextPage}
+        externalEvents={userFilterIncludesViewer ? externalEventsQuery.data?.events : undefined}
       />
     </BookingDetailsSheetStoreProvider>
   );

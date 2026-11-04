@@ -28,6 +28,7 @@ import {
 import type { BookingListingStatus, BookingsGetOutput, RowData } from "../types";
 import { BookingDetailsSheet } from "./BookingDetailsSheet";
 import { BookingList } from "./BookingList";
+import { ExternalCalendarEventsSection } from "./external-events/ExternalCalendarEventsSection";
 import { ViewToggleButton } from "./ViewToggleButton";
 
 interface FilterButtonProps {
@@ -65,6 +66,7 @@ interface BookingListContainerProps {
   };
   bookingsV3Enabled: boolean;
   bookingAuditEnabled: boolean;
+  externalCalendarEventsEnabled: boolean;
 }
 
 interface BookingListInnerProps extends BookingListContainerProps {
@@ -82,6 +84,7 @@ function BookingListInner({
   bookings,
   bookingsV3Enabled,
   bookingAuditEnabled,
+  externalCalendarEventsEnabled,
   data,
   isPending,
   hasError,
@@ -205,6 +208,9 @@ function BookingListInner({
       )}
       {status === "upcoming" && !isEmpty && (
         <WipeMyCalActionButton className="mt-4" bookingStatus={status} bookingsEmpty={isEmpty} />
+      )}
+      {status === "upcoming" && externalCalendarEventsEnabled && displayedFilterCount === 0 && (
+        <ExternalCalendarEventsSection enabled />
       )}
       <div className="mt-4">
         <BookingList
