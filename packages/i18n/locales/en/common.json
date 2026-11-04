@@ -4966,6 +4966,7 @@
   "notetaker_event_type_unavailable_cal_video": "The notetaker is not available for event types that use Cal Video. Use the built-in Cal Video transcription instead.",
   "notetaker_disclosure": "This meeting will be transcribed by an automated notetaker on behalf of {{host}}.",
   "notetaker_enabled_by_event_type_default": "Enabled by the event type default on {{date}}",
+  "notetaker_enabled_by_calendar_auto_join": "Added from your calendar on {{date}}",
   "notetaker_scope_title": "Apply to which bookings?",
   "notetaker_scope_description": "This is a recurring booking. Apply the change to this booking only, or to this booking and every future occurrence.",
   "notetaker_scope_this_booking": "This booking",

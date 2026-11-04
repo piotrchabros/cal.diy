@@ -639,7 +639,8 @@ model Team {
   managedOrganizations ManagedOrganization[] @relation("ManagerOrganization")
   filterSegments       FilterSegment[]
 
-  notetakerSharingSettings EventTypeNotetakerSettings[]
+  notetakerSharingSettings   EventTypeNotetakerSettings[]
+  notetakerCalendarAutoJoins NotetakerCalendarAutoJoin[]
 
   teamBilling               TeamBilling?               @relation("TeamBilling")
   organizationBilling       OrganizationBilling?       @relation("OrganizationBilling")
@@ -855,74 +856,75 @@ enum BookingStatus {
 }
 
 model Booking {
-  id                     Int                        @id @default(autoincrement())
-  uid                    String                     @unique
+  id                       Int                        @id @default(autoincrement())
+  uid                      String                     @unique
   // (optional) UID based on slot start/end time & email against duplicates
-  idempotencyKey         String?                    @unique
-  user                   User?                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId                 Int?
+  idempotencyKey           String?                    @unique
+  user                     User?                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                   Int?
   // User's email at the time of booking
   /// @zod.import(["import { emailSchema } from '../../zod-utils'"]).custom.use(emailSchema)
-  userPrimaryEmail       String?
-  references             BookingReference[]
-  eventType              EventType?                 @relation(fields: [eventTypeId], references: [id])
-  eventTypeId            Int?
-  title                  String
-  description            String?
-  customInputs           Json?
+  userPrimaryEmail         String?
+  references               BookingReference[]
+  eventType                EventType?                 @relation(fields: [eventTypeId], references: [id])
+  eventTypeId              Int?
+  title                    String
+  description              String?
+  customInputs             Json?
   /// @zod.import(["import { bookingResponses } from '../../zod-utils'"]).custom.use(bookingResponses)
-  responses              Json?
-  startTime              DateTime
-  endTime                DateTime
-  attendees              Attendee[]
-  location               String?
-  createdAt              DateTime                   @default(now())
-  updatedAt              DateTime?                  @updatedAt
-  status                 BookingStatus              @default(ACCEPTED)
-  paid                   Boolean                    @default(false)
-  payment                Payment[]
-  destinationCalendar    DestinationCalendar?       @relation(fields: [destinationCalendarId], references: [id])
-  destinationCalendarId  Int?
-  cancellationReason     String?
-  rejectionReason        String?
-  reassignReason         String?
-  reassignBy             User?                      @relation("reassignByUser", fields: [reassignById], references: [id])
-  reassignById           Int?
-  dynamicEventSlugRef    String?
-  dynamicGroupSlugRef    String?
-  rescheduled            Boolean?
-  fromReschedule         String?
-  recurringEventId       String?
-  smsReminderNumber      String?
-  scheduledJobs          String[] // scheduledJobs is deprecated, please use scheduledTriggers instead
-  seatsReferences        BookingSeat[]
+  responses                Json?
+  startTime                DateTime
+  endTime                  DateTime
+  attendees                Attendee[]
+  location                 String?
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime?                  @updatedAt
+  status                   BookingStatus              @default(ACCEPTED)
+  paid                     Boolean                    @default(false)
+  payment                  Payment[]
+  destinationCalendar      DestinationCalendar?       @relation(fields: [destinationCalendarId], references: [id])
+  destinationCalendarId    Int?
+  cancellationReason       String?
+  rejectionReason          String?
+  reassignReason           String?
+  reassignBy               User?                      @relation("reassignByUser", fields: [reassignById], references: [id])
+  reassignById             Int?
+  dynamicEventSlugRef      String?
+  dynamicGroupSlugRef      String?
+  rescheduled              Boolean?
+  fromReschedule           String?
+  recurringEventId         String?
+  smsReminderNumber        String?
+  scheduledJobs            String[] // scheduledJobs is deprecated, please use scheduledTriggers instead
+  seatsReferences          BookingSeat[]
   /// @zod.import(["import { bookingMetadataSchema } from '../../zod-utils'"]).custom.use(bookingMetadataSchema)
-  metadata               Json?
-  isRecorded             Boolean                    @default(false)
-  iCalUID                String?                    @default("")
-  iCalSequence           Int                        @default(0)
-  instantMeetingToken    InstantMeetingToken?
-  rating                 Int?
-  ratingFeedback         String?
-  noShowHost             Boolean?                   @default(false)
-  scheduledTriggers      WebhookScheduledTriggers[]
-  oneTimePassword        String?                    @unique @default(uuid())
+  metadata                 Json?
+  isRecorded               Boolean                    @default(false)
+  iCalUID                  String?                    @default("")
+  iCalSequence             Int                        @default(0)
+  instantMeetingToken      InstantMeetingToken?
+  rating                   Int?
+  ratingFeedback           String?
+  noShowHost               Boolean?                   @default(false)
+  scheduledTriggers        WebhookScheduledTriggers[]
+  oneTimePassword          String?                    @unique @default(uuid())
   /// @zod.import(["import { emailSchema } from '../../zod-utils'"]).custom.use(emailSchema)
-  cancelledBy            String?
+  cancelledBy              String?
   /// @zod.import(["import { emailSchema } from '../../zod-utils'"]).custom.use(emailSchema)
-  rescheduledBy          String?
-  assignmentReason       AssignmentReason[]
-  internalNote           BookingInternalNote[]
-  creationSource         CreationSource?
-  tracking               Tracking?
-  expenseLogs            CreditExpenseLog[]
-  report                 BookingReport?
-  wrongAssignmentReports WrongAssignmentReport[]
-  notetaker              BookingNotetaker?
-  notetakerSessions      NotetakerSession[]
-  notetakerTranscripts   NotetakerTranscript[]
-  notetakerSharingGrant  NotetakerSharingGrant?
-  notetakerActivities    NotetakerActivity[]
+  rescheduledBy            String?
+  assignmentReason         AssignmentReason[]
+  internalNote             BookingInternalNote[]
+  creationSource           CreationSource?
+  tracking                 Tracking?
+  expenseLogs              CreditExpenseLog[]
+  report                   BookingReport?
+  wrongAssignmentReports   WrongAssignmentReport[]
+  notetaker                BookingNotetaker?
+  notetakerSessions        NotetakerSession[]
+  notetakerTranscripts     NotetakerTranscript[]
+  notetakerSharingGrant    NotetakerSharingGrant?
+  notetakerActivities      NotetakerActivity[]
+  notetakerCalendarMeeting NotetakerCalendarMeeting?
 
   // @@partial_index([reassignById])
 
@@ -1041,6 +1043,7 @@ model SelectedCalendar {
   eventType   EventType? @relation(fields: [eventTypeId], references: [id])
 
   calendarCacheEvents CalendarCacheEvent[]
+  notetakerAutoJoin   NotetakerCalendarAutoJoin?
 
   // It could still allow multiple user-level(eventTypeId is null) selected calendars for same userId, integration, externalId because NULL is not equal to NULL
   // We currently ensure uniqueness by checking for the existence of the record before creating a new one
@@ -2896,6 +2899,7 @@ enum NotetakerBotProvider {
 enum NotetakerChoiceSource {
   HOST
   EVENT_TYPE_DEFAULT
+  CALENDAR_AUTO_JOIN
 }
 
 enum NotetakerTranscriptCompleteness {
@@ -3005,6 +3009,7 @@ model NotetakerSession {
 
   @@index([bookingId])
   @@index([status])
+  @@index([meetingUrl, status])
 }
 
 model NotetakerTranscript {
@@ -3087,6 +3092,55 @@ model NotetakerActivity {
   createdAt   DateTime                @default(now())
 
   @@index([bookingId, createdAt])
+}
+
+model NotetakerCalendarAutoJoin {
+  selectedCalendarId String           @id
+  selectedCalendar   SelectedCalendar @relation(fields: [selectedCalendarId], references: [id], onDelete: Cascade)
+  // Soft reference to User.id without an FK
+  userId             Int
+  enabled            Boolean          @default(true)
+  sharingTeamId      Int?
+  sharingTeam        Team?            @relation(fields: [sharingTeamId], references: [id], onDelete: SetNull)
+  lastPolledAt       DateTime?
+  lastPollError      String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([enabled, lastPolledAt])
+  @@index([userId])
+}
+
+model NotetakerCalendarMeeting {
+  id           String                                @id @default(uuid())
+  bookingId    Int                                   @unique
+  booking      Booking                               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  meetingKey   String
+  startTime    DateTime
+  endTime      DateTime
+  iCalUID      String?
+  // Soft reference to User.id without an FK
+  ownerUserId  Int
+  createdAt    DateTime                              @default(now())
+  updatedAt    DateTime                              @updatedAt
+  participants NotetakerCalendarMeetingParticipant[]
+
+  @@unique([meetingKey, startTime])
+}
+
+model NotetakerCalendarMeetingParticipant {
+  meetingId          String
+  meeting            NotetakerCalendarMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  // Soft reference to User.id without an FK
+  userId             Int
+  selectedCalendarId String
+  externalEventId    String
+  lastSeenAt         DateTime
+  removedAt          DateTime?
+
+  @@id([meetingId, userId])
+  @@index([selectedCalendarId, externalEventId])
+  @@index([userId])
 }
 
 model EventTypeNotetakerSharingMember {

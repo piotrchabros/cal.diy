@@ -25,6 +25,7 @@ const initialData: AppFlags = {
   "signup-watchlist-review": false,
   "sink-shortener": false,
   notetaker: false,
+  "notetaker-calendar-auto-join": false,
 };
 
 export function useFlags(): Partial<AppFlags> {
