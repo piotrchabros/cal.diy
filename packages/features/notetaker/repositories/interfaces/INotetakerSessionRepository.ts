@@ -67,6 +67,11 @@ export interface INotetakerSessionRepository {
     bookingId: number,
     statuses: NotetakerSessionStatusDto[]
   ): Promise<NotetakerSessionRecord | null>;
+  /** A session in a live status on the same meeting URL, belonging to any other booking. */
+  findLiveByMeetingUrlExcludingBooking(params: {
+    meetingUrl: string;
+    excludeBookingId: number;
+  }): Promise<NotetakerSessionRecord | null>;
   updateIfStatusIn(
     id: string,
     fromStatuses: NotetakerSessionStatusDto[],

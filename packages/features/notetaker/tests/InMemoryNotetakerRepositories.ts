@@ -7,6 +7,7 @@ import {
   NOTETAKER_AD_HOC_SHARING_TEAM_KEY,
   readAdHocBookingMetadata,
 } from "../lib/adHocMeeting";
+import { NOTETAKER_LIVE_SESSION_STATUSES } from "../lib/sessionStateMachine";
 import type { NotetakerSharingTeam } from "../lib/sharingScope";
 import { deriveNotetakerSharingTeam } from "../lib/sharingScope";
 import type {
@@ -1119,6 +1120,21 @@ export class InMemoryNotetakerSessionRepository implements INotetakerSessionRepo
   async findLatestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null> {
     const latest = this.sessionsOfBookingLatestFirst(bookingId)[0];
     return latest ? copySession(latest) : null;
+  }
+
+  async findLiveByMeetingUrlExcludingBooking(params: {
+    meetingUrl: string;
+    excludeBookingId: number;
+  }): Promise<NotetakerSessionRecord | null> {
+    const live = Array.from(this.store.sessions.values())
+      .filter(
+        (session) =>
+          session.meetingUrl === params.meetingUrl &&
+          session.bookingId !== params.excludeBookingId &&
+          NOTETAKER_LIVE_SESSION_STATUSES.includes(session.status)
+      )
+      .sort(compareLatestSessionFirst)[0];
+    return live ? copySession(live) : null;
   }
 
   async findEarliestByBookingId(bookingId: number): Promise<NotetakerSessionRecord | null> {
