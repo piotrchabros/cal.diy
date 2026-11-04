@@ -27,6 +27,7 @@ export type AppFlags = {
   "sink-shortener": boolean;
   notetaker: boolean;
   "notetaker-calendar-auto-join": boolean;
+  "bookings-external-calendar-events": boolean;
 };
 
 export type TeamFeatures = Record<keyof AppFlags, boolean>;

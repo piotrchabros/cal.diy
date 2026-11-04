@@ -26,6 +26,7 @@ const initialData: AppFlags = {
   "sink-shortener": false,
   notetaker: false,
   "notetaker-calendar-auto-join": false,
+  "bookings-external-calendar-events": false,
 };
 
 export function useFlags(): Partial<AppFlags> {
