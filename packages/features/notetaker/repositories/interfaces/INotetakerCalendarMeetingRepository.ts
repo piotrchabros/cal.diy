@@ -86,7 +86,23 @@ export interface INotetakerCalendarMeetingRepository {
   transferOwner(params: { meetingId: string; bookingId: number; userId: number }): Promise<void>;
   /** Cancels the booking and disables its notetaker choice. */
   cancel(params: { meetingId: string; bookingId: number }): Promise<void>;
+  /**
+   * Undoes cancel for the user: accepts the booking under them as owner, re-arms the notetaker choice
+   * as a fresh calendar auto-join choice with a system activity, and revives their participant row.
+   */
+  revive(params: {
+    meetingId: string;
+    bookingId: number;
+    userId: number;
+    email: string;
+    name: string;
+    timeZone: string;
+    selectedCalendarId: string;
+    externalEventId: string;
+    seenAt: Date;
+  }): Promise<void>;
   isParticipant(params: { bookingId: number; userId: number }): Promise<boolean>;
+  listActiveParticipantUserIds(params: { bookingId: number }): Promise<number[]>;
   countCreatedByOwnerSince(params: { userId: number; since: Date }): Promise<number>;
   /**
    * A live Cal.diy booking matching the calendar event by iCalUID or booking reference uid.

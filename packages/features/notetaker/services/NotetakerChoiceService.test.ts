@@ -168,6 +168,7 @@ describe("NotetakerChoiceService", () => {
   let logger: ReturnType<typeof createLogger>;
   let service: NotetakerChoiceService;
   let membershipLookup: InMemoryNotetakerMembershipLookup;
+  let calendarParticipantIds: Set<number>;
 
   function buildService(
     config: NotetakerConfig = buildConfig(),
@@ -188,6 +189,9 @@ describe("NotetakerChoiceService", () => {
         sessionRepository: repositories.sessionRepository,
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup,
+        calendarMeetingRepository: {
+          isParticipant: async ({ userId }) => calendarParticipantIds.has(userId),
+        },
       }),
       membershipLookup,
       featuresRepository: { checkIfUserHasFeature },
@@ -371,6 +375,7 @@ describe("NotetakerChoiceService", () => {
     users = [userRecord(ORGANIZER_ID, "Organizer"), userRecord(CO_HOST_ID, "Co Host")];
     repositories = createInMemoryNotetakerRepositories();
     membershipLookup = new InMemoryNotetakerMembershipLookup();
+    calendarParticipantIds = new Set();
     tasker = new RecordingNotetakerTasker();
     logger = createLogger();
     service = buildService();
@@ -806,12 +811,53 @@ describe("NotetakerChoiceService", () => {
         canStop: false,
         isRecurring: false,
         isAdHoc: false,
+        isCalendarMeeting: false,
         session: null,
         transcript: null,
         summary: null,
         sharedWithAttendees: false,
         access: { attendees: false, colleagues: null },
       });
+    });
+
+    it("flags a booking whose metadata marks it as a calendar meeting", async () => {
+      repositories.store.addBooking(buildBooking({ metadata: { notetakerCalendarMeeting: "true" } }));
+
+      const state = await getState();
+
+      expect(state.isCalendarMeeting).toBe(true);
+    });
+
+    it("lets a calendar meeting participant read and stop, but not toggle or see the choice", async () => {
+      repositories.store.addBooking(
+        buildBooking({ eventTypeId: null, metadata: { notetakerCalendarMeeting: "true" } })
+      );
+      await enable();
+      await repositories.bookingNotetakerRepository.clearPendingDispatch(BOOKING_ID);
+      await createSession("TRANSCRIBING");
+      calendarParticipantIds.add(STRANGER_ID);
+
+      const state = await getState(STRANGER_ID);
+
+      expect(state.viewerRole).toBe("PARTICIPANT");
+      expect(state.canStop).toBe(true);
+      expect(state.canToggle).toBe(false);
+      expect(state.choice).toBeNull();
+      expect(state.access).toBeUndefined();
+      expect(state.isCalendarMeeting).toBe(true);
+    });
+
+    it("refuses a calendar meeting participant who turns the notetaker off for everyone", async () => {
+      repositories.store.addBooking(
+        buildBooking({ eventTypeId: null, metadata: { notetakerCalendarMeeting: "true" } })
+      );
+      await enable();
+      calendarParticipantIds.add(STRANGER_ID);
+
+      const error = await captureError(disable(STRANGER_ID));
+
+      expect(error.code).toBe(ErrorCode.Forbidden);
+      expect(repositories.store.choices.get(BOOKING_ID)?.enabled).toBe(true);
     });
 
     it("flags a booking whose metadata marks it as ad-hoc", async () => {

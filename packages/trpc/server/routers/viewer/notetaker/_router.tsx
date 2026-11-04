@@ -12,6 +12,7 @@ import { ZListEventTypeSharingCandidatesInputSchema } from "./listEventTypeShari
 import { ZListPassagesInputSchema } from "./listPassages.schema";
 import { ZListSharedWithMeInputSchema } from "./listSharedWithMe.schema";
 import { ZRegenerateSummaryInputSchema } from "./regenerateSummary.schema";
+import { ZSetCalendarAutoJoinInputSchema } from "./setCalendarAutoJoin.schema";
 import { ZSetEnabledInputSchema } from "./setEnabled.schema";
 import { ZSetEventTypeDefaultInputSchema } from "./setEventTypeDefault.schema";
 import { ZSetEventTypeSharingInputSchema } from "./setEventTypeSharing.schema";
@@ -135,4 +136,16 @@ export const notetakerRouter = router({
     const { dispatchToMeetingHandler } = await import("./dispatchToMeeting.handler");
     return dispatchToMeetingHandler({ ctx, input });
   }),
+
+  listCalendarAutoJoin: authedProcedure.query(async ({ ctx }) => {
+    const { listCalendarAutoJoinHandler } = await import("./listCalendarAutoJoin.handler");
+    return listCalendarAutoJoinHandler({ ctx });
+  }),
+
+  setCalendarAutoJoin: authedProcedure
+    .input(ZSetCalendarAutoJoinInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setCalendarAutoJoinHandler } = await import("./setCalendarAutoJoin.handler");
+      return setCalendarAutoJoinHandler({ ctx, input });
+    }),
 });

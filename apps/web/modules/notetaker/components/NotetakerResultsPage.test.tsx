@@ -102,6 +102,7 @@ function buildState(overrides: Partial<NotetakerStateDto> = {}): NotetakerStateD
     canStop: false,
     isRecurring: false,
     isAdHoc: false,
+    isCalendarMeeting: false,
     session: buildSession(),
     transcript: buildTranscript(),
     summary: null,

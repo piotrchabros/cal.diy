@@ -205,6 +205,7 @@ describe("NotetakerSummaryService", () => {
         sessionRepository: repositories.sessionRepository,
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup: new InMemoryNotetakerMembershipLookup(),
+        calendarMeetingRepository: { isParticipant: async () => false },
       }),
       sessionRepository: repositories.sessionRepository,
       transcriptRepository: repositories.transcriptRepository,

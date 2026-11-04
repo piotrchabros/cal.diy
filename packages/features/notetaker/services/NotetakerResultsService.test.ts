@@ -255,6 +255,7 @@ describe("NotetakerResultsService", () => {
       sessionRepository,
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       membershipLookup,
+      calendarMeetingRepository: { isParticipant: async () => false },
     });
     const userRepository: INotetakerUserLookup = {
       findByIds: async ({ ids }) => users.filter((user) => ids.includes(user.id)),

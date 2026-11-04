@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   getActivityHandler: vi.fn(),
   getAdHocOptionsHandler: vi.fn(),
   dispatchToMeetingHandler: vi.fn(),
+  listCalendarAutoJoinHandler: vi.fn(),
+  setCalendarAutoJoinHandler: vi.fn(),
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -72,6 +74,12 @@ vi.mock("./getAdHocOptions.handler", () => ({ getAdHocOptionsHandler: mocks.getA
 vi.mock("./dispatchToMeeting.handler", () => ({
   dispatchToMeetingHandler: mocks.dispatchToMeetingHandler,
 }));
+vi.mock("./listCalendarAutoJoin.handler", () => ({
+  listCalendarAutoJoinHandler: mocks.listCalendarAutoJoinHandler,
+}));
+vi.mock("./setCalendarAutoJoin.handler", () => ({
+  setCalendarAutoJoinHandler: mocks.setCalendarAutoJoinHandler,
+}));
 
 const ctx: TRPCContextInner = {
   prisma,
@@ -101,6 +109,8 @@ const handlerMocks = [
   mocks.getActivityHandler,
   mocks.getAdHocOptionsHandler,
   mocks.dispatchToMeetingHandler,
+  mocks.listCalendarAutoJoinHandler,
+  mocks.setCalendarAutoJoinHandler,
 ];
 
 const procedures: {
@@ -233,6 +243,19 @@ const procedures: {
         sharingTeamId: null,
         acknowledgedNotice: true,
       }),
+  },
+  {
+    name: "listCalendarAutoJoin",
+    handler: mocks.listCalendarAutoJoinHandler,
+    expectedInput: undefined,
+    invoke: (caller) => caller.listCalendarAutoJoin(),
+  },
+  {
+    name: "setCalendarAutoJoin",
+    handler: mocks.setCalendarAutoJoinHandler,
+    expectedInput: { selectedCalendarId: "sc-1", enabled: true, sharingTeamId: null },
+    invoke: (caller) =>
+      caller.setCalendarAutoJoin({ selectedCalendarId: "sc-1", enabled: true, sharingTeamId: null }),
   },
 ];
 

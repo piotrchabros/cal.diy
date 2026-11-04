@@ -55,6 +55,12 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_SHARED_RESULTS_SERVICE_MODULE: Symbol("NotetakerSharedResultsServiceModule"),
   NOTETAKER_AD_HOC_SERVICE: Symbol("NotetakerAdHocService"),
   NOTETAKER_AD_HOC_SERVICE_MODULE: Symbol("NotetakerAdHocServiceModule"),
+  NOTETAKER_CALENDAR_AUTO_JOIN_SERVICE: Symbol("NotetakerCalendarAutoJoinService"),
+  NOTETAKER_CALENDAR_AUTO_JOIN_SERVICE_MODULE: Symbol("NotetakerCalendarAutoJoinServiceModule"),
+  NOTETAKER_CALENDAR_AUTO_JOIN_SETTINGS_SERVICE: Symbol("NotetakerCalendarAutoJoinSettingsService"),
+  NOTETAKER_CALENDAR_AUTO_JOIN_SETTINGS_SERVICE_MODULE: Symbol(
+    "NotetakerCalendarAutoJoinSettingsServiceModule"
+  ),
   RECALL_API_CLIENT: Symbol("RecallApiClient"),
   RECALL_API_CLIENT_MODULE: Symbol("RecallApiClientModule"),
   RECALL_WEBHOOK_SERVICE: Symbol("RecallWebhookService"),

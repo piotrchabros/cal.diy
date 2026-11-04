@@ -157,6 +157,7 @@ describe("NotetakerDispatchService", () => {
   };
   let tasker: RecordingTasker;
   let membershipLookup: InMemoryNotetakerMembershipLookup;
+  let calendarParticipantIds: Set<number>;
   let users: NotetakerUserRecord[];
   type InviteParams = Parameters<NotetakerCalendarInviteService["ensureBotInvited"]>[0];
   let inviteCalls: InviteParams[];
@@ -187,6 +188,7 @@ describe("NotetakerDispatchService", () => {
     logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
     tasker = new RecordingTasker();
     membershipLookup = new InMemoryNotetakerMembershipLookup();
+    calendarParticipantIds = new Set();
     inviteCalls = [];
     callLog = [];
     inviteBot = async () => "NOT_CONFIGURED";
@@ -226,6 +228,9 @@ describe("NotetakerDispatchService", () => {
         sessionRepository: repositories.sessionRepository,
         eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
         membershipLookup,
+        calendarMeetingRepository: {
+          isParticipant: async ({ userId }) => calendarParticipantIds.has(userId),
+        },
       }),
       userRepository,
       notetakerTasker: tasker,
@@ -2966,6 +2971,28 @@ describe("NotetakerDispatchService", () => {
           actorUserId: CO_HOST_ID,
           actorName: "Co Host",
         });
+      });
+
+      it("lets a calendar meeting participant stop the live bot", async () => {
+        const bookingId = await seedArmed({ metadata: { notetakerCalendarMeeting: "true" } });
+        const sessionId = await seedTranscribing(bookingId);
+        calendarParticipantIds.add(STRANGER_ID);
+
+        await hostStop(buildService(fakeBinding(knownGateway())), STRANGER_ID);
+
+        expect(stopRequests).toEqual([{ sessionId, reason: "STOPPED_BY_HOST" }]);
+        expect(repositories.store.sessions.get(sessionId)?.stopRequestedByUserId).toBe(STRANGER_ID);
+      });
+
+      it("rejects a calendar meeting participant on a booking that is not a calendar meeting", async () => {
+        const bookingId = await seedArmed();
+        await seedTranscribing(bookingId);
+        calendarParticipantIds.add(STRANGER_ID);
+
+        const error = await captureError(hostStop(buildService(fakeBinding(knownGateway())), STRANGER_ID));
+
+        expect(error.code).toBe(ErrorCode.Forbidden);
+        expect(stopRequests).toEqual([]);
       });
 
       const noActiveSessionCases: { name: string; status: NotetakerSessionStatusDto | null }[] = [

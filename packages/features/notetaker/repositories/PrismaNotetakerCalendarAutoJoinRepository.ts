@@ -5,6 +5,7 @@ import type {
   INotetakerCalendarAutoJoinRepository,
   NotetakerCalendarAutoJoinSettingRecord,
   NotetakerUserLevelSelectedCalendarRecord,
+  NotetakerUserLevelSelectedCalendarWithAutoJoinRecord,
 } from "./interfaces/INotetakerCalendarAutoJoinRepository";
 
 const dueSelect = {
@@ -94,5 +95,21 @@ export class PrismaNotetakerCalendarAutoJoinRepository implements INotetakerCale
       where: { id: params.selectedCalendarId, userId: params.userId, eventTypeId: null },
       select: { id: true, integration: true },
     });
+  }
+
+  async findUserLevelSelectedCalendarsIncludeAutoJoin(params: {
+    userId: number;
+  }): Promise<NotetakerUserLevelSelectedCalendarWithAutoJoinRecord[]> {
+    const rows = await this.prismaClient.selectedCalendar.findMany({
+      where: { userId: params.userId, eventTypeId: null },
+      orderBy: [{ integration: "asc" }, { externalId: "asc" }],
+      select: {
+        id: true,
+        integration: true,
+        externalId: true,
+        notetakerAutoJoin: { select: { enabled: true, sharingTeamId: true, lastPollError: true } },
+      },
+    });
+    return rows.map(({ notetakerAutoJoin, ...row }) => ({ ...row, autoJoin: notetakerAutoJoin }));
   }
 }

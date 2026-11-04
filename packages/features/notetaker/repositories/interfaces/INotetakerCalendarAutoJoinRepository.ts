@@ -11,6 +11,13 @@ export type NotetakerUserLevelSelectedCalendarRecord = {
   integration: string;
 };
 
+export type NotetakerUserLevelSelectedCalendarWithAutoJoinRecord = {
+  id: string;
+  integration: string;
+  externalId: string;
+  autoJoin: { enabled: boolean; sharingTeamId: number | null; lastPollError: string | null } | null;
+};
+
 export interface INotetakerCalendarAutoJoinRepository {
   /**
    * Enabled rows never polled or last polled before `polledBefore`, limited to user-level selected
@@ -35,4 +42,8 @@ export interface INotetakerCalendarAutoJoinRepository {
     selectedCalendarId: string;
     userId: number;
   }): Promise<NotetakerUserLevelSelectedCalendarRecord | null>;
+  /** Every user-level selected calendar of the user, with its auto-join row when one exists. */
+  findUserLevelSelectedCalendarsIncludeAutoJoin(params: {
+    userId: number;
+  }): Promise<NotetakerUserLevelSelectedCalendarWithAutoJoinRecord[]>;
 }

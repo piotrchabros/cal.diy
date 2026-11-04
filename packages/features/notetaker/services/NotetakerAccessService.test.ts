@@ -57,6 +57,8 @@ describe("NotetakerAccessService", () => {
     typeof createInMemoryNotetakerRepositories
   >["bookingNotetakerRepository"];
   let membershipLookup: InMemoryNotetakerMembershipLookup;
+  let calendarParticipantIds: Set<number>;
+  let isParticipantCalls: number;
   let service: NotetakerAccessService;
 
   beforeEach(() => {
@@ -64,11 +66,19 @@ describe("NotetakerAccessService", () => {
     store = repositories.store;
     bookingNotetakerRepository = repositories.bookingNotetakerRepository;
     membershipLookup = new InMemoryNotetakerMembershipLookup();
+    calendarParticipantIds = new Set();
+    isParticipantCalls = 0;
     service = new NotetakerAccessService({
       bookingNotetakerRepository,
       sessionRepository: repositories.sessionRepository,
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       membershipLookup,
+      calendarMeetingRepository: {
+        isParticipant: async ({ bookingId, userId }) => {
+          isParticipantCalls++;
+          return bookingId === BOOKING_ID && calendarParticipantIds.has(userId);
+        },
+      },
     });
   });
 
@@ -277,6 +287,80 @@ describe("NotetakerAccessService", () => {
 
       const attendee = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ATTENDEE_USER_ID });
       expect(attendee.role).toBe("ATTENDEE");
+    });
+  });
+
+  describe("calendar meeting participant", () => {
+    const calendarMeetingBooking = () =>
+      buildBooking({ eventTypeId: null, metadata: { notetakerCalendarMeeting: "true" } });
+
+    it("treats an active participant as PARTICIPANT without a grant", async () => {
+      store.addBooking(calendarMeetingBooking());
+      calendarParticipantIds.add(STRANGER_ID);
+
+      const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: STRANGER_ID });
+
+      expect(result.role).toBe("PARTICIPANT");
+    });
+
+    it("keeps a participant who is also a granted attendee a PARTICIPANT", async () => {
+      store.addBooking(calendarMeetingBooking());
+      store.setVerifiedEmails(ATTENDEE_USER_ID, [ATTENDEE_EMAIL]);
+      calendarParticipantIds.add(ATTENDEE_USER_ID);
+      await grant();
+
+      const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ATTENDEE_USER_ID });
+
+      expect(result.role).toBe("PARTICIPANT");
+    });
+
+    it("keeps the owner a HOST without asking the participant list", async () => {
+      store.addBooking(calendarMeetingBooking());
+      calendarParticipantIds.add(ORGANIZER_ID);
+
+      const result = await service.resolveViewerRole({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID });
+
+      expect(result.role).toBe("HOST");
+      expect(isParticipantCalls).toBe(0);
+    });
+
+    it("rejects a user who is not or no longer a participant", async () => {
+      store.addBooking(calendarMeetingBooking());
+
+      await expectDenied(STRANGER_ID);
+    });
+
+    it("never asks the participant list for a booking without the calendar meeting marker", async () => {
+      store.addBooking(buildBooking({ metadata: { notetakerCalendarMeeting: "false" } }));
+      calendarParticipantIds.add(STRANGER_ID);
+
+      await expectDenied(STRANGER_ID);
+      expect(isParticipantCalls).toBe(0);
+    });
+
+    it("lets a participant stop, but refuses them every host-only action", async () => {
+      store.addBooking(calendarMeetingBooking());
+      calendarParticipantIds.add(STRANGER_ID);
+
+      const booking = await service.assertCanStop({ bookingUid: BOOKING_UID, userId: STRANGER_ID });
+      expect(booking.id).toBe(BOOKING_ID);
+
+      const promise = service.assertHost({ bookingUid: BOOKING_UID, userId: STRANGER_ID });
+      await expect(promise).rejects.toMatchObject({
+        code: ErrorCode.Forbidden,
+        message: "Only a host of this booking can perform this action",
+      });
+    });
+
+    it("lets the owner stop and refuses a stranger", async () => {
+      store.addBooking(calendarMeetingBooking());
+
+      await expect(
+        service.assertCanStop({ bookingUid: BOOKING_UID, userId: ORGANIZER_ID })
+      ).resolves.toMatchObject({ id: BOOKING_ID });
+      await expect(
+        service.assertCanStop({ bookingUid: BOOKING_UID, userId: STRANGER_ID })
+      ).rejects.toMatchObject({ code: ErrorCode.Forbidden });
     });
   });
 

@@ -229,7 +229,11 @@ describe("NotetakerNotificationService", () => {
 
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
   let userLookup: FakeUserLookup;
+  let calendarParticipantIds: number[];
   let service: NotetakerNotificationService;
+  const calendarMeetingRepository = {
+    listActiveParticipantUserIds: vi.fn(async (_params: { bookingId: number }) => calendarParticipantIds),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -244,6 +248,7 @@ describe("NotetakerNotificationService", () => {
 
     repositories = createInMemoryNotetakerRepositories();
     userLookup = new FakeUserLookup();
+    calendarParticipantIds = [];
     service = new NotetakerNotificationService({
       bookingNotetakerRepository: repositories.bookingNotetakerRepository,
       activityRepository: repositories.activityRepository,
@@ -251,6 +256,7 @@ describe("NotetakerNotificationService", () => {
       transcriptRepository: repositories.transcriptRepository,
       summaryRepository: repositories.summaryRepository,
       userRepository: userLookup,
+      calendarMeetingRepository,
       logger,
     });
     repositories.store.addBooking(buildBooking());
@@ -469,6 +475,38 @@ describe("NotetakerNotificationService", () => {
       expect(second.locale).toBe("en");
       expect(second.timeZone).toBe("America/New_York");
       expect(second.t).toBe(translatorFor("en"));
+    });
+
+    it("adds every active participant of a calendar meeting once, the owner included", async () => {
+      repositories.store.removeBooking(BOOKING_ID);
+      repositories.store.addBooking(buildBooking({ metadata: { notetakerCalendarMeeting: "true" } }));
+      userLookup.users = [buildUser(ORGANIZER_ID), buildUser(SECOND_HOST_ID), buildUser(THIRD_USER_ID)];
+      calendarParticipantIds = [ORGANIZER_ID, THIRD_USER_ID];
+      await seedEnabled(null);
+      const sessionId = await seedReadySession();
+
+      await send(sessionId);
+
+      expect(sendMock.mock.calls.map(([input]) => input.to.email).sort()).toEqual([
+        "user1@example.com",
+        "user3@example.com",
+      ]);
+      expect(calendarMeetingRepository.listActiveParticipantUserIds).toHaveBeenCalledWith({
+        bookingId: BOOKING_ID,
+      });
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("does not read calendar meeting participants for any other booking", async () => {
+      userLookup.users = [buildUser(ORGANIZER_ID)];
+      calendarParticipantIds = [THIRD_USER_ID];
+      await seedEnabled(null);
+      const sessionId = await seedReadySession();
+
+      await send(sessionId);
+
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(calendarMeetingRepository.listActiveParticipantUserIds).not.toHaveBeenCalled();
     });
 
     it("skips a user the lookup does not return", async () => {
@@ -968,6 +1006,16 @@ describe("NotetakerNotificationService", () => {
         "REJECTED",
       ] as const)("resolves without sending for a %s booking", async (status) => {
         repositories.store.addBooking(buildBooking({ status }));
+        await seedChoice();
+        setAttendees([buildAttendee(ANN)]);
+
+        await expect(sendNotice()).resolves.toBeUndefined();
+
+        await expectSkipped();
+      });
+
+      it("resolves without emailing anyone for a calendar meeting", async () => {
+        repositories.store.addBooking(buildBooking({ metadata: { notetakerCalendarMeeting: "true" } }));
         await seedChoice();
         setAttendees([buildAttendee(ANN)]);
 
@@ -2302,6 +2350,7 @@ describe("NotetakerNotificationService", () => {
           transcriptRepository: repositories.transcriptRepository,
           summaryRepository: repositories.summaryRepository,
           userRepository: userLookup,
+          calendarMeetingRepository,
           logger,
         });
         await seedSession();
