@@ -6,6 +6,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerBotJoinRequest, NotetakerBotStopReason } from "@calcom/lib/notetaker/botContract";
 import type { INotetakerBotGatewayResolver, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "../bot/INotetakerBotGateway";
+import { parseAdHocMeetingUrl } from "../lib/adHocMeeting";
 import type { NotetakerConfig } from "../lib/config";
 import { NOTETAKER_SWEEP_BATCH_SIZE } from "../lib/config";
 import { getBookingNotetakerEligibility, resolveMeetingLink } from "../lib/eligibility";
@@ -31,6 +32,9 @@ const STARTED_LATE_THRESHOLD_MS = 60_000;
 // Enabling inside the join-lead window enqueues the enable-time notice and this one milliseconds
 // apart; without a delay both tasks would read the same recipient list and both would send.
 const ATTENDEE_NOTICE_DELAY = "30s";
+
+// Booking ids start at 1, so excluding 0 excludes nothing when no booking exists yet.
+const NO_BOOKING_ID = 0;
 
 type PreparedSession = { session: NotetakerSessionRecord; joinRequest: NotetakerBotJoinRequest };
 
@@ -374,6 +378,35 @@ export class NotetakerDispatchService {
     await this.dispatchBooking(booking, binding);
   }
 
+  async isMeetingLinkTaken(params: { meetingUrl: string }): Promise<boolean> {
+    const session = await this.findLiveSessionAtMeetingLink({
+      meetingUrl: params.meetingUrl,
+      excludeBookingId: NO_BOOKING_ID,
+    });
+    return session !== null;
+  }
+
+  // Ad-hoc and calendar meetings store the canonical link while booking integrations store the provider's
+  // URL as-is, so both forms are looked up.
+  private async findLiveSessionAtMeetingLink(params: {
+    meetingUrl: string;
+    excludeBookingId: number;
+  }): Promise<NotetakerSessionRecord | null> {
+    const { meetingUrl, excludeBookingId } = params;
+    const canonical = parseAdHocMeetingUrl(meetingUrl, this.deps.config.enabledPlatforms);
+    const links =
+      canonical.ok && canonical.meetingUrl !== meetingUrl ? [canonical.meetingUrl, meetingUrl] : [meetingUrl];
+
+    for (const link of links) {
+      const session = await this.deps.sessionRepository.findLiveByMeetingUrlExcludingBooking({
+        meetingUrl: link,
+        excludeBookingId,
+      });
+      if (session) return session;
+    }
+    return null;
+  }
+
   async stopForBooking(
     params:
       | { bookingUid: string; reason: "DISABLED" }
@@ -594,6 +627,24 @@ export class NotetakerDispatchService {
       NOTETAKER_LIVE_SESSION_STATUSES
     );
     if (liveSession) return;
+
+    // Also before the swap: two bookings on one link would put two bots in the call, so this one stays
+    // armed and a later sweep dispatches it once the other bot has left.
+    const meetingUrl = resolveMeetingLink(booking);
+    if (meetingUrl !== null) {
+      const otherSession = await this.findLiveSessionAtMeetingLink({
+        meetingUrl,
+        excludeBookingId: booking.id,
+      });
+      if (otherSession) {
+        this.deps.logger.info("Notetaker dispatch deferred: another booking's notetaker is in the meeting", {
+          bookingId: booking.id,
+          otherBookingId: otherSession.bookingId,
+          otherSessionId: otherSession.id,
+        });
+        return;
+      }
+    }
 
     const wonSwap = await bookingNotetakerRepository.clearPendingDispatch(booking.id);
     if (!wonSwap) return;

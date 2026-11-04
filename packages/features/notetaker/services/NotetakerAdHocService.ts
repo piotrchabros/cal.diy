@@ -49,7 +49,8 @@ export type NotetakerAdHocErrorCode =
   | "WRAPPED_MEETING_LINK"
   | "AD_HOC_LIMIT_REACHED"
   | "TEAM_NOT_ALLOWED"
-  | "INVALID_DURATION";
+  | "INVALID_DURATION"
+  | "MEETING_ALREADY_RECORDED";
 
 export type NotetakerAdHocOptions = {
   featureEnabled: boolean;
@@ -68,7 +69,7 @@ export interface INotetakerAdHocServiceDeps {
   membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   choiceService: Pick<NotetakerChoiceService, "setEnabled">;
-  dispatchService: Pick<NotetakerDispatchService, "dispatchForBooking">;
+  dispatchService: Pick<NotetakerDispatchService, "dispatchForBooking" | "isMeetingLinkTaken">;
   userRepository: INotetakerUserLookup;
   config: NotetakerConfig;
   logger: ISimpleLogger;
@@ -127,6 +128,10 @@ export class NotetakerAdHocService {
     // Pasting the same link again, e.g. after a reload, returns the live meeting instead of a second bot.
     const sameMeeting = active.find((meeting) => meeting.location === link.meetingUrl);
     if (sameMeeting) return { bookingUid: sameMeeting.bookingUid, reused: true };
+    // Someone else's notetaker already records this call; a second bot would only duplicate it.
+    if (await dispatchService.isMeetingLinkTaken({ meetingUrl: link.meetingUrl })) {
+      throw adHocError("MEETING_ALREADY_RECORDED");
+    }
 
     if (active.length >= adHocLimits.maxActiveMeetings) throw adHocError("AD_HOC_LIMIT_REACHED");
     const createdToday = await bookingNotetakerRepository.countAdHocByUserIdSince({

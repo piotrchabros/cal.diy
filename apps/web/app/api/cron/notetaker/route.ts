@@ -1,8 +1,14 @@
 import process from "node:process";
+import { getNotetakerCalendarAutoJoinService } from "@calcom/features/notetaker/di/NotetakerCalendarAutoJoinService.container";
 import { getNotetakerDispatchService } from "@calcom/features/notetaker/di/NotetakerDispatchService.container";
+import type { NotetakerCalendarPollCounts } from "@calcom/features/notetaker/services/NotetakerCalendarAutoJoinService";
+import logger from "@calcom/lib/logger";
+import { safeStringify } from "@calcom/lib/safeStringify";
 import { defaultResponderForAppDir } from "@calcom/web/app/api/defaultResponderForAppDir";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+const log = logger.getSubLogger({ prefix: ["[api]", "[cron/notetaker]"] });
 
 async function getHandler(request: NextRequest) {
   const apiKey = request.headers.get("authorization") || request.nextUrl.searchParams.get("apiKey");
@@ -20,9 +26,26 @@ async function getHandler(request: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  await getNotetakerDispatchService().dispatchDue();
+  // Dispatch goes first because bots must join on time; the calendar poll can wait for the next tick.
+  let dispatchError: unknown = null;
+  try {
+    await getNotetakerDispatchService().dispatchDue();
+  } catch (error) {
+    dispatchError = error;
+  }
 
-  return NextResponse.json({ ok: true });
+  // A poll failure is logged rather than thrown so it never turns a successful dispatch into a failed run.
+  let poll: NotetakerCalendarPollCounts | null = null;
+  try {
+    poll = await getNotetakerCalendarAutoJoinService().pollDue();
+    log.info("Calendar auto-join poll finished", safeStringify(poll));
+  } catch (error) {
+    log.error("Calendar auto-join poll failed", safeStringify(error));
+  }
+
+  if (dispatchError) throw dispatchError;
+
+  return NextResponse.json({ ok: true, poll });
 }
 
 export const GET = defaultResponderForAppDir(getHandler);

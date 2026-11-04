@@ -9,6 +9,7 @@ import AppListCardWebWrapper from "@calcom/web/modules/apps/components/AppListCa
 import CredentialActionsDropdown from "@calcom/web/modules/apps/components/CredentialActionsDropdown";
 import AdditionalCalendarSelector from "@calcom/web/modules/calendars/components/AdditionalCalendarSelector";
 import { CalendarSwitch } from "@calcom/web/modules/calendars/components/CalendarSwitch";
+import { NotetakerCalendarAutoJoinSwitch } from "@calcom/web/modules/notetaker/components/NotetakerCalendarAutoJoinSwitch";
 import Link from "next/link";
 import React from "react";
 
@@ -52,6 +53,8 @@ const ConnectedCalendarList = ({
 }) => {
   const { t } = useLocale();
   const shouldUseEventTypeScope = scope === SelectedCalendarSettingsScope.EventType;
+  // Auto-join belongs to the user-level selected calendar, so it is only offered on the calendar settings page, never inside an event type
+  const showNotetakerAutoJoin = !shouldUseEventTypeScope && eventTypeId === null;
   return (
     <List noBorderTreatment className="p-6 pt-2">
       {items.map((connectedCalendar) => {
@@ -81,24 +84,31 @@ const ConnectedCalendarList = ({
                     <p className="text-subtle px-5 pt-4 text-sm">{t("toggle_calendars_conflict")}</p>
                     <ul className="stack-y-4 px-5 py-4">
                       {connectedCalendar.calendars?.map((cal) => (
-                        <CalendarSwitch
-                          disabled={isDisabled}
-                          key={cal.externalId}
-                          externalId={cal.externalId}
-                          title={cal.name || "Nameless calendar"}
-                          name={cal.name || "Nameless calendar"}
-                          type={connectedCalendar.integration.type}
-                          isChecked={cal.isSelected}
-                          destination={cal.externalId === destinationCalendarId}
-                          credentialId={cal.credentialId}
-                          eventTypeId={(() => {
-                            if (shouldUseEventTypeScope) {
-                              return eventTypeId;
-                            }
-                            return null;
-                          })()}
-                          delegationCredentialId={connectedCalendar.delegationCredentialId || null}
-                        />
+                        <React.Fragment key={cal.externalId}>
+                          <CalendarSwitch
+                            disabled={isDisabled}
+                            externalId={cal.externalId}
+                            title={cal.name || "Nameless calendar"}
+                            name={cal.name || "Nameless calendar"}
+                            type={connectedCalendar.integration.type}
+                            isChecked={cal.isSelected}
+                            destination={cal.externalId === destinationCalendarId}
+                            credentialId={cal.credentialId}
+                            eventTypeId={(() => {
+                              if (shouldUseEventTypeScope) {
+                                return eventTypeId;
+                              }
+                              return null;
+                            })()}
+                            delegationCredentialId={connectedCalendar.delegationCredentialId || null}
+                          />
+                          {showNotetakerAutoJoin && cal.isSelected && (
+                            <NotetakerCalendarAutoJoinSwitch
+                              integration={connectedCalendar.integration.type}
+                              externalId={cal.externalId}
+                            />
+                          )}
+                        </React.Fragment>
                       ))}
                     </ul>
                   </>

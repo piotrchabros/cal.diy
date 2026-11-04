@@ -37,6 +37,7 @@ const serviceMocks = vi.hoisted(() => ({
   generate: vi.fn<(payload: NotetakerGenerateSummaryPayload) => Promise<void>>(),
   send: vi.fn<(payload: NotetakerSendNotificationPayload) => Promise<void>>(),
   dispatchDue: vi.fn<() => Promise<void>>(),
+  pollDue: vi.fn<() => Promise<unknown>>(),
 }));
 
 const taskServiceMocks = vi.hoisted(() => ({
@@ -66,6 +67,10 @@ vi.mock("@calcom/features/notetaker/di/NotetakerNotificationService.container", 
 
 vi.mock("@calcom/features/notetaker/di/NotetakerDispatchService.container", () => ({
   getNotetakerDispatchService: () => ({ dispatchDue: serviceMocks.dispatchDue }),
+}));
+
+vi.mock("@calcom/features/notetaker/di/NotetakerCalendarAutoJoinService.container", () => ({
+  getNotetakerCalendarAutoJoinService: () => ({ pollDue: serviceMocks.pollDue }),
 }));
 
 vi.mock("@calcom/lib/redactError", () => ({
@@ -450,6 +455,30 @@ describe("notetaker trigger tasks", () => {
 
     expect(serviceMocks.dispatchDue).toHaveBeenCalledTimes(1);
     expect(serviceMocks.dispatchDue).toHaveBeenCalledWith();
+  });
+
+  it("poll-calendars registers a scheduled task that runs every five minutes in UTC", async () => {
+    const { notetakerTaskConfig } = await import("./trigger/config");
+    const { POLL_CALENDARS_JOB_ID } = await import("./trigger/poll-calendars");
+
+    expect(POLL_CALENDARS_JOB_ID).toBe("notetaker.poll-calendars");
+    expect(sdkMocks.scheduledTask).toHaveBeenCalledTimes(1);
+    const [params] = sdkMocks.scheduledTask.mock.calls[0];
+    expect(params.id).toBe("notetaker.poll-calendars");
+    expect(params.cron).toEqual({ pattern: "*/5 * * * *", timezone: "UTC" });
+    expect(params.machine).toBe(notetakerTaskConfig.machine);
+    expect(params.queue).toBe(notetakerTaskConfig.queue);
+    expect(params.retry).toEqual(notetakerTaskConfig.retry);
+  });
+
+  it("poll-calendars run polls the due calendars", async () => {
+    serviceMocks.pollDue.mockResolvedValue(undefined);
+    await import("./trigger/poll-calendars");
+    const [params] = sdkMocks.scheduledTask.mock.calls[0];
+
+    await params.run();
+
+    expect(serviceMocks.pollDue).toHaveBeenCalledTimes(1);
   });
 });
 
