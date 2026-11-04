@@ -100,7 +100,7 @@ describe("GoogleCalendarEventsGateway", () => {
         maxResults: 250,
         fields: expect.stringContaining("nextPageToken,items(id,iCalUID,status"),
       });
-      expect(client.calls[0].fields).toContain("attendees(email,self,responseStatus,organizer)");
+      expect(client.calls[0].fields).toContain("attendees(email,displayName,self,responseStatus,organizer)");
       expect(client.calls[0].fields).toContain("conferenceData/entryPoints");
     });
 
@@ -142,7 +142,12 @@ describe("GoogleCalendarEventsGateway", () => {
           organizer: { email: "Boss@Example.com" },
           attendees: [
             { email: "Owner@Example.com", self: true, responseStatus: "accepted" },
-            { email: "Boss@Example.com", organizer: true, responseStatus: "accepted" },
+            {
+              email: "Boss@Example.com",
+              displayName: " Big Boss ",
+              organizer: true,
+              responseStatus: "accepted",
+            },
           ],
         })
       );
@@ -159,8 +164,23 @@ describe("GoogleCalendarEventsGateway", () => {
         selfResponse: "accepted",
         organizerEmail: "boss@example.com",
         attendeeEmails: ["owner@example.com", "boss@example.com"],
+        attendees: [
+          { email: "owner@example.com", name: null },
+          { email: "boss@example.com", name: "Big Boss" },
+        ],
         candidateLinks: [MEET_LINK],
       });
+    });
+
+    it("leaves out attendees without an email and treats a blank display name as missing", async () => {
+      const event = await listOne(
+        timedEvent({
+          attendees: [{ displayName: "No Email" }, { email: "guest@example.com", displayName: "   " }],
+        })
+      );
+
+      expect(event.attendeeEmails).toEqual(["guest@example.com"]);
+      expect(event.attendees).toEqual([{ email: "guest@example.com", name: null }]);
     });
 
     it("marks an event with a start date as all-day", async () => {

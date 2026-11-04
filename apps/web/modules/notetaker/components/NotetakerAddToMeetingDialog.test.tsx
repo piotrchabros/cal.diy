@@ -330,4 +330,46 @@ describe("NotetakerAddToMeetingDialog", () => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
+
+  it("sends parsed customer emails with the dispatch", async () => {
+    openDialog();
+    fillLink();
+    fireEvent.change(screen.getByTestId("notetaker-ad-hoc-contact-emails"), {
+      target: { value: "A@x.com, b@x.com\nA@x.com" },
+    });
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalled());
+    expect(mocks.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ contactEmails: ["a@x.com", "b@x.com"] })
+    );
+  });
+
+  it("blocks submit with an inline error for an invalid customer email", () => {
+    openDialog();
+    fillLink();
+    fireEvent.change(screen.getByTestId("notetaker-ad-hoc-contact-emails"), { target: { value: "nope" } });
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    expect(screen.getByTestId("notetaker-ad-hoc-contact-emails-error").textContent).toBe(
+      "notetaker_contact_emails_invalid"
+    );
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit when there are more than 20 customer emails", () => {
+    openDialog();
+    fillLink();
+    const emails = Array.from({ length: 21 }, (_, index) => `p${index}@x.com`).join(",");
+    fireEvent.change(screen.getByTestId("notetaker-ad-hoc-contact-emails"), { target: { value: emails } });
+    fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+    submit();
+
+    expect(screen.getByTestId("notetaker-ad-hoc-contact-emails-error").textContent).toBe(
+      "notetaker_contact_emails_too_many"
+    );
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
 });

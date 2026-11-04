@@ -7,7 +7,9 @@ import type {
 } from "./INotetakerCalendarEventsGateway";
 
 type NotetakerOffice365EventTime = { dateTime?: string | null; timeZone?: string | null };
-type NotetakerOffice365EmailAddress = { emailAddress?: { address?: string | null } | null };
+type NotetakerOffice365EmailAddress = {
+  emailAddress?: { address?: string | null; name?: string | null } | null;
+};
 type NotetakerOffice365ListedEvent = {
   id?: string | null;
   iCalUId?: string | null;
@@ -70,9 +72,12 @@ function toNotetakerCalendarEvent(item: NotetakerOffice365ListedEvent): Notetake
   const end = parseEventTime(item.end) ?? start;
 
   const attendeeEmails: string[] = [];
+  const attendees: NonNullable<NotetakerCalendarEvent["attendees"]> = [];
   for (const attendee of item.attendees ?? []) {
     const email = toEmail(attendee);
-    if (email) attendeeEmails.push(email);
+    if (!email) continue;
+    attendeeEmails.push(email);
+    attendees.push({ email, name: attendee.emailAddress?.name?.trim() || null });
   }
 
   return {
@@ -87,6 +92,7 @@ function toNotetakerCalendarEvent(item: NotetakerOffice365ListedEvent): Notetake
     selfResponse: toSelfResponse(item),
     organizerEmail: toEmail(item.organizer),
     attendeeEmails,
+    attendees,
     candidateLinks: toCandidateLinks(item),
   };
 }

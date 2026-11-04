@@ -20,6 +20,7 @@ import type {
   NotetakerBookingReferenceRecord,
   NotetakerBookingStatus,
   NotetakerBookingWithResultsSessionRecord,
+  NotetakerMeetingForWebhookRecord,
   NotetakerSeriesBookingRecord,
   NotetakerSharingGrantRecord,
   NotetakerWebPushSubscriptionRecord,
@@ -36,6 +37,11 @@ import type {
   INotetakerActivityRepository,
   NotetakerActivityRecord,
 } from "../repositories/interfaces/INotetakerActivityRepository";
+import type {
+  INotetakerMeetingContactRepository,
+  NotetakerMeetingContactRecord,
+  NotetakerMeetingContactSource,
+} from "../repositories/interfaces/INotetakerMeetingContactRepository";
 import type {
   INotetakerSessionRepository,
   NotetakerSessionCreateInput,
@@ -77,7 +83,7 @@ type InMemoryEventTypeSeed = Omit<
   teamName?: string | null;
   organizationId?: number | null;
 };
-type InMemoryUser = { name: string | null; email: string; avatarUrl: string | null };
+type InMemoryUser = { name: string | null; email: string; avatarUrl: string | null; timeZone?: string };
 type InMemorySharingMember = { userId: number; addedByUserId: number | null; addedAt: Date };
 
 function copySeed(seed: InMemoryBookingSeed): InMemoryBookingSeed {
@@ -191,8 +197,11 @@ export class InMemoryNotetakerStore {
   readonly sessions = new Map<string, NotetakerSessionRecord>();
   readonly transcripts = new Map<string, NotetakerTranscriptRecord>();
   readonly passages = new Map<string, Map<number, NotetakerPassageRecord>>();
+  readonly webhookDispatchedTranscriptIds = new Set<string>();
   readonly summaries = new Map<string, NotetakerSummaryRecord>();
   readonly activities: NotetakerActivityRecord[] = [];
+  // Insertion order stands in for the createdAt asc ordering of listByBookingId.
+  readonly meetingContacts = new Map<number, NotetakerMeetingContactRecord[]>();
 
   private idCounter = 0;
 
@@ -214,6 +223,7 @@ export class InMemoryNotetakerStore {
     this.sharingGrants.delete(bookingId);
     this.attendees.delete(bookingId);
     this.references.delete(bookingId);
+    this.meetingContacts.delete(bookingId);
 
     const sessionIds = new Set<string>();
     for (const session of Array.from(this.sessions.values())) {
@@ -325,6 +335,7 @@ export class InMemoryNotetakerStore {
 
   removeTranscript(transcriptId: string): void {
     this.transcripts.delete(transcriptId);
+    this.webhookDispatchedTranscriptIds.delete(transcriptId);
     this.passages.delete(transcriptId);
     this.summaries.delete(transcriptId);
   }
@@ -610,6 +621,37 @@ export class InMemoryBookingNotetakerRepository implements IBookingNotetakerRepo
           latestSessionStatus: latestSession?.status ?? null,
         };
       });
+  }
+
+  // The owner comes from the seed organizer; its time zone from setUser, else "UTC".
+  async findMeetingForWebhook(bookingId: number): Promise<NotetakerMeetingForWebhookRecord | null> {
+    const seed = this.store.bookings.get(bookingId);
+    if (!seed) return null;
+    const organizer = seed.userId !== null ? seed.organizer : null;
+    return {
+      booking: {
+        id: seed.id,
+        uid: seed.uid,
+        title: seed.title,
+        startTime: seed.startTime,
+        endTime: seed.endTime,
+        status: seed.status,
+        location: seed.location,
+        metadata: seed.metadata,
+      },
+      owner: organizer
+        ? {
+            name: organizer.name,
+            email: organizer.email,
+            timeZone: this.store.users.get(organizer.id)?.timeZone ?? "UTC",
+            locale: organizer.locale,
+          }
+        : null,
+      contacts: (this.store.meetingContacts.get(bookingId) ?? []).map((contact) => ({
+        email: contact.email,
+        name: contact.name,
+      })),
+    };
   }
 
   private isAdHoc(booking: InMemoryBookingSeed): boolean {
@@ -1365,6 +1407,16 @@ export class InMemoryNotetakerTranscriptRepository implements INotetakerTranscri
     return updated;
   }
 
+  async claimWebhookDispatch(id: string, _at: Date): Promise<boolean> {
+    if (!this.store.transcripts.has(id) || this.store.webhookDispatchedTranscriptIds.has(id)) return false;
+    this.store.webhookDispatchedTranscriptIds.add(id);
+    return true;
+  }
+
+  async isWebhookDispatched(id: string): Promise<boolean> {
+    return this.store.webhookDispatchedTranscriptIds.has(id);
+  }
+
   async deleteById(id: string): Promise<void> {
     this.store.removeTranscript(id);
   }
@@ -1527,6 +1579,35 @@ export class InMemoryNotetakerActivityRepository implements INotetakerActivityRe
   }
 }
 
+export class InMemoryNotetakerMeetingContactRepository implements INotetakerMeetingContactRepository {
+  constructor(private readonly store: InMemoryNotetakerStore) {}
+
+  async listByBookingId(bookingId: number): Promise<NotetakerMeetingContactRecord[]> {
+    return (this.store.meetingContacts.get(bookingId) ?? []).map((contact) => ({ ...contact }));
+  }
+
+  async replaceForSource(params: {
+    bookingId: number;
+    source: NotetakerMeetingContactSource;
+    contacts: { email: string; name: string | null }[];
+  }): Promise<void> {
+    if (!this.store.bookings.has(params.bookingId)) {
+      throw new Error(`InMemoryNotetakerStore: booking ${params.bookingId} does not exist`);
+    }
+    const kept = (this.store.meetingContacts.get(params.bookingId) ?? []).filter(
+      (contact) => contact.source !== params.source
+    );
+    const emails = new Set(kept.map((contact) => contact.email));
+    for (const contact of params.contacts) {
+      // Mirrors the (bookingId, email) unique key with skipDuplicates.
+      if (emails.has(contact.email)) continue;
+      emails.add(contact.email);
+      kept.push({ email: contact.email, name: contact.name, source: params.source });
+    }
+    this.store.meetingContacts.set(params.bookingId, kept);
+  }
+}
+
 export function createInMemoryNotetakerRepositories(): {
   store: InMemoryNotetakerStore;
   bookingNotetakerRepository: InMemoryBookingNotetakerRepository;
@@ -1535,6 +1616,7 @@ export function createInMemoryNotetakerRepositories(): {
   transcriptRepository: InMemoryNotetakerTranscriptRepository;
   summaryRepository: InMemoryNotetakerSummaryRepository;
   activityRepository: InMemoryNotetakerActivityRepository;
+  meetingContactRepository: InMemoryNotetakerMeetingContactRepository;
 } {
   const store = new InMemoryNotetakerStore();
   return {
@@ -1545,6 +1627,7 @@ export function createInMemoryNotetakerRepositories(): {
     transcriptRepository: new InMemoryNotetakerTranscriptRepository(store),
     summaryRepository: new InMemoryNotetakerSummaryRepository(store),
     activityRepository: new InMemoryNotetakerActivityRepository(store),
+    meetingContactRepository: new InMemoryNotetakerMeetingContactRepository(store),
   };
 }
 

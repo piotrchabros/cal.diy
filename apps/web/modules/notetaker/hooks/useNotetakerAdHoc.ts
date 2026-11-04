@@ -16,6 +16,7 @@ const ERROR_KEYS: Record<NotetakerAdHocErrorCode, string> = {
   TEAM_NOT_ALLOWED: "notetaker_ad_hoc_team_not_allowed",
   INVALID_DURATION: "notetaker_ad_hoc_invalid_duration",
   MEETING_ALREADY_RECORDED: "notetaker_ad_hoc_meeting_already_recorded",
+  MEETING_CONTACTS_NOT_SUPPORTED: "notetaker_contact_emails_not_supported",
 };
 
 export type AdHocLinkCopyVariant = "meet" | "teams" | "any";
@@ -80,6 +81,7 @@ type DispatchInput = {
   durationMinutes?: number;
   sharingTeamId: number | null;
   acknowledgedNotice: true;
+  contactEmails?: string[];
 };
 
 export function useNotetakerAdHoc({ enabled }: { enabled: boolean }) {

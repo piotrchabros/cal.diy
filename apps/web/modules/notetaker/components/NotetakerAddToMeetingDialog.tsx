@@ -11,11 +11,12 @@ import {
   DialogHeader,
   DialogTrigger,
 } from "@calcom/ui/components/dialog";
-import { Input } from "@calcom/ui/components/form";
+import { Input, TextArea } from "@calcom/ui/components/form";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getAdHocLinkCopyKeys, getAdHocLinkCopyVariant, useNotetakerAdHoc } from "../hooks/useNotetakerAdHoc";
 import { AD_HOC_DURATION_CHOICES_MINUTES } from "../lib/adHocDuration";
+import { CONTACT_EMAIL_ERROR_KEYS, validateContactEmailInput } from "../lib/contactEmailInput";
 import { useNotetakerFeatureEnabled } from "../lib/NotetakerFeatureContext";
 
 const TITLE_MAX_LENGTH = 200;
@@ -108,6 +109,9 @@ function AddToMeetingForm({
   const [teamValue, setTeamValue] = useState(ONLY_ME);
   const [acknowledged, setAcknowledged] = useState(false);
   const [linkError, setLinkError] = useState<AdHocMeetingUrlRejection | null>(null);
+  const [contactEmailsText, setContactEmailsText] = useState("");
+  const [showContactEmailsError, setShowContactEmailsError] = useState(false);
+  const contactEmails = validateContactEmailInput(contactEmailsText);
 
   const data = options.data;
   const copyKeys = getAdHocLinkCopyKeys(getAdHocLinkCopyVariant(data?.enabledPlatforms));
@@ -138,6 +142,10 @@ function AddToMeetingForm({
       setLinkError(link.reason);
       return;
     }
+    if (contactEmails.error) {
+      setShowContactEmailsError(true);
+      return;
+    }
     const trimmedTitle = title.trim();
     const bookingUid = await dispatch({
       meetingUrl: cleanedUrl,
@@ -145,6 +153,7 @@ function AddToMeetingForm({
       durationMinutes: selectedDuration,
       sharingTeamId,
       acknowledgedNotice: true,
+      contactEmails: contactEmails.emails.length > 0 ? contactEmails.emails : undefined,
     });
     if (!bookingUid) return;
     onClose();
@@ -212,6 +221,31 @@ function AddToMeetingForm({
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label
+            htmlFor="notetaker-ad-hoc-contact-emails"
+            className="block font-medium text-emphasis text-sm">
+            {t("notetaker_contact_emails_label")}
+          </label>
+          <TextArea
+            id="notetaker-ad-hoc-contact-emails"
+            rows={2}
+            className="mt-1"
+            value={contactEmailsText}
+            onChange={(event) => {
+              setContactEmailsText(event.target.value);
+              setShowContactEmailsError(false);
+            }}
+            data-testid="notetaker-ad-hoc-contact-emails"
+          />
+          {showContactEmailsError && contactEmails.error ? (
+            <p className="mt-1 text-error text-sm" data-testid="notetaker-ad-hoc-contact-emails-error">
+              {t(CONTACT_EMAIL_ERROR_KEYS[contactEmails.error])}
+            </p>
+          ) : null}
+          <p className="mt-1 text-sm text-subtle">{t("notetaker_contact_emails_hint")}</p>
         </div>
 
         {teamOptions.length > 0 ? (

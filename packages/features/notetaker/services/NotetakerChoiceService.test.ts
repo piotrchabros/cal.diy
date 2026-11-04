@@ -184,6 +184,7 @@ describe("NotetakerChoiceService", () => {
       transcriptRepository: repositories.transcriptRepository,
       summaryRepository: repositories.summaryRepository,
       activityRepository: repositories.activityRepository,
+      meetingContactRepository: repositories.meetingContactRepository,
       accessService: new NotetakerAccessService({
         bookingNotetakerRepository,
         sessionRepository: repositories.sessionRepository,
@@ -817,7 +818,46 @@ describe("NotetakerChoiceService", () => {
         summary: null,
         sharedWithAttendees: false,
         access: { attendees: false, colleagues: null },
+        meetingContacts: [],
+        transcriptWebhookSent: false,
       });
+    });
+
+    it("returns the meeting contacts and the webhook delivery to the host", async () => {
+      repositories.store.addBooking(
+        buildBooking({ eventTypeId: null, metadata: { notetakerAdHoc: "true" } })
+      );
+      await repositories.meetingContactRepository.replaceForSource({
+        bookingId: BOOKING_ID,
+        source: "MANUAL",
+        contacts: [{ email: "client@example.com", name: null }],
+      });
+      await enable();
+      const session = await createSession("READY");
+      const transcript = await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+      await repositories.transcriptRepository.claimWebhookDispatch(transcript.id, new Date());
+
+      const state = await getState();
+
+      expect(state.meetingContacts).toEqual([{ email: "client@example.com", name: null, source: "MANUAL" }]);
+      expect(state.transcriptWebhookSent).toBe(true);
+    });
+
+    it("reports a transcript not yet delivered to the webhook", async () => {
+      repositories.store.addBooking(buildBooking());
+      await enable();
+      const session = await createSession("READY");
+      await repositories.transcriptRepository.createIfMissing({
+        sessionId: session.id,
+        bookingId: BOOKING_ID,
+      });
+
+      const state = await getState();
+
+      expect(state.transcriptWebhookSent).toBe(false);
     });
 
     it("flags a booking whose metadata marks it as a calendar meeting", async () => {
@@ -845,6 +885,8 @@ describe("NotetakerChoiceService", () => {
       expect(state.choice).toBeNull();
       expect(state.access).toBeUndefined();
       expect(state.isCalendarMeeting).toBe(true);
+      expect(state.meetingContacts).toBeUndefined();
+      expect(state.transcriptWebhookSent).toBeUndefined();
     });
 
     it("refuses a calendar meeting participant who turns the notetaker off for everyone", async () => {

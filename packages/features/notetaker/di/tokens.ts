@@ -15,6 +15,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_CALENDAR_AUTO_JOIN_REPOSITORY_MODULE: Symbol("NotetakerCalendarAutoJoinRepositoryModule"),
   NOTETAKER_CALENDAR_MEETING_REPOSITORY: Symbol("NotetakerCalendarMeetingRepository"),
   NOTETAKER_CALENDAR_MEETING_REPOSITORY_MODULE: Symbol("NotetakerCalendarMeetingRepositoryModule"),
+  NOTETAKER_MEETING_CONTACT_REPOSITORY: Symbol("NotetakerMeetingContactRepository"),
+  NOTETAKER_MEETING_CONTACT_REPOSITORY_MODULE: Symbol("NotetakerMeetingContactRepositoryModule"),
   NOTETAKER_ACCESS_SERVICE: Symbol("NotetakerAccessService"),
   NOTETAKER_ACCESS_SERVICE_MODULE: Symbol("NotetakerAccessServiceModule"),
   NOTETAKER_CHOICE_SERVICE: Symbol("NotetakerChoiceService"),
@@ -61,6 +63,10 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_CALENDAR_AUTO_JOIN_SETTINGS_SERVICE_MODULE: Symbol(
     "NotetakerCalendarAutoJoinSettingsServiceModule"
   ),
+  NOTETAKER_TRANSCRIPT_WEBHOOK_SERVICE: Symbol("NotetakerTranscriptWebhookService"),
+  NOTETAKER_TRANSCRIPT_WEBHOOK_SERVICE_MODULE: Symbol("NotetakerTranscriptWebhookServiceModule"),
+  NOTETAKER_TRANSCRIPT_WEBHOOK_GATEWAY: Symbol("NotetakerTranscriptWebhookGateway"),
+  NOTETAKER_TRANSCRIPT_WEBHOOK_GATEWAY_MODULE: Symbol("NotetakerTranscriptWebhookGatewayModule"),
   RECALL_API_CLIENT: Symbol("RecallApiClient"),
   RECALL_API_CLIENT_MODULE: Symbol("RecallApiClientModule"),
   RECALL_WEBHOOK_SERVICE: Symbol("RecallWebhookService"),

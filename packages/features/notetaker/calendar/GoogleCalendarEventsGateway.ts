@@ -9,6 +9,7 @@ import type {
 type NotetakerGoogleEventTime = { date?: string | null; dateTime?: string | null };
 type NotetakerGoogleListedAttendee = {
   email?: string | null;
+  displayName?: string | null;
   self?: boolean | null;
   responseStatus?: string | null;
   organizer?: boolean | null;
@@ -37,7 +38,7 @@ const MAX_PAGES = 10;
 const LIST_FIELDS =
   "nextPageToken,items(id,iCalUID,status,summary,start,end,originalStartTime,hangoutLink," +
   "conferenceData/entryPoints,location,description," +
-  "attendees(email,self,responseStatus,organizer),organizer(email,self),recurringEventId)";
+  "attendees(email,displayName,self,responseStatus,organizer),organizer(email,self),recurringEventId)";
 
 const ATTENDEE_RESPONSES = ["accepted", "tentative", "needsAction", "declined"] as const;
 type NotetakerAttendeeResponse = (typeof ATTENDEE_RESPONSES)[number];
@@ -85,9 +86,12 @@ function toNotetakerCalendarEvent(item: NotetakerGoogleListedEvent): NotetakerCa
   const end = parseEventTime(item.end) ?? start;
 
   const attendeeEmails: string[] = [];
+  const attendees: NonNullable<NotetakerCalendarEvent["attendees"]> = [];
   for (const attendee of item.attendees ?? []) {
     const email = attendee.email?.trim().toLowerCase();
-    if (email) attendeeEmails.push(email);
+    if (!email) continue;
+    attendeeEmails.push(email);
+    attendees.push({ email, name: attendee.displayName?.trim() || null });
   }
 
   return {
@@ -102,6 +106,7 @@ function toNotetakerCalendarEvent(item: NotetakerGoogleListedEvent): NotetakerCa
     selfResponse: toSelfResponse(item),
     organizerEmail: item.organizer?.email?.trim().toLowerCase() || null,
     attendeeEmails,
+    attendees,
     candidateLinks: toCandidateLinks(item),
   };
 }

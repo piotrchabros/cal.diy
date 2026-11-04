@@ -46,6 +46,10 @@ vi.mock("../hooks/useNotetakerMutations", () => ({
   }),
 }));
 
+vi.mock("../hooks/useNotetakerMeetingContacts", () => ({
+  useNotetakerMeetingContacts: () => ({ setMeetingContacts: { mutate: vi.fn(), isPending: false } }),
+}));
+
 function buildChoice(overrides: Partial<NotetakerChoice> = {}): NotetakerChoice {
   return {
     enabled: true,

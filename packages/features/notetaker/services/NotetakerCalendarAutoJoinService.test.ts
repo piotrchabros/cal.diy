@@ -15,6 +15,10 @@ import type {
   NotetakerCalDiyBookingMatchRecord,
   NotetakerCalendarMeetingRecord,
 } from "../repositories/interfaces/INotetakerCalendarMeetingRepository";
+import type {
+  INotetakerMeetingContactRepository,
+  NotetakerMeetingContactRecord,
+} from "../repositories/interfaces/INotetakerMeetingContactRepository";
 import { NotetakerCalendarAutoJoinService } from "./NotetakerCalendarAutoJoinService";
 
 vi.mock("@calcom/i18n/server", () => ({
@@ -381,6 +385,27 @@ class FakeAutoJoinRepository
   }
 }
 
+class FakeMeetingContactRepository implements Pick<INotetakerMeetingContactRepository, "replaceForSource"> {
+  contacts = new Map<number, NotetakerMeetingContactRecord[]>();
+  failWith: Error | null = null;
+
+  async replaceForSource(params: Parameters<INotetakerMeetingContactRepository["replaceForSource"]>[0]) {
+    if (this.failWith) throw this.failWith;
+    const kept = (this.contacts.get(params.bookingId) ?? []).filter((c) => c.source !== params.source);
+    const emails = new Set(kept.map((c) => c.email));
+    for (const contact of params.contacts) {
+      if (emails.has(contact.email)) continue;
+      emails.add(contact.email);
+      kept.push({ ...contact, source: params.source });
+    }
+    this.contacts.set(params.bookingId, kept);
+  }
+
+  emailsFor(bookingId: number): string[] {
+    return (this.contacts.get(bookingId) ?? []).map((c) => c.email);
+  }
+}
+
 type EventsSource = NotetakerCalendarEvent[] | (() => Promise<NotetakerCalendarEvent[]>);
 
 class FakeEventsGateway implements INotetakerCalendarEventsGateway {
@@ -401,6 +426,8 @@ describe("NotetakerCalendarAutoJoinService", () => {
   let gateway: FakeEventsGateway;
   let disabledFlags: Set<string>;
   let users: Map<number, NotetakerUserRecord>;
+  let contacts: FakeMeetingContactRepository;
+  let verifiedEmails: Map<number, string[]>;
   let service: NotetakerCalendarAutoJoinService;
 
   function buildService(config: NotetakerConfig = buildConfig()): NotetakerCalendarAutoJoinService {
@@ -418,6 +445,10 @@ describe("NotetakerCalendarAutoJoinService", () => {
     return new NotetakerCalendarAutoJoinService({
       autoJoinRepository: autoJoin,
       calendarMeetingRepository: meetings,
+      meetingContactRepository: contacts,
+      bookingNotetakerRepository: {
+        findVerifiedEmailsByUserId: async (userId) => verifiedEmails.get(userId) ?? [],
+      },
       eventsGatewayResolver: resolver,
       featuresRepository: {
         checkIfUserHasFeature: async (userId, slug) => !disabledFlags.has(`${userId}:${slug}`),
@@ -468,6 +499,8 @@ describe("NotetakerCalendarAutoJoinService", () => {
     gateway = new FakeEventsGateway();
     disabledFlags = new Set();
     users = new Map();
+    contacts = new FakeMeetingContactRepository();
+    verifiedEmails = new Map();
     addUser(1);
     addUser(2);
     addUser(3);
@@ -1017,6 +1050,172 @@ describe("NotetakerCalendarAutoJoinService", () => {
       await service.pollDue(NOW);
 
       expect(meetings.enabledBookingIds).toEqual([]);
+    });
+  });
+
+  describe("calendar contacts", () => {
+    it("stores the event's other attendees with their names when it creates a meeting", async () => {
+      addCalendar(1, [
+        buildEvent({
+          attendeeEmails: ["guest@example.com", "user1@example.com", "second@example.com"],
+          attendees: [
+            { email: "guest@example.com", name: "Guest Person" },
+            { email: "user1@example.com", name: "User 1" },
+            { email: "second@example.com", name: null },
+          ],
+        }),
+      ]);
+
+      await service.pollDue(NOW);
+
+      expect(contacts.contacts.get(meetings.meetings[0].bookingId)).toEqual([
+        { email: "guest@example.com", name: "Guest Person", source: "CALENDAR" },
+        { email: "second@example.com", name: null, source: "CALENDAR" },
+      ]);
+      expect(meetings.meetings[0].attendeeEmails).toEqual([]);
+    });
+
+    it("falls back to the attendee emails and adds an organizer who is not the owner", async () => {
+      addCalendar(1, [
+        buildEvent({ organizerEmail: "boss@example.com", attendeeEmails: ["guest@example.com"] }),
+      ]);
+
+      await service.pollDue(NOW);
+
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toEqual([
+        "guest@example.com",
+        "boss@example.com",
+      ]);
+    });
+
+    it("leaves out the owner's verified emails, the owner as organizer, other Cal participants and rooms", async () => {
+      verifiedEmails.set(1, ["owner.alias@example.com"]);
+      verifiedEmails.set(2, ["second.alias@example.com"]);
+      const shared = {
+        organizerEmail: "owner.organizer@example.com",
+        selfResponse: "organizer" as const,
+        attendeeEmails: [
+          "guest@example.com",
+          "user1@example.com",
+          "owner.alias@example.com",
+          "user2@example.com",
+          "second.alias@example.com",
+          "room-1@resource.calendar.google.com",
+        ],
+      };
+      addCalendar(1, [eventForUser(1, shared)]);
+      addCalendar(2, [eventForUser(2, { ...shared, selfResponse: "accepted" })]);
+      await service.pollDue(NOW);
+
+      await service.pollDue(LATER);
+
+      expect(meetings.meetings).toHaveLength(1);
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toEqual(["guest@example.com"]);
+    });
+
+    it("caps the stored contacts", async () => {
+      const guests = Array.from({ length: 60 }, (_, index) => `guest${index}@example.com`);
+      addCalendar(1, [buildEvent({ attendeeEmails: guests })]);
+
+      await service.pollDue(NOW);
+
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toHaveLength(50);
+    });
+
+    it("replaces the calendar contacts on a later poll", async () => {
+      addCalendar(1, [buildEvent()]);
+      await service.pollDue(NOW);
+      gateway.events.set("cal-1", [
+        buildEvent({ organizerEmail: null, attendeeEmails: ["new@example.com", "user1@example.com"] }),
+      ]);
+
+      await service.pollDue(LATER);
+
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toEqual(["new@example.com"]);
+    });
+
+    it("keeps manual contacts when it replaces the calendar ones", async () => {
+      addCalendar(1, [buildEvent()]);
+      await service.pollDue(NOW);
+      const bookingId = meetings.meetings[0].bookingId;
+      await contacts.replaceForSource({
+        bookingId,
+        source: "MANUAL",
+        contacts: [{ email: "manual@example.com", name: null }],
+      });
+      gateway.events.set("cal-1", [
+        buildEvent({ organizerEmail: null, attendeeEmails: ["new@example.com", "user1@example.com"] }),
+      ]);
+
+      await service.pollDue(LATER);
+
+      expect(contacts.contacts.get(bookingId)).toEqual([
+        { email: "manual@example.com", name: null, source: "MANUAL" },
+        { email: "new@example.com", name: null, source: "CALENDAR" },
+      ]);
+    });
+
+    it("updates the contacts after rescheduling the meeting", async () => {
+      addCalendar(1, [buildEvent()]);
+      await service.pollDue(NOW);
+      gateway.events.set("cal-1", [
+        buildEvent({
+          candidateLinks: [OTHER_MEET_URL],
+          start: new Date(NOW.getTime() + 3 * HOUR_MS),
+          end: new Date(NOW.getTime() + 4 * HOUR_MS),
+          organizerEmail: null,
+          attendeeEmails: ["new@example.com", "user1@example.com"],
+        }),
+      ]);
+
+      await service.pollDue(LATER);
+
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toEqual(["new@example.com"]);
+    });
+
+    it("does not touch the contacts once the meeting has ended", async () => {
+      addCalendar(1, [buildEvent({ end: new Date(NOW.getTime() + HOUR_MS + 5 * 60 * 1000) })]);
+      await service.pollDue(NOW);
+      const bookingId = meetings.meetings[0].bookingId;
+      const meeting = meetings.meetings[0];
+      meeting.endTime = new Date(NOW.getTime() + 3 * 60 * 1000);
+      gateway.events.set("cal-1", [
+        buildEvent({
+          end: new Date(NOW.getTime() + HOUR_MS + 5 * 60 * 1000),
+          attendeeEmails: ["new@example.com", "user1@example.com"],
+        }),
+      ]);
+      meeting.hasSession = true;
+
+      await service.pollDue(LATER);
+
+      expect(contacts.emailsFor(bookingId)).toEqual(["guest@example.com"]);
+    });
+
+    it("lets only the owner's calendar change the contacts", async () => {
+      addCalendar(1, [eventForUser(1)]);
+      addCalendar(2, [eventForUser(2, { attendeeEmails: ["other@example.com", "user2@example.com"] })]);
+
+      await service.pollDue(NOW);
+      await service.pollDue(LATER);
+
+      expect(contacts.emailsFor(meetings.meetings[0].bookingId)).toEqual(["guest@example.com"]);
+    });
+
+    it("keeps auto-join working and logs no emails when storing contacts fails", async () => {
+      contacts.failWith = new Error("insert failed for guest@example.com");
+      addCalendar(1, [buildEvent()]);
+
+      const counts = await service.pollDue(NOW);
+
+      expect(counts).toMatchObject({ created: 1, failed: 0 });
+      expect(logger.warn).toHaveBeenCalledWith("Notetaker calendar meeting contacts could not be stored", {
+        meetingId: meetings.meetings[0].id,
+        bookingId: meetings.meetings[0].bookingId,
+        selectedCalendarId: "cal-1",
+        errorName: "Error",
+      });
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("guest@example.com");
     });
   });
 

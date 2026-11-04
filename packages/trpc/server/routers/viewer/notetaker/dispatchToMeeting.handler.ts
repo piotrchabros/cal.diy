@@ -25,6 +25,7 @@ export const dispatchToMeetingHandler = async ({
     title: input.title,
     durationMinutes: input.durationMinutes,
     sharingTeamId: input.sharingTeamId,
+    contactEmails: input.contactEmails,
   });
   return { bookingUid, reused };
 };

@@ -8,6 +8,7 @@ import type { NotetakerConfig } from "../lib/config";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
+import { NotetakerAccessService } from "./NotetakerAccessService";
 import type { NotetakerAdHocErrorCode } from "./NotetakerAdHocService";
 import { NotetakerAdHocService } from "./NotetakerAdHocService";
 
@@ -120,12 +121,21 @@ describe("NotetakerAdHocService", () => {
         countAdHocByUserIdSince: (params) => bookingNotetakerRepository.countAdHocByUserIdSince(params),
         findAcceptedAdHocByUserIdIncludeLatestSession: (params) =>
           bookingNotetakerRepository.findAcceptedAdHocByUserIdIncludeLatestSession(params),
+        findVerifiedEmailsByUserId: (userId) => bookingNotetakerRepository.findVerifiedEmailsByUserId(userId),
       },
       eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
       membershipLookup,
       featuresRepository: { checkIfUserHasFeature },
       choiceService: { setEnabled },
       dispatchService: { dispatchForBooking, isMeetingLinkTaken },
+      accessService: new NotetakerAccessService({
+        bookingNotetakerRepository,
+        sessionRepository: repositories.sessionRepository,
+        eventTypeNotetakerSettingsRepository: repositories.eventTypeNotetakerSettingsRepository,
+        membershipLookup,
+        calendarMeetingRepository: { isParticipant: async () => false },
+      }),
+      meetingContactRepository: repositories.meetingContactRepository,
       userRepository,
       config,
       logger,
@@ -698,6 +708,151 @@ describe("NotetakerAdHocService", () => {
         await expect(dispatch()).rejects.toThrow("enable failed");
         expect(dispatchForBooking).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe("meeting contacts", () => {
+    const OWNER_EMAIL = "owner@example.com";
+    const OWNER_SECONDARY_EMAIL = "owner.alias@example.com";
+
+    beforeEach(() => {
+      repositories.store.setVerifiedEmails(USER_ID, [OWNER_EMAIL, OWNER_SECONDARY_EMAIL]);
+    });
+
+    function contactsOf(bookingId: number) {
+      return repositories.meetingContactRepository.listByBookingId(bookingId);
+    }
+
+    function seedBooking(params: { id: number; userId?: number; metadata: Record<string, string> | null }) {
+      repositories.store.addBooking({
+        id: params.id,
+        uid: `booking-${params.id}`,
+        userId: params.userId ?? USER_ID,
+        status: "ACCEPTED",
+        startTime: NOW,
+        endTime: new Date(NOW.getTime() + 60 * MINUTE_MS),
+        title: "Meeting",
+        location: MEET_URL,
+        metadata: params.metadata,
+        recurringEventId: null,
+        eventTypeId: params.metadata ? null : 5,
+        attendeeEmails: params.metadata ? [] : ["guest@example.com"],
+        references: [],
+        eventTypeHosts: [],
+        organizer: { id: params.userId ?? USER_ID, name: null, email: OWNER_EMAIL, locale: null },
+      });
+      return `booking-${params.id}`;
+    }
+
+    it("stores normalised manual contacts without the owner's verified emails before arming the choice", async () => {
+      const { bookingUid } = await dispatch({
+        contactEmails: [
+          "Client@Example.com",
+          "client@example.com",
+          OWNER_EMAIL,
+          "Owner.Alias@example.com",
+          "b@x.io",
+        ],
+      });
+
+      const booking = adHocBookings().find((candidate) => candidate.uid === bookingUid);
+      expect(booking).toBeDefined();
+      if (!booking) return;
+      expect(await contactsOf(booking.id)).toEqual([
+        { email: "client@example.com", name: null, source: "MANUAL" },
+        { email: "b@x.io", name: null, source: "MANUAL" },
+      ]);
+      expect(booking.attendeeEmails).toEqual([]);
+      expect(await repositories.bookingNotetakerRepository.findAttendeesByBookingId(booking.id)).toEqual([]);
+    });
+
+    it("caps manual contacts at the manual limit", async () => {
+      const contactEmails = Array.from({ length: 25 }, (_, i) => `person${i}@example.com`);
+
+      const { bookingUid } = await dispatch({ contactEmails });
+
+      const booking = adHocBookings().find((candidate) => candidate.uid === bookingUid);
+      if (!booking) throw new Error("booking missing");
+      expect(await contactsOf(booking.id)).toHaveLength(20);
+    });
+
+    it("stores no contacts when none are given", async () => {
+      const { bookingUid } = await dispatch();
+
+      const booking = adHocBookings().find((candidate) => candidate.uid === bookingUid);
+      if (!booking) throw new Error("booking missing");
+      expect(await contactsOf(booking.id)).toEqual([]);
+    });
+
+    it("replaces the manual contacts of an ad-hoc booking and keeps the calendar ones", async () => {
+      const bookingUid = seedBooking({ id: 100, metadata: { notetakerAdHoc: "true" } });
+      await repositories.meetingContactRepository.replaceForSource({
+        bookingId: 100,
+        source: "CALENDAR",
+        contacts: [{ email: "calendar@example.com", name: "Cal Guest" }],
+      });
+      await repositories.meetingContactRepository.replaceForSource({
+        bookingId: 100,
+        source: "MANUAL",
+        contacts: [{ email: "old@example.com", name: null }],
+      });
+
+      const result = await service.setMeetingContacts({
+        userId: USER_ID,
+        bookingUid,
+        emails: [" New@Example.com ", OWNER_EMAIL],
+      });
+
+      const expected = [
+        { email: "calendar@example.com", name: "Cal Guest", source: "CALENDAR" },
+        { email: "new@example.com", name: null, source: "MANUAL" },
+      ];
+      expect(result.meetingContacts).toEqual(expected);
+      expect(await contactsOf(100)).toEqual(expected);
+    });
+
+    it("clears the manual contacts of a calendar meeting with an empty list", async () => {
+      const bookingUid = seedBooking({ id: 101, metadata: { notetakerCalendarMeeting: "true" } });
+      await repositories.meetingContactRepository.replaceForSource({
+        bookingId: 101,
+        source: "MANUAL",
+        contacts: [{ email: "old@example.com", name: null }],
+      });
+
+      const result = await service.setMeetingContacts({ userId: USER_ID, bookingUid, emails: [] });
+
+      expect(result.meetingContacts).toEqual([]);
+    });
+
+    it("rejects a booking with an event type", async () => {
+      const bookingUid = seedBooking({ id: 102, metadata: null });
+
+      await expectAdHocError(
+        service.setMeetingContacts({ userId: USER_ID, bookingUid, emails: ["a@example.com"] }),
+        "MEETING_CONTACTS_NOT_SUPPORTED"
+      );
+      expect(await contactsOf(102)).toEqual([]);
+    });
+
+    it("rejects a caller who is not the host", async () => {
+      const bookingUid = seedBooking({ id: 103, userId: 99, metadata: { notetakerAdHoc: "true" } });
+
+      const error = await service
+        .setMeetingContacts({ userId: USER_ID, bookingUid, emails: ["a@example.com"] })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ErrorWithCode);
+      if (error instanceof ErrorWithCode) expect(error.code).toBe(ErrorCode.Forbidden);
+      expect(await contactsOf(103)).toEqual([]);
+    });
+
+    it("reports an unknown booking as not found", async () => {
+      const error = await service
+        .setMeetingContacts({ userId: USER_ID, bookingUid: "missing", emails: [] })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ErrorWithCode);
+      if (error instanceof ErrorWithCode) expect(error.code).toBe(ErrorCode.NotFound);
     });
   });
 });
