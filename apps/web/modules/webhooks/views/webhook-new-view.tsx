@@ -18,9 +18,10 @@ import { WebhookFormHeader } from "./webhook-form-header";
 type Props = {
   webhooks: RouterOutputs["viewer"]["webhook"]["list"];
   installedApps: RouterOutputs["viewer"]["apps"]["integrations"];
+  canManageMemberMeetings?: boolean;
 };
 
-export const NewWebhookView = ({ webhooks, installedApps }: Props) => {
+export const NewWebhookView = ({ webhooks, installedApps, canManageMemberMeetings }: Props) => {
   const searchParams = useCompatSearchParams();
   const { t } = useLocale();
   const utils = trpc.useUtils();
@@ -74,12 +75,17 @@ export const NewWebhookView = ({ webhooks, installedApps }: Props) => {
       version: values.version,
       teamId,
       platform,
+      ...(teamId && !platform && canManageMemberMeetings !== false
+        ? { includeMemberMeetings: !!values.includeMemberMeetings }
+        : {}),
     });
   };
 
   return (
     <WebhookForm
       onSubmit={onCreateWebhook}
+      teamId={platform ? undefined : teamId}
+      canManageMemberMeetings={canManageMemberMeetings}
       apps={installedApps?.items.map((app) => app.slug)}
       headerWrapper={(formMethods, children) => (
         <>

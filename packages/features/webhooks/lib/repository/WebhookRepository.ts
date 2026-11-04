@@ -21,9 +21,15 @@ import type { GetSubscribersOptions } from "./types";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 // Type for raw query results from the database
@@ -39,6 +45,16 @@ interface WebhookQueryResult {
   version: WebhookVersion;
   priority: number; // This field is added by the query and removed before returning
 }
+
+const isTeamAdminRole = (role: MembershipRole): boolean =>
+  role === MembershipRole.ADMIN || role === MembershipRole.OWNER;
+
+// Member-meeting webhooks have no owning user (userId null), so only team admins/owners may see them.
+const isTeamOwnedWebhook = (webhook: {
+  userId: number | null;
+  teamId: number | null;
+  eventTypeId: number | null;
+}): boolean => webhook.userId == null && webhook.teamId != null && webhook.eventTypeId == null;
 
 const filterWebhooks = (webhook: { appId: string | null }): boolean => {
   const appIds = [
@@ -99,6 +115,7 @@ export class WebhookRepository implements IWebhookRepository {
       managedParentEventTypeId,
       teamIds: teamIds && orgId ? [...teamIds, orgId] : teamIds || (orgId ? [orgId] : undefined),
       oAuthClientId,
+      memberSharingTeamIds: options.memberSharingTeamIds?.length ? options.memberSharingTeamIds : undefined,
       triggerEvent: options.triggerEvent,
     });
 
@@ -125,9 +142,18 @@ export class WebhookRepository implements IWebhookRepository {
     managedParentEventTypeId?: number | null;
     teamIds?: number[];
     oAuthClientId?: string | null;
+    memberSharingTeamIds?: number[];
     triggerEvent: WebhookTriggerEvents;
   }): Promise<WebhookSubscriber[]> {
-    const { userId, eventTypeId, managedParentEventTypeId, teamIds, oAuthClientId, triggerEvent } = params;
+    const {
+      userId,
+      eventTypeId,
+      managedParentEventTypeId,
+      teamIds,
+      oAuthClientId,
+      memberSharingTeamIds,
+      triggerEvent,
+    } = params;
 
     // IMPORTANT: Explicit type casts (::int, ::text) are required for nullable params
     // PostgreSQL can't infer types for NULL values without explicit casts
@@ -207,6 +233,21 @@ export class WebhookRepository implements IWebhookRepository {
         AND ${triggerEvent}::"WebhookTriggerEvents" = ANY("eventTriggers")
         AND platform = false
       
+      UNION ALL
+      
+      -- Team webhooks opted into member meetings (only if memberSharingTeamIds provided and not empty)
+      SELECT 
+        id, "subscriberUrl", "payloadTemplate", "appId", secret, time, "timeUnit", "eventTriggers", version,
+        7 as priority
+      FROM "Webhook"
+      WHERE active = true 
+        AND ${memberSharingTeamIds}::int[] IS NOT NULL
+        AND cardinality(${memberSharingTeamIds}::int[]) > 0
+        AND "teamId" = ANY(${memberSharingTeamIds}::int[])
+        AND "includeMemberMeetings" = true
+        AND ${triggerEvent}::"WebhookTriggerEvents" = ANY("eventTriggers")
+        AND platform = false
+      
       ORDER BY priority, id
     `;
 
@@ -270,6 +311,7 @@ export class WebhookRepository implements IWebhookRepository {
         time: true,
         timeUnit: true,
         version: true,
+        includeMemberMeetings: true,
       },
     });
 
@@ -342,6 +384,7 @@ export class WebhookRepository implements IWebhookRepository {
             createdAt: true,
             platform: true,
             platformOAuthClientId: true,
+            includeMemberMeetings: true,
           },
         },
         teams: {
@@ -374,6 +417,7 @@ export class WebhookRepository implements IWebhookRepository {
                     createdAt: true,
                     platform: true,
                     platformOAuthClientId: true,
+                    includeMemberMeetings: true,
                   },
                 },
               },
@@ -449,7 +493,11 @@ export class WebhookRepository implements IWebhookRepository {
           slug: membership.team.slug || null,
           image: getPlaceholderAvatar(membership.team.logoUrl, membership.team.name),
         },
-        webhooks: WebhookOutputMapper.toWebhookList(membership.team.webhooks.filter(filterWebhooks)),
+        webhooks: WebhookOutputMapper.toWebhookList(
+          membership.team.webhooks
+            .filter(filterWebhooks)
+            .filter((webhook) => isTeamAdminRole(membership.role) || !isTeamOwnedWebhook(webhook))
+        ),
         metadata: {
           canModify: canUpdate,
           canDelete,
@@ -478,6 +526,7 @@ export class WebhookRepository implements IWebhookRepository {
           createdAt: true,
           platform: true,
           platformOAuthClientId: true,
+          includeMemberMeetings: true,
         },
       });
 
@@ -558,6 +607,26 @@ export class WebhookRepository implements IWebhookRepository {
       whereConditions.push({
         OR: [{ userId }, ...(allowedTeamIds.length ? [{ teamId: { in: allowedTeamIds } }] : [])],
       });
+
+      const adminTeamIds = (
+        await this.prisma.membership.findMany({
+          where: {
+            userId,
+            accepted: true,
+            role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
+          },
+          select: { teamId: true },
+        })
+      ).map((membership) => membership.teamId);
+
+      whereConditions.push({
+        OR: [
+          { userId: { not: null } },
+          { teamId: null },
+          { eventTypeId: { not: null } },
+          ...(adminTeamIds.length ? [{ teamId: { in: adminTeamIds } }] : []),
+        ],
+      });
     }
 
     // Event triggers filter
@@ -584,6 +653,7 @@ export class WebhookRepository implements IWebhookRepository {
         createdAt: true,
         platform: true,
         platformOAuthClientId: true,
+        includeMemberMeetings: true,
       },
     });
 

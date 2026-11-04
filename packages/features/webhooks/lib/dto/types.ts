@@ -407,6 +407,7 @@ export interface Webhook {
   createdAt: Date;
   platform: boolean;
   platformOAuthClientId: string | null;
+  includeMemberMeetings: boolean;
 }
 
 /**
