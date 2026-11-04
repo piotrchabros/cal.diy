@@ -15,14 +15,20 @@ import { Input } from "@calcom/ui/components/form";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getAdHocLinkCopyKeys, getAdHocLinkCopyVariant, useNotetakerAdHoc } from "../hooks/useNotetakerAdHoc";
+import { AD_HOC_DURATION_CHOICES_MINUTES } from "../lib/adHocDuration";
 import { useNotetakerFeatureEnabled } from "../lib/NotetakerFeatureContext";
 
 const TITLE_MAX_LENGTH = 200;
-const DURATION_CHOICES_MINUTES = [15, 30, 45, 60, 90, 120, 180, 240];
 const ONLY_ME = "";
 
 const SELECT_CLASS_NAME =
   "mt-1 block w-full rounded-md border border-default bg-default px-3 py-2 text-emphasis text-sm";
+
+export type NotetakerAddToMeetingInitialValues = {
+  meetingUrl?: string;
+  title?: string;
+  durationMinutes?: number;
+};
 
 export function NotetakerAddToMeetingDialog(): JSX.Element | null {
   const { t } = useLocale();
@@ -38,20 +44,67 @@ export function NotetakerAddToMeetingDialog(): JSX.Element | null {
           {t("notetaker_add_to_meeting")}
         </Button>
       </DialogTrigger>
-      <DialogContent enableOverflow>
-        <AddToMeetingForm onClose={() => setOpen(false)} />
-      </DialogContent>
+      <AddToMeetingDialogContent open={open} onClose={() => setOpen(false)} />
     </Dialog>
   );
 }
 
-function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
+export function NotetakerAddToMeetingDialogControlled({
+  open,
+  onOpenChange,
+  initialValues,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialValues?: NotetakerAddToMeetingInitialValues;
+}): JSX.Element | null {
+  const enabled = useNotetakerFeatureEnabled();
+
+  if (!enabled) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <AddToMeetingDialogContent
+        open={open}
+        onClose={() => onOpenChange(false)}
+        initialValues={initialValues}
+      />
+    </Dialog>
+  );
+}
+
+// The form only mounts while open so its state re-seeds from initialValues on every open.
+function AddToMeetingDialogContent({
+  open,
+  onClose,
+  initialValues,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialValues?: NotetakerAddToMeetingInitialValues;
+}): JSX.Element {
+  return (
+    <DialogContent enableOverflow>
+      {open ? <AddToMeetingForm onClose={onClose} initialValues={initialValues} /> : null}
+    </DialogContent>
+  );
+}
+
+function AddToMeetingForm({
+  onClose,
+  initialValues,
+}: {
+  onClose: () => void;
+  initialValues?: NotetakerAddToMeetingInitialValues;
+}): JSX.Element {
   const { t } = useLocale();
   const router = useRouter();
   const { options, dispatch, dispatchToMeeting } = useNotetakerAdHoc({ enabled: true });
-  const [meetingUrl, setMeetingUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
+  const [meetingUrl, setMeetingUrl] = useState(initialValues?.meetingUrl ?? "");
+  const [title, setTitle] = useState(initialValues?.title ?? "");
+  const [durationMinutes, setDurationMinutes] = useState<number | null>(
+    initialValues?.durationMinutes ?? null
+  );
   const [teamValue, setTeamValue] = useState(ONLY_ME);
   const [acknowledged, setAcknowledged] = useState(false);
   const [linkError, setLinkError] = useState<AdHocMeetingUrlRejection | null>(null);
@@ -64,10 +117,14 @@ function AddToMeetingForm({ onClose }: { onClose: () => void }): JSX.Element {
     WRAPPED_MEETING_LINK: "notetaker_ad_hoc_wrapped_link",
   };
   const teamOptions = data?.teamOptions ?? [];
-  const durationChoices = DURATION_CHOICES_MINUTES.filter(
+  const durationChoices = AD_HOC_DURATION_CHOICES_MINUTES.filter(
     (minutes) => minutes <= (data?.maxDurationMinutes ?? 0)
   );
-  const selectedDuration = durationMinutes ?? data?.defaultDurationMinutes;
+  // Options load asynchronously, so a prefilled duration is validated against them here.
+  const selectedDuration =
+    durationMinutes !== null && durationChoices.includes(durationMinutes)
+      ? durationMinutes
+      : data?.defaultDurationMinutes;
   const sharingTeamId = teamValue === ONLY_ME ? null : Number(teamValue);
   const canSubmit =
     !!data && cleanMeetingLinkInput(meetingUrl) !== "" && acknowledged && !dispatchToMeeting.isPending;

@@ -31,6 +31,7 @@ type BookingsProps = {
   bookingsV3Enabled: boolean;
   bookingAuditEnabled: boolean;
   notetakerEnabled: boolean;
+  externalCalendarEventsEnabled: boolean;
 };
 
 function useSystemSegments(userId?: number) {
@@ -81,7 +82,13 @@ export default function Bookings(props: BookingsProps) {
   );
 }
 
-function BookingsContent({ status, permissions, bookingsV3Enabled, bookingAuditEnabled }: BookingsProps) {
+function BookingsContent({
+  status,
+  permissions,
+  bookingsV3Enabled,
+  bookingAuditEnabled,
+  externalCalendarEventsEnabled,
+}: BookingsProps) {
   const [view] = useBookingsView({ bookingsV3Enabled });
 
   return (
@@ -97,6 +104,7 @@ function BookingsContent({ status, permissions, bookingsV3Enabled, bookingAuditE
             permissions={permissions}
             bookingsV3Enabled={bookingsV3Enabled}
             bookingAuditEnabled={bookingAuditEnabled}
+            externalCalendarEventsEnabled={externalCalendarEventsEnabled}
           />
         </>
       )}
@@ -105,6 +113,7 @@ function BookingsContent({ status, permissions, bookingsV3Enabled, bookingAuditE
           status={status}
           permissions={permissions}
           bookingsV3Enabled={bookingsV3Enabled}
+          externalCalendarEventsEnabled={externalCalendarEventsEnabled}
         />
       )}
     </div>

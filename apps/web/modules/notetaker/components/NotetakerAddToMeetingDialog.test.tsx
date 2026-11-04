@@ -1,7 +1,10 @@
 import type { NotetakerAdHocOptions } from "@calcom/features/notetaker/services/NotetakerAdHocService";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotetakerAddToMeetingDialog } from "./NotetakerAddToMeetingDialog";
+import {
+  NotetakerAddToMeetingDialog,
+  NotetakerAddToMeetingDialogControlled,
+} from "./NotetakerAddToMeetingDialog";
 
 type Options = NotetakerAdHocOptions;
 
@@ -270,5 +273,61 @@ describe("NotetakerAddToMeetingDialog", () => {
     await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
     expect(mocks.push).not.toHaveBeenCalled();
     expect(screen.getByTestId("notetaker-add-to-meeting-form")).toBeTruthy();
+  });
+
+  describe("NotetakerAddToMeetingDialogControlled", () => {
+    function renderControlled(
+      props: Partial<React.ComponentProps<typeof NotetakerAddToMeetingDialogControlled>> = {}
+    ) {
+      mocks.options = OPTIONS;
+      return render(<NotetakerAddToMeetingDialogControlled open onOpenChange={vi.fn()} {...props} />);
+    }
+
+    it("renders nothing when the feature is off", () => {
+      mocks.enabled = false;
+      renderControlled();
+
+      expect(screen.queryByTestId("notetaker-add-to-meeting-form")).toBeNull();
+    });
+
+    it("renders no form and no trigger while closed", () => {
+      renderControlled({ open: false });
+
+      expect(screen.queryByTestId("notetaker-add-to-meeting-form")).toBeNull();
+      expect(screen.queryByTestId("notetaker-add-to-meeting")).toBeNull();
+    });
+
+    it("prefills link, title and an allowed duration", () => {
+      renderControlled({ initialValues: { meetingUrl: LINK, title: "Weekly sync", durationMinutes: 90 } });
+
+      expect((screen.getByTestId("notetaker-ad-hoc-link") as HTMLInputElement).value).toBe(LINK);
+      expect((screen.getByTestId("notetaker-ad-hoc-title") as HTMLInputElement).value).toBe("Weekly sync");
+      expect((screen.getByTestId("notetaker-ad-hoc-duration") as HTMLSelectElement).value).toBe("90");
+    });
+
+    it("falls back to the default duration when the prefilled one exceeds the maximum", () => {
+      renderControlled({ initialValues: { durationMinutes: 240 } });
+
+      expect((screen.getByTestId("notetaker-ad-hoc-duration") as HTMLSelectElement).value).toBe("60");
+    });
+
+    it("sends the prefilled values", async () => {
+      renderControlled({ initialValues: { meetingUrl: LINK, title: "Weekly sync", durationMinutes: 30 } });
+      fireEvent.click(screen.getByTestId("notetaker-ad-hoc-acknowledge"));
+      submit();
+
+      await waitFor(() => expect(mocks.dispatch).toHaveBeenCalled());
+      expect(mocks.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ meetingUrl: LINK, title: "Weekly sync", durationMinutes: 30 })
+      );
+    });
+
+    it("reports closing through onOpenChange", () => {
+      const onOpenChange = vi.fn();
+      renderControlled({ onOpenChange });
+      fireEvent.click(screen.getByText("cancel"));
+
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
   });
 });
