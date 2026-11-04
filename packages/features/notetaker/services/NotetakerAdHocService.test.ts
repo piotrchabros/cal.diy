@@ -92,6 +92,7 @@ describe("NotetakerAdHocService", () => {
   const dispatchForBooking = vi.fn(async (_params: { bookingUid: string }) => {
     calls.push("dispatch");
   });
+  const isMeetingLinkTaken = vi.fn(async (_params: { meetingUrl: string }) => false);
   const logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
   let userLocale: string | null;
   let repositories: ReturnType<typeof createInMemoryNotetakerRepositories>;
@@ -124,7 +125,7 @@ describe("NotetakerAdHocService", () => {
       membershipLookup,
       featuresRepository: { checkIfUserHasFeature },
       choiceService: { setEnabled },
-      dispatchService: { dispatchForBooking },
+      dispatchService: { dispatchForBooking, isMeetingLinkTaken },
       userRepository,
       config,
       logger,
@@ -213,6 +214,8 @@ describe("NotetakerAdHocService", () => {
     dispatchForBooking.mockImplementation(async () => {
       calls.push("dispatch");
     });
+    isMeetingLinkTaken.mockReset();
+    isMeetingLinkTaken.mockResolvedValue(false);
     logger.warn.mockClear();
     vi.mocked(getTranslation).mockClear();
     userLocale = null;
@@ -484,6 +487,29 @@ describe("NotetakerAdHocService", () => {
         expect(result.bookingUid).not.toBe(finished.uid);
         expect(adHocBookings()).toHaveLength(2);
         expect(dispatchForBooking).toHaveBeenCalledWith({ bookingUid: result.bookingUid });
+      });
+    });
+
+    describe("meeting already recorded", () => {
+      it("refuses a link where another booking's notetaker is live", async () => {
+        isMeetingLinkTaken.mockResolvedValue(true);
+
+        await expectAdHocError(
+          dispatch({ meetingUrl: "https://meet.google.com/ABC-DEFG-HIJ" }),
+          "MEETING_ALREADY_RECORDED"
+        );
+
+        expect(isMeetingLinkTaken).toHaveBeenCalledWith({ meetingUrl: MEET_URL });
+        expect(adHocBookings()).toHaveLength(0);
+        expect(setEnabled).not.toHaveBeenCalled();
+        expect(dispatchForBooking).not.toHaveBeenCalled();
+      });
+
+      it("returns the user's own live meeting on the link instead of refusing it", async () => {
+        isMeetingLinkTaken.mockResolvedValue(true);
+        const live = await seedUnexpiredAdHoc({ location: MEET_URL, sessionStatus: "TRANSCRIBING" });
+
+        await expect(dispatch()).resolves.toEqual({ bookingUid: live.uid, reused: true });
       });
     });
 

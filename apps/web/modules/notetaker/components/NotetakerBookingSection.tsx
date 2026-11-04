@@ -30,7 +30,56 @@ const INELIGIBILITY_REASON_KEYS: Record<NotetakerIneligibilityReasonDto, string>
   REJOIN_BLOCKED: "notetaker_unavailable_rejoin_blocked",
 };
 
-// An attendee or a shared viewer reads results but cannot change the choice or stop the notetaker, so only the status and the link are shown
+function NotetakerOriginBadges({ state }: { state: NotetakerStateDto }): JSX.Element | null {
+  const { t } = useLocale();
+
+  if (!state.isAdHoc && !state.isCalendarMeeting) return null;
+  return (
+    <div className="flex gap-1">
+      {state.isAdHoc && (
+        <Badge variant="gray" data-testid="notetaker-ad-hoc-badge">
+          {t("notetaker_ad_hoc_badge")}
+        </Badge>
+      )}
+      {state.isCalendarMeeting && (
+        <Badge variant="gray" data-testid="notetaker-calendar-meeting-badge">
+          {t("notetaker_calendar_auto_join_badge")}
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+function NotetakerStopControl({ bookingUid }: { bookingUid: string }): JSX.Element {
+  const { t } = useLocale();
+  const { stop } = useNotetakerMutations();
+  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
+
+  return (
+    <div className="flex">
+      <Button
+        type="button"
+        color="destructive"
+        size="sm"
+        disabled={stop.isPending}
+        onClick={() => setIsStopDialogOpen(true)}
+        data-testid="notetaker-stop-button">
+        {t("notetaker_stop_button")}
+      </Button>
+      <Dialog open={isStopDialogOpen} onOpenChange={setIsStopDialogOpen}>
+        <ConfirmationDialogContent
+          variety="danger"
+          title={t("notetaker_stop_confirm_title")}
+          confirmBtnText={t("notetaker_stop_button")}
+          onConfirm={() => stop.mutate({ bookingUid })}>
+          {t("notetaker_stop_confirm_description")}
+        </ConfirmationDialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Attendees, shared viewers and calendar-meeting participants cannot change the choice; only a participant may also stop an active session, so the host controls are otherwise hidden
 function NotetakerReadOnlySection({
   bookingUid,
   state,
@@ -43,13 +92,7 @@ function NotetakerReadOnlySection({
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
       <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
-      {state.isAdHoc && (
-        <div className="flex">
-          <Badge variant="gray" data-testid="notetaker-ad-hoc-badge">
-            {t("notetaker_ad_hoc_badge")}
-          </Badge>
-        </div>
-      )}
+      <NotetakerOriginBadges state={state} />
       {state.status !== null && (
         <div className="flex">
           <NotetakerStatusBadge
@@ -57,6 +100,9 @@ function NotetakerReadOnlySection({
             outcomeReason={state.session?.status === state.status ? state.session.outcomeReason : null}
           />
         </div>
+      )}
+      {state.viewerRole === "PARTICIPANT" && state.canStop && (
+        <NotetakerStopControl bookingUid={bookingUid} />
       )}
       {state.transcript !== null && (
         <Link
@@ -73,8 +119,7 @@ function NotetakerReadOnlySection({
 export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }): JSX.Element | null {
   const { t, i18n } = useLocale();
   const { data: state, isPending, isError } = useNotetakerState(bookingUid);
-  const { setEnabled, stop } = useNotetakerMutations();
-  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
+  const { setEnabled } = useNotetakerMutations();
   const [pendingScope, setPendingScope] = useState<boolean | null>(null);
 
   if (isPending || isError || !state) return null;
@@ -113,13 +158,7 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
   return (
     <div className="flex flex-col gap-1" data-testid="notetaker-booking-section">
       <h3 className="font-medium text-subtle text-xs">{t("notetaker_section_title")}</h3>
-      {state.isAdHoc && (
-        <div className="flex">
-          <Badge variant="gray" data-testid="notetaker-ad-hoc-badge">
-            {t("notetaker_ad_hoc_badge")}
-          </Badge>
-        </div>
-      )}
+      <NotetakerOriginBadges state={state} />
       {state.status === "WAITING_TO_BE_ADMITTED" && (
         <div data-testid="notetaker-admit-banner">
           <Alert
@@ -190,28 +229,7 @@ export function NotetakerBookingSection({ bookingUid }: { bookingUid: string }):
           />
         </div>
       )}
-      {state.canStop && (
-        <div className="flex">
-          <Button
-            type="button"
-            color="destructive"
-            size="sm"
-            disabled={stop.isPending}
-            onClick={() => setIsStopDialogOpen(true)}
-            data-testid="notetaker-stop-button">
-            {t("notetaker_stop_button")}
-          </Button>
-          <Dialog open={isStopDialogOpen} onOpenChange={setIsStopDialogOpen}>
-            <ConfirmationDialogContent
-              variety="danger"
-              title={t("notetaker_stop_confirm_title")}
-              confirmBtnText={t("notetaker_stop_button")}
-              onConfirm={() => stop.mutate({ bookingUid })}>
-              {t("notetaker_stop_confirm_description")}
-            </ConfirmationDialogContent>
-          </Dialog>
-        </div>
-      )}
+      {state.canStop && <NotetakerStopControl bookingUid={bookingUid} />}
       {choiceText !== null && <p className="text-subtle text-xs">{choiceText}</p>}
       {state.transcript === null && state.session?.resultsDeletedAt != null && (
         <p className="text-sm text-subtle" data-testid="notetaker-results-deleted">

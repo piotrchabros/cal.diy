@@ -527,6 +527,93 @@ describe("NotetakerBookingSection for a shared viewer", () => {
   });
 });
 
+describe("NotetakerBookingSection for a calendar meeting participant", () => {
+  beforeEach(() => {
+    mocks.stopMutate.mockClear();
+  });
+
+  it("shows the stop button while the session is active and stops on confirm", () => {
+    renderSection(
+      buildState({
+        viewerRole: "PARTICIPANT",
+        isCalendarMeeting: true,
+        status: "TRANSCRIBING",
+        canToggle: false,
+        canStop: true,
+        choice: buildChoice({ source: "CALENDAR_AUTO_JOIN" }),
+        session: buildSession({ status: "TRANSCRIBING", outcomeReason: null, endedAt: null }),
+      })
+    );
+
+    fireEvent.click(screen.getByTestId("notetaker-stop-button"));
+    fireEvent.click(screen.getByTestId("dialog-confirmation"));
+
+    expect(mocks.stopMutate).toHaveBeenCalledWith({ bookingUid: BOOKING_UID });
+  });
+
+  it("hides the host controls and the choice sentence", () => {
+    renderSection(
+      buildState({
+        viewerRole: "PARTICIPANT",
+        status: "WAITING_TO_BE_ADMITTED",
+        canToggle: true,
+        canStop: true,
+        choice: buildChoice({ source: "CALENDAR_AUTO_JOIN" }),
+        eligibility: { eligible: false, platform: "GOOGLE_MEET", reason: "REJOIN_BLOCKED" },
+        session: buildSession({ status: "WAITING_TO_BE_ADMITTED", outcomeReason: null, endedAt: null }),
+      })
+    );
+
+    const text = screen.getByTestId("notetaker-booking-section").textContent;
+    expect(screen.getByTestId("notetaker-stop-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-admit-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notetaker-rejoin-blocked")).not.toBeInTheDocument();
+    expect(text).not.toContain("notetaker_enabled_by_calendar_auto_join");
+  });
+
+  it("shows no stop button once the session is no longer active", () => {
+    renderSection(
+      buildState({
+        viewerRole: "PARTICIPANT",
+        status: "READY",
+        canStop: false,
+        session: buildSession({ status: "READY", outcomeReason: null }),
+        transcript: TRANSCRIPT,
+      })
+    );
+
+    expect(screen.queryByTestId("notetaker-stop-button")).not.toBeInTheDocument();
+    expect(screen.getByTestId("notetaker-view-transcript")).toBeInTheDocument();
+  });
+});
+
+describe("NotetakerBookingSection calendar meeting badge", () => {
+  it("shows the badge to a host of a calendar meeting", () => {
+    renderSection(buildState({ isCalendarMeeting: true }));
+
+    expect(screen.getByTestId("notetaker-calendar-meeting-badge").textContent).toBe(
+      "notetaker_calendar_auto_join_badge"
+    );
+  });
+
+  it("shows the badge to a participant of a calendar meeting", () => {
+    renderSection(buildState({ viewerRole: "PARTICIPANT", isCalendarMeeting: true }));
+
+    expect(screen.getByTestId("notetaker-calendar-meeting-badge")).toBeInTheDocument();
+  });
+
+  it("does not show the badge for a booking", () => {
+    renderSection(buildState());
+
+    expect(screen.queryByTestId("notetaker-calendar-meeting-badge")).not.toBeInTheDocument();
+  });
+
+  it("has the badge text in the English catalogue", () => {
+    expect(enTranslations.notetaker_calendar_auto_join_badge).toBe("Added from your calendar");
+  });
+});
+
 describe("NotetakerBookingSection after the results were deleted", () => {
   it("shows a host the deleted line last in the section and no transcript link", () => {
     renderSection(

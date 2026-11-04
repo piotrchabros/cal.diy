@@ -82,6 +82,15 @@ function buildBooking(overrides: Partial<InMemoryBookingSeed> = {}): InMemoryBoo
   };
 }
 
+// Bookings sharing one link would be deferred by the one-notetaker-per-link guard, so multi-booking
+// tests give each booking its own meeting.
+function meetLinkFor(id: number): string {
+  const code = Array.from(id.toString(26).padStart(3, "0"), (digit) =>
+    String.fromCharCode(97 + Number.parseInt(digit, 26))
+  ).join("");
+  return `https://meet.google.com/${code}-defg-hij`;
+}
+
 function offsetFromNow(ms: number): Date {
   return new Date(NOW.getTime() + ms);
 }
@@ -733,6 +742,7 @@ describe("NotetakerDispatchService", () => {
           buildBooking({
             id,
             uid: `uid-${id}`,
+            location: meetLinkFor(id),
             startTime,
             endTime: new Date(startTime.getTime() + 1_800_000),
           })
@@ -1065,8 +1075,18 @@ describe("NotetakerDispatchService", () => {
 
     describe("isolation between bookings", () => {
       async function seedTwoDue(): Promise<{ first: number; second: number }> {
-        const first = await seedArmed({ id: 1, uid: "uid-1", startTime: offsetFromNow(10_000) });
-        const second = await seedArmed({ id: 2, uid: "uid-2", startTime: offsetFromNow(20_000) });
+        const first = await seedArmed({
+          id: 1,
+          uid: "uid-1",
+          location: meetLinkFor(1),
+          startTime: offsetFromNow(10_000),
+        });
+        const second = await seedArmed({
+          id: 2,
+          uid: "uid-2",
+          location: meetLinkFor(2),
+          startTime: offsetFromNow(20_000),
+        });
         return { first, second };
       }
 
@@ -1314,8 +1334,8 @@ describe("NotetakerDispatchService", () => {
     });
 
     it("invites once per dispatched booking, each before its own join request", async () => {
-      await seedArmed({ id: 1, uid: "uid-1", startTime: offsetFromNow(10_000) });
-      await seedArmed({ id: 2, uid: "uid-2", startTime: offsetFromNow(20_000) });
+      await seedArmed({ id: 1, uid: "uid-1", location: meetLinkFor(1), startTime: offsetFromNow(10_000) });
+      await seedArmed({ id: 2, uid: "uid-2", location: meetLinkFor(2), startTime: offsetFromNow(20_000) });
 
       await buildService(fakeBinding(joinLoggingGateway())).dispatchDue();
 
@@ -2544,6 +2564,7 @@ describe("NotetakerDispatchService", () => {
       const dueId = await seedArmed({
         id: 1,
         uid: "uid-1",
+        location: meetLinkFor(1),
         startTime: END,
         endTime: new Date(END.getTime() + 1_800_000),
       });
@@ -2773,6 +2794,101 @@ describe("NotetakerDispatchService", () => {
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect(repositories.store.sessions.size).toBe(0);
       expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+    });
+  });
+
+  describe("one notetaker per meeting link", () => {
+    const OTHER_BOOKING_ID = 200;
+
+    function seedOtherBooking(): void {
+      repositories.store.addBooking(buildBooking({ id: OTHER_BOOKING_ID, uid: "other-booking-uid" }));
+    }
+
+    it("defers a due booking whose link already has another booking's live notetaker", async () => {
+      seedOtherBooking();
+      const otherSessionId = await seedTranscribing(OTHER_BOOKING_ID);
+      const bookingId = await seedArmed();
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(repositories.store.sessions.size).toBe(1);
+      expect(gateway.joinRequests).toHaveLength(0);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+      expect(logger.info).toHaveBeenCalledWith(expect.any(String), {
+        bookingId,
+        otherBookingId: OTHER_BOOKING_ID,
+        otherSessionId,
+      });
+      expect(loggedText()).not.toContain(MEET_LINK);
+    });
+
+    it("defers when only the canonical form of the link matches", async () => {
+      seedOtherBooking();
+      await seedTranscribing(OTHER_BOOKING_ID);
+      const bookingId = await seedArmed({ location: "https://meet.google.com/ABC-DEFG-HIJ?authuser=0" });
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(repositories.store.sessions.size).toBe(1);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+    });
+
+    it("dispatches once the other booking's notetaker has finished", async () => {
+      seedOtherBooking();
+      await seedSessionWith(OTHER_BOOKING_ID, { status: "READY" });
+      const bookingId = await seedArmed();
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(gateway.joinRequests).toHaveLength(1);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+    });
+
+    it("dispatches when the only earlier session at the link belongs to the same booking", async () => {
+      const bookingId = await seedArmed();
+      await seedSessionWith(bookingId, { status: "ENDED_EARLY" });
+      const lookup = vi.spyOn(repositories.sessionRepository, "findLiveByMeetingUrlExcludingBooking");
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+      await settle(gateway);
+
+      expect(lookup).toHaveBeenCalledWith({ meetingUrl: MEET_LINK, excludeBookingId: bookingId });
+      expect(gateway.joinRequests).toHaveLength(1);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(false);
+    });
+
+    it("defers an immediate dispatch the same way", async () => {
+      seedOtherBooking();
+      await seedTranscribing(OTHER_BOOKING_ID);
+      const bookingId = await seedArmed();
+      const gateway = fake();
+
+      await buildService(fakeBinding(gateway)).dispatchForBooking({ bookingUid: BOOKING_UID });
+      await settle(gateway);
+
+      expect(gateway.joinRequests).toHaveLength(0);
+      expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+    });
+
+    it("reports a link as taken only while a notetaker is live in it", async () => {
+      seedOtherBooking();
+      const sessionId = await seedTranscribing(OTHER_BOOKING_ID);
+      const service = buildService(fakeBinding(fake()));
+
+      await expect(service.isMeetingLinkTaken({ meetingUrl: MEET_LINK })).resolves.toBe(true);
+      await expect(
+        service.isMeetingLinkTaken({ meetingUrl: "https://meet.google.com/zzz-zzzz-zzz" })
+      ).resolves.toBe(false);
+
+      await repositories.sessionRepository.update(sessionId, { status: "READY" });
+      await expect(service.isMeetingLinkTaken({ meetingUrl: MEET_LINK })).resolves.toBe(false);
     });
   });
 

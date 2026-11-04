@@ -71,6 +71,7 @@ const CalendarSwitch = (props: ICalendarSwitchProps) => {
     async onSettled() {
       await utils.viewer.apps.integrations.invalidate();
       await utils.viewer.calendars.connectedCalendars.invalidate();
+      await utils.viewer.notetaker.listCalendarAutoJoin.invalidate();
     },
     onError() {
       setCheckedInternal(false);

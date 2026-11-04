@@ -15,6 +15,7 @@ const ERROR_KEYS: Record<NotetakerAdHocErrorCode, string> = {
   AD_HOC_LIMIT_REACHED: "notetaker_ad_hoc_limit_reached",
   TEAM_NOT_ALLOWED: "notetaker_ad_hoc_team_not_allowed",
   INVALID_DURATION: "notetaker_ad_hoc_invalid_duration",
+  MEETING_ALREADY_RECORDED: "notetaker_ad_hoc_meeting_already_recorded",
 };
 
 export type AdHocLinkCopyVariant = "meet" | "teams" | "any";
