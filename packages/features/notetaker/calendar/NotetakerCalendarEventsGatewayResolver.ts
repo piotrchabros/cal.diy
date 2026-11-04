@@ -4,6 +4,7 @@ import type {
 } from "./INotetakerCalendarEventsGateway";
 
 export const GOOGLE_CALENDAR_INTEGRATION = "google_calendar";
+export const OFFICE365_CALENDAR_INTEGRATION = "office365_calendar";
 
 export interface INotetakerCalendarEventsGatewayResolverDeps {
   /** Keyed by SelectedCalendar.integration */
