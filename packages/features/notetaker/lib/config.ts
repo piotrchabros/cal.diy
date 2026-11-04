@@ -34,6 +34,12 @@ type NotetakerConfig = {
     maxActiveMeetings: number;
     maxMeetingsPerDay: number;
   };
+  calendarAutoJoin: {
+    pollIntervalSeconds: number;
+    lookaheadHours: number;
+    pollBatchSize: number;
+    maxMeetingsPerDay: number;
+  };
   enabledPlatforms: NotetakerPlatformDto[];
   // null means unset in production, which the feature reports as disabled
   botProvider: NotetakerBotProviderDto | null;
@@ -153,6 +159,10 @@ const configObjectSchema = z.object({
   NOTETAKER_SUMMARY_MIN_WORDS: limitSchema(40),
   NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS: limitSchema(10),
   NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY: limitSchema(50),
+  NOTETAKER_CALENDAR_POLL_INTERVAL_SECONDS: limitSchema(300),
+  NOTETAKER_CALENDAR_LOOKAHEAD_HOURS: limitSchema(24),
+  NOTETAKER_CALENDAR_POLL_BATCH_SIZE: limitSchema(20),
+  NOTETAKER_CALENDAR_MAX_MEETINGS_PER_DAY: limitSchema(10),
   NOTETAKER_ENABLED_PLATFORMS: platformsSchema,
   NOTETAKER_BOT_PROVIDER: botProviderSchema,
   NOTETAKER_BOT_URL: botUrlSchema,
@@ -235,6 +245,12 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     adHocLimits: {
       maxActiveMeetings: parsed.NOTETAKER_AD_HOC_MAX_ACTIVE_MEETINGS,
       maxMeetingsPerDay: parsed.NOTETAKER_AD_HOC_MAX_MEETINGS_PER_DAY,
+    },
+    calendarAutoJoin: {
+      pollIntervalSeconds: parsed.NOTETAKER_CALENDAR_POLL_INTERVAL_SECONDS,
+      lookaheadHours: parsed.NOTETAKER_CALENDAR_LOOKAHEAD_HOURS,
+      pollBatchSize: parsed.NOTETAKER_CALENDAR_POLL_BATCH_SIZE,
+      maxMeetingsPerDay: parsed.NOTETAKER_CALENDAR_MAX_MEETINGS_PER_DAY,
     },
     enabledPlatforms: parsed.NOTETAKER_ENABLED_PLATFORMS,
     botProvider: parsed.NOTETAKER_BOT_PROVIDER ?? getDefaultBotProvider(env),
