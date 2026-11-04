@@ -84,6 +84,12 @@ function buildConfig(overrides: Partial<NotetakerConfig> = {}): NotetakerConfig 
       summaryMinWords: 40,
     },
     adHocLimits: { maxActiveMeetings: 10, maxMeetingsPerDay: 50 },
+    calendarAutoJoin: {
+      pollIntervalSeconds: 300,
+      lookaheadHours: 24,
+      pollBatchSize: 20,
+      maxMeetingsPerDay: 10,
+    },
     enabledPlatforms: ["GOOGLE_MEET"],
     botProvider: "FAKE",
     botUrl: null,

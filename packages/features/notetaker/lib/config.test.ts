@@ -91,6 +91,30 @@ describe("getNotetakerConfig ad-hoc limits", () => {
   });
 });
 
+describe("getNotetakerConfig calendar auto-join", () => {
+  const calendarRows = [
+    ["NOTETAKER_CALENDAR_POLL_INTERVAL_SECONDS", "pollIntervalSeconds", 300],
+    ["NOTETAKER_CALENDAR_LOOKAHEAD_HOURS", "lookaheadHours", 24],
+    ["NOTETAKER_CALENDAR_POLL_BATCH_SIZE", "pollBatchSize", 20],
+    ["NOTETAKER_CALENDAR_MAX_MEETINGS_PER_DAY", "maxMeetingsPerDay", 10],
+  ] as const;
+
+  it.each(calendarRows)("%s defaults when unset or blank", (name, field, fallback) => {
+    expect(getNotetakerConfig(env()).calendarAutoJoin[field]).toBe(fallback);
+    expect(getNotetakerConfig(env({ [name]: " " })).calendarAutoJoin[field]).toBe(fallback);
+  });
+
+  it.each(calendarRows)("%s parses a valid integer", (name, field) => {
+    expect(getNotetakerConfig(env({ [name]: " 3 " })).calendarAutoJoin[field]).toBe(3);
+  });
+
+  it.each(calendarRows)("%s throws for an invalid value", (name) => {
+    for (const value of ["abc", "-1", "1.5"]) {
+      expectConfigError({ [name]: value }, name);
+    }
+  });
+});
+
 describe("getNotetakerConfig platforms", () => {
   it("defaults to Google Meet", () => {
     expect(getNotetakerConfig(env()).enabledPlatforms).toEqual(["GOOGLE_MEET"]);
