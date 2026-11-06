@@ -177,12 +177,13 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/app/api/username/route.ts`: the org comes from `getOrgFromRequest`, not the body; remove the `isValidOrgDomain = false` stub
 
   Update the tests
-- [ ] T034 [US2] Signup in `apps/web/app/api/auth/signup/handlers/selfHostedHandler.ts`:
+- [ ] T034 [US2] (handler, `createOrUpdateMemberships` and org-scoped username validation done; `completeInviteSignup` postponed, see below) Signup in `apps/web/app/api/auth/signup/handlers/selfHostedHandler.ts`:
   - Without a token (~line 169), the user joins the host org (`getOrgFromRequest`), which on the default domain is the default org (FR-013).
   - With a token, the user joins the token team's parent org.
   - The membership is written through `OrganizationMembershipService.addMember`.
 
   Also update `packages/features/auth/signup/utils/createOrUpdateMemberships.ts` and `TeamMembersService.completeInviteSignup`. Add tests
+  - POSTPONED: `TeamMembersService.completeInviteSignup` cannot write the org membership through `addMember`: invitees created by `inviteMember` (T031) have `username = null`, the invite-completion flow only sets a password, and `addMember` needs a username for the org `Profile`. Open question: how does such an invitee get their org username? Options: (a) derive it from the email (`getOrgUsernameFromEmail`, the upstream convention) and make it unique in the org; (b) add a username field to the invite-completion form; (c) create the org profile and membership when the user first sets a username (onboarding / `updateProfile`, together with T130).
 - [X] T035 [P] [US2] Make `userAdminRouter.add` in `packages/trpc/server/routers/viewer/users/_router.ts` require an `organizationId` (defaulting to the default org) and use `OrganizationMembershipService.addMember`. Add tests
 
 **PR 21**
@@ -369,6 +370,7 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T120 [P] [US2] Add an instance-admin teams list (none exists today) with the `organization: { id, name }` column and `organizationId` filter required by US2-5 / contracts/trpc-organizations.md, e.g. `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/teams/page.tsx` + an admin `teams.listPaginated` procedure (split out of T032)
 - [ ] T130 [US2] Keep the org `Profile.username` in sync when an org member changes their username in `packages/trpc/server/routers/viewer/me/updateProfile.handler.ts` (data-model.md: `users.username` equals `Profile.username`; both are written on change). Today only `users.username` is updated. Add tests
 - [ ] T131 [US2] In `TeamMembersService.acceptPendingInvitesOnSignup` (`packages/features/membership/services/TeamMembersService.ts`), skip pending invites to teams outside the organization the new user just joined when the flag is on. Add tests
+- [ ] T132 [US2] In `apps/web/app/api/auth/signup/handlers/selfHostedHandler.ts`, when `addMember` fails after `userRepository.create` on the invitation-less path (flag on), the new user is left with the org id and profile but no membership. Create the user and the membership in one step (or compensate by deleting the user) and add tests
 
 ---
 

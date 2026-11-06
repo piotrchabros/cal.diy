@@ -1,19 +1,21 @@
-import type { Mock } from "vitest";
-import { vi } from "vitest";
-
 import {
   prismaMock,
   resetPrismaMock,
 } from "@calcom/features/auth/signup/handlers/__tests__/mocks/prisma.mocks";
-import {
-  createMockTeam,
-  createMockFoundToken,
-} from "@calcom/features/auth/signup/handlers/__tests__/mocks/signup.factories";
 import type { SignupBody } from "@calcom/features/auth/signup/handlers/__tests__/mocks/signup.factories";
+import {
+  createMockFoundToken,
+  createMockTeam,
+} from "@calcom/features/auth/signup/handlers/__tests__/mocks/signup.factories";
+import type { Mock } from "vitest";
+import { vi } from "vitest";
 
 const mockFindTokenByToken: Mock = vi.fn();
 const mockValidateAndGetCorrectedUsernameForTeam: Mock = vi.fn();
 const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
+const mockIsOrganizationsEnabled: Mock = vi.fn().mockReturnValue(false);
+const mockGetOrgFromRequest: Mock = vi.fn();
+const mockAddMember: Mock = vi.fn();
 
 vi.mock("next/server", async () => {
   const { createNextServerMock } = await import(
@@ -46,6 +48,15 @@ vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
     }
   },
 }));
+vi.mock("@calcom/lib/organizations/isOrganizationsEnabled", () => ({
+  isOrganizationsEnabled: () => mockIsOrganizationsEnabled(),
+}));
+vi.mock("@calcom/features/organizations/lib/getOrgFromRequest", () => ({
+  getOrgFromRequest: (...args: unknown[]) => mockGetOrgFromRequest(...args),
+}));
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
+}));
 vi.mock("@calcom/lib/auth/hashPassword", () => ({ hashPassword: vi.fn().mockResolvedValue("hashed") }));
 vi.mock("@calcom/lib/slugify", () => ({ default: vi.fn((s: string) => s.toLowerCase()) }));
 vi.mock("@calcom/lib/constants", () => ({ IS_PREMIUM_USERNAME_ENABLED: false }));
@@ -68,14 +79,18 @@ vi.mock("@calcom/features/auth/signup/utils/token", () => ({
     mockValidateAndGetCorrectedUsernameForTeam(...args),
 }));
 
-// Import after mocks
-import { describe, expect, it } from "vitest";
-
-import handler from "./selfHostedHandler";
+import { SIGNUP_ERROR_CODES } from "@calcom/features/auth/signup/constants";
 import { runP2002TestSuite } from "@calcom/features/auth/signup/handlers/__tests__/p2002.test-suite";
+import { createOrUpdateMemberships } from "@calcom/features/auth/signup/utils/createOrUpdateMemberships";
+import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
+import { ErrorWithCode } from "@calcom/lib/errors";
+import { isUsernameReservedDueToMigration } from "@calcom/lib/server/username";
+// Import after mocks
+import { beforeEach, describe, expect, it } from "vitest";
+import handler from "./selfHostedHandler";
 
 function callHandler(body: SignupBody): ReturnType<typeof handler> {
-  return handler(body as unknown as Record<string, string>);
+  return handler(body as unknown as Record<string, string>, new Headers());
 }
 
 runP2002TestSuite("selfHostedHandler", callHandler, () => {
@@ -123,5 +138,134 @@ describe("selfHostedHandler – team invite materialization", () => {
     });
 
     expect(response.status).toBe(201);
+  });
+});
+
+describe("selfHostedHandler – organizations", () => {
+  const hostOrg = { id: 7, slug: "acme", name: "Acme" };
+  const signupBody = {
+    email: "new@example.com",
+    password: "ValidPassword123!",
+    username: "newuser",
+    language: "en",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetPrismaMock();
+    mockIsOrganizationsEnabled.mockReturnValue(true);
+    mockGetOrgFromRequest.mockResolvedValue(hostOrg);
+    mockAddMember.mockResolvedValue({ userId: 42, organizationId: hostOrg.id, role: "MEMBER" });
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
+    mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
+    mockValidateAndGetCorrectedUsernameForTeam.mockResolvedValue("newuser");
+    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
+    prismaMock.user.upsert.mockResolvedValue({ id: 42 } as never);
+    prismaMock.user.findFirst.mockResolvedValue(null as never);
+    prismaMock.verificationToken.delete.mockResolvedValue({} as never);
+  });
+
+  function lastCreatedOrganizationId(): unknown {
+    const [args] = prismaMock.user.create.mock.calls[0] as [{ data: { organizationId?: number } }];
+    return args.data.organizationId ?? null;
+  }
+
+  function lastUpsertedOrganizationId(): unknown {
+    const [args] = prismaMock.user.upsert.mock.calls[0] as [{ create: { organizationId: number | null } }];
+    return args.create.organizationId;
+  }
+
+  it("keeps the legacy global signup when the flag is off", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(201);
+    expect(lastCreatedOrganizationId()).toBeNull();
+    expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+    expect(mockAddMember).not.toHaveBeenCalled();
+    expect(validateAndGetCorrectedUsernameAndEmail).toHaveBeenCalledWith({
+      username: "newuser",
+      email: "new@example.com",
+      isSignup: true,
+    });
+    expect(isUsernameReservedDueToMigration).toHaveBeenCalled();
+  });
+
+  it("joins the host org as MEMBER without a token", async () => {
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(201);
+    expect(lastCreatedOrganizationId()).toBe(hostOrg.id);
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: hostOrg.id, userId: 42, role: "MEMBER" });
+    expect(validateAndGetCorrectedUsernameAndEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ usernameOrganizationId: hostOrg.id })
+    );
+    expect(isUsernameReservedDueToMigration).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the request has no organization", async () => {
+    mockGetOrgFromRequest.mockResolvedValue(null);
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ message: "Organization not found" });
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the org membership conflicts", async () => {
+    mockAddMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+    );
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS });
+  });
+
+  it("rethrows membership errors other than conflicts", async () => {
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("Organization not found"));
+
+    await expect(callHandler(signupBody)).rejects.toThrow("Organization not found");
+  });
+
+  it("joins the parent org of an invited sub-team", async () => {
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBe(11);
+    expect(createOrUpdateMemberships).toHaveBeenCalled();
+    expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+    expect(mockAddMember).not.toHaveBeenCalled();
+  });
+
+  it("joins the inviting org itself", async () => {
+    prismaMock.team.findUnique.mockResolvedValue(createMockTeam({ id: 5, isOrganization: true }) as never);
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBe(5);
+    expect(mockAddMember).not.toHaveBeenCalled();
+  });
+
+  it("joins the host org when the inviting team has no org", async () => {
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: null }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBe(hostOrg.id);
+    expect(createOrUpdateMemberships).toHaveBeenCalled();
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: hostOrg.id, userId: 42, role: "MEMBER" });
+    expect(isUsernameReservedDueToMigration).not.toHaveBeenCalled();
   });
 });
