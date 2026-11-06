@@ -10,7 +10,8 @@ import type { UpId, UserAsPersonalProfile, UserProfile } from "@calcom/types/Use
 import { v4 as uuidv4 } from "uuid";
 import type { IProfileRepository } from "./IProfileRepository";
 
-const whereClauseForOrgWithSlugOrRequestedSlug = (..._args: unknown[]) => ({});
+// The filtered relation only points at organizations, whose slugs are unique among them; the requested-slug metadata is not consulted here.
+const whereClauseForOrgWithSlugOrRequestedSlug = (slug: string) => ({ slug });
 const getParsedTeam = <T>(team: T): T => team;
 
 const userSelect = {

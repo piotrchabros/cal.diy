@@ -16,7 +16,8 @@ import { userMetadata } from "@calcom/prisma/zod-utils";
 import type { UpId, UserProfile } from "@calcom/types/UserProfile";
 import type { z } from "zod";
 
-const whereClauseForOrgWithSlugOrRequestedSlug = (..._args: unknown[]) => ({});
+// The filtered relation only points at organizations, whose slugs are unique among them; the requested-slug metadata is not consulted here.
+const whereClauseForOrgWithSlugOrRequestedSlug = (slug: string) => ({ slug });
 const getParsedTeam = <T>(team: T): T => team;
 
 export type { UserWithLegacySelectedCalendars } from "@calcom/lib/server/withSelectedCalendars";

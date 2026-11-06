@@ -1,4 +1,5 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { CreationSource, MembershipRole } from "@calcom/prisma/enums";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -429,5 +430,33 @@ describe("organization membership of invited users", () => {
 
     const updated = await prismock.user.findUnique({ where: { id: user.id } });
     expect(updated?.organizationId).toBe(321);
+  });
+});
+
+describe("_getWhereClauseForFindingUsersByUsername", () => {
+  test("Should scope non-profile username matches to the organization with the given slug", async () => {
+    const findManySpy = vi.spyOn(ProfileRepository, "findManyByOrgSlugOrRequestedSlug").mockResolvedValue([]);
+
+    const { where } = await new UserRepository(prismock)._getWhereClauseForFindingUsersByUsername({
+      orgSlug: "acme",
+      usernameList: ["a"],
+    });
+
+    expect(findManySpy).toHaveBeenCalledWith({ orgSlug: "acme", usernames: ["a"] });
+    expect(where).toEqual({ username: { in: ["a"] }, organization: { slug: "acme" } });
+    findManySpy.mockRestore();
+  });
+
+  test("Should only match users outside any organization when no orgSlug is given", async () => {
+    const findManySpy = vi.spyOn(ProfileRepository, "findManyByOrgSlugOrRequestedSlug");
+
+    const { where } = await new UserRepository(prismock)._getWhereClauseForFindingUsersByUsername({
+      orgSlug: null,
+      usernameList: ["a"],
+    });
+
+    expect(findManySpy).not.toHaveBeenCalled();
+    expect(where).toEqual({ username: { in: ["a"] }, organization: null });
+    findManySpy.mockRestore();
   });
 });
