@@ -61,6 +61,12 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     return user ? { ...user } : null;
   }
 
+  async findUserByEmail(email: string): Promise<MembershipUserRecord | null> {
+    const normalizedEmail = email.toLowerCase();
+    const user = this.users.find((existing) => existing.email.toLowerCase() === normalizedEmail);
+    return user ? { ...user } : null;
+  }
+
   async isUsernameTaken(params: {
     organizationId: number;
     username: string;
