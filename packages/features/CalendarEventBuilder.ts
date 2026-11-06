@@ -1,4 +1,3 @@
-import process from "node:process";
 import { ALL_APPS } from "@calcom/app-store/utils";
 import { getAssignmentReasonCategory } from "@calcom/features/bookings/lib/getAssignmentReasonCategory";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
@@ -7,6 +6,7 @@ import {
   type EventTypeBrandingData,
   getEventTypeService,
 } from "@calcom/features/eventtypes/di/EventTypeService.container";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
@@ -23,9 +23,6 @@ import { bookingResponses as bookingResponsesSchema } from "@calcom/prisma/zod-u
 import type { AppsStatus, CalEventResponses, CalendarEvent, Person } from "@calcom/types/Calendar";
 import type { VideoCallData } from "@calcom/types/VideoApiAdapter";
 import type { TFunction } from "i18next";
-
-const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 type CalendarEventRequiredFields = Required<
   Pick<CalendarEvent, "startTime" | "endTime" | "type" | "bookerUrl" | "title" | "organizer" | "attendees">
@@ -144,7 +141,9 @@ export class CalendarEventBuilder {
     const appsStatus: AppsStatus[] = [];
 
     const organizationId = user.profiles?.[0]?.organizationId ?? null;
-    const bookerUrl = await getBookerBaseUrl(eventType.team?.parentId ?? organizationId);
+    const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+      organizationId: eventType.team?.parentId ?? organizationId,
+    });
 
     const parsedBookingResponses = bookingResponsesSchema.safeParse(responses);
     const bookingResponses = parsedBookingResponses.success ? parsedBookingResponses.data : null;

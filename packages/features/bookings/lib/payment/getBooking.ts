@@ -1,10 +1,10 @@
-import process from "node:process";
 import { enrichUserWithDelegationCredentials } from "@calcom/app-store/delegationCredential";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
 import {
   type EventTypeBrandingData,
   getEventTypeService,
 } from "@calcom/features/eventtypes/di/EventTypeService.container";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import { HttpError as HttpCode } from "@calcom/lib/http-error";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
@@ -14,9 +14,6 @@ import { bookingMinimalSelect, prisma } from "@calcom/prisma";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-
-const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 async function getEventType(id: number) {
   return prisma.eventType.findUnique({
@@ -161,13 +158,14 @@ export async function getBooking(bookingId: number) {
     where: {
       userId: booking.userId ?? undefined,
     },
+    select: { organizationId: true, username: true },
   });
 
   const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
 
-  const bookerUrl = await getBookerBaseUrl(
-    booking.eventType?.team?.parentId ?? organizerOrganizationId ?? null
-  );
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+    organizationId: booking.eventType?.team?.parentId ?? organizerOrganizationId ?? null,
+  });
 
   const attendeesList = await Promise.all(attendeesListPromises);
   const selectedDestinationCalendar = booking.destinationCalendar || user.destinationCalendar;

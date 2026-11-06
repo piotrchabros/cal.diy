@@ -1,7 +1,7 @@
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
 import type { BuiltCalendarEvent } from "@calcom/features/CalendarEventBuilder";
 import { CalendarEventBuilder } from "@calcom/features/CalendarEventBuilder";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import prisma from "@calcom/prisma";
 import type { CalendarEvent } from "@calcom/types/Calendar";
@@ -59,19 +59,25 @@ const buildCalendarEvent: (bookingUid: string) => Promise<CalendarEvent> = async
     throw new Error(`event type not found for booking ${bookingUid}`);
   }
 
-  const bookerUrl = WEBAPP_URL;
+  const organizationUrlService = getOrganizationUrlService();
+  const teamParentId = booking.eventType.team?.parentId;
+  const bookerUrl = teamParentId
+    ? await organizationUrlService.getBaseUrl({ organizationId: teamParentId })
+    : await organizationUrlService.getBaseUrlForUser({ userId: booking.user.id });
   const organizerT = await getTranslation(booking.user?.locale ?? "en", "common");
 
   const attendeePromises = [];
   for (const attendee of booking.attendees) {
     attendeePromises.push(
-      getTranslation(attendee.locale ?? "en", "common").then((tAttendee: Awaited<ReturnType<typeof getTranslation>>) => ({
-        email: attendee.email,
-        name: attendee.name,
-        timeZone: attendee.timeZone,
-        language: { translate: tAttendee, locale: attendee.locale ?? "en" },
-        phoneNumber: attendee.phoneNumber || undefined,
-      }))
+      getTranslation(attendee.locale ?? "en", "common").then(
+        (tAttendee: Awaited<ReturnType<typeof getTranslation>>) => ({
+          email: attendee.email,
+          name: attendee.name,
+          timeZone: attendee.timeZone,
+          language: { translate: tAttendee, locale: attendee.locale ?? "en" },
+          phoneNumber: attendee.phoneNumber || undefined,
+        })
+      )
     );
   }
 
