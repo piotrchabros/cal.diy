@@ -1,13 +1,9 @@
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import type { MembershipRole } from "@calcom/prisma/enums";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import type { TeamPermissions } from "./permissionUtils";
-
-const getBookerBaseUrlSync = (_orgSlug?: string | number | null): string =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
-const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 export interface EventTypeGroup {
   teamId?: number | null;
@@ -49,7 +45,9 @@ export async function createUserEventGroup(
   },
   parentOrgHasLockedEventTypes: boolean
 ): Promise<EventTypeGroup> {
-  const bookerUrl = await getBookerBaseUrl(profile.organizationId);
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+    organizationId: profile.organizationId ?? null,
+  });
 
   return {
     teamId: null,
@@ -97,12 +95,10 @@ export async function createTeamEventGroup(
     metadata: teamMetadataSchema.parse(membership.team.metadata),
   };
 
-  const teamParentMetadata = team.parent ? teamMetadataSchema.parse(team.parent.metadata) : null;
-
   return {
     teamId: team.id,
     parentId: team.parentId,
-    bookerUrl: getBookerBaseUrlSync(team.parent?.slug ?? teamParentMetadata?.requestedSlug ?? null),
+    bookerUrl: await getOrganizationUrlService().getBaseUrl({ organizationId: team.parentId }),
     membershipRole: effectiveRole,
     profile: {
       image: team.parent

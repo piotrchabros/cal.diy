@@ -1,6 +1,7 @@
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
@@ -17,14 +18,16 @@ import { orderBy } from "lodash";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
-const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
-const getBookerBaseUrlSync = (_orgSlug?: string | number | null): string =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 const log = logger.getSubLogger({ prefix: ["viewer.eventTypes.getByViewer"] });
 
@@ -59,6 +62,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
   }
 
   const permissionCheckService = new PermissionCheckService();
+  const urlService = getOrganizationUrlService();
   const [teamsWithEventTypeReadPermission, teamsWithEventTypeUpdatePermission] = await Promise.all([
     permissionCheckService.getTeamIdsWithPermission({
       userId: user.id,
@@ -202,7 +206,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
   );
 
   if (shouldListUserEvents) {
-    const bookerUrl = await getBookerBaseUrl(profile.organizationId ?? null);
+    const bookerUrl = await urlService.getBaseUrl({ organizationId: profile.organizationId ?? null });
     eventTypeGroups.push({
       teamId: null,
       bookerUrl,
@@ -274,11 +278,10 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
           slug = team.slug ? (!team.parentId ? `team/${team.slug}` : `${team.slug}`) : null;
 
           const eventTypes = await Promise.all(team.eventTypes.map(mapEventType));
-          const teamParentMetadata = team.parent ? teamMetadataSchema.parse(team.parent.metadata) : null;
           return {
             teamId: team.id,
             parentId: team.parentId,
-            bookerUrl: getBookerBaseUrlSync(team.parent?.slug ?? teamParentMetadata?.requestedSlug ?? null),
+            bookerUrl: await urlService.getBaseUrl({ organizationId: team.parentId }),
             membershipRole:
               orgMembership && compareMembership(orgMembership, membership.role)
                 ? orgMembership

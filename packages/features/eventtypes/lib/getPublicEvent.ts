@@ -1,4 +1,3 @@
-import process from "node:process";
 import type { LocationObject } from "@calcom/app-store/locations";
 import { privacyFilteredLocations } from "@calcom/app-store/locations";
 import { getAppFromSlug } from "@calcom/app-store/utils";
@@ -6,6 +5,7 @@ import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-util
 import dayjs from "@calcom/dayjs";
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
 import { getDefaultEvent, getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getOrgOrTeamAvatar, getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
@@ -38,8 +38,6 @@ class PermissionCheckService {
   }
 }
 const getSlugOrRequestedSlug = (slug: string) => ({ slug });
-const getBookerBaseUrlSync = (_orgSlug?: string | number | null): string =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 const userSelect = {
   id: true,
@@ -305,8 +303,7 @@ export const getPublicEvent = async (
     // this reason (sortUsersByDynamicList in getLocationValuesForDb.ts) — without the same sort
     // here, the booking page can advertise a different location than the one actually booked.
     const users = [...usersInOrgContext].sort(
-      (a, b) =>
-        usernameList.indexOf(a.username ?? "") - usernameList.indexOf(b.username ?? "")
+      (a, b) => usernameList.indexOf(a.username ?? "") - usernameList.indexOf(b.username ?? "")
     );
 
     const defaultEvent = getDefaultEvent(eventSlug);
@@ -346,11 +343,16 @@ export const getPublicEvent = async (
       });
     }
 
+    const urlService = getOrganizationUrlService();
+    const bookerUrls = await Promise.all(
+      users.map((user) => urlService.getBaseUrl({ organizationId: user.profile?.organizationId ?? null }))
+    );
+
     return {
       ...defaultEvent,
       bookingFields: getBookingFieldsWithSystemFields({ ...defaultEvent, disableBookingTitle }),
       // Only return fields consumed by the booker.
-      subsetOfUsers: users.map((user) => ({
+      subsetOfUsers: users.map((user, index) => ({
         name: user.name,
         username: user.username,
         avatarUrl: user.avatarUrl,
@@ -358,10 +360,10 @@ export const getPublicEvent = async (
         brandColor: user.brandColor,
         darkBrandColor: user.darkBrandColor,
         profile: user.profile,
-        bookerUrl: getBookerBaseUrlSync(user.profile?.organization?.slug ?? null),
+        bookerUrl: bookerUrls[index],
       })),
       users: fetchAllUsers
-        ? users.map((user) => ({
+        ? users.map((user, index) => ({
             name: user.name,
             username: user.username,
             avatarUrl: user.avatarUrl,
@@ -369,7 +371,7 @@ export const getPublicEvent = async (
             brandColor: user.brandColor,
             darkBrandColor: user.darkBrandColor,
             profile: user.profile,
-            bookerUrl: getBookerBaseUrlSync(user.profile?.organization?.slug ?? null),
+            bookerUrl: bookerUrls[index],
           }))
         : undefined,
       locations: privacyFilteredLocations(locations),
@@ -677,7 +679,7 @@ export async function getUsersFromEvent(
     const eventHosts = hosts?.length ? hosts : subsetOfHosts;
     // getOwnerFromUsersArray is used here for backward compatibility when team event type has users[] but not hosts[]
     return eventHosts.length
-      ? eventHosts.filter((host) => host.user.username).map(mapHostsToUsers)
+      ? await Promise.all(eventHosts.filter((host) => host.user.username).map(mapHostsToUsers))
       : ((await getOwnerFromUsersArray(prisma, id)) ?? []);
   }
   if (!owner) {
@@ -693,7 +695,7 @@ export async function getUsersFromEvent(
       organizationId,
       avatarUrl,
       profile,
-      bookerUrl: getBookerBaseUrlSync(owner.profile?.organization?.slug ?? null),
+      bookerUrl: await getOrganizationUrlService().getBaseUrl({ organizationId }),
     },
   ];
 }
@@ -729,12 +731,14 @@ async function getOwnerFromUsersArray(prisma: PrismaClient, eventTypeId: number)
   return [
     {
       ...usersWithUserProfile[0],
-      bookerUrl: getBookerBaseUrlSync(usersWithUserProfile[0].organization?.slug ?? null),
+      bookerUrl: await getOrganizationUrlService().getBaseUrl({
+        organizationId: usersWithUserProfile[0].organizationId,
+      }),
     },
   ];
 }
 
-function mapHostsToUsers(host: {
+async function mapHostsToUsers(host: {
   user: Pick<UserType, "username" | "name" | "weekStart" | "avatarUrl"> & {
     profile: UserProfile;
   };
@@ -745,7 +749,9 @@ function mapHostsToUsers(host: {
     avatarUrl: host.user.avatarUrl,
     weekStart: host.user.weekStart,
     organizationId: host.user.profile?.organizationId ?? null,
-    bookerUrl: getBookerBaseUrlSync(host.user.profile?.organization?.slug ?? null),
+    bookerUrl: await getOrganizationUrlService().getBaseUrl({
+      organizationId: host.user.profile?.organizationId ?? null,
+    }),
     profile: host.user.profile,
   };
 }
