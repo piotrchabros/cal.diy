@@ -33,6 +33,7 @@ function notFoundError() {
 function buildRepository() {
   const team = {
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
     findMany: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
@@ -321,6 +322,49 @@ describe("PrismaOrganizationRepository", () => {
         { userId: 10, name: null, email: "owner@acme.com" },
         { userId: 11, name: "Second", email: "second@acme.com" },
       ]);
+    });
+  });
+
+  describe("url lookups", () => {
+    it("findDomainById filters to organizations and selects only the custom domain", async () => {
+      const { repository, team } = buildRepository();
+      team.findFirst.mockResolvedValue({ organizationSettings: { customDomain: "cal.acme.com" } });
+
+      expect(await repository.findDomainById(1)).toBe("cal.acme.com");
+      expect(team.findFirst).toHaveBeenCalledWith({
+        where: { id: 1, ...organizationWhere },
+        select: { organizationSettings: { select: { customDomain: true } } },
+      });
+    });
+
+    it("findDomainById returns null for a missing org, settings row or domain", async () => {
+      const { repository, team } = buildRepository();
+      team.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ organizationSettings: null })
+        .mockResolvedValueOnce({ organizationSettings: { customDomain: null } });
+
+      expect(await repository.findDomainById(1)).toBeNull();
+      expect(await repository.findDomainById(1)).toBeNull();
+      expect(await repository.findDomainById(1)).toBeNull();
+    });
+
+    it("findTeamParentById selects the parent and organization flag", async () => {
+      const { repository, team } = buildRepository();
+      team.findUnique.mockResolvedValue({ id: 5, parentId: 1, isOrganization: false });
+
+      expect(await repository.findTeamParentById(5)).toEqual({ id: 5, parentId: 1, isOrganization: false });
+      expect(team.findUnique).toHaveBeenCalledWith({
+        where: { id: 5 },
+        select: { id: true, parentId: true, isOrganization: true },
+      });
+    });
+
+    it("findTeamParentById returns null for an unknown team", async () => {
+      const { repository, team } = buildRepository();
+      team.findUnique.mockResolvedValue(null);
+
+      expect(await repository.findTeamParentById(5)).toBeNull();
     });
   });
 });

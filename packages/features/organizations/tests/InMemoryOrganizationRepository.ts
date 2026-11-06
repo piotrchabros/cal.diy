@@ -6,6 +6,7 @@ import type {
   OrganizationListParams,
   OrganizationRecord,
   OrganizationUpdateInput,
+  TeamParentRecord,
 } from "../repositories/interfaces/IOrganizationRepository";
 
 type StoredOrganization = {
@@ -20,6 +21,7 @@ type StoredOrganization = {
 
 export class InMemoryOrganizationRepository implements IOrganizationRepository {
   private organizations: StoredOrganization[] = [];
+  private teams: TeamParentRecord[] = [];
   private nextId = 1;
 
   seed(params: {
@@ -45,6 +47,17 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     this.organizations = this.organizations.filter((organization) => organization.id !== id);
     this.organizations.push(stored);
     return this.toRecord(stored);
+  }
+
+  seedTeam(params: { id: number; parentId?: number | null; isOrganization?: boolean }): TeamParentRecord {
+    const team: TeamParentRecord = {
+      id: params.id,
+      parentId: params.parentId ?? null,
+      isOrganization: params.isOrganization ?? false,
+    };
+    this.teams = this.teams.filter((existing) => existing.id !== params.id);
+    this.teams.push(team);
+    return { ...team };
   }
 
   setMemberCount(organizationId: number, memberCount: number): void {
@@ -127,6 +140,15 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
   async findOwners(organizationId: number): Promise<OrganizationOwnerDto[]> {
     const owners = this.organizations.find((organization) => organization.id === organizationId)?.owners;
     return owners ? owners.map((owner) => ({ ...owner })) : [];
+  }
+
+  async findDomainById(id: number): Promise<string | null> {
+    return this.organizations.find((organization) => organization.id === id)?.domain ?? null;
+  }
+
+  async findTeamParentById(teamId: number): Promise<TeamParentRecord | null> {
+    const team = this.teams.find((existing) => existing.id === teamId);
+    return team ? { ...team } : null;
   }
 
   private findWhere(predicate: (organization: StoredOrganization) => boolean): OrganizationRecord | null {

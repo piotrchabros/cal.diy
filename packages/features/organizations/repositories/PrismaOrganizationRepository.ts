@@ -10,6 +10,7 @@ import type {
   OrganizationListParams,
   OrganizationRecord,
   OrganizationUpdateInput,
+  TeamParentRecord,
 } from "./interfaces/IOrganizationRepository";
 
 const organizationWhere = { isOrganization: true, parentId: null } satisfies Prisma.TeamWhereInput;
@@ -201,5 +202,20 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
       select: ownerSelect,
     });
     return rows.map(toOwner);
+  }
+
+  async findDomainById(id: number): Promise<string | null> {
+    const row = await this.prismaClient.team.findFirst({
+      where: { id, ...organizationWhere },
+      select: { organizationSettings: { select: { customDomain: true } } },
+    });
+    return row?.organizationSettings?.customDomain ?? null;
+  }
+
+  async findTeamParentById(teamId: number): Promise<TeamParentRecord | null> {
+    return this.prismaClient.team.findUnique({
+      where: { id: teamId },
+      select: { id: true, parentId: true, isOrganization: true },
+    });
   }
 }

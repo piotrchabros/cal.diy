@@ -92,7 +92,7 @@ description: "Task list for Organizations (spec 005)"
 
 **Base URL (PR 7)**
 
-- [ ] T016 Implement `OrganizationUrlService` in `packages/features/organizations/services/OrganizationUrlService.ts` with `getBaseUrl({ organizationId })`, `getBaseUrlForUser({ userId })` and `getBaseUrlForTeam({ teamId })` (the team's parent org). It returns `https://<customDomain>` and falls back to `WEBAPP_URL` when there is no domain or the flag is off. Add a test, DI module and container
+- [X] T016 Implement `OrganizationUrlService` in `packages/features/organizations/services/OrganizationUrlService.ts` with `getBaseUrl({ organizationId })`, `getBaseUrlForUser({ userId })` and `getBaseUrlForTeam({ teamId })` (the team's parent org). It returns `https://<customDomain>` and falls back to `WEBAPP_URL` when there is no domain or the flag is off. Add a test, DI module and container
 - [ ] T017 Replace the stubbed `getBookerBaseUrl` / `getBookerBaseUrlSync` copies with calls to `OrganizationUrlService` in:
   - `packages/features/CalendarEventBuilder.ts`
   - `packages/features/eventtypes/lib/getEventTypesByViewer.ts`
