@@ -33,3 +33,12 @@ export type OrganizationListResultDto = z.infer<typeof OrganizationListResultDto
 export const OrganizationRoleDtoSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
 
 export type OrganizationRoleDto = z.infer<typeof OrganizationRoleDtoSchema>;
+
+export const RequestOrganizationDtoSchema = OrganizationListItemDtoSchema.pick({
+  id: true,
+  slug: true,
+  domain: true,
+  isDefault: true,
+});
+
+export type RequestOrganizationDto = z.infer<typeof RequestOrganizationDtoSchema>;

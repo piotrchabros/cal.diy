@@ -4,22 +4,44 @@
 
 The proxy runs on every page and API request, except `/_next/*` and static assets.
 
-1. It deletes the incoming `x-cal-org-id` and `x-cal-org-slug` request headers. They are only trusted when set here.
-2. It normalises the host from `Host`: lowercase, port stripped. Caddy forwards the original host.
-3. It resolves the host to an organization:
+1. It deletes the incoming `x-cal-org-id`, `x-cal-org-slug`, `x-cal-org-domain` and `x-cal-org-default` request headers (`stripOrgHeaders`). They are only trusted when set here, so they are stripped on every route.
+2. It normalises the host from `Host`: lowercase, port and trailing dot stripped. Caddy forwards the original host.
+3. It resolves the host to an organization (`OrganizationDomainResolver`):
    - When `ORGANIZATIONS_ENABLED` is off, every host resolves to the default org. Behaviour is unchanged.
    - A loopback host (`localhost`, `127.0.0.1`, `::1`) resolves to the default org. This keeps the deploy health check and local development working.
-   - Otherwise it uses `OrganizationSettings.customDomain = host` (60-second in-memory cache).
+   - Otherwise it uses `OrganizationSettings.customDomain = host`.
+   - The default org is the one whose domain equals the host of `WEBAPP_URL`. When there is none, the result is `null`.
    - When the host is unknown, the response is `404` with a plain body, no organization content and no redirect.
-4. It sets `x-cal-org-id` and `x-cal-org-slug` on the forwarded request.
+4. It sets the headers on the forwarded request (`setOrgHeaders`):
+
+| Header | Value |
+|--------|-------|
+| `x-cal-org-id` | org id, positive integer |
+| `x-cal-org-slug` | org slug; omitted when the slug is `null` |
+| `x-cal-org-domain` | org domain; omitted when the domain is `null` |
+| `x-cal-org-default` | `"1"` for the default org, otherwise `"0"` |
+
+The header names and `stripOrgHeaders` / `setOrgHeaders` / `readOrgFromHeaders` live in `packages/features/organizations/lib/orgRequestHeaders.ts`, which has no runtime imports so the proxy can import it statically.
+
+### Resolver cache
+
+`OrganizationDomainResolver` is a per-process singleton (DI container `getOrganizationDomainResolver()`) with an in-memory cache:
+
+- Entries live 60 seconds (`ORGANIZATION_DOMAIN_CACHE_TTL_MS`). Keys are `domain:<host>` and `default:<defaultDomain>`.
+- Misses (`null`) are cached too, so unknown hosts do not hit the database on every request.
+- At most 1000 entries. When full, the oldest insertion is evicted. This bounds memory when clients send arbitrary `Host` values.
+- Concurrent lookups of the same key share one query.
+- Errors are never cached: the next request queries again.
 
 ## Reading it (server)
 
 ```ts
-getOrgFromRequest(headers: Headers): Promise<{ id: number; slug: string; domain: string | null; isDefault: boolean }>
+type RequestOrganizationDto = { id: number; slug: string | null; domain: string | null; isDefault: boolean };
+
+getOrgFromRequest(headers: Pick<Headers, "get">): Promise<RequestOrganizationDto | null>
 ```
 
-This helper reads the trusted headers. When they are absent (routes outside the proxy matcher, such as `pages/api/*`), it resolves from `Host` with the same rules. Every `currentOrgDomain = null` stub is replaced by this helper.
+This helper reads the trusted headers. When they are absent or the id header is not a positive integer (routes outside the proxy matcher, such as `pages/api/*`), it resolves from `Host` with the same rules, loading the resolver lazily so callers with the headers never load Prisma. It returns `null` when no organization matches. Every `currentOrgDomain = null` stub is replaced by this helper.
 
 ## Base URL of a subject
 
