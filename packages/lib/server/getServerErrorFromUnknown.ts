@@ -137,6 +137,10 @@ export function getHttpStatusCode(cause: Error | ErrorWithCode): number {
       return 403;
     case ErrorCode.NotFound:
       return 404;
+    case ErrorCode.Conflict:
+      return 409;
+    case ErrorCode.PreconditionFailed:
+      return 412;
     case ErrorCode.InternalServerError:
       return 500;
 

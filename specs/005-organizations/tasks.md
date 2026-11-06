@@ -58,7 +58,7 @@ description: "Task list for Organizations (spec 005)"
 
 **Services (PR 3)**
 
-- [ ] T009 Implement `OrganizationService` in `packages/features/organizations/services/OrganizationService.ts` with `list`, `get`, `create`, `update` and `delete`. Validation rules:
+- [X] T009 Implement `OrganizationService` in `packages/features/organizations/services/OrganizationService.ts` with `list`, `get`, `create`, `update` and `delete`. Validation rules:
   - The slug matches `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`, is "at least 2 characters", and is unique among organizations, checked in the service because the index does not cover `parentId IS NULL`.
   - The domain is a valid FQDN, is normalised with `normalizeHost`, and is unique.
   - `isDefault` is `domain === normalizeHost(new URL(WEBAPP_URL).host)`.
