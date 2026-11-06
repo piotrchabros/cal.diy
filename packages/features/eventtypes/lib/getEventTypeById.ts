@@ -5,14 +5,15 @@ import { getEventTypeAppData } from "@calcom/app-store/utils";
 import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-utils";
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import { getTranslation } from "@calcom/i18n/server";
 import { WEBSITE_URL } from "@calcom/lib/constants";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { parseBookingLimit } from "@calcom/lib/intervalLimits/isBookingLimits";
 import { parseDurationLimit } from "@calcom/lib/intervalLimits/isDurationLimits";
 import { parseEventTypeColor } from "@calcom/lib/isEventTypeColor";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
-import { getTranslation } from "@calcom/i18n/server";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -20,8 +21,6 @@ import { customInputSchema } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
 
 const getOrganizationRepository = () => ({ findById: async (..._args: unknown[]) => null });
-const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
-  process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
 
 interface getEventTypeByIdProps {
   eventTypeId: number;
@@ -137,9 +136,9 @@ export const getEventTypeById = async ({
     customInputs: parsedCustomInputs,
     users: rawEventType.users,
     bookerUrl: restEventType.team
-      ? await getBookerBaseUrl(restEventType.team.parentId)
+      ? await getOrganizationUrlService().getBaseUrl({ organizationId: restEventType.team.parentId })
       : restEventType.owner
-        ? await getBookerBaseUrl(currentOrganizationId)
+        ? await getOrganizationUrlService().getBaseUrl({ organizationId: currentOrganizationId })
         : WEBSITE_URL,
     children: childrenWithUserProfile.flatMap((ch) =>
       ch.owner !== null

@@ -1,9 +1,15 @@
-// Organizations are not available in community edition
-// Only getBookerBaseUrlSync is kept as it's used for URL generation
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
+import { WEBAPP_URL } from "@calcom/lib/constants";
 
-import process from "node:process";
+/**
+ * @deprecated Always returns the default domain; use getBookerBaseUrl(organizationId)
+ */
 export function getBookerBaseUrlSync(_orgSlug: string | null): string {
-  return process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
+  return WEBAPP_URL;
+}
+
+export async function getBookerBaseUrl(organizationId: number | null): Promise<string> {
+  return getOrganizationUrlService().getBaseUrl({ organizationId });
 }
 
 // Stub billing service for API v2 — org billing removed in community edition
