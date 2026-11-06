@@ -234,7 +234,7 @@ Agent 5: T029 (dispatch notice and flag)
 - [X] T062 [P] [US5] Integration tests against the scratch database only, in the two existing repository integration-test files (C6)
 - [X] T063 [US5] One scenario in `apps/web/playwright/notetaker.e2e.ts`: personal event type shared with a team, a member reads from "Shared with me", a non-member is refused, the owner leaves the team and the member is refused; run against the scratch setup (C6)
 - [X] T064 Run `yarn type-check:ci --force`, the unit suites of quickstart.md with `TZ=UTC`, and `yarn biome check` on the changed paths; record the counts in the last PR description (C6)
-- [ ] T065 Deploy with the owner's agreement: apply the one migration to the live database, then rebuild in place with `/root/caldiy-deploy-inplace.sh`; the bot is not touched (C7)
+- [X] T065 Deploy with the owner's agreement: apply the one migration to the live database, then rebuild in place with `/root/caldiy-deploy-inplace.sh`; the bot is not touched (C7)
 - [ ] T066 Acceptance on the live site: quickstart Scenario 7 steps 1 to 4 (C7)
 
 **Checkpoint**: Scenario 7 passes against the scratch setup with the fake bot.
