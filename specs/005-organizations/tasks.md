@@ -225,7 +225,7 @@ description: "Task list for Organizations (spec 005)"
 **PR 12: bookings**
 
 - [X] T044 [US3] In `apps/web/modules/bookings/views/bookings-single-view.getServerSideProps.tsx` (~215-247) and `apps/web/lib/reschedule/[uid]/getServerSideProps.ts`, when the organizer's org differs from the host org, redirect (308) to the same path on the organizer's org base URL. Add tests
-- [ ] T045 [US3] In `packages/features/bookings/lib/handleNewBooking/loadUsers.ts`, remove the `getOrgDomainConfig` stub (~line 15) and resolve the org from `hostname`. In `packages/features/bookings/lib/service/RegularBookingService.ts`, refuse with `ErrorWithCode(NotFound, "event_not_found")` when the event type's owner or team org differs from the host org; API v2 calls keep using `forcedSlug`. Add tests
+- [X] T045 [US3] In `packages/features/bookings/lib/handleNewBooking/loadUsers.ts`, remove the `getOrgDomainConfig` stub (~line 15) and resolve the org from `hostname`. In `packages/features/bookings/lib/service/RegularBookingService.ts`, refuse with `ErrorWithCode(NotFound, "event_not_found")` when the event type's owner or team org differs from the host org; API v2 calls keep using `forcedSlug`. Add tests
 - [ ] T046 [P] [US3] In `packages/trpc/server/routers/viewer/slots/util.ts` (~180-192, 346-369), pass the request org instead of the "no org" default. Add a test
 
 **PRs 13–15: server link sweep** (replace `WEBAPP_URL` user-facing links with `OrganizationUrlService` for the subject; leave server-to-server API bases alone)
