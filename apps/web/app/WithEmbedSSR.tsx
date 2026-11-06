@@ -1,7 +1,6 @@
-import type { GetServerSideProps, GetServerSidePropsContext } from "next";
-import { notFound, redirect } from "next/navigation";
-
 import { WebAppURL } from "@calcom/lib/WebAppURL";
+import type { GetServerSideProps, GetServerSidePropsContext } from "next";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 
 export type EmbedProps = {
   isEmbed?: boolean;
@@ -33,7 +32,12 @@ const withEmbedSsrAppDir =
       const newDestinationUrl = `${urlPrefix}${destinationUrlObj.pathname}/embed?${
         destinationQueryStr ? `${destinationQueryStr}&` : ""
       }layout=${layout}&embed=${embed}`;
-      redirect(newDestinationUrl);
+      const ssrRedirect = ssrResponse.redirect;
+      if ("permanent" in ssrRedirect && ssrRedirect.permanent) {
+        permanentRedirect(newDestinationUrl);
+      } else {
+        redirect(newDestinationUrl);
+      }
     }
 
     if ("notFound" in ssrResponse) {

@@ -1,9 +1,8 @@
 import type { Request, Response } from "express";
 import type { NextApiRequest, NextApiResponse, Redirect } from "next";
-import { redirect, notFound } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 import { createMocks } from "node-mocks-http";
 import { describe, expect, it, vi } from "vitest";
-
 import withEmbedSsrAppDir from "./WithEmbedSSR";
 
 export type CustomNextApiRequest = NextApiRequest & Request;
@@ -18,12 +17,13 @@ const noop = () => {};
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
+  permanentRedirect: vi.fn(),
   notFound: vi.fn(),
 }));
 
 function getServerSidePropsFnGenerator(
   config:
-    | { redirectUrl: string }
+    | { redirectUrl: string; permanent?: boolean }
     | { props: Record<string, unknown> }
     | {
         notFound: true;
@@ -33,7 +33,7 @@ function getServerSidePropsFnGenerator(
     return async () => {
       return {
         redirect: {
-          permanent: false,
+          permanent: config.permanent ?? false,
           destination: config.redirectUrl,
         } satisfies Redirect,
       };
@@ -197,6 +197,56 @@ describe("withEmbedSsrAppDir", () => {
         expect(redirect).toHaveBeenCalledWith(
           "/calcom.cal.local/owner/embed?layout=week_view&embed=namespace1"
         );
+      });
+    });
+
+    describe("when redirect is permanent", () => {
+      it("should use permanentRedirect for an absolute URL", async () => {
+        vi.mocked(redirect).mockClear();
+        const withEmbedGetSsr = withEmbedSsrAppDir(
+          getServerSidePropsFnGenerator({
+            redirectUrl: "https://cal.acme.com/booking/abc?x=1",
+            permanent: true,
+          })
+        );
+
+        await withEmbedGetSsr(
+          getServerSidePropsContextArg({
+            embedRelatedParams: {
+              layout: "month_view",
+              embed: "ns",
+            },
+          })
+        ).catch(noop);
+
+        expect(permanentRedirect).toHaveBeenCalledWith(
+          "https://cal.acme.com/booking/abc/embed?x=1&layout=month_view&embed=ns"
+        );
+        expect(redirect).not.toHaveBeenCalled();
+      });
+
+      it("should use redirect when permanent is false", async () => {
+        vi.mocked(permanentRedirect).mockClear();
+        const withEmbedGetSsr = withEmbedSsrAppDir(
+          getServerSidePropsFnGenerator({
+            redirectUrl: "https://cal.acme.com/booking/abc?x=1",
+            permanent: false,
+          })
+        );
+
+        await withEmbedGetSsr(
+          getServerSidePropsContextArg({
+            embedRelatedParams: {
+              layout: "month_view",
+              embed: "ns",
+            },
+          })
+        ).catch(noop);
+
+        expect(redirect).toHaveBeenCalledWith(
+          "https://cal.acme.com/booking/abc/embed?x=1&layout=month_view&embed=ns"
+        );
+        expect(permanentRedirect).not.toHaveBeenCalled();
       });
     });
   });
