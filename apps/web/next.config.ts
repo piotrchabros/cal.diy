@@ -144,6 +144,10 @@ const nextConfig = (): NextConfig => {
     ],
     experimental: {
       optimizePackageImports: ["@calcom/ui"],
+      // The proxy runs on every route, including APIs, and Next truncates request bodies above this
+      // limit (default 10mb) once they pass through it. The largest real bodies are base64 image
+      // uploads (5mb team logos, ~7mb encoded); 25mb leaves headroom without being unbounded.
+      proxyClientMaxBodySize: "25mb",
     },
     productionBrowserSourceMaps: true,
     transpilePackages: [

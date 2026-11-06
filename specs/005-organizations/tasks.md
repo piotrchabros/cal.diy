@@ -81,7 +81,7 @@ description: "Task list for Organizations (spec 005)"
 
   Add a test covering the cache, loopback, flag off and unknown host
 - [X] T013 Implement `getOrgFromRequest(headers: Headers)` in `packages/features/organizations/lib/getOrgFromRequest.ts`. It reads the trusted `x-cal-org-id` / `x-cal-org-slug` headers and falls back to `OrganizationDomainResolver.resolve(headers.get("host"))`. Add a test
-- [ ] T014 Update `apps/web/proxy.ts`:
+- [X] T014 Update `apps/web/proxy.ts`:
   - Widen the matcher to every route except `/_next/*` and static assets.
   - Delete the incoming `x-cal-org-id` / `x-cal-org-slug` headers.
   - Resolve the host and set the headers through `NextResponse.next({ request: { headers } })`.

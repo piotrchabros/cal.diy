@@ -1,4 +1,9 @@
 import process from "node:process";
+import { setOrgHeaders, stripOrgHeaders } from "@calcom/features/organizations/lib/orgRequestHeaders";
+import { WEBAPP_URL } from "@calcom/lib/constants";
+import type { RequestOrganizationDto } from "@calcom/lib/dto/OrganizationDto";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import { isLoopbackHost, normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 import { getCspHeader, getCspNonce } from "@lib/csp";
 import { get } from "@vercel/edge-config";
 import type { NextRequest } from "next/server";
@@ -65,10 +70,81 @@ const shouldEnforceCsp = (url: URL) => {
   return url.pathname.startsWith("/auth/login") || url.pathname.startsWith("/login");
 };
 
+const LEGACY_PROXY_ROUTES: ReadonlySet<string> = new Set([
+  "/auth/login",
+  "/login",
+  "/apps/installed",
+  "/auth/logout",
+  "/availability",
+  "/api/auth/signup",
+]);
+
+// Routes the proxy used to be limited to; only they get the CSP, embed, return-to and logout handling.
+const isLegacyProxyRoute = (pathname: string): boolean => {
+  const path = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return LEGACY_PROXY_ROUTES.has(path) || path.endsWith("/embed");
+};
+
+const defaultHost: string | null = normalizeHost(new URL(WEBAPP_URL).host);
+
+// Loopback (health check, local dev) and the WEBAPP_URL host must keep working even when no
+// organization matches them or the lookup fails.
+const isTrustedFallbackHost = (host: string | null): boolean =>
+  isLoopbackHost(host) || (defaultHost !== null && normalizeHost(host) === defaultHost);
+
+type OrganizationResolution =
+  | { kind: "ok"; org: RequestOrganizationDto | null }
+  | { kind: "unknown-host" }
+  | { kind: "error" };
+
+const resolveRequestOrganization = async (host: string | null): Promise<OrganizationResolution> => {
+  if (!isOrganizationsEnabled()) return { kind: "ok", org: null };
+
+  try {
+    // Loaded lazily so that with organizations disabled the proxy never pulls in Prisma.
+    const { getOrganizationDomainResolver } = await import(
+      "@calcom/features/organizations/di/OrganizationDomainResolver.container"
+    );
+    const org = await getOrganizationDomainResolver().resolve(host);
+    if (org) return { kind: "ok", org };
+    return isTrustedFallbackHost(host) ? { kind: "ok", org: null } : { kind: "unknown-host" };
+  } catch (error) {
+    console.error("proxy: organization lookup failed", {
+      host: normalizeHost(host),
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    return isTrustedFallbackHost(host) ? { kind: "ok", org: null } : { kind: "error" };
+  }
+};
+
+const applyOrgHeaders = (headers: Headers, org: RequestOrganizationDto | null): void => {
+  stripOrgHeaders(headers);
+  if (org) setOrgHeaders(headers, org);
+};
+
 const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
   const url = req.nextUrl;
+  const resolution = await resolveRequestOrganization(req.headers.get("host") ?? url.host);
+
+  if (resolution.kind === "unknown-host") {
+    return new NextResponse("Not Found", { status: 404, headers: { "content-type": "text/plain" } });
+  }
+  if (resolution.kind === "error") {
+    return new NextResponse("Service Unavailable", {
+      status: 503,
+      headers: { "content-type": "text/plain" },
+    });
+  }
+
+  if (!isLegacyProxyRoute(url.pathname)) {
+    const headers = new Headers(req.headers);
+    applyOrgHeaders(headers, resolution.org);
+    return NextResponse.next({ request: { headers: sanitizeRequestHeaders(headers) } });
+  }
+
   const reqWithEnrichedHeaders = enrichRequestWithHeaders({ req });
   const requestHeaders = new Headers(reqWithEnrichedHeaders.headers);
+  stripOrgHeaders(requestHeaders);
 
   if (url.pathname.startsWith("/api/auth/signup")) {
     const isSignupDisabled = await safeGet<boolean>("isSignupDisabled");
@@ -91,6 +167,7 @@ const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
     }
   }
 
+  applyOrgHeaders(requestHeaders, resolution.org);
   const res = NextResponse.next({
     request: {
       headers: sanitizeRequestHeaders(requestHeaders),
@@ -163,7 +240,10 @@ function enrichRequestWithHeaders({ req }: { req: NextRequest }) {
 }
 
 export const config = {
-  matcher: ["/auth/login", "/login", "/apps/installed", "/auth/logout", "/:path*/embed", "/availability", "/api/auth/signup"],
+  // The x-cal-org-* request headers are only trustworthy if every route that can read them passes
+  // through here to have client-supplied copies stripped, so this runs on everything but build assets.
+  // File extensions are not excluded: /:user/avatar.png rewrites to an API route.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
 
 export default proxy;
