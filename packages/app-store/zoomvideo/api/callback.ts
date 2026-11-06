@@ -1,20 +1,19 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getZoomAppKeys } from "../lib";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
   const { code } = req.query;
   const { client_id, client_secret } = await getZoomAppKeys();
 
-  const redirectUri = encodeURI(`${WEBAPP_URL_FOR_OAUTH}/api/integrations/zoomvideo/callback`);
+  const redirectUri = encodeURI(getOAuthRedirectUri(req, "zoomvideo"));
   const authHeader = `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`;
   const result = await fetch(
     `https://zoom.us/oauth/token?grant_type=authorization_code&code=${code}&redirect_uri=${redirectUri}`,
@@ -78,6 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: "zoom", type: "zoom_video" }, responseBody, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "conferencing", slug: "zoom" })
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+      getInstalledAppPath({ variant: "conferencing", slug: "zoom" })
   );
 }

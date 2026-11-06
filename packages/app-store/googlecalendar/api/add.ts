@@ -1,12 +1,11 @@
-import { OAuth2Client } from "googleapis-common";
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { GOOGLE_CALENDAR_SCOPES, SCOPE_USERINFO_PROFILE, WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
+import { GOOGLE_CALENDAR_SCOPES, SCOPE_USERINFO_PROFILE } from "@calcom/lib/constants";
 import { HttpError } from "@calcom/lib/http-error";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import { OAuth2Client } from "googleapis-common";
+import type { NextApiRequest, NextApiResponse } from "next";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getGoogleAppKeys } from "../lib/getGoogleAppKeys";
 
 async function getHandler(req: NextApiRequest, res: NextApiResponse) {
@@ -23,7 +22,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   const { client_id, client_secret } = await getGoogleAppKeys();
-  const redirect_uri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/googlecalendar/callback`;
+  const redirect_uri = getOAuthRedirectUri(req, "googlecalendar");
   const oAuth2Client = new OAuth2Client(client_id, client_secret, redirect_uri);
 
   const authUrl = oAuth2Client.generateAuthUrl({

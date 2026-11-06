@@ -1,10 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export const OFFICE365_VIDEO_SCOPES = ["OnlineMeetings.ReadWrite", "offline_access"];
 
@@ -19,7 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       response_type: "code",
       scope: OFFICE365_VIDEO_SCOPES.join(" "),
       client_id: clientId,
-      redirect_uri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/office365video/callback`,
+      redirect_uri: getOAuthRedirectUri(req, "office365video"),
       state,
     };
     const query = stringify(params);

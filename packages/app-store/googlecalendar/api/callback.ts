@@ -1,38 +1,38 @@
-import { calendar_v3 } from "@googleapis/calendar";
-import { OAuth2Client } from "googleapis-common";
-import type { NextApiRequest, NextApiResponse } from "next";
-
 import { createGoogleCalendarServiceWithGoogleType } from "@calcom/app-store/googlecalendar/lib/CalendarService";
 import { CredentialRepository } from "@calcom/features/credentials/repositories/CredentialRepository";
 import { buildCredentialCreateData } from "@calcom/features/credentials/services/CredentialDataService";
 import { renewSelectedCalendarCredentialId } from "@calcom/lib/connectedCalendar";
-import {
-  GOOGLE_CALENDAR_SCOPES,
-  SCOPE_USERINFO_PROFILE,
-  WEBAPP_URL,
-  WEBAPP_URL_FOR_OAUTH,
-} from "@calcom/lib/constants";
+import { GOOGLE_CALENDAR_SCOPES, SCOPE_USERINFO_PROFILE } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import { HttpError } from "@calcom/lib/http-error";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import { Prisma } from "@calcom/prisma/client";
-
+import { calendar_v3 } from "@googleapis/calendar";
+import { OAuth2Client } from "googleapis-common";
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import {
+  getOAuthAppOrigin,
+  getOAuthRedirectUri,
+  getOAuthSafeRedirectOptions,
+} from "../../_utils/oauth/getOAuthRedirectUri";
 import { updateProfilePhotoGoogle } from "../../_utils/oauth/updateProfilePhotoGoogle";
 import { getGoogleAppKeys } from "../lib/getGoogleAppKeys";
 
 async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = req.query;
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
+  const appOrigin = getOAuthAppOrigin(req);
 
   if (typeof code !== "string") {
     if (state?.onErrorReturnTo || state?.returnTo) {
       res.redirect(
-        getSafeRedirectUrl(state.onErrorReturnTo) ??
-          getSafeRedirectUrl(state?.returnTo) ??
-          `${WEBAPP_URL}/apps/installed`
+        getSafeRedirectUrl(state.onErrorReturnTo, safeRedirectOptions) ??
+          getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+          `${appOrigin}/apps/installed`
       );
       return;
     }
@@ -45,7 +45,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
 
   const { client_id, client_secret } = await getGoogleAppKeys();
 
-  const redirect_uri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/googlecalendar/callback`;
+  const redirect_uri = getOAuthRedirectUri(req, "googlecalendar");
 
   const oAuth2Client = new OAuth2Client(client_id, client_secret, redirect_uri);
 
@@ -63,9 +63,9 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
         });
       }
       res.redirect(
-        getSafeRedirectUrl(state.onErrorReturnTo) ??
-          getSafeRedirectUrl(state?.returnTo) ??
-          `${WEBAPP_URL}/apps/installed`
+        getSafeRedirectUrl(state.onErrorReturnTo, safeRedirectOptions) ??
+          getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+          `${appOrigin}/apps/installed`
       );
       return;
     }
@@ -96,7 +96,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
     // It can be toggled on later.
     if (!primaryCal?.id) {
       res.redirect(
-        getSafeRedirectUrl(state?.returnTo) ??
+        getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
           getInstalledAppPath({ variant: "calendar", slug: "google-calendar" })
       );
       return;
@@ -128,7 +128,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
         // we want to recover by connecting the existing selectedCalendar to the new Credential.
         if (await renewSelectedCalendarCredentialId(selectedCalendarWhereUnique, gcalCredential.id)) {
           res.redirect(
-            getSafeRedirectUrl(state?.returnTo) ??
+            getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
               getInstalledAppPath({ variant: "calendar", slug: "google-calendar" })
           );
           return;
@@ -139,7 +139,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
       await CredentialRepository.deleteById({ id: gcalCredential.id });
       res.redirect(
         `${
-          getSafeRedirectUrl(state?.onErrorReturnTo) ??
+          getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ??
           getInstalledAppPath({ variant: "calendar", slug: "google-calendar" })
         }?error=${errorMessage}`
       );
@@ -150,7 +150,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   // No need to install? Redirect to the returnTo URL
   if (!state?.installGoogleVideo) {
     res.redirect(
-      getSafeRedirectUrl(state?.returnTo) ??
+      getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
         getInstalledAppPath({ variant: "calendar", slug: "google-calendar" })
     );
     return;
@@ -164,7 +164,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   // If the user already has a google meet credential, there's nothing to do in here
   if (existingGoogleMeetCredential) {
     res.redirect(
-      getSafeRedirectUrl(`${WEBAPP_URL}/apps/installed/conferencing?hl=google-meet`) ??
+      getSafeRedirectUrl(`${appOrigin}/apps/installed/conferencing?hl=google-meet`, safeRedirectOptions) ??
         getInstalledAppPath({ variant: "conferencing", slug: "google-meet" })
     );
     return;
@@ -179,7 +179,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   });
   await CredentialRepository.create(googleMeetCredentialData);
   res.redirect(
-    getSafeRedirectUrl(`${WEBAPP_URL}/apps/installed/conferencing?hl=google-meet`) ??
+    getSafeRedirectUrl(`${appOrigin}/apps/installed/conferencing?hl=google-meet`, safeRedirectOptions) ??
       getInstalledAppPath({ variant: "conferencing", slug: "google-meet" })
   );
 }
