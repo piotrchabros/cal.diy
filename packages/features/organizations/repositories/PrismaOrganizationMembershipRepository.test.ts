@@ -33,6 +33,30 @@ describe("PrismaOrganizationMembershipRepository", () => {
     expect(result).toEqual(row);
   });
 
+  describe("findUserByEmail", () => {
+    it("matches the email case-insensitively and selects only the fields it needs", async () => {
+      const { repository, user } = buildRepository();
+      const row = { id: 7, username: "alice", email: "alice@acme.com", organizationId: 2 };
+      user.findFirst.mockResolvedValue(row);
+
+      const result = await repository.findUserByEmail("Alice@Acme.com");
+
+      expect(user.findFirst).toHaveBeenCalledWith({
+        where: { email: { equals: "Alice@Acme.com", mode: "insensitive" } },
+        select: { id: true, username: true, email: true, organizationId: true },
+      });
+      expect(user.findFirst.mock.calls[0][0]).not.toHaveProperty("include");
+      expect(result).toEqual(row);
+    });
+
+    it("returns null when no user has the email", async () => {
+      const { repository, user } = buildRepository();
+      user.findFirst.mockResolvedValue(null);
+
+      expect(await repository.findUserByEmail("nobody@acme.com")).toBeNull();
+    });
+  });
+
   describe("isUsernameTaken", () => {
     it("checks users and profiles in the organization, excluding the user", async () => {
       const { repository, user, profile } = buildRepository();

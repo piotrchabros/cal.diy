@@ -16,6 +16,7 @@ export type AddMemberInput = {
 
 export interface IOrganizationMembershipRepository {
   findUserById(userId: number): Promise<MembershipUserRecord | null>;
+  findUserByEmail(email: string): Promise<MembershipUserRecord | null>;
   isUsernameTaken(p: { organizationId: number; username: string; excludeUserId: number }): Promise<boolean>;
   addMember(
     input: AddMemberInput

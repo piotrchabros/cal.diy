@@ -30,6 +30,13 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     });
   }
 
+  async findUserByEmail(email: string): Promise<MembershipUserRecord | null> {
+    return this.prismaClient.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { id: true, username: true, email: true, organizationId: true },
+    });
+  }
+
   async isUsernameTaken({
     organizationId,
     username,
