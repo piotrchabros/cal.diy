@@ -1,7 +1,8 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
-import { CreationSource } from "@calcom/prisma/enums";
+import { CreationSource, MembershipRole } from "@calcom/prisma/enums";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+
 vi.mock("@calcom/app-store/delegationCredential", () => ({
   enrichHostsWithDelegationCredentials: vi.fn(),
   getUsersCredentialsIncludeServiceAccountKey: vi.fn(),
@@ -257,7 +258,6 @@ describe("listUsers", () => {
     });
 
     const { users, total } = await new UserRepository(prismock).listUsers({
-
       searchTerm: "nonexistent-term-xyz",
       cursor: null,
       limit: 10,
@@ -265,5 +265,71 @@ describe("listUsers", () => {
 
     expect(users).toEqual([]);
     expect(total).toEqual(0);
+  });
+});
+describe("organization membership of invited users", () => {
+  test("createInvitedWithPendingTeamMembership stores organizationId without creating a profile", async () => {
+    const team = await prismock.team.create({ data: { name: "Org Team", slug: "org-team-invite" } });
+    const organizationId = 456;
+
+    const { id } = await new UserRepository(prismock).createInvitedWithPendingTeamMembership({
+      email: "Invitee@Example.com",
+      teamId: team.id,
+      role: MembershipRole.MEMBER,
+      organizationId,
+    });
+
+    const user = await prismock.user.findUnique({ where: { id } });
+    expect(user).toEqual(
+      expect.objectContaining({ email: "invitee@example.com", username: null, organizationId })
+    );
+    const profile = await prismock.profile.findFirst({ where: { userId: id } });
+    expect(profile).toBeNull();
+  });
+
+  test("createInvitedWithPendingTeamMembership leaves organizationId null when not given", async () => {
+    const team = await prismock.team.create({ data: { name: "Plain Team", slug: "plain-team-invite" } });
+
+    const { id } = await new UserRepository(prismock).createInvitedWithPendingTeamMembership({
+      email: "plain-invitee@example.com",
+      teamId: team.id,
+      role: MembershipRole.MEMBER,
+    });
+
+    const user = await prismock.user.findUnique({ where: { id } });
+    expect(user?.organizationId).toBeNull();
+  });
+
+  test("findInviteeByEmail returns organizationId and username", async () => {
+    await new UserRepository(prismock).create({
+      username: "org-member",
+      email: "org-member@example.com",
+      organizationId: 789,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+    });
+
+    const invitee = await new UserRepository(prismock).findInviteeByEmail({
+      email: "ORG-member@example.com",
+    });
+
+    expect(invitee).toEqual(
+      expect.objectContaining({ username: "org-member", organizationId: 789, hasPassword: false })
+    );
+  });
+
+  test("setOrganizationId updates the user row", async () => {
+    const user = await new UserRepository(prismock).create({
+      username: null,
+      email: "no-org@example.com",
+      organizationId: null,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+    });
+
+    await new UserRepository(prismock).setOrganizationId({ id: user.id, organizationId: 321 });
+
+    const updated = await prismock.user.findUnique({ where: { id: user.id } });
+    expect(updated?.organizationId).toBe(321);
   });
 });

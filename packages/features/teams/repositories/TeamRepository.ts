@@ -15,6 +15,7 @@ export class TeamRepository {
         slug: true,
         logoUrl: true,
         isOrganization: true,
+        parentId: true,
       },
     });
   }

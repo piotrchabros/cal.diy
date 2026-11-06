@@ -1,10 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { Mock } from "vitest";
-
-import { MembershipRole } from "@calcom/prisma/enums";
-
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
-
+import { ErrorWithCode } from "@calcom/lib/errors";
+import { MembershipRole } from "@calcom/prisma/enums";
+import { TRPCError } from "@trpc/server";
+import type { Mock } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { acceptInviteHandler } from "./acceptInvite.handler";
 import { getTeamHandler } from "./getTeam.handler";
 import { inviteMemberHandler } from "./inviteMember.handler";
@@ -59,6 +58,35 @@ describe("viewer.teams mutation handlers", () => {
       email: "ada@example.com",
       role: MembershipRole.MEMBER,
     });
+  });
+
+  it("inviteMember converts ErrorWithCode Conflict to a CONFLICT TRPCError", async () => {
+    serviceMock.inviteMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization")
+    );
+
+    const promise = inviteMemberHandler({
+      ctx: mockCtx,
+      input: { teamId: 7, email: "ada@example.com", role: MembershipRole.MEMBER },
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(TRPCError);
+    await expect(promise).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "user_belongs_to_another_organization",
+    });
+  });
+
+  it("inviteMember rethrows non-ErrorWithCode errors unchanged", async () => {
+    const error = new Error("boom");
+    serviceMock.inviteMember.mockRejectedValue(error);
+
+    await expect(
+      inviteMemberHandler({
+        ctx: mockCtx,
+        input: { teamId: 7, email: "ada@example.com", role: MembershipRole.MEMBER },
+      })
+    ).rejects.toBe(error);
   });
 
   it("acceptInvite accepts for the session user only", async () => {

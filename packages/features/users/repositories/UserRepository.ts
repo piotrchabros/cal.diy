@@ -286,6 +286,8 @@ export class UserRepository {
         name: true,
         locale: true,
         identityProvider: true,
+        organizationId: true,
+        username: true,
         password: { select: { userId: true } },
       },
     });
@@ -298,15 +300,17 @@ export class UserRepository {
     email,
     teamId,
     role,
+    organizationId = null,
   }: {
     email: string;
     teamId: number;
     role: MembershipRole;
+    organizationId?: number | null;
   }) {
     const user = await this.create({
       email: email.toLowerCase(),
       username: null,
-      organizationId: null,
+      organizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
       invitedTo: teamId,
@@ -319,6 +323,14 @@ export class UserRepository {
       },
     });
     return { id: user.id, email: user.email, locale: user.locale };
+  }
+
+  async setOrganizationId({ id, organizationId }: { id: number; organizationId: number }): Promise<void> {
+    await this.prismaClient.user.update({
+      where: { id },
+      data: { organizationId },
+      select: { id: true },
+    });
   }
 
   async switchToPasswordLogin({ id, hashedPassword }: { id: number; hashedPassword: string }) {
@@ -1001,9 +1013,10 @@ export class UserRepository {
         },
         creationSource,
         locked,
+        ...(organizationId ? { organizationId } : {}),
+        // Invited users have no username yet; their profile is created once they pick one.
         ...(organizationId && username
           ? {
-              organizationId,
               profiles: {
                 create: {
                   username,

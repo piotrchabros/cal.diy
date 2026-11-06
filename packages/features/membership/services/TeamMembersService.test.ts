@@ -1,6 +1,6 @@
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TeamMembersService } from "./TeamMembersService";
 
 vi.mock("@calcom/lib/auth/hashPassword", () => ({
@@ -34,6 +34,7 @@ const makeUserRepo = (overrides: Record<string, unknown> = {}) => ({
   findInviteeByEmail: vi.fn(),
   createInvitedWithPendingTeamMembership: vi.fn(),
   switchToPasswordLogin: vi.fn(),
+  setOrganizationId: vi.fn(),
   ...overrides,
 });
 
@@ -43,6 +44,10 @@ const adminMembership = { id: 1, teamId: 7, userId: 9, role: MembershipRole.ADMI
 describe("TeamMembersService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("listMembers", () => {
@@ -214,6 +219,7 @@ describe("TeamMembersService", () => {
         email: "new@example.com",
         teamId: 7,
         role: MembershipRole.ADMIN,
+        organizationId: null,
       });
       expect(membershipRepo.createTeamMembership).not.toHaveBeenCalled();
       expect(teamRepo.createTeamInviteToken).toHaveBeenCalledWith(
@@ -278,6 +284,163 @@ describe("TeamMembersService", () => {
           role: MembershipRole.MEMBER,
         })
       ).rejects.toBeInstanceOf(ErrorWithCode);
+    });
+  });
+
+  describe("inviteMember organization isolation", () => {
+    const orgTeam = { ...team, parentId: 3 };
+
+    const setup = ({
+      teamResult = orgTeam,
+      invitee,
+    }: {
+      teamResult?: typeof team & { parentId: number | null };
+      invitee: { id: number; organizationId: number | null; username: string | null } | null;
+    }) => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi
+          .fn()
+          .mockResolvedValueOnce(adminMembership)
+          .mockResolvedValueOnce(null),
+        createTeamMembership: vi.fn().mockResolvedValue({ id: 3, role: "MEMBER", accepted: false }),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(teamResult),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue(null),
+      });
+      const userRepo = makeUserRepo({
+        findInviteeByEmail: vi
+          .fn()
+          .mockResolvedValue(
+            invitee ? { ...invitee, email: "ada@example.com", locale: "en", hasPassword: true } : null
+          ),
+        createInvitedWithPendingTeamMembership: vi
+          .fn()
+          .mockResolvedValue({ id: 12, email: "ada@example.com", locale: null }),
+      });
+      const orgMembership = { addMember: vi.fn().mockResolvedValue(undefined) };
+      const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        sendInviteEmail,
+        () => orgMembership
+      );
+      const invite = () =>
+        service.inviteMember({
+          teamId: 7,
+          requesterId: 9,
+          requesterName: "Owner",
+          email: "ada@example.com",
+          role: MembershipRole.MEMBER,
+        });
+      return { invite, membershipRepo, userRepo, orgMembership, sendInviteEmail };
+    };
+
+    it("ignores the parent organization when the flag is off", async () => {
+      const { invite, userRepo, orgMembership } = setup({ invitee: null });
+
+      await expect(invite()).resolves.toEqual({ status: "invited-new", email: "ada@example.com" });
+      expect(userRepo.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: null })
+      );
+      expect(orgMembership.addMember).not.toHaveBeenCalled();
+    });
+
+    it("keeps the existing flow for a team without a parent organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, userRepo, orgMembership } = setup({
+        teamResult: { ...team, parentId: null },
+        invitee: { id: 11, organizationId: 4, username: "ada" },
+      });
+
+      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
+      expect(membershipRepo.createTeamMembership).toHaveBeenCalledTimes(1);
+      expect(orgMembership.addMember).not.toHaveBeenCalled();
+      expect(userRepo.setOrganizationId).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invitee from another organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, sendInviteEmail, orgMembership } = setup({
+        invitee: { id: 11, organizationId: 4, username: "ada" },
+      });
+
+      const error = await invite().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ErrorWithCode);
+      expect(error).toMatchObject({
+        code: "conflict_error",
+        message: "user_belongs_to_another_organization",
+      });
+      expect(membershipRepo.createTeamMembership).not.toHaveBeenCalled();
+      expect(orgMembership.addMember).not.toHaveBeenCalled();
+      expect(sendInviteEmail).not.toHaveBeenCalled();
+    });
+
+    it("invites a member of the same organization without re-adding them", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, orgMembership, userRepo } = setup({
+        invitee: { id: 11, organizationId: 3, username: "ada" },
+      });
+
+      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
+      expect(membershipRepo.createTeamMembership).toHaveBeenCalledTimes(1);
+      expect(orgMembership.addMember).not.toHaveBeenCalled();
+      expect(userRepo.setOrganizationId).not.toHaveBeenCalled();
+    });
+
+    it("adds an organization-less invitee with a username to the organization first", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, orgMembership, sendInviteEmail, userRepo } = setup({
+        invitee: { id: 11, organizationId: null, username: "ada" },
+      });
+
+      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
+      expect(orgMembership.addMember).toHaveBeenCalledWith({ organizationId: 3, userId: 11, role: "MEMBER" });
+      expect(userRepo.setOrganizationId).not.toHaveBeenCalled();
+      expect(membershipRepo.createTeamMembership).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 7, userId: 11, accepted: false })
+      );
+      expect(sendInviteEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("links an organization-less invitee without a username to the organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, orgMembership, userRepo } = setup({
+        invitee: { id: 11, organizationId: null, username: null },
+      });
+
+      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
+      expect(userRepo.setOrganizationId).toHaveBeenCalledWith({ id: 11, organizationId: 3 });
+      expect(orgMembership.addMember).not.toHaveBeenCalled();
+      expect(membershipRepo.createTeamMembership).toHaveBeenCalledTimes(1);
+    });
+
+    it("propagates an organization membership failure without inviting", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, membershipRepo, orgMembership, sendInviteEmail } = setup({
+        invitee: { id: 11, organizationId: null, username: "ada" },
+      });
+      const failure = new Error("addMember failed");
+      orgMembership.addMember.mockRejectedValueOnce(failure);
+
+      await expect(invite()).rejects.toBe(failure);
+      expect(membershipRepo.createTeamMembership).not.toHaveBeenCalled();
+      expect(sendInviteEmail).not.toHaveBeenCalled();
+    });
+
+    it("creates a brand-new invitee inside the parent organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { invite, userRepo } = setup({ invitee: null });
+
+      await expect(invite()).resolves.toEqual({ status: "invited-new", email: "ada@example.com" });
+      expect(userRepo.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith({
+        email: "ada@example.com",
+        teamId: 7,
+        role: MembershipRole.MEMBER,
+        organizationId: 3,
+      });
     });
   });
 

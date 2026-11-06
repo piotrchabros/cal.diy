@@ -160,7 +160,7 @@ description: "Task list for Organizations (spec 005)"
 **PR 19**
 
 - [X] T030 [US2] In `packages/features/membership/services/TeamCreationService.ts`, set `parentId = caller.organizationId` on create, and scope the slug check (lines ~47-54) and `isSlugAvailable` to `parentId = caller org`. Update the tests
-- [ ] T031 [US2] In `packages/features/membership/services/TeamMembersService.ts` `inviteMember` (~line 155):
+- [X] T031 [US2] In `packages/features/membership/services/TeamMembersService.ts` `inviteMember` (~line 155):
   - Look up the invitee within the team's parent org (add `UserRepository.findByEmailAndOrganizationId`).
   - Refuse with `ErrorWithCode(Conflict, "user_belongs_to_another_organization")` when the email exists in another org.
   - Create new invitees in the team's org through `OrganizationMembershipService.addMember` (replacing `organizationId: null` in `createInvitedWithPendingTeamMembership`, ~line 159).
