@@ -42,3 +42,12 @@ export function readOrgFromHeaders(headers: Pick<Headers, "get">): RequestOrgani
     isDefault: headers.get(ORG_IS_DEFAULT_HEADER) === "1",
   };
 }
+
+export function toHeaderGetter(headers: Record<string, string | string[] | undefined>): Pick<Headers, "get"> {
+  return {
+    get: (name: string) => {
+      const value = headers[name.toLowerCase()];
+      return Array.isArray(value) ? value.join(", ") : (value ?? null);
+    },
+  };
+}

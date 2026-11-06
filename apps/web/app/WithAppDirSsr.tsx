@@ -1,5 +1,5 @@
 import type { GetServerSideProps, GetServerSidePropsContext } from "next";
-import { notFound, redirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 
 export const withAppDirSsr =
   <T extends Record<string, any>>(getServerSideProps: GetServerSideProps<T>) =>
@@ -7,7 +7,12 @@ export const withAppDirSsr =
     const ssrResponse = await getServerSideProps(context);
 
     if ("redirect" in ssrResponse) {
-      redirect(ssrResponse.redirect.destination);
+      const ssrRedirect = ssrResponse.redirect;
+      if ("permanent" in ssrRedirect && ssrRedirect.permanent) {
+        permanentRedirect(ssrRedirect.destination);
+      } else {
+        redirect(ssrRedirect.destination);
+      }
     }
     if ("notFound" in ssrResponse) {
       notFound();
