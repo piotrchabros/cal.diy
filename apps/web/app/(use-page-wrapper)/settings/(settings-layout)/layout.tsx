@@ -1,4 +1,5 @@
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -20,6 +21,7 @@ export default async function SettingsLayoutAppDir(props: SettingsLayoutProps) {
         canViewRoles: false,
         canViewOrganizationBilling: false,
         canUpdateOrganization: false,
+        canManageOrganizations: isOrganizationsEnabled(),
       }}
     />
   );
