@@ -26,9 +26,9 @@ description: "Task list for Organizations (spec 005)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the slice folders `packages/features/organizations/{repositories,services,lib,di}` and `apps/web/modules/organizations/{views,components,hooks}`. Add `ORGANIZATIONS_DI_TOKENS` in `packages/features/organizations/di/tokens.ts` and spread it into `packages/features/di/tokens.ts` (PR 2)
-- [ ] T002 [P] Add the `isOrganizationsEnabled()` helper, reading `process.env.ORGANIZATIONS_ENABLED === "1" || === "true"`, in `packages/lib/organizations/isOrganizationsEnabled.ts` with a test (PR 2)
-- [ ] T003 [P] Add `normalizeHost(host: string | null): string | null` (lowercase, strip port, strip trailing dot; `null` for empty input) and `isLoopbackHost(host)` (`localhost`, `127.0.0.1`, `::1`, `[::1]`) in `packages/lib/organizations/normalizeHost.ts` with a test (PR 2)
+- [X] T001 Create the slice folders `packages/features/organizations/{repositories,services,lib,di}` and `apps/web/modules/organizations/{views,components,hooks}`. Add `ORGANIZATIONS_DI_TOKENS` in `packages/features/organizations/di/tokens.ts` and spread it into `packages/features/di/tokens.ts` (PR 2)
+- [X] T002 [P] Add the `isOrganizationsEnabled()` helper, reading `process.env.ORGANIZATIONS_ENABLED === "1" || === "true"`, in `packages/lib/organizations/isOrganizationsEnabled.ts` with a test (PR 2)
+- [X] T003 [P] Add `normalizeHost(host: string | null): string | null` (lowercase, strip port, strip trailing dot; `null` for empty input) and `isLoopbackHost(host)` (`localhost`, `127.0.0.1`, `::1`, `[::1]`) in `packages/lib/organizations/normalizeHost.ts` with a test (PR 2)
 
 ---
 
@@ -41,8 +41,8 @@ description: "Task list for Organizations (spec 005)"
 
 **Repository and DTOs (PR 2)**
 
-- [ ] T006 [P] Define the `OrganizationDto`, `OrganizationListItemDto` and `OrganizationOwnerDto` Zod schemas and types in `packages/lib/dto/OrganizationDto.ts`, with the fields from contracts/trpc-organizations.md: `{ id, name, slug, domain: string | null, isDefault, memberCount, teamCount, owners: { userId, name, email }[] }`
-- [ ] T007 Define `IOrganizationRepository` in `packages/features/organizations/repositories/interfaces/IOrganizationRepository.ts`. Methods:
+- [X] T006 [P] Define the `OrganizationDto`, `OrganizationListItemDto` and `OrganizationOwnerDto` Zod schemas and types in `packages/lib/dto/OrganizationDto.ts`, with the fields from contracts/trpc-organizations.md: `{ id, name, slug, domain: string | null, isDefault, memberCount, teamCount, owners: { userId, name, email }[] }`
+- [X] T007 Define `IOrganizationRepository` in `packages/features/organizations/repositories/interfaces/IOrganizationRepository.ts`. Methods:
   - `findById`
   - `findBySlug`
   - `findByDomain`
@@ -54,7 +54,7 @@ description: "Task list for Organizations (spec 005)"
   - `countMembers`
   - `countTeams`
   - `findOwners`
-- [ ] T008 Implement `PrismaOrganizationRepository` in `packages/features/organizations/repositories/PrismaOrganizationRepository.ts`. All reads filter `isOrganization: true, parentId: null`, and `findByDomain` matches `organizationSettings.customDomain`. Add a unit test with a mocked Prisma client and the module `packages/features/organizations/di/PrismaOrganizationRepository.module.ts`
+- [X] T008 Implement `PrismaOrganizationRepository` in `packages/features/organizations/repositories/PrismaOrganizationRepository.ts`. All reads filter `isOrganization: true, parentId: null`, and `findByDomain` matches `organizationSettings.customDomain`. Add a unit test with a mocked Prisma client and the module `packages/features/organizations/di/PrismaOrganizationRepository.module.ts`
 
 **Services (PR 3)**
 
