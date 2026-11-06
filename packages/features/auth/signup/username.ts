@@ -1,10 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
-
 import notEmpty from "@calcom/lib/notEmpty";
-import { isPremiumUserName, generateUsernameSuggestion } from "@calcom/lib/server/username";
+import { generateUsernameSuggestion, isPremiumUserName } from "@calcom/lib/server/username";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
+import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 
 export type RequestWithUsernameStatus = NextApiRequest & {
   usernameStatus: {
@@ -74,7 +73,7 @@ const usernameHandler =
     return handler(req, res);
   };
 
-const usernameCheck = async (usernameRaw: string) => {
+const usernameCheck = async (usernameRaw: string, organizationId: number | null = null) => {
   const response = {
     available: true,
     premium: false,
@@ -87,7 +86,7 @@ const usernameCheck = async (usernameRaw: string) => {
     where: {
       username_organizationId: {
         username,
-        organizationId: null,
+        organizationId,
       },
     },
     select: {
@@ -109,6 +108,7 @@ const usernameCheck = async (usernameRaw: string) => {
       username: {
         contains: username,
       },
+      organizationId,
     },
     select: {
       username: true,
