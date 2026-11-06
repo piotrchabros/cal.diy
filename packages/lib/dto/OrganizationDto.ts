@@ -29,3 +29,7 @@ export type OrganizationOwnerDto = z.infer<typeof OrganizationOwnerDtoSchema>;
 export type OrganizationListItemDto = z.infer<typeof OrganizationListItemDtoSchema>;
 export type OrganizationDto = z.infer<typeof OrganizationDtoSchema>;
 export type OrganizationListResultDto = z.infer<typeof OrganizationListResultDtoSchema>;
+
+export const OrganizationRoleDtoSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
+
+export type OrganizationRoleDto = z.infer<typeof OrganizationRoleDtoSchema>;

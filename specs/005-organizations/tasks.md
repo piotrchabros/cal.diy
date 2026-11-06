@@ -65,13 +65,13 @@ description: "Task list for Organizations (spec 005)"
   - `delete` is refused with `ErrorWithCode(PreconditionFailed)` when the org has members or teams, or is the default.
 
   Add the test `OrganizationService.test.ts`
-- [ ] T010 Implement `OrganizationMembershipService` in `packages/features/organizations/services/OrganizationMembershipService.ts`:
+- [X] T010 Implement `OrganizationMembershipService` in `packages/features/organizations/services/OrganizationMembershipService.ts`:
   - `addMember({ organizationId, userId, role })` writes, in one transaction, `User.organizationId`, a `Profile` (`uid`, `username = users.username`) and an accepted org `Membership`.
   - `setRole` follows the data-model.md role rules: "ADMIN can grant MEMBER and ADMIN; only an OWNER can grant or remove OWNER; the last OWNER cannot be demoted or removed".
   - `getRole(userId, organizationId)`.
 
   Add a test covering the last-owner and role rules
-- [ ] T011 Add DI modules and containers in `packages/features/organizations/di/`: `OrganizationService.module.ts`, `OrganizationService.container.ts` (`getOrganizationService()`), `OrganizationMembershipService.module.ts`, `OrganizationMembershipService.container.ts` (`getOrganizationMembershipService()`)
+- [X] T011 Add DI modules and containers in `packages/features/organizations/di/`: `OrganizationService.module.ts`, `OrganizationService.container.ts` (`getOrganizationService()`), `OrganizationMembershipService.module.ts`, `OrganizationMembershipService.container.ts` (`getOrganizationMembershipService()`)
 
 **Request organization (PR 6)**
 
