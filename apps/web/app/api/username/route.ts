@@ -1,13 +1,16 @@
+import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { checkUsername } from "@calcom/features/profile/lib/checkUsername";
-import { buildLegacyRequest } from "@lib/buildLegacyCtx";
+import { resolveUsernameNamespace } from "@calcom/features/profile/lib/resolveUsernameNamespace";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 const bodySchema = z.object({
   username: z.string(),
+  // Only honoured with organizations disabled; otherwise the org comes from the request host.
   orgSlug: z.string().optional(),
 });
 
@@ -16,13 +19,16 @@ async function postHandler(request: NextRequest) {
     const body = await request.json();
     const { username, orgSlug } = bodySchema.parse(body);
 
-    const legacyReq = buildLegacyRequest(await headers(), await cookies());
+    const orgsEnabled = isOrganizationsEnabled();
+    const org = orgsEnabled ? await getOrgFromRequest(await headers()) : null;
+    if (orgsEnabled && !org) {
+      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+    }
 
-    // Get current org domain from request headers
-    const currentOrgDomain = null;
-  const isValidOrgDomain = false;
-
-    const result = await checkUsername(username, currentOrgDomain || orgSlug);
+    const result = await checkUsername(
+      username,
+      resolveUsernameNamespace({ organizationId: org?.id, legacyOrgSlug: orgSlug })
+    );
 
     return NextResponse.json(result);
   } catch (error) {

@@ -1,11 +1,10 @@
-import type { NextResponse } from "next/server";
-
+import process from "node:process";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
 import { RedirectType } from "@calcom/prisma/enums";
-
+import type { NextResponse } from "next/server";
 import { IS_PREMIUM_USERNAME_ENABLED } from "../constants";
 import logger from "../logger";
 import notEmpty from "../notEmpty";
@@ -110,9 +109,33 @@ const usernameHandler =
     return handler(body, usernameStatus, query);
   };
 
-const usernameCheck = async (usernameRaw: string, currentOrgDomain?: string | null) => {
-  log.debug("usernameCheck", { usernameRaw, currentOrgDomain });
-  const isCheckingUsernameInGlobalNamespace = !currentOrgDomain;
+export type UsernameNamespace = { organizationId: number } | { orgSlug: string } | null;
+
+const resolveOrganizationId = async (namespace: UsernameNamespace): Promise<number | null> => {
+  if (!namespace) return null;
+  if ("organizationId" in namespace) return namespace.organizationId;
+
+  const currentOrgDomain = namespace.orgSlug;
+  const organization = await prisma.team.findFirst({
+    where: {
+      isOrganization: true,
+      OR: [{ slug: currentOrgDomain }, { metadata: { path: ["requestedSlug"], equals: currentOrgDomain } }],
+    },
+    select: {
+      id: true,
+    },
+  });
+  if (!organization) {
+    throw new ErrorWithCode(ErrorCode.NotFound, `Organization with domain "${currentOrgDomain}" not found`, {
+      currentOrgDomain,
+    });
+  }
+  return organization.id;
+};
+
+const usernameCheck = async (usernameRaw: string, namespace: UsernameNamespace = null) => {
+  log.debug("usernameCheck", { usernameRaw, namespace });
+  const isCheckingUsernameInGlobalNamespace = !namespace;
   const response = {
     available: true,
     premium: false,
@@ -121,33 +144,13 @@ const usernameCheck = async (usernameRaw: string, currentOrgDomain?: string | nu
 
   const username = slugify(usernameRaw);
 
-  let organizationId: number | null = null;
-  if (currentOrgDomain) {
-    // Get organizationId from orgSlug
-    const organization = await prisma.team.findFirst({
-      where: {
-        isOrganization: true,
-        OR: [{ slug: currentOrgDomain }, { metadata: { path: ["requestedSlug"], equals: currentOrgDomain } }],
-      },
-      select: {
-        id: true,
-      },
-    });
-    if (!organization) {
-      throw new ErrorWithCode(
-        ErrorCode.NotFound,
-        `Organization with domain "${currentOrgDomain}" not found`,
-        { currentOrgDomain }
-      );
-    }
-    organizationId = organization.id;
-  }
+  const organizationId = await resolveOrganizationId(namespace);
 
   const user = await prisma.user.findFirst({
     where: {
       username,
       // Check in the specific organization context, or global namespace if no org
-      organizationId: organizationId ?? null,
+      organizationId,
     },
     select: {
       id: true,
@@ -173,7 +176,7 @@ const usernameCheck = async (usernameRaw: string, currentOrgDomain?: string | nu
       username: {
         contains: username,
       },
-      ...(organizationId !== null ? { organizationId } : { organizationId: null }),
+      organizationId,
     },
     select: {
       username: true,

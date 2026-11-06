@@ -1,8 +1,7 @@
 import prismaMock from "@calcom/testing/lib/__mocks__/prismaMock";
-
+import { ErrorCode } from "@calcom/lib/errorCodes";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { generateUsernameSuggestion, usernameCheckForSignup } from "./username";
+import { generateUsernameSuggestion, usernameCheck, usernameCheckForSignup } from "./username";
 
 describe("usernameCheckForSignup ", async () => {
   beforeEach(() => {
@@ -54,6 +53,100 @@ describe("usernameCheckForSignup ", async () => {
       premium: false,
       suggestedUsername: "",
     });
+  });
+});
+
+describe("usernameCheck", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // @ts-expect-error
+    prismaMock.user.findFirst.mockResolvedValue(null);
+    // @ts-expect-error
+    prismaMock.user.findMany.mockResolvedValue([]);
+    // @ts-expect-error
+    prismaMock.tempOrgRedirect.findUnique.mockResolvedValue(null);
+    // @ts-expect-error
+    prismaMock.team.findFirst.mockResolvedValue(null);
+  });
+
+  it("scopes to the given organizationId without resolving a slug or checking migration reservations", async () => {
+    const res = await usernameCheck("john", { organizationId: 7 });
+
+    expect(res).toEqual({ available: true, premium: false, suggestedUsername: "" });
+    expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: "john", organizationId: 7 } })
+    );
+    expect(prismaMock.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: { contains: "john" }, organizationId: 7 } })
+    );
+    expect(prismaMock.team.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.tempOrgRedirect.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("scopes to the global namespace and runs the migration reservation check when namespace is null", async () => {
+    // @ts-expect-error
+    prismaMock.tempOrgRedirect.findUnique.mockResolvedValue({ id: 1 });
+
+    const res = await usernameCheck("john", null);
+
+    expect(res.available).toBe(false);
+    expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: "john", organizationId: null } })
+    );
+    expect(prismaMock.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: { contains: "john" }, organizationId: null } })
+    );
+    expect(prismaMock.tempOrgRedirect.findUnique).toHaveBeenCalled();
+    expect(prismaMock.team.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("defaults to the global namespace when no namespace is passed", async () => {
+    const res = await usernameCheck("john");
+
+    expect(res.available).toBe(true);
+    expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: "john", organizationId: null } })
+    );
+    expect(prismaMock.tempOrgRedirect.findUnique).toHaveBeenCalled();
+  });
+
+  it("resolves the organization from orgSlug and scopes to it", async () => {
+    // @ts-expect-error
+    prismaMock.team.findFirst.mockResolvedValue({ id: 12 });
+
+    const res = await usernameCheck("john", { orgSlug: "acme" });
+
+    expect(res.available).toBe(true);
+    expect(prismaMock.team.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          isOrganization: true,
+          OR: [{ slug: "acme" }, { metadata: { path: ["requestedSlug"], equals: "acme" } }],
+        },
+      })
+    );
+    expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: "john", organizationId: 12 } })
+    );
+    expect(prismaMock.tempOrgRedirect.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws NotFound when the orgSlug does not match an organization", async () => {
+    await expect(usernameCheck("john", { orgSlug: "missing" })).rejects.toMatchObject({
+      code: ErrorCode.NotFound,
+    });
+    expect(prismaMock.user.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("suggests an alternative when the username is taken", async () => {
+    // @ts-expect-error
+    prismaMock.user.findFirst.mockResolvedValue({ id: 3, username: "john" });
+    // @ts-expect-error
+    prismaMock.user.findMany.mockResolvedValue([{ username: "john" }]);
+
+    const res = await usernameCheck("john", { organizationId: 7 });
+
+    expect(res).toEqual({ available: false, premium: false, suggestedUsername: "john001" });
   });
 });
 
