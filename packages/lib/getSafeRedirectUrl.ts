@@ -1,8 +1,23 @@
-import { CONSOLE_URL, WEBAPP_URL, WEBSITE_URL, EMBED_LIB_URL } from "@calcom/lib/constants";
+import { CONSOLE_URL, EMBED_LIB_URL, WEBAPP_URL, WEBSITE_URL } from "@calcom/lib/constants";
 import { getTldPlus1 } from "@calcom/lib/getTldPlus1";
 
+function toOrigin(url: string): string | null {
+  try {
+    const { origin } = new URL(url);
+    // Opaque origins serialize to "null"; never let one match anything.
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
+export type SafeRedirectOptions = { allowedOrigins?: readonly string[]; fallbackUrl?: string };
+
 // It ensures that redirection URL safe where it is accepted through a query params or other means where user can change it.
-export const getSafeRedirectUrl = (url = "") => {
+export const getSafeRedirectUrl = (
+  url = "",
+  { allowedOrigins = [], fallbackUrl = `${WEBAPP_URL}/` }: SafeRedirectOptions = {}
+) => {
   if (!url) {
     return null;
   }
@@ -15,8 +30,11 @@ export const getSafeRedirectUrl = (url = "") => {
   const urlParsed = new URL(url);
 
   // Avoid open redirection security vulnerability
-  if (![CONSOLE_URL, WEBAPP_URL, WEBSITE_URL].some((u) => new URL(u).origin === urlParsed.origin)) {
-    url = `${WEBAPP_URL}/`;
+  if (
+    ![CONSOLE_URL, WEBAPP_URL, WEBSITE_URL].some((u) => new URL(u).origin === urlParsed.origin) &&
+    !allowedOrigins.some((u) => toOrigin(u) === urlParsed.origin)
+  ) {
+    url = fallbackUrl;
   }
 
   return url;

@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { getOrganizationOriginForUrl } from "@calcom/features/organizations/lib/getOrganizationOrigin";
+import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import { serverConfig } from "@calcom/lib/serverConfig";
 import Handlebars from "handlebars";
 import type { SendVerificationRequestParams } from "next-auth/providers/email";
 import type { TransportOptions } from "nodemailer";
 import nodemailer from "nodemailer";
-import path from "node:path";
-
-import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
-import { serverConfig } from "@calcom/lib/serverConfig";
 
 const transporter = nodemailer.createTransport<TransportOptions>({
   ...(serverConfig.transport as TransportOptions),
@@ -19,7 +20,11 @@ const sendVerificationRequest = async ({
   const emailsDir = path.resolve(process.cwd(), "..", "..", "packages/emails", "templates");
   const originalUrl = new URL(url);
   const webappUrl = new URL(process.env.NEXTAUTH_URL || WEBAPP_URL);
-  if (originalUrl.origin !== webappUrl.origin) {
+  // A link already on an organization's own domain is kept so the session cookie lands on that domain.
+  if (
+    originalUrl.origin !== webappUrl.origin &&
+    originalUrl.origin !== (await getOrganizationOriginForUrl(url))
+  ) {
     url = url.replace(originalUrl.origin, webappUrl.origin);
   }
   const emailFile = readFileSync(path.join(emailsDir, "confirm-email.html"), {
