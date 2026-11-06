@@ -9,4 +9,6 @@ export const ORGANIZATIONS_DI_TOKENS = {
   ORGANIZATION_MEMBERSHIP_REPOSITORY_MODULE: Symbol("OrganizationMembershipRepositoryModule"),
   ORGANIZATION_MEMBERSHIP_SERVICE: Symbol("OrganizationMembershipService"),
   ORGANIZATION_MEMBERSHIP_SERVICE_MODULE: Symbol("OrganizationMembershipServiceModule"),
+  ORGANIZATION_DOMAIN_RESOLVER: Symbol("OrganizationDomainResolver"),
+  ORGANIZATION_DOMAIN_RESOLVER_MODULE: Symbol("OrganizationDomainResolverModule"),
 };

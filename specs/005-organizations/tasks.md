@@ -75,12 +75,12 @@ description: "Task list for Organizations (spec 005)"
 
 **Request organization (PR 6)**
 
-- [ ] T012 Implement `OrganizationDomainResolver.resolve(host)` in `packages/features/organizations/lib/OrganizationDomainResolver.ts`:
+- [X] T012 Implement `OrganizationDomainResolver.resolve(host)` in `packages/features/organizations/lib/OrganizationDomainResolver.ts`:
   - When the flag is off or the host is loopback, it returns the default org.
   - Otherwise it looks up `findByDomain` with a 60-second in-memory TTL cache, and returns `null` for an unknown host.
 
   Add a test covering the cache, loopback, flag off and unknown host
-- [ ] T013 Implement `getOrgFromRequest(headers: Headers)` in `packages/features/organizations/lib/getOrgFromRequest.ts`. It reads the trusted `x-cal-org-id` / `x-cal-org-slug` headers and falls back to `OrganizationDomainResolver.resolve(headers.get("host"))`. Add a test
+- [X] T013 Implement `getOrgFromRequest(headers: Headers)` in `packages/features/organizations/lib/getOrgFromRequest.ts`. It reads the trusted `x-cal-org-id` / `x-cal-org-slug` headers and falls back to `OrganizationDomainResolver.resolve(headers.get("host"))`. Add a test
 - [ ] T014 Update `apps/web/proxy.ts`:
   - Widen the matcher to every route except `/_next/*` and static assets.
   - Delete the incoming `x-cal-org-id` / `x-cal-org-slug` headers.
