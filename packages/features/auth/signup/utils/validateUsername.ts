@@ -29,16 +29,24 @@ export const validateAndGetCorrectedUsernameAndEmail = async ({
   organizationId,
   orgAutoAcceptEmail,
   isSignup,
+  usernameOrganizationId,
 }: {
   username: string;
   email: string;
   organizationId?: number;
   orgAutoAcceptEmail?: string;
   isSignup: boolean;
+  // Scopes only the username clause to an org (usernames are unique per org) without the
+  // org-invite semantics of `organizationId`, so the provided username is kept as-is.
+  usernameOrganizationId?: number;
 }) => {
   if (username.includes("+")) {
     return { isValid: false, username: undefined, email };
   }
+  const usernameClause =
+    usernameOrganizationId !== undefined
+      ? { username, organizationId: usernameOrganizationId }
+      : { username };
   // There is an existingUser if, within an org context or not, the username matches
   // OR if the email matches AND either the email is verified
   // or both username and password are set
@@ -48,7 +56,7 @@ export const validateAndGetCorrectedUsernameAndEmail = async ({
       OR: [
         // When inviting to org, invited user gets created with username now, so in an org context we
         // can't check for username as it will exist on signup
-        ...(!organizationId ? [{ username }] : [{}]),
+        ...(!organizationId ? [usernameClause] : [{}]),
         {
           AND: [
             { email },
