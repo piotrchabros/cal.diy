@@ -1,7 +1,5 @@
-import { v4 as uuidv4 } from "uuid";
-
 import { prisma } from "@calcom/prisma";
-
+import { v4 as uuidv4 } from "uuid";
 import { convertSvgToPng } from "./imageUtils";
 
 export const uploadAvatar = async ({ userId, avatar: data }: { userId: number; avatar: string }) => {
@@ -41,7 +39,8 @@ export const uploadAvatar = async ({ userId, avatar: data }: { userId: number; a
     },
   });
 
-  return `/api/avatar/${objectKey}.png`;
+  // objectKey stays stable so old links keep working; the version param changes the stored URL so browsers refetch despite the avatar route's max-age=86400.
+  return `/api/avatar/${objectKey}.png?v=${Date.now()}`;
 };
 
 export const uploadLogo = async ({

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockFindUnique = vi.fn();
 const mockUpsert = vi.fn();
@@ -30,6 +30,12 @@ describe("uploadAvatar", () => {
     mockConvertSvgToPng.mockImplementation((data: string) => Promise.resolve(`processed_${data}`));
     mockUpsert.mockResolvedValue(undefined);
     mockUuidv4.mockReturnValue("generated-uuid-1234");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("generates new objectKey via uuidv4 when no existing avatar", async () => {
@@ -38,7 +44,7 @@ describe("uploadAvatar", () => {
     const result = await uploadAvatar({ userId: 1, avatar: "image-data" });
 
     expect(mockUuidv4).toHaveBeenCalled();
-    expect(result).toBe("/api/avatar/generated-uuid-1234.png");
+    expect(result).toBe("/api/avatar/generated-uuid-1234.png?v=1767225600000");
   });
 
   it("reuses existing objectKey and does NOT call uuidv4", async () => {
@@ -47,7 +53,7 @@ describe("uploadAvatar", () => {
     const result = await uploadAvatar({ userId: 1, avatar: "image-data" });
 
     expect(mockUuidv4).not.toHaveBeenCalled();
-    expect(result).toBe("/api/avatar/existing-key-5678.png");
+    expect(result).toBe("/api/avatar/existing-key-5678.png?v=1767225600000");
   });
 
   it("includes objectKey in create clause but NOT in update clause", async () => {
@@ -63,12 +69,24 @@ describe("uploadAvatar", () => {
     );
   });
 
-  it("returns /api/avatar/{objectKey}.png", async () => {
+  it("returns /api/avatar/{objectKey}.png with a version query", async () => {
     mockFindUnique.mockResolvedValue({ objectKey: "my-key" });
 
     const result = await uploadAvatar({ userId: 5, avatar: "data" });
 
-    expect(result).toBe("/api/avatar/my-key.png");
+    expect(result).toBe("/api/avatar/my-key.png?v=1767225600000");
+  });
+
+  it("returns a different URL on re-upload while keeping the same objectKey", async () => {
+    mockFindUnique.mockResolvedValue({ objectKey: "k" });
+
+    const first = await uploadAvatar({ userId: 5, avatar: "data" });
+    vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+    const second = await uploadAvatar({ userId: 5, avatar: "data" });
+
+    expect(first.startsWith("/api/avatar/k.png?v=")).toBe(true);
+    expect(second.startsWith("/api/avatar/k.png?v=")).toBe(true);
+    expect(second).not.toBe(first);
   });
 
   it("uses correct compound unique key for lookup and upsert", async () => {
