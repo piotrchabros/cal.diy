@@ -89,7 +89,9 @@ Three read-only surveys of the code base: multi-domain hosting and auth, the org
   - Keep `NEXTAUTH_COOKIE_DOMAIN` empty, so cookies stay host-only. That already gives one session per domain.
   - Set `AUTH_TRUST_HOST=true` (next-auth 4.24.13 then derives the base URL from `X-Forwarded-Host` / `Host`; Caddy forwards both).
   - Allow the `redirect` callback (`packages/features/auth/lib/next-auth-options.ts:1164`) and `getSafeRedirectUrl` to target any organization domain.
-  - In the `signIn` callback, reject a user whose organization differs from the host's organization, and send them to their own domain's login (FR-017).
+  - In the `signIn` callback, after authentication (credentials + 2FA, OAuth, magic-link callback; not the magic-link request step), redirect a user whose organization differs from the host's organization to their own domain's login, `https://<org domain>/auth/login?reason=wrong_organization_domain` (FR-017). A redirect that would loop goes to `/auth/error?error=wrong_organization_domain`.
+  - No email→domain lookup endpoint (dropped from the earlier plan). The domain is only revealed after authentication, so emails can't be enumerated.
+  - `AUTH_TRUST_HOST` only while `ORGANIZATIONS_ENABLED` is on. Caddy must overwrite `X-Forwarded-*`, and the Node ports must not be public, or a client could pick the base URL.
   - Stop `sendVerificationRequest.ts:21` rewriting magic links to `NEXTAUTH_URL`.
   - In the JWT, set `org.fullDomain` (`next-auth-options.ts:521`) from the user's org.
 - **Owner action**: Google and Azure AD sign-in callbacks become `<domain>/api/auth/callback/<provider>`, which must be registered with each provider, for each domain, if those sign-in providers are enabled.

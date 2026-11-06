@@ -1,11 +1,18 @@
 "use client";
 
+import process from "node:process";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
-import { HOSTED_CAL_FEATURES, WEBAPP_URL, WEBSITE_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { HOSTED_CAL_FEATURES, WEBSITE_URL } from "@calcom/lib/constants";
 import { emailRegex } from "@calcom/lib/emailSchema";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import {
+  isOrganizationLoginRedirect,
+  SIGN_IN_REASON_PARAM,
+  WRONG_ORGANIZATION_DOMAIN_ERROR,
+} from "@calcom/lib/organizations/organizationSignIn";
 import { Alert } from "@calcom/ui/components/alert";
 import { Icon } from "@calcom/ui/components/icon";
 import { LastUsed, useLastUsed } from "@calcom/web/modules/auth/hooks/useLastUsed";
@@ -36,13 +43,9 @@ interface LoginValues {
   csrfToken: string;
 }
 
-const MicrosoftIcon = () => (
-  <img className="size-4" src="/microsoft-logo.svg" alt="" />
-);
+const MicrosoftIcon = () => <img className="size-4" src="/microsoft-logo.svg" alt="" />;
 
-const GoogleIcon = () => (
-  <img className="size-4" src="/google-icon-colored.svg" alt="" />
-);
+const GoogleIcon = () => <img className="size-4" src="/google-icon-colored.svg" alt="" />;
 
 function BackgroundGrid() {
   const rows = 9;
@@ -110,6 +113,7 @@ export default function Login({
   const searchParams = useCompatSearchParams();
   const { t } = useLocale();
   const router = useRouter();
+  const orgBaseUrl = useOrgBaseUrl();
   const formSchema = z
     .object({
       email: z
@@ -135,6 +139,7 @@ export default function Login({
     [ErrorCode.IncorrectTwoFactorCode]: `${t("incorrect_2fa_code")} ${t("please_try_again")}`,
     [ErrorCode.InternalServerError]: `${t("something_went_wrong")} ${t("please_try_again_and_contact_us")}`,
     [ErrorCode.ThirdPartyIdentityProviderEnabled]: t("account_created_with_identity_provider"),
+    [WRONG_ORGANIZATION_DOMAIN_ERROR]: t("wrong_organization_domain_error"),
   };
 
   let callbackUrl = searchParams?.get("callbackUrl") || "";
@@ -143,10 +148,13 @@ export default function Login({
 
   // If not absolute URL, make it absolute
   if (!/^https?:\/\//.test(callbackUrl)) {
-    callbackUrl = `${WEBAPP_URL}/${callbackUrl}`;
+    callbackUrl = `${orgBaseUrl}/${callbackUrl}`;
   }
 
-  const safeCallbackUrl = getSafeRedirectUrl(callbackUrl);
+  const safeCallbackUrl = getSafeRedirectUrl(callbackUrl, {
+    allowedOrigins: [orgBaseUrl],
+    fallbackUrl: `${orgBaseUrl}/`,
+  });
 
   callbackUrl = safeCallbackUrl || "";
 
@@ -158,9 +166,17 @@ export default function Login({
       callbackUrl,
       redirect: false,
     });
-    if (!res) setErrorMessage(errorMessages[ErrorCode.InternalServerError]);
+    if (!res) {
+      setErrorMessage(errorMessages[ErrorCode.InternalServerError]);
+      return;
+    }
+    // The server sends a user who signed in on the wrong domain to their organization's login page.
+    if (!res.error && isOrganizationLoginRedirect(res.url)) {
+      window.location.assign(res.url);
+      return;
+    }
     // we're logged in! let's do a hard refresh to the desired url
-    else if (!res.error) {
+    if (!res.error) {
       setLastUsed("credentials");
       router.push(callbackUrl);
     } else if (res.error === ErrorCode.SecondFactorRequired) setTwoFactorRequired(true);
@@ -170,6 +186,8 @@ export default function Login({
     else setErrorMessage(errorMessages[res.error] || t("something_went_wrong"));
   };
 
+  const showWrongOrganizationDomainNotice =
+    searchParams?.get(SIGN_IN_REASON_PARAM) === WRONG_ORGANIZATION_DOMAIN_ERROR;
   const showSocialLogin = isGoogleLoginEnabled || isOutlookLoginEnabled;
   const showSignupLink =
     process.env.NEXT_PUBLIC_DISABLE_SIGNUP !== "true" && searchParams?.get("register") !== "false";
@@ -190,6 +208,10 @@ export default function Login({
           <p className="mb-8 text-center text-sm text-subtle" data-testid="login-subtitle">
             {twoFactorRequired ? t("2fa_code") : t("welcome_back_sign_in")}
           </p>
+
+          {showWrongOrganizationDomainNotice && (
+            <Alert severity="info" title={t("sign_in_on_your_organization_domain")} className="mb-6" />
+          )}
 
           <FormProvider {...methods}>
             {/* Social Login Buttons */}

@@ -5134,5 +5134,7 @@
   "organization_default_domain_locked": "The default organization's domain cannot be changed.",
   "organization_domain_change_warning_title": "Changing the domain",
   "organization_domain_change_warning": "Links on the old domain will stop working. The new domain must already point at this server.",
+  "sign_in_on_your_organization_domain": "Sign in here — this is your organization's address.",
+  "wrong_organization_domain_error": "This account belongs to another organization. Sign in on your organization's address.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

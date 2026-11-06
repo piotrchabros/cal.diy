@@ -78,8 +78,14 @@ useEmbedBookerUrl(): string        // now = useOrgBaseUrl()
 ## Sign-in
 
 - The session cookie is host-only (`NEXTAUTH_COOKIE_DOMAIN` stays empty).
-- `AUTH_TRUST_HOST=true`.
-- In the `signIn` callback: when `user.organizationId != H`, sign-in is refused with error `wrong_organization_domain`, and the login page redirects to `https://<user's org domain>/auth/login`.
+- `AUTH_TRUST_HOST=true`, but only together with `ORGANIZATIONS_ENABLED`. While the flag is off, `AUTH_TRUST_HOST` stays unset, so next-auth keeps using `NEXTAUTH_URL` and ignores `X-Forwarded-Host`.
+- The `signIn` callback runs the domain policy only after the user is authenticated:
+  - credentials, including the 2FA step;
+  - OAuth (Google, Azure AD);
+  - the magic-link callback (when the link is opened). The magic-link request step (sending the email) does not run it.
+- When `user.organizationId != H`, the callback redirects to `https://<user's org domain>/auth/login?reason=wrong_organization_domain`. The login page there shows a notice that this is the user's organization address. For credentials sign-in (`redirect: false`), the login page follows that URL with `window.location.assign`.
+- When that redirect would loop (the user's org domain is the current host, or it can't be resolved), sign-in goes to `/auth/error?error=wrong_organization_domain`. On the login page, a `wrong_organization_domain` error shows the same message.
+- There is no endpoint that looks up a domain from an email. The user's domain is only revealed after authentication, so the login page cannot be used to find out which emails have accounts.
 - The `redirect` callback and `getSafeRedirectUrl` allow `WEBAPP_URL`, `WEBSITE_URL`, `CONSOLE_URL`, and every org `customDomain`.
 
 ## App OAuth (calendar, video, CRM apps)

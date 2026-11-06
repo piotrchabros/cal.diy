@@ -1,13 +1,12 @@
+import { WRONG_ORGANIZATION_DOMAIN_ERROR } from "@calcom/lib/organizations/organizationSignIn";
+import { IdentityProvider } from "@calcom/prisma/enums";
+import { Button } from "@calcom/ui/components/button";
+import AuthContainer from "@components/ui/AuthContainer";
+import { XIcon } from "@coss/ui/icons";
 import type { PageProps } from "app/_types";
 import { _generateMetadata, getTranslate } from "app/_utils";
 import Link from "next/link";
 import { z } from "zod";
-
-import { IdentityProvider } from "@calcom/prisma/enums";
-import { Button } from "@calcom/ui/components/button";
-import { XIcon } from "@coss/ui/icons";
-
-import AuthContainer from "@components/ui/AuthContainer";
 
 export const generateMetadata = async () => {
   return await _generateMetadata(
@@ -51,6 +50,8 @@ const ServerPage = async ({ searchParams }: PageProps) => {
       return t("saml_idp_not_authoritative_error");
     } else if (error === "unverified-email") {
       return t("unverified_email_oauth_error");
+    } else if (error === WRONG_ORGANIZATION_DOMAIN_ERROR) {
+      return t("wrong_organization_domain_error");
     }
     return t("error_during_login") + (error ? ` Error code: ${error}` : "");
   };
