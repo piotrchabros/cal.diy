@@ -226,7 +226,7 @@ description: "Task list for Organizations (spec 005)"
 
 - [X] T044 [US3] In `apps/web/modules/bookings/views/bookings-single-view.getServerSideProps.tsx` (~215-247) and `apps/web/lib/reschedule/[uid]/getServerSideProps.ts`, when the organizer's org differs from the host org, redirect (308) to the same path on the organizer's org base URL. Add tests
 - [X] T045 [US3] In `packages/features/bookings/lib/handleNewBooking/loadUsers.ts`, remove the `getOrgDomainConfig` stub (~line 15) and resolve the org from `hostname`. In `packages/features/bookings/lib/service/RegularBookingService.ts`, refuse with `ErrorWithCode(NotFound, "event_not_found")` when the event type's owner or team org differs from the host org; API v2 calls keep using `forcedSlug`. Add tests
-- [ ] T046 [P] [US3] In `packages/trpc/server/routers/viewer/slots/util.ts` (~180-192, 346-369), pass the request org instead of the "no org" default. Add a test
+- [X] T046 [P] [US3] In `packages/trpc/server/routers/viewer/slots/util.ts` (~180-192, 346-369), pass the request org instead of the "no org" default. Add a test
 
 **PRs 13–15: server link sweep** (replace `WEBAPP_URL` user-facing links with `OrganizationUrlService` for the subject; leave server-to-server API bases alone)
 
@@ -363,6 +363,9 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T074 Create OAuth (Google, Azure AD) sign-ups in the request organization when the flag is on. Today they are created without an organization, so the `signIn` domain policy refuses them. Add tests
 - [ ] T075 In `getServerSession` / `ensureSession`, check on each request that the database `user.organizationId` matches the request organization. This defends against a session token copied to another domain. Add tests
 - [ ] T076 Owner checklist (`contracts/infra-owner-checklist.md`): set `AUTH_TRUST_HOST` only together with `ORGANIZATIONS_ENABLED`; Caddy must overwrite `X-Forwarded-*` headers; the Node ports must not be reachable from outside
+- [ ] T110 [US3] Run the T045 host-organization check (`assertEventTypeInHostOrganization` in `packages/features/organizations/lib/resolveBookingHostOrganization.ts`) for instant meetings and API v1 bookings (`createBookingForApiV1`), which bypass `RegularBookingService.handler`. Add tests
+- [ ] T111 [US3] In `packages/trpc/server/routers/viewer/slots/getSchedule.handler.ts`, refuse (NOT_FOUND) a direct `eventTypeId` whose owner/team organization differs from the request organization; T046 only scopes slug lookups. Add tests
+- [ ] T112 [P] [US3] Let `apps/api/v2` bookings skip the host-organization check explicitly (instead of relying on its Host not resolving): with a loopback Host the resolver returns the default org and would refuse other organizations' event types. Pass a flag from `packages/platform/libraries` into `RegularBookingService`. Add tests
 - [ ] T120 [P] [US2] Add an instance-admin teams list (none exists today) with the `organization: { id, name }` column and `organizationId` filter required by US2-5 / contracts/trpc-organizations.md, e.g. `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/teams/page.tsx` + an admin `teams.listPaginated` procedure (split out of T032)
 
 ---
