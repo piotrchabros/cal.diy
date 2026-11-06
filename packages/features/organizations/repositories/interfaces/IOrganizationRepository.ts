@@ -16,6 +16,8 @@ export type OrganizationCreateInput = { name: string; slug: string; domain: stri
 
 export type OrganizationUpdateInput = { name?: string; slug?: string; domain?: string };
 
+export type TeamParentRecord = { id: number; parentId: number | null; isOrganization: boolean };
+
 export interface IOrganizationRepository {
   findById(id: number): Promise<OrganizationRecord | null>;
   findBySlug(slug: string): Promise<OrganizationRecord | null>;
@@ -28,4 +30,6 @@ export interface IOrganizationRepository {
   countMembers(organizationId: number): Promise<number>;
   countTeams(organizationId: number): Promise<number>;
   findOwners(organizationId: number): Promise<OrganizationOwnerDto[]>;
+  findDomainById(id: number): Promise<string | null>;
+  findTeamParentById(teamId: number): Promise<TeamParentRecord | null>;
 }
