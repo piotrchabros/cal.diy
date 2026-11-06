@@ -1,7 +1,7 @@
 import process from "node:process";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { getSafeRedirectUrlForOrganizations } from "@calcom/features/organizations/lib/getOrganizationOrigin";
 import { WEBSITE_URL } from "@calcom/lib/constants";
-import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
 import { IS_GOOGLE_LOGIN_ENABLED } from "@server/lib/constants";
 import { jwtVerify } from "jose";
@@ -52,7 +52,7 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
 
     if (callbackUrl) {
       try {
-        const destination = getSafeRedirectUrl(callbackUrl as string);
+        const destination = await getSafeRedirectUrlForOrganizations(callbackUrl as string);
         if (destination) {
           return {
             redirect: {
