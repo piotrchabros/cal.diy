@@ -6,6 +6,10 @@ import { LookupTarget, ProfileRepository } from "./ProfileRepository";
 
 vi.mock("@calcom/lib/logger", () => ({
   default: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
     getSubLogger: () => ({
       debug: vi.fn(),
       warn: vi.fn(),
@@ -469,5 +473,20 @@ describe("ProfileRepository.findByUpIdWithAuth - IDOR Security Fix", () => {
       expect(result).not.toBeNull();
       expect(result?.id).toBe(profile3.id);
     });
+  });
+});
+
+describe("ProfileRepository.findManyByOrgSlugOrRequestedSlug", () => {
+  it("should only query profiles in the organization with the given slug", async () => {
+    const findManySpy = vi.spyOn(prismock.profile, "findMany").mockResolvedValue([]);
+
+    await ProfileRepository.findManyByOrgSlugOrRequestedSlug({ orgSlug: "acme", usernames: ["a"] });
+
+    expect(findManySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { username: { in: ["a"] }, organization: { slug: "acme" } },
+      })
+    );
+    findManySpy.mockRestore();
   });
 });
