@@ -25,10 +25,11 @@ export const teamsRouter = router({
     });
   }),
 
-  isSlugAvailable: authedProcedure.input(ZIsSlugAvailableInputSchema).query(async ({ input }) => {
+  isSlugAvailable: authedProcedure.input(ZIsSlugAvailableInputSchema).query(async ({ ctx, input }) => {
     const { isSlugAvailableHandler } = await import("./isSlugAvailable.handler");
 
     return isSlugAvailableHandler({
+      ctx,
       input,
     });
   }),
