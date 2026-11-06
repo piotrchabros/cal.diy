@@ -1,17 +1,31 @@
 // Import mocked functions
 
+import { createRequire } from "node:module";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { get as edgeConfigGet } from "@vercel/edge-config";
 import { NextRequest, NextResponse } from "next/server";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // We'll test the wrapped proxy as it would be used in production
-import proxy from "./proxy";
-import { config } from "./proxy";
+import proxy, { config } from "./proxy";
+
+// Next's bundled copy ships without type declarations; it is the matcher compiler Next itself uses.
+const { pathToRegexp } = createRequire(import.meta.url)("next/dist/compiled/path-to-regexp") as {
+  pathToRegexp: (source: string) => RegExp;
+};
 
 // Mock dependencies at module level
 vi.mock("@vercel/edge-config", () => ({
   get: vi.fn(),
+}));
+
+const { resolveOrg, getOrganizationDomainResolver } = vi.hoisted(() => {
+  const resolveOrg = vi.fn();
+  return { resolveOrg, getOrganizationDomainResolver: vi.fn(() => ({ resolve: resolveOrg })) };
+});
+
+vi.mock("@calcom/features/organizations/di/OrganizationDomainResolver.container", () => ({
+  getOrganizationDomainResolver,
 }));
 
 // Mock NextResponse.json since it's not available in test environment
@@ -442,37 +456,216 @@ describe("Middleware Integration Tests", () => {
 });
 
 describe("Middleware Matcher Configuration", () => {
-  const matcher: string[] = config.matcher;
+  const matchers = config.matcher.map((source) => pathToRegexp(source));
+  const matches = (path: string) => matchers.some((regexp) => regexp.test(path));
 
-  it("should include all core middleware routes", () => {
-    expect(matcher).toContain("/auth/login");
-    expect(matcher).toContain("/auth/logout");
-    expect(matcher).toContain("/api/auth/signup");
-    expect(matcher).toContain("/apps/installed");
-    expect(matcher).toContain("/availability");
-    expect(matcher).toContain("/login");
-    expect(matcher).toContain("/:path*/embed");
+  it.each([
+    "/",
+    "/team/a",
+    "/api/version",
+    "/api/trpc/x",
+    "/_next/data/b/x.json",
+    "/u/avatar.png",
+    "/x/embed",
+  ])("runs on %s", (path) => {
+    expect(matches(path)).toBe(true);
   });
 
-  it("should have no duplicate entries", () => {
-    const uniqueEntries = new Set(matcher);
-    expect(uniqueEntries.size).toBe(matcher.length);
+  it.each(["/_next/static/c.js", "/_next/image", "/favicon.ico"])("skips %s", (path) => {
+    expect(matches(path)).toBe(false);
+  });
+});
+
+const ORG_HEADERS = ["x-cal-org-id", "x-cal-org-slug", "x-cal-org-domain", "x-cal-org-default"];
+const SPOOFED_ORG_HEADERS = {
+  "x-cal-org-id": "999",
+  "x-cal-org-slug": "evil",
+  "x-cal-org-domain": "evil.example",
+  "x-cal-org-default": "1",
+};
+
+const forwardedHeaders = (spy: ReturnType<typeof vi.spyOn>): Headers => {
+  const initArg = (spy as unknown as Mock).mock.calls.at(-1)?.[0] as { request?: { headers?: Headers } };
+  return initArg?.request?.headers as Headers;
+};
+
+describe("Request organization resolution", () => {
+  let nextSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nextSpy = vi.spyOn(NextResponse, "next");
   });
 
-  it("should not contain any /api/ routes except /api/auth/signup", () => {
-    const apiRoutes = matcher.filter((entry) => entry.startsWith("/api/") && entry !== "/api/auth/signup");
-    expect(apiRoutes).toEqual([]);
+  afterEach(() => {
+    nextSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
-  it("should only contain the expected reduced route set", () => {
-    expect(matcher).toEqual([
-      "/auth/login",
-      "/login",
-      "/apps/installed",
-      "/auth/logout",
-      "/:path*/embed",
-      "/availability",
-      "/api/auth/signup",
-    ]);
+  describe("with organizations disabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    });
+
+    it.each(["/team/x", "/auth/login"])("strips spoofed org headers on %s", async (path) => {
+      const res = await callProxy(
+        createTestRequest({ url: `${WEBAPP_URL}${path}`, headers: SPOOFED_ORG_HEADERS })
+      );
+
+      expectStatus(res, 200);
+      const forwarded = forwardedHeaders(nextSpy);
+      for (const header of ORG_HEADERS) expect(forwarded.get(header)).toBeNull();
+      expect(getOrganizationDomainResolver).not.toHaveBeenCalled();
+      expect(resolveOrg).not.toHaveBeenCalled();
+    });
+
+    it("strips spoofed org headers from the return-to redirect", async () => {
+      const res = await callProxy(
+        createTestRequest({
+          url: `${WEBAPP_URL}/apps/installed`,
+          headers: SPOOFED_ORG_HEADERS,
+          cookies: { "return-to": "/dashboard" },
+        })
+      );
+
+      expectStatus(res, 307);
+      for (const header of ORG_HEADERS) expect(getHeader(res, header)).toBeNull();
+    });
+  });
+
+  describe("with organizations enabled", () => {
+    const org = { id: 7, slug: "acme", domain: "cal.acme.test", isDefault: false };
+
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    });
+
+    it.each(["/team/x", "/auth/login"])("forwards the resolved org headers on %s", async (path) => {
+      resolveOrg.mockResolvedValue(org);
+
+      const res = await callProxy(
+        createTestRequest({
+          url: `https://cal.acme.test${path}`,
+          headers: { host: "cal.acme.test", ...SPOOFED_ORG_HEADERS },
+        })
+      );
+
+      expectStatus(res, 200);
+      expect(resolveOrg).toHaveBeenCalledWith("cal.acme.test");
+      const forwarded = forwardedHeaders(nextSpy);
+      expect(forwarded.get("x-cal-org-id")).toBe("7");
+      expect(forwarded.get("x-cal-org-slug")).toBe("acme");
+      expect(forwarded.get("x-cal-org-domain")).toBe("cal.acme.test");
+      expect(forwarded.get("x-cal-org-default")).toBe("0");
+    });
+
+    it("returns a plain 404 for an unknown host", async () => {
+      resolveOrg.mockResolvedValue(null);
+
+      const res = await callProxy(
+        createTestRequest({ url: "https://unknown.test/team/x", headers: { host: "unknown.test" } })
+      );
+
+      expectStatus(res, 404);
+      expect(getHeader(res, "content-type")).toBe("text/plain");
+      expect(getHeader(res, "location")).toBeNull();
+      expect(await res.text()).toBe("Not Found");
+      expect(nextSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["loopback", "localhost:3000"],
+      ["WEBAPP_URL", new URL(WEBAPP_URL).host],
+    ])("passes the %s host through without org headers when nothing matches", async (_label, host) => {
+      resolveOrg.mockResolvedValue(null);
+
+      const res = await callProxy(
+        createTestRequest({ url: `http://${host}/team/x`, headers: { host, ...SPOOFED_ORG_HEADERS } })
+      );
+
+      expectStatus(res, 200);
+      const forwarded = forwardedHeaders(nextSpy);
+      for (const header of ORG_HEADERS) expect(forwarded.get(header)).toBeNull();
+    });
+
+    it("returns a plain 503 when the lookup fails for an unknown host", async () => {
+      resolveOrg.mockRejectedValue(new Error("db down"));
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const res = await callProxy(
+        createTestRequest({ url: "https://unknown.test/team/x", headers: { host: "unknown.test" } })
+      );
+
+      expectStatus(res, 503);
+      expect(getHeader(res, "content-type")).toBe("text/plain");
+      expect(await res.text()).toBe("Service Unavailable");
+      consoleSpy.mockRestore();
+    });
+
+    it("passes a loopback host through when the lookup fails", async () => {
+      resolveOrg.mockRejectedValue(new Error("db down"));
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const res = await callProxy(
+        createTestRequest({ url: "http://localhost:3000/team/x", headers: { host: "localhost:3000" } })
+      );
+
+      expectStatus(res, 200);
+      const forwarded = forwardedHeaders(nextSpy);
+      for (const header of ORG_HEADERS) expect(forwarded.get(header)).toBeNull();
+      consoleSpy.mockRestore();
+    });
+  });
+});
+
+describe("Legacy route gating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("CSP_POLICY", "strict");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(["/team/x", "/api/trpc/x"])("skips CSP handling on %s", async (path) => {
+    const nextSpy = vi.spyOn(NextResponse, "next");
+    const res = await callProxy(createTestRequest({ url: `${WEBAPP_URL}${path}` }));
+
+    expect(forwardedHeaders(nextSpy).get("x-csp-nonce")).toBeNull();
+    nextSpy.mockRestore();
+    expect(getHeader(res, "x-csp-nonce")).toBeNull();
+    expect(getHeader(res, "x-csp-status")).toBeNull();
+    expect(getHeader(res, "content-security-policy")).toBeNull();
+  });
+
+  it("keeps CSP handling on /auth/login", async () => {
+    const nextSpy = vi.spyOn(NextResponse, "next");
+    const res = await callProxy(createTestRequest({ url: `${WEBAPP_URL}/auth/login` }));
+
+    expect(forwardedHeaders(nextSpy).get("x-csp-nonce")).toBeTruthy();
+    nextSpy.mockRestore();
+    expect(getHeader(res, "content-security-policy")).toBeTruthy();
+  });
+
+  it("does not fire the return-to redirect below /apps/installed", async () => {
+    const res = await callProxy(
+      createTestRequest({
+        url: `${WEBAPP_URL}/apps/installed/calendar`,
+        cookies: { "return-to": "/dashboard" },
+      })
+    );
+
+    expectStatus(res, 200);
+    expect(getHeader(res, "location")).toBeNull();
+  });
+
+  it("fires the return-to redirect on /apps/installed/", async () => {
+    const res = await callProxy(
+      createTestRequest({ url: `${WEBAPP_URL}/apps/installed/`, cookies: { "return-to": "/dashboard" } })
+    );
+
+    expectStatus(res, 307);
+    expect(getHeader(res, "location")).toContain("/dashboard");
   });
 });
