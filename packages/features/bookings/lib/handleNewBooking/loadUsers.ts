@@ -1,3 +1,4 @@
+import { resolveBookingHostOrganization } from "@calcom/features/organizations/lib/resolveBookingHostOrganization";
 import {
   findMatchingHostsWithEventSegment,
   getNormalizedHosts,
@@ -11,8 +12,6 @@ import prisma, { userSelect } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import type { NewBookingEventType } from "./getEventTypesFromDB";
-
-const getOrgDomainConfig = (..._args: unknown[]) => ({ currentOrgDomain: null as string | null, isValidOrgDomain: false });
 
 const log = logger.getSubLogger({ prefix: ["[loadUsers]:handleNewBooking "] });
 
@@ -46,15 +45,12 @@ export const loadUsers = async ({
   isPlatform: boolean;
 }) => {
   try {
-    const { currentOrgDomain } = getOrgDomainConfig({
-      hostname,
-      forcedSlug,
-      isPlatform,
-    });
-
     const users = eventType.id
       ? await loadUsersByEventType(eventType)
-      : await loadDynamicUsers(dynamicUserList, currentOrgDomain);
+      : await loadDynamicUsers(
+          dynamicUserList,
+          (await resolveBookingHostOrganization({ hostname, forcedSlug, isPlatform })).orgSlug
+        );
 
     const routedUsers = getRoutedUsersWithContactOwnerAndFixedUsers({
       users,
@@ -94,14 +90,14 @@ const loadUsersByEventType = async (eventType: EventType): Promise<NewBookingEve
   }));
 };
 
-const loadDynamicUsers = async (dynamicUserList: string[], currentOrgDomain: string | null) => {
+const loadDynamicUsers = async (dynamicUserList: string[], orgSlug: string | null) => {
   if (!Array.isArray(dynamicUserList) || dynamicUserList.length === 0) {
     throw new Error("dynamicUserList is not properly defined or empty.");
   }
 
   const users = await findUsersByUsername({
     usernameList: dynamicUserList,
-    orgSlug: currentOrgDomain ? currentOrgDomain : null,
+    orgSlug,
   });
 
   // For dynamic group bookings: reorder users to match dynamicUserList order

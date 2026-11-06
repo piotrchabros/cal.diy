@@ -43,6 +43,7 @@ const getEventTypesFromDBSelect = {
       id: true,
       name: true,
       parentId: true,
+      isOrganization: true,
       bookingLimits: true,
       includeManagedEventsInLimits: true,
       rrResetInterval: true,
@@ -117,6 +118,7 @@ const getEventTypesFromDBSelect = {
     select: {
       id: true,
       hideBranding: true,
+      organizationId: true,
       profiles: {
         select: {
           organizationId: true,

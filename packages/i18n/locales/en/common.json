@@ -2042,6 +2042,7 @@
   "event_duration_info": "The event duration",
   "event_time_info": "The event start time",
   "event_type_not_found": "Event type not found",
+  "event_not_found": "We could not find the event you are trying to book.",
   "number_to_call_variable": "Number to call",
   "number_to_call_info": "The phone number of the user you are calling",
   "location_variable": "Location",

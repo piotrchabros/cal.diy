@@ -45,6 +45,11 @@ import {
   type MemberSharingTeamInput,
   resolveMemberSharingTeamIds,
 } from "@calcom/features/notetaker/lib/webhookSharingTeam";
+import {
+  assertEventTypeInHostOrganization,
+  getEventTypeOrganizationId,
+  resolveBookingHostOrganization,
+} from "@calcom/features/organizations/lib/resolveBookingHostOrganization";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { handleAnalyticsEvents } from "@calcom/features/tasker/tasks/analytics/handleAnalyticsEvents";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
@@ -572,6 +577,17 @@ async function handler(
   const eventType = await getEventType({
     eventTypeId: rawBookingData.eventTypeId,
     eventTypeSlug: rawBookingData.eventTypeSlug,
+  });
+
+  const { hostOrganization } = await resolveBookingHostOrganization({
+    hostname,
+    forcedSlug,
+    isPlatform: isPlatformBooking,
+  });
+  assertEventTypeInHostOrganization({
+    hostOrganization,
+    eventTypeOrganizationId: getEventTypeOrganizationId(eventType),
+    eventTypeId: eventType.id,
   });
 
   // Early validation: Check reschedule restrictions if rescheduling

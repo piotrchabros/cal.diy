@@ -54,6 +54,7 @@ async function handler(req: NextApiRequest & RequestMeta) {
       platformRescheduleUrl: req.platformRescheduleUrl,
       platformBookingLocation: req.platformBookingLocation,
       noEmail: req.noEmail,
+      hostname: req.headers.host || "",
     },
     creationSource: "WEBAPP",
   });
