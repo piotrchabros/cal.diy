@@ -36,8 +36,8 @@ description: "Task list for Organizations (spec 005)"
 
 **Schema (PR 1)**
 
-- [ ] T004 Add `customDomain String? @unique` to `model OrganizationSettings` in `packages/prisma/schema.prisma`, with the doc comment `/// Lowercase host name without scheme or port, e.g. "cal.bespokesoft.pl"` (data-model.md Change 1)
-- [ ] T005 Create the migration `packages/prisma/migrations/20261107000000_add_organization_custom_domain/migration.sql`: `ALTER TABLE "OrganizationSettings" ADD COLUMN "customDomain" TEXT;` plus `CREATE UNIQUE INDEX "OrganizationSettings_customDomain_key" ON "OrganizationSettings"("customDomain");`. Run `yarn prisma generate`. Do NOT apply it to the `.env` database; the owner runs `db-deploy`
+- [X] T004 Add `customDomain String? @unique` to `model OrganizationSettings` in `packages/prisma/schema.prisma`, with the doc comment `/// Lowercase host name without scheme or port, e.g. "cal.bespokesoft.pl"` (data-model.md Change 1)
+- [X] T005 Create the migration `packages/prisma/migrations/20261107000000_add_organization_custom_domain/migration.sql`: `ALTER TABLE "OrganizationSettings" ADD COLUMN "customDomain" TEXT;` plus `CREATE UNIQUE INDEX "OrganizationSettings_customDomain_key" ON "OrganizationSettings"("customDomain");`. Run `yarn prisma generate`. Do NOT apply it to the `.env` database; the owner runs `db-deploy`
 
 **Repository and DTOs (PR 2)**
 
