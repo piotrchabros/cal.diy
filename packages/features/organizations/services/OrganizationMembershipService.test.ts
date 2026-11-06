@@ -215,4 +215,26 @@ describe("OrganizationMembershipService", () => {
       expect(await service.getRole(2, ORG_ID)).toBeNull();
     });
   });
+
+  describe("findMembershipCandidate", () => {
+    it("returns the seeded user", async () => {
+      membershipRepository.seedUser({
+        id: 1,
+        username: "alice",
+        email: "alice@acme.com",
+        organizationId: ORG_ID,
+      });
+
+      expect(await service.findMembershipCandidate(1)).toEqual({
+        id: 1,
+        username: "alice",
+        email: "alice@acme.com",
+        organizationId: ORG_ID,
+      });
+    });
+
+    it("returns null for an unknown user", async () => {
+      expect(await service.findMembershipCandidate(999)).toBeNull();
+    });
+  });
 });

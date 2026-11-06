@@ -1,6 +1,9 @@
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import type { IOrganizationMembershipRepository } from "../repositories/interfaces/IOrganizationMembershipRepository";
+import type {
+  IOrganizationMembershipRepository,
+  MembershipUserRecord,
+} from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
 
 export interface IOrganizationMembershipServiceDeps {
@@ -75,6 +78,10 @@ export class OrganizationMembershipService {
 
   async getRole(userId: number, organizationId: number): Promise<OrganizationRoleDto | null> {
     return this.deps.organizationMembershipRepository.findRole({ organizationId, userId });
+  }
+
+  async findMembershipCandidate(userId: number): Promise<MembershipUserRecord | null> {
+    return this.deps.organizationMembershipRepository.findUserById(userId);
   }
 
   // newRole is null when the member is being removed rather than demoted

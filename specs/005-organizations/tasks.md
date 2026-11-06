@@ -131,15 +131,15 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 4: router**
 
-- [ ] T023 [US1] Create the `viewer.admin.organizations` router in `packages/trpc/server/routers/viewer/admin/organizations/_router.ts` with `list`, `get`, `create`, `update` and `delete` on `authedAdminProcedure`. Use the Zod inputs from contracts/trpc-organizations.md, including `owner: { userId } | { email }` and `confirmMoveOwner`. Each handler is a thin call to `getOrganizationService()`. Register it in `packages/trpc/server/routers/viewer/admin/_router.ts`
-- [ ] T024 [US1] Implement owner assignment in `OrganizationService.create`:
+- [X] T023 [US1] Create the `viewer.admin.organizations` router in `packages/trpc/server/routers/viewer/admin/organizations/_router.ts` with `list`, `get`, `create`, `update` and `delete` on `authedAdminProcedure`. Use the Zod inputs from contracts/trpc-organizations.md, including `owner: { userId } | { email }` and `confirmMoveOwner`. Each handler is a thin call to `getOrganizationService()`. Register it in `packages/trpc/server/routers/viewer/admin/_router.ts`
+- [ ] T024 [US1] (userId owners, rollback and audit log done in PR 4; the email-owner invitation and `update.ownerUserId` follow in PR 4b) Implement owner assignment in `OrganizationService.create`:
   - An existing user is added through `OrganizationMembershipService.addMember(role OWNER)`.
   - If the user is in another org and `confirmMoveOwner` is not set, return `PreconditionFailed`. With confirmation, use the move from T067, or until T067 lands refuse with a clear error.
   - An unknown email creates a `VerificationToken` for the org team and sends `TeamInviteEmail` with the link on the org's base URL.
   - Log `action: "organization.create"` with ids only (FR-023).
 
   Update `OrganizationService.test.ts`
-- [ ] T025 [P] [US1] Add router tests in `packages/trpc/server/routers/viewer/admin/organizations/_router.test.ts`: a non-admin is refused, inputs are validated, and errors are mapped
+- [X] T025 [P] [US1] Add router tests in `packages/trpc/server/routers/viewer/admin/organizations/_router.test.ts`: a non-admin is refused, inputs are validated, and errors are mapped
 
 **PR 5: UI**
 

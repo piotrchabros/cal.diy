@@ -6,6 +6,7 @@ import { ZCreateSelfHostedLicenseSchema } from "./createSelfHostedLicenseKey.sch
 import { ZAdminGetTeamsForFeatureSchema } from "./getTeamsForFeature.schema";
 import { ZListMembersSchema } from "./listPaginated.schema";
 import { ZAdminLockUserAccountSchema } from "./lockUserAccount.schema";
+import { organizationsRouter } from "./organizations/_router";
 import { ZAdminRemoveTwoFactor } from "./removeTwoFactor.schema";
 import { ZAdminPasswordResetSchema } from "./sendPasswordReset.schema";
 import { ZSetSMSLockState } from "./setSMSLockState.schema";
@@ -68,4 +69,5 @@ export const adminRouter = router({
       return handler(opts);
     }),
   watchlist: watchlistRouter,
+  organizations: organizationsRouter,
 });

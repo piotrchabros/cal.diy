@@ -1,5 +1,6 @@
 import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
 import { OrganizationService } from "@calcom/features/organizations/services/OrganizationService";
+import { moduleLoader as organizationMembershipServiceModuleLoader } from "./OrganizationMembershipService.module";
 import { moduleLoader as organizationsConfigModuleLoader } from "./OrganizationsConfig.module";
 import { moduleLoader as organizationRepositoryModuleLoader } from "./PrismaOrganizationRepository.module";
 import { ORGANIZATIONS_DI_TOKENS } from "./tokens";
@@ -16,6 +17,7 @@ const loadModule = bindModuleToClassOnToken({
   depsMap: {
     organizationRepository: organizationRepositoryModuleLoader,
     organizationsConfig: organizationsConfigModuleLoader,
+    organizationMembershipService: organizationMembershipServiceModuleLoader,
   },
 });
 
