@@ -1,9 +1,7 @@
-import { expect } from "@playwright/test";
 import path from "node:path";
-
 import { CAL_URL } from "@calcom/lib/constants";
 import { prisma } from "@calcom/prisma";
-
+import { expect } from "@playwright/test";
 import { test } from "../lib/fixtures";
 
 test.describe("User Avatar", async () => {
@@ -48,7 +46,10 @@ test.describe("User Avatar", async () => {
 
       const avatarImage = page.getByTestId("profile-upload-avatar").locator("img");
 
-      await expect(avatarImage).toHaveAttribute("src", new RegExp(`^\/api\/avatar\/${objectKey}\.png$`));
+      await expect(avatarImage).toHaveAttribute(
+        "src",
+        new RegExp(`^/api/avatar/${objectKey}\\.png(\\?v=\\d+)?$`)
+      );
 
       const urlResponse = await page.request.get((await avatarImage.getAttribute("src")) || "", {
         maxRedirects: 0,
@@ -62,7 +63,7 @@ test.describe("User Avatar", async () => {
 
       await expect(page.locator(`img`)).toHaveAttribute(
         "src",
-        new RegExp(`\/api\/avatar\/${objectKey}\.png$`)
+        new RegExp(`/api/avatar/${objectKey}\\.png(\\?v=\\d+)?$`)
       );
       // verify objectKey is passed to the OG image
       // yes, OG image URI encodes at multiple places.. don't want to mess with that.
