@@ -1,36 +1,17 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
-import { CreationSource, RedirectType } from "@calcom/prisma/enums";
-import { UserSchema } from "@calcom/prisma/zod/modelSchema/UserSchema";
+import { RedirectType } from "@calcom/prisma/enums";
 import { authedAdminProcedure } from "@calcom/trpc/server/procedures/authedProcedure";
 import { router } from "@calcom/trpc/server/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { addUserHandler, addUserInputSchema, userBodySchema } from "./add.handler";
 import { isImageDataUrl, storeAdminUserAvatar } from "./adminUserAvatar";
 
 export type UserAdminRouter = typeof userAdminRouter;
 export type UserAdminRouterOutputs = inferRouterOutputs<UserAdminRouter>;
 
 const userIdSchema = z.object({ userId: z.coerce.number() });
-
-const userBodySchema = UserSchema.pick({
-  name: true,
-  email: true,
-  username: true,
-  bio: true,
-  timeZone: true,
-  weekStart: true,
-  theme: true,
-  defaultScheduleId: true,
-  locale: true,
-  timeFormat: true,
-  // brandColor: true,
-  // darkBrandColor: true,
-  allowDynamicBooking: true,
-  identityProvider: true,
-  role: true,
-  avatarUrl: true,
-});
 
 /** Reusable logic that checks for admin permissions and if the requested user exists */
 //const authedAdminWithUserMiddleware = middleware();
@@ -61,25 +42,7 @@ export const userAdminRouter = router({
     const users = await prisma.user.findMany();
     return users;
   }),
-  add: authedAdminProcedure.input(userBodySchema).mutation(async ({ ctx, input }) => {
-    const { prisma } = ctx;
-    const { avatarUrl, ...rest } = input;
-    const hasUploadedAvatar = isImageDataUrl(avatarUrl);
-    const created = await prisma.user.create({
-      data: {
-        ...rest,
-        avatarUrl: hasUploadedAvatar ? null : avatarUrl,
-        creationSource: CreationSource.WEBAPP,
-      },
-    });
-    const user = hasUploadedAvatar
-      ? await prisma.user.update({
-          where: { id: created.id },
-          data: { avatarUrl: await storeAdminUserAvatar(created.id, avatarUrl) },
-        })
-      : created;
-    return { user, message: `User with id: ${user.id} added successfully` };
-  }),
+  add: authedAdminProcedure.input(addUserInputSchema).mutation(addUserHandler),
   update: authedAdminProcedureWithRequestedUser
     .input(userBodySchema.partial())
     .mutation(async ({ ctx, input }) => {

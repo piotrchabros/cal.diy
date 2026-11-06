@@ -71,6 +71,14 @@ export class OrganizationService {
     return this.toDto(record);
   }
 
+  async getDefault(): Promise<OrganizationDto> {
+    const { defaultDomain } = this.deps.organizationsConfig;
+    if (!defaultDomain) throw ErrorWithCode.Factory.NotFound("Default organization not found");
+    const record = await this.deps.organizationRepository.findDefault(defaultDomain);
+    if (!record) throw ErrorWithCode.Factory.NotFound("Default organization not found");
+    return this.toDto(record);
+  }
+
   async create(input: CreateOrganizationInput, actorUserId: number): Promise<OrganizationDto> {
     const name = this.parseName(input.name);
     const slug = this.parseSlug(input.slug);
