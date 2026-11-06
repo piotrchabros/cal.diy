@@ -106,8 +106,8 @@ description: "Task list for Organizations (spec 005)"
 
 **Client base URL (PR 8)**
 
-- [ ] T018 Create `OrgBaseUrlProvider` and `useOrgBaseUrl()` in `apps/web/modules/organizations/components/OrgBaseUrlProvider.tsx`. Mount it in the root layout `apps/web/app/layout.tsx` with `baseUrl` computed server-side from `getOrgFromRequest(headers())` + `OrganizationUrlService`. Add a test
-- [ ] T019 Make `useBookerUrl` and `useEmbedBookerUrl` in `packages/features/bookings/hooks/useBookerUrl.ts` return the context value. The hook must not import from `apps/web`: pass the value through a context defined in `packages/features/organizations/lib/OrgBaseUrlContext.ts` that the web provider fills. Make `packages/features/embed/lib/EmbedCodes.tsx` always emit `calOrigin` as the booker URL. Add tests
+- [X] T018 Create `OrgBaseUrlProvider` and `useOrgBaseUrl()` in `apps/web/modules/organizations/components/OrgBaseUrlProvider.tsx`. Mount it in the root layout `apps/web/app/layout.tsx` with `baseUrl` computed server-side from `getOrgFromRequest(headers())` + `OrganizationUrlService`. Add a test
+- [X] T019 Make `useBookerUrl` and `useEmbedBookerUrl` in `packages/features/bookings/hooks/useBookerUrl.ts` return the context value. The hook must not import from `apps/web`: pass the value through a context defined in `packages/features/organizations/lib/OrgBaseUrlContext.ts` that the web provider fills. Make `packages/features/embed/lib/EmbedCodes.tsx` always emit `calOrigin` as the booker URL. Add tests
 
 **Auth (PR 9)**
 

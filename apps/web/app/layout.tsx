@@ -1,6 +1,8 @@
 import { getLocale } from "@calcom/features/auth/lib/getLocale";
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { loadTranslations } from "@calcom/i18n/server";
 import { IconSprites } from "@calcom/ui/components/icon";
+import { OrgBaseUrlProvider } from "@calcom/web/modules/organizations/components/OrgBaseUrlProvider";
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import { dir } from "i18next";
 import { Inter } from "next/font/google";
@@ -100,6 +102,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const country = h.get("cf-ipcountry") || h.get("x-vercel-ip-country") || "Unknown";
 
   const { locale, direction, isEmbed, embedColorScheme } = await getInitialProps();
+  const orgBaseUrl = await getRequestOrgBaseUrl(h);
 
   const ns = "common";
   const translations = await loadTranslations(locale, ns);
@@ -116,8 +119,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <head nonce={nonce}>
         <style>{`
           :root {
-            --font-sans: ${interFont.style.fontFamily.replace(/\'/g, "")}, system-ui;
-            --font-cal: ${calFont.style.fontFamily.replace(/\'/g, "")};
+            --font-sans: ${interFont.style.fontFamily.replace(/'/g, "")}, system-ui;
+            --font-cal: ${calFont.style.fontFamily.replace(/'/g, "")};
           }
         `}</style>
         {process.env.NODE_ENV === "development" && (
@@ -151,20 +154,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <IconSprites />
         <SpeculationRules
           // URLs In Navigation
-          prerenderPathsOnHover={[
-            "/event-types",
-            "/availability",
-            "/bookings/upcoming",
-            "/teams",
-            "/apps",
-          ]}
+          prerenderPathsOnHover={["/event-types", "/availability", "/bookings/upcoming", "/teams", "/apps"]}
         />
 
-        <Providers isEmbed={isEmbed} nonce={nonce} country={country}>
-          <AppRouterI18nProvider translations={translations} locale={locale} ns={ns}>
-            {children}
-          </AppRouterI18nProvider>
-        </Providers>
+        <OrgBaseUrlProvider value={orgBaseUrl}>
+          <Providers isEmbed={isEmbed} nonce={nonce} country={country}>
+            <AppRouterI18nProvider translations={translations} locale={locale} ns={ns}>
+              {children}
+            </AppRouterI18nProvider>
+          </Providers>
+        </OrgBaseUrlProvider>
       </body>
     </html>
   );
