@@ -730,6 +730,8 @@ model OrganizationSettings {
   disablePhoneOnlySMSNotifications    Boolean    @default(false)
   disableAutofillOnBookingPage        Boolean    @default(false)
   orgAutoJoinOnSignup                 Boolean    @default(true)
+  /// Lowercase host name without scheme or port, e.g. "cal.bespokesoft.pl"
+  customDomain                        String?    @unique
 
   disableAttendeeConfirmationEmail      Boolean @default(false)
   disableAttendeeCancellationEmail      Boolean @default(false)
