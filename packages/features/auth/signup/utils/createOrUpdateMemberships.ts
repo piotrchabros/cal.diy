@@ -1,4 +1,7 @@
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import type { OrganizationSettings, Team, User } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -9,16 +12,15 @@ type ParentTeamData = {
   organizationSettings?: Pick<OrganizationSettings, "orgAutoAcceptEmail"> | null;
 };
 
-export const createOrUpdateMemberships = async ({
-  user,
-  team,
-}: {
+type CreateOrUpdateMembershipsInput = {
   user: Pick<User, "id">;
   team: Pick<Team, "id" | "parentId" | "isOrganization"> & {
     organizationSettings?: Pick<OrganizationSettings, "orgAutoAcceptEmail"> | null;
     parent?: ParentTeamData | null;
   };
-}) => {
+};
+
+const createOrUpdateMembershipsLegacy = async ({ user, team }: CreateOrUpdateMembershipsInput) => {
   return await prisma.$transaction(async (tx) => {
     // Determine the organization context - either the team itself (if it's an org) or its parent
     const organizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
@@ -92,4 +94,23 @@ export const createOrUpdateMemberships = async ({
     }
     return { membership, orgMembership };
   });
+};
+
+export const createOrUpdateMemberships = async ({
+  user,
+  team,
+}: CreateOrUpdateMembershipsInput): Promise<void> => {
+  const organizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
+  if (isOrganizationsEnabled() && organizationId !== null) {
+    await getOrganizationMembershipService().addMember({ organizationId, userId: user.id, role: "MEMBER" });
+    if (!team.isOrganization) {
+      await new MembershipRepository(prisma).upsertAcceptedTeamMembership({
+        teamId: team.id,
+        userId: user.id,
+      });
+    }
+    return;
+  }
+
+  await createOrUpdateMembershipsLegacy({ user, team });
 };

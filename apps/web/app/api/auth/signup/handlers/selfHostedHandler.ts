@@ -10,24 +10,40 @@ import {
   validateAndGetCorrectedUsernameForTeam,
 } from "@calcom/features/auth/signup/utils/token";
 import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
+import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
+import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
-
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { isPrismaError } from "@calcom/lib/server/getServerErrorFromUnknown";
 import { isUsernameReservedDueToMigration } from "@calcom/lib/server/username";
 import slugify from "@calcom/lib/slugify";
 import { prisma } from "@calcom/prisma";
-import { IdentityProvider } from "@calcom/prisma/enums";
+import { CreationSource, IdentityProvider } from "@calcom/prisma/enums";
 import { signupSchema } from "@calcom/prisma/zod-utils";
 import { NextResponse } from "next/server";
-import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
-import { CreationSource } from "@calcom/prisma/enums";
 
-export default async function handler(body: Record<string, string>) {
+async function respondConflictAs409(writeMembership: () => Promise<void>): Promise<NextResponse | null> {
+  try {
+    await writeMembership();
+    return null;
+  } catch (error) {
+    if (error instanceof ErrorWithCode && error.code === ErrorCode.Conflict) {
+      return NextResponse.json({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS }, { status: 409 });
+    }
+    throw error;
+  }
+}
+
+export default async function handler(body: Record<string, string>, requestHeaders: Pick<Headers, "get">) {
   const { email, password, language, token } = signupSchema.parse(body);
+  const orgsEnabled = isOrganizationsEnabled();
 
-  const userRepository = getUserRepository()
+  const userRepository = getUserRepository();
 
   const username = slugify(body.username);
   const userEmail = email.toLowerCase();
@@ -38,6 +54,7 @@ export default async function handler(body: Record<string, string>) {
 
   let foundToken: { id: number; teamId: number | null; expires: Date } | null = null;
   let correctedUsername = username;
+  let hostOrgId: number | null = null;
   if (token) {
     foundToken = await findTokenByToken({ token });
     throwIfTokenExpired(foundToken?.expires);
@@ -50,18 +67,27 @@ export default async function handler(body: Record<string, string>) {
 
     if (foundToken?.teamId) {
       const existingUser = await userRepository.findByEmailWithInvitedTo({
-        email: userEmail
-      })
+        email: userEmail,
+      });
 
       if (existingUser && existingUser.invitedTo !== foundToken.teamId) {
         return NextResponse.json({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS }, { status: 409 });
       }
     }
   } else {
+    // Without an invite the user joins the org of the domain they signed up on (the default org on the default domain)
+    if (orgsEnabled) {
+      const hostOrg = await getOrgFromRequest(requestHeaders);
+      if (!hostOrg) {
+        return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+      }
+      hostOrgId = hostOrg.id;
+    }
     const userValidation = await validateAndGetCorrectedUsernameAndEmail({
       username,
       email: userEmail,
       isSignup: true,
+      ...(hostOrgId !== null && { usernameOrganizationId: hostOrgId }),
     });
     if (!userValidation.isValid) {
       logger.error("User validation failed", { userValidation });
@@ -96,20 +122,27 @@ export default async function handler(body: Record<string, string>) {
       const isInviteForATeamInOrganization = !!team.parent;
       const isCheckingUsernameInGlobalNamespace = !team.isOrganization && !isInviteForATeamInOrganization;
 
-      if (isCheckingUsernameInGlobalNamespace) {
+      // The migration reservation guards the old global namespace, which org-scoped usernames no longer share
+      if (isCheckingUsernameInGlobalNamespace && !orgsEnabled) {
         const isUsernameAvailable = !(await isUsernameReservedDueToMigration(correctedUsername));
         if (!isUsernameAvailable) {
           return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
         }
       }
 
-      const organizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
+      const teamOrganizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
+      // A team outside any org has no org namespace of its own, so its invitees join the host org
+      const fallbackHostOrgId =
+        orgsEnabled && teamOrganizationId === null
+          ? ((await getOrgFromRequest(requestHeaders))?.id ?? null)
+          : null;
+      const organizationId = teamOrganizationId ?? fallbackHostOrgId;
 
       const existingUserByUsername = await userRepository.findByUsernameAndOrganizationId({
         username: correctedUsername,
         organizationId,
-        excludeEmail: userEmail
-      })
+        excludeEmail: userEmail,
+      });
 
       if (existingUserByUsername) {
         return NextResponse.json({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS }, { status: 409 });
@@ -123,8 +156,8 @@ export default async function handler(body: Record<string, string>) {
           hashedPassword,
           organizationId,
           emailVerified: new Date(Date.now()),
-          identityProvider: IdentityProvider.CAL
-        })
+          identityProvider: IdentityProvider.CAL,
+        });
       } catch (error) {
         if (isPrismaError(error) && error.code === "P2002") {
           const target = String(error.meta?.target ?? "");
@@ -135,10 +168,24 @@ export default async function handler(body: Record<string, string>) {
         throw error;
       }
 
-      await createOrUpdateMemberships({
-        user,
-        team,
-      });
+      if (orgsEnabled) {
+        const conflictResponse = await respondConflictAs409(async () => {
+          await createOrUpdateMemberships({ user, team });
+          if (fallbackHostOrgId !== null) {
+            await getOrganizationMembershipService().addMember({
+              organizationId: fallbackHostOrgId,
+              userId: user.id,
+              role: "MEMBER",
+            });
+          }
+        });
+        if (conflictResponse) return conflictResponse;
+      } else {
+        await createOrUpdateMemberships({
+          user,
+          team,
+        });
+      }
 
       // Accept any child team invites for orgs.
       if (team.parent) {
@@ -156,9 +203,11 @@ export default async function handler(body: Record<string, string>) {
       },
     });
   } else {
-    const isUsernameAvailable = !(await isUsernameReservedDueToMigration(correctedUsername));
-    if (!isUsernameAvailable) {
-      return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
+    if (hostOrgId === null) {
+      const isUsernameAvailable = !(await isUsernameReservedDueToMigration(correctedUsername));
+      if (!isUsernameAvailable) {
+        return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
+      }
     }
     let createdUser: { id: number };
     try {
@@ -166,11 +215,11 @@ export default async function handler(body: Record<string, string>) {
         username: correctedUsername,
         email: userEmail,
         hashedPassword,
-        organizationId: null,
+        organizationId: hostOrgId,
         creationSource: CreationSource.WEBAPP,
         identityProvider: IdentityProvider.CAL,
-        locked: false
-      })
+        locked: false,
+      });
     } catch (error) {
       // Fallback for race conditions where user was created between our check and create
       if (isPrismaError(error) && error.code === "P2002") {
@@ -180,6 +229,17 @@ export default async function handler(body: Record<string, string>) {
         }
       }
       throw error;
+    }
+    if (hostOrgId !== null) {
+      const organizationId = hostOrgId;
+      const conflictResponse = await respondConflictAs409(async () => {
+        await getOrganizationMembershipService().addMember({
+          organizationId,
+          userId: createdUser.id,
+          role: "MEMBER",
+        });
+      });
+      if (conflictResponse) return conflictResponse;
     }
     try {
       await new TeamMembersService().acceptPendingInvitesOnSignup({
