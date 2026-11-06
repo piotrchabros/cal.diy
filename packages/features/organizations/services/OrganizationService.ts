@@ -4,12 +4,16 @@ import type {
   OrganizationListResultDto,
 } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import logger from "@calcom/lib/logger";
 import { normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 import type {
   IOrganizationRepository,
   OrganizationListItemRecord,
   OrganizationRecord,
 } from "../repositories/interfaces/IOrganizationRepository";
+import type { OrganizationMembershipService } from "./OrganizationMembershipService";
+
+const log = logger.getSubLogger({ prefix: ["[OrganizationService]"] });
 
 // Requires a dotted hostname ending in a letter-led TLD, which rules out IPs, localhost and URLs
 const ORGANIZATION_DOMAIN_REGEX =
@@ -25,9 +29,18 @@ export type OrganizationsConfig = { defaultDomain: string | null };
 export interface IOrganizationServiceDeps {
   organizationRepository: IOrganizationRepository;
   organizationsConfig: OrganizationsConfig;
+  organizationMembershipService: OrganizationMembershipService;
 }
 
-export type CreateOrganizationInput = { name: string; slug: string; domain: string };
+export type OrganizationOwnerInput = { userId: number };
+
+export type CreateOrganizationInput = {
+  name: string;
+  slug: string;
+  domain: string;
+  owner: OrganizationOwnerInput;
+  confirmMoveOwner?: boolean;
+};
 
 export type UpdateOrganizationInput = { name?: string; slug?: string; domain?: string };
 
@@ -58,19 +71,49 @@ export class OrganizationService {
     return this.toDto(record);
   }
 
-  async create(input: CreateOrganizationInput): Promise<OrganizationDto> {
+  async create(input: CreateOrganizationInput, actorUserId: number): Promise<OrganizationDto> {
     const name = this.parseName(input.name);
     const slug = this.parseSlug(input.slug);
     const domain = this.parseDomain(input.domain);
+    const ownerUserId = input.owner.userId;
 
     await this.assertSlugAvailable(slug, null);
     await this.assertDomainAvailable(domain, null);
+    await this.assertOwnerEligible(ownerUserId, input.confirmMoveOwner ?? false);
 
     const record = await this.deps.organizationRepository.create({ name, slug, domain });
-    return this.toDto(record);
+
+    try {
+      await this.deps.organizationMembershipService.addMember({
+        organizationId: record.id,
+        userId: ownerUserId,
+        role: "OWNER",
+      });
+    } catch (error) {
+      // Keep an organization from existing without an owner when a race slips past the pre-check
+      try {
+        await this.deps.organizationRepository.delete(record.id);
+      } catch (cleanupError) {
+        log.error("Failed to remove an organization whose owner could not be added", {
+          organizationId: record.id,
+          ownerUserId,
+          cleanupError,
+        });
+      }
+      throw error;
+    }
+
+    log.info("organization.create", {
+      action: "organization.create",
+      actorUserId,
+      organizationId: record.id,
+      ownerUserId,
+    });
+
+    return this.get(record.id);
   }
 
-  async update(id: number, input: UpdateOrganizationInput): Promise<OrganizationDto> {
+  async update(id: number, input: UpdateOrganizationInput, actorUserId: number): Promise<OrganizationDto> {
     const existing = await this.findByIdOrThrow(id);
 
     const name = input.name === undefined ? undefined : this.parseName(input.name);
@@ -88,10 +131,21 @@ export class OrganizationService {
 
     const updated = await this.deps.organizationRepository.update(id, { name, slug, domain });
     if (!updated) throw ErrorWithCode.Factory.NotFound("Organization not found");
+
+    const changed = Object.entries({ name, slug, domain })
+      .filter(([, value]) => value !== undefined)
+      .map(([field]) => field);
+    log.info("organization.update", {
+      action: "organization.update",
+      actorUserId,
+      organizationId: id,
+      changed,
+    });
+
     return this.toDto(updated);
   }
 
-  async delete(id: number): Promise<{ id: number }> {
+  async delete(id: number, actorUserId: number): Promise<{ id: number }> {
     const existing = await this.findByIdOrThrow(id);
 
     if (this.isDefault(existing)) {
@@ -110,7 +164,33 @@ export class OrganizationService {
 
     const deleted = await this.deps.organizationRepository.delete(id);
     if (!deleted) throw ErrorWithCode.Factory.NotFound("Organization not found");
+
+    log.info("organization.delete", { action: "organization.delete", actorUserId, organizationId: id });
+
     return deleted;
+  }
+
+  private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<void> {
+    const candidate = await this.deps.organizationMembershipService.findMembershipCandidate(userId);
+    if (!candidate) throw ErrorWithCode.Factory.NotFound("Owner user not found");
+
+    if (candidate.organizationId !== null) {
+      if (!confirmMoveOwner) {
+        throw ErrorWithCode.Factory.PreconditionFailed(
+          "The owner belongs to another organization; confirm to move them"
+        );
+      }
+      // Moving users between organizations arrives with the move service
+      throw ErrorWithCode.Factory.PreconditionFailed(
+        "Moving an owner from another organization is not available yet"
+      );
+    }
+
+    if (candidate.username === null) {
+      throw ErrorWithCode.Factory.PreconditionFailed(
+        "The owner needs a username before joining an organization"
+      );
+    }
   }
 
   private async findByIdOrThrow(id: number): Promise<OrganizationRecord> {
