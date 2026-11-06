@@ -1,9 +1,5 @@
-import { WEBAPP_URL, WEBSITE_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 
-export const useBookerUrl = () => {
-  return WEBSITE_URL ?? WEBAPP_URL;
-};
+export const useBookerUrl = (): string => useOrgBaseUrl();
 
-export const useEmbedBookerUrl = () => {
-  return WEBAPP_URL;
-};
+export const useEmbedBookerUrl = (): string => useOrgBaseUrl();

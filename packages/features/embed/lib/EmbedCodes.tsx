@@ -1,16 +1,10 @@
-import { WEBSITE_URL, IS_SELF_HOSTED, WEBAPP_URL } from "@calcom/lib/constants";
-
+import { IS_SELF_HOSTED } from "@calcom/lib/constants";
 import type { PreviewState } from "../types";
 import { embedLibUrl } from "./constants";
 import { getApiNameForReactSnippet, getApiNameForVanillaJsSnippet } from "./getApiName";
 import { getDimension } from "./getDimension";
 
-export const doWeNeedCalOriginProp = (embedCalOrigin: string) => {
-  // If we are self hosted, calOrigin won't be app.cal.com so we need to pass it
-  // If we are not self hosted but it's still different from WEBAPP_URL and WEBSITE_URL, we need to pass it -> It happens for organization booking URL at the moment
-  return IS_SELF_HOSTED || (embedCalOrigin !== WEBAPP_URL && embedCalOrigin !== WEBSITE_URL);
-};
-
+// Each organization is served on its own domain, so snippets always say where to load the booker from.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Codes = {
   react: {
@@ -45,7 +39,7 @@ export default function MyApp() {
     calLink="${calLink}"
     style={{width:"${width}",height:"${height}",overflow:"scroll"}}
     config={${JSON.stringify(previewState.config)}}
-    ${doWeNeedCalOriginProp(embedCalOrigin) ? `calOrigin="${embedCalOrigin}"` : ""}
+    calOrigin="${embedCalOrigin}"
     ${IS_SELF_HOSTED ? `embedJsUrl="${embedLibUrl}"` : ""}
   />;
 };`;
@@ -66,7 +60,7 @@ export default function MyApp() {
       const argumentForGetCalApi = getArgumentForGetCalApi(namespace);
       const floatingButtonArg = JSON.stringify({
         calLink,
-        ...(doWeNeedCalOriginProp(embedCalOrigin) ? { calOrigin: embedCalOrigin } : null),
+        calOrigin: embedCalOrigin,
         ...previewState,
       });
       return code`
@@ -108,7 +102,7 @@ export default function MyApp() {
   }, [])
   return <button data-cal-namespace="${namespace}"
     data-cal-link="${calLink}"
-    ${doWeNeedCalOriginProp(embedCalOrigin) ? `data-cal-origin="${embedCalOrigin}"` : ""}
+    data-cal-origin="${embedCalOrigin}"
     ${`data-cal-config='${JSON.stringify(previewState.config)}'`}
   >Click me</button>;
 };`;
