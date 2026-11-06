@@ -4,6 +4,8 @@ export enum ErrorCode {
   Forbidden = "forbidden_error",
   NotFound = "not_found_error",
   BadRequest = "bad_request_error",
+  Conflict = "conflict_error",
+  PreconditionFailed = "precondition_failed_error",
   InternalServerError = "internal_server_error",
 
   // Domain-specific error codes

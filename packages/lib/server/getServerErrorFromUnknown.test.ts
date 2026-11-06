@@ -30,6 +30,7 @@ const test404Codes = [
 ];
 
 const test409Codes = [
+  ErrorCode.Conflict,
   ErrorCode.NoAvailableUsersFound,
   ErrorCode.FixedHostsUnavailableForBooking,
   ErrorCode.RoundRobinHostsUnavailableForBooking,
@@ -100,6 +101,15 @@ describe("getServerErrorFromUnknown", () => {
 
     expect(result.statusCode).toBe(409);
     expect(result.message).toBe(ErrorCode.NoAvailableUsersFound);
+  });
+
+  test("PreconditionFailed should return 412", () => {
+    const error = ErrorWithCode.Factory.PreconditionFailed("Precondition not met");
+
+    const result = getServerErrorFromUnknown(error);
+
+    expect(result.statusCode).toBe(412);
+    expect(result.message).toBe("Precondition not met");
   });
 
   test("Generic Error without ErrorCode should return 500", () => {
