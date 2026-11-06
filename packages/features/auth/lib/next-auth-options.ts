@@ -15,6 +15,7 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import { isPasswordValid } from "@calcom/lib/auth/isPasswordValid";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
 import {
+  CONSOLE_URL,
   ENABLE_PROFILE_SWITCHER,
   GOOGLE_CALENDAR_SCOPES,
   GOOGLE_OAUTH_SCOPES,
@@ -23,11 +24,13 @@ import {
   IS_TEAM_BILLING_ENABLED,
   MICROSOFT_CALENDAR_SCOPES,
   WEBAPP_URL,
+  WEBSITE_URL,
 } from "@calcom/lib/constants";
 import { symmetricDecrypt, symmetricEncrypt } from "@calcom/lib/crypto";
 import { defaultCookies } from "@calcom/lib/default-cookies";
 import { isENVDev } from "@calcom/lib/env";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { randomString } from "@calcom/lib/random";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { hashEmail } from "@calcom/lib/server/PiiHasher";
@@ -371,15 +374,101 @@ function isNumber(n: string) {
 
 const calcomAdapter = CalComAdapter(prisma);
 
-export const getOptions = ({
-  getDubId,
-  getTrackingData,
-}: {
+type GetOptionsDeps = {
   /** so we can extract the Dub cookie in both pages and app routers */
   getDubId: () => string | undefined;
   /** Ad tracking data for Stripe customer metadata */
   getTrackingData: () => TrackingData;
-}): AuthOptions => ({
+  /** Request headers, used to resolve the organization the sign-in happens on */
+  getRequestHeaders?: () => Pick<Headers, "get">;
+};
+
+type SignInCallbackParams = Parameters<NonNullable<NonNullable<AuthOptions["callbacks"]>["signIn"]>>[0];
+
+async function getOrganizationFullDomain(organizationId: number): Promise<string> {
+  if (!isOrganizationsEnabled()) return WEBAPP_URL;
+  const { getOrganizationUrlService } = await import(
+    "@calcom/features/organizations/di/OrganizationUrlService.container"
+  );
+  return getOrganizationUrlService().getBaseUrl({ organizationId });
+}
+
+async function enforceOrganizationDomain(
+  params: SignInCallbackParams,
+  getRequestHeaders: GetOptionsDeps["getRequestHeaders"]
+): Promise<boolean | string> {
+  // Refusing at the magic-link request step would tell anyone which organization an email belongs
+  // to, so the check runs only when the link is used.
+  if (params.account?.provider === "email" && params.email?.verificationRequest) return true;
+
+  if (!getRequestHeaders) {
+    log.error("callbacks:signIn - request headers unavailable, refusing organization sign-in");
+    return false;
+  }
+
+  const headers = getRequestHeaders();
+  const { getOrgFromRequest } = await import("@calcom/features/organizations/lib/getOrgFromRequest");
+  const { getOrganizationSignInService } = await import(
+    "@calcom/features/organizations/di/OrganizationSignInService.container"
+  );
+  const org = await getOrgFromRequest(headers);
+  const decision = await getOrganizationSignInService().checkSignInDomain({
+    email: params.user.email,
+    requestOrganizationId: org?.id ?? null,
+    requestHost: headers.get("host"),
+  });
+
+  if (decision.kind === "allowed") return true;
+  if (decision.kind === "redirect") return decision.loginUrl;
+  return decision.errorUrl;
+}
+
+function getHostname(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+async function isAllowedOrganizationRedirect(url: string): Promise<boolean> {
+  if (!isOrganizationsEnabled()) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (parsed.hostname === getHostname(WEBSITE_URL)) return true;
+  if (parsed.hostname === getHostname(CONSOLE_URL)) return true;
+
+  const { getOrganizationOriginForUrl } = await import(
+    "@calcom/features/organizations/lib/getOrganizationOrigin"
+  );
+  return (await getOrganizationOriginForUrl(url)) === parsed.origin;
+}
+
+export const getOptions = (deps: GetOptionsDeps): AuthOptions => {
+  const options = getBaseOptions(deps);
+  const baseSignIn = options.callbacks?.signIn;
+
+  return {
+    ...options,
+    callbacks: {
+      ...options.callbacks,
+      async signIn(params) {
+        const result = baseSignIn ? await baseSignIn(params) : true;
+        if (result !== true || !isOrganizationsEnabled()) return result;
+        return enforceOrganizationDomain(params, deps.getRequestHeaders);
+      },
+    },
+  };
+};
+
+const getBaseOptions = ({ getDubId, getTrackingData }: GetOptionsDeps): AuthOptions => ({
   adapter: calcomAdapter,
   session: {
     strategy: "jwt",
@@ -518,7 +607,7 @@ export const getOptions = ({
                   name: profileOrg.name,
                   slug: profileOrg.slug ?? "",
                   logoUrl: profileOrg.logoUrl,
-                  fullDomain: WEBAPP_URL,
+                  fullDomain: await getOrganizationFullDomain(profileOrg.id),
                   domainSuffix: "",
                   role: orgRole as MembershipRole, // It can't be undefined if we have a profileOrg
                 }
@@ -1166,6 +1255,7 @@ export const getOptions = ({
       if (url.startsWith("/")) return `${baseUrl}${url}`;
       // Allows callback URLs on the same domain
       else if (new URL(url).hostname === new URL(WEBAPP_URL).hostname) return url;
+      if (await isAllowedOrganizationRedirect(url)) return url;
       return baseUrl;
     },
   },

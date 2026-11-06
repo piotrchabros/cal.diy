@@ -111,14 +111,14 @@ description: "Task list for Organizations (spec 005)"
 
 **Auth (PR 9)**
 
-- [ ] T020 In `packages/features/auth/lib/next-auth-options.ts`:
+- [X] T020 In `packages/features/auth/lib/next-auth-options.ts`:
   - The `redirect` callback (~line 1164) allows the hosts of `WEBAPP_URL`, `WEBSITE_URL` and every org `customDomain`.
   - The `signIn` callback refuses with error `wrong_organization_domain` when the flag is on and `user.organizationId !== host org id`.
   - The JWT `org.fullDomain` (~line 521) comes from `OrganizationUrlService`.
 
   Add tests
-- [ ] T021 [P] Make `packages/lib/getSafeRedirectUrl.ts` accept org domains through an injected allow-list argument (`packages/lib` must not import features), with the callers passing the org domains. Stop rewriting magic links to `NEXTAUTH_URL` in `packages/features/auth/lib/sendVerificationRequest.ts:21`. Add tests
-- [ ] T022 [P] In `apps/web/modules/auth/login-view.tsx`: build the callback from `window.location.origin` instead of `WEBAPP_URL`, and on error `wrong_organization_domain` redirect to `https://<user's org domain>/auth/login`. The domain comes from a new public endpoint `apps/web/app/api/auth/org-domain/route.ts` that, given an email, returns only the domain. Rate-limit it and return the default domain for unknown emails so it doesn't reveal which emails exist. Also update `apps/web/server/lib/auth/login/getServerSideProps.tsx` JWT issuer/audience. Add tests
+- [X] T021 [P] Make `packages/lib/getSafeRedirectUrl.ts` accept org domains through an injected allow-list argument (`packages/lib` must not import features), with the callers passing the org domains. Stop rewriting magic links to `NEXTAUTH_URL` in `packages/features/auth/lib/sendVerificationRequest.ts:21`. Add tests
+- [X] T022 [P] In the next-auth `signIn` callback, run the domain policy after authentication (credentials + 2FA, OAuth, magic-link callback; not the magic-link request step). A user from another organization is redirected to `https://<user's org domain>/auth/login?reason=wrong_organization_domain`; a redirect that would loop goes to `/auth/error?error=wrong_organization_domain`. In `apps/web/modules/auth/login-view.tsx`: build the callback from the request organization's base URL (`useOrgBaseUrl`) instead of `WEBAPP_URL`, follow the organization login redirect returned by `signIn`, show the `wrong_organization_domain` error and the `?reason=` notice. Add the error branch to the `/auth/error` page. No email→domain lookup endpoint, so emails can't be enumerated. Also update `apps/web/server/lib/auth/login/getServerSideProps.tsx` JWT issuer/audience. Add tests
 
 **Checkpoint**: the foundation is merged; with the flag off nothing changes for users (quickstart S13).
 
@@ -360,6 +360,9 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T071 [P] Add a Playwright spec `apps/web/playwright/organizations.e2e.ts` for quickstart S2, S4, S5 and S6, run on the scratch setup only and with the owner's go-ahead
 - [ ] T072 Document the rollout in `specs/005-organizations/quickstart.md` §5, finalise `contracts/infra-owner-checklist.md` with the actual OAuth apps in use (quickstart step 0), and add `ORGANIZATIONS_ENABLED` / `AUTH_TRUST_HOST` notes to `.env.example`
 - [ ] T073 Run the full quickstart S1–S13 on the scratch setup and record the results in the last PR description
+- [ ] T074 Create OAuth (Google, Azure AD) sign-ups in the request organization when the flag is on. Today they are created without an organization, so the `signIn` domain policy refuses them. Add tests
+- [ ] T075 In `getServerSession` / `ensureSession`, check on each request that the database `user.organizationId` matches the request organization. This defends against a session token copied to another domain. Add tests
+- [ ] T076 Owner checklist (`contracts/infra-owner-checklist.md`): set `AUTH_TRUST_HOST` only together with `ORGANIZATIONS_ENABLED`; Caddy must overwrite `X-Forwarded-*` headers; the Node ports must not be reachable from outside
 
 ---
 
