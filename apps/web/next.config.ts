@@ -1,16 +1,10 @@
+import process from "node:process";
+import i18nConfig from "@calcom/i18n/next-i18next.config";
 import { withBotId } from "botid/next/config";
 import { config as dotenvConfig } from "dotenv";
 import type { NextConfig } from "next";
-import type { RouteHas } from "next/dist/lib/load-custom-routes";
 import { withAxiom } from "next-axiom";
-import i18nConfig from "@calcom/i18n/next-i18next.config";
 import packageJson from "./package.json";
-import {
-  nextJsOrgRewriteConfig,
-  orgUserRoutePath,
-  orgUserTypeEmbedRoutePath,
-  orgUserTypeRoutePath,
-} from "./pagesAndRewritePaths";
 import { TRIGGER_VERSION } from "./trigger.version"; // adjust path as needed
 
 dotenvConfig({ path: "../../.env" });
@@ -22,11 +16,6 @@ const {
 
 type NextConfigPlugin = (config: NextConfig) => NextConfig;
 
-// Type guard to filter out null/undefined values with proper type narrowing
-function isNotNull<T>(value: T | null | undefined): value is T {
-  return value !== null && value !== undefined;
-}
-
 function adjustEnvVariables(): void {
   // Type-safe way to modify process.env (which is typed as readonly in environment.d.ts)
   const envMutable = process.env as Record<string, string | undefined>;
@@ -37,11 +26,6 @@ function adjustEnvVariables(): void {
       );
       delete envMutable.RESERVED_SUBDOMAINS;
     }
-
-    if (!process.env.ORGANIZATIONS_ENABLED) {
-      console.log("Auto-enabling ORGANIZATIONS_ENABLED because SINGLE_ORG_SLUG is set");
-      envMutable.ORGANIZATIONS_ENABLED = "1";
-    }
   }
 }
 
@@ -49,9 +33,6 @@ adjustEnvVariables();
 
 if (!process.env.NEXTAUTH_SECRET) throw new Error("Please set NEXTAUTH_SECRET");
 if (!process.env.CALENDSO_ENCRYPTION_KEY) throw new Error("Please set CALENDSO_ENCRYPTION_KEY");
-
-const isOrganizationsEnabled =
-  process.env.ORGANIZATIONS_ENABLED === "1" || process.env.ORGANIZATIONS_ENABLED === "true";
 
 // Type-safe way to assign to process.env (which is typed as readonly in environment.d.ts)
 const env = process.env as Record<string, string | undefined>;
@@ -143,84 +124,7 @@ if (process.env.NEXT_PUBLIC_VERCEL_USE_BOTID_IN_BOOKER === "1") {
   plugins.push(withBotId);
 }
 
-interface OrgDomainMatcher {
-  has: RouteHas[];
-  source: string;
-}
-
-const orgDomainMatcherConfig: {
-  root: OrgDomainMatcher | null;
-  rootEmbed: OrgDomainMatcher | null;
-  user: OrgDomainMatcher;
-  userType: OrgDomainMatcher;
-  userTypeEmbed: OrgDomainMatcher;
-} = {
-  root: nextJsOrgRewriteConfig.disableRootPathRewrite
-    ? null
-    : {
-        has: [
-          {
-            type: "host",
-            value: nextJsOrgRewriteConfig.orgHostPath,
-          },
-        ],
-        source: "/",
-      },
-
-  rootEmbed: nextJsOrgRewriteConfig.disableRootEmbedPathRewrite
-    ? null
-    : {
-        has: [
-          {
-            type: "host",
-            value: nextJsOrgRewriteConfig.orgHostPath,
-          },
-        ],
-        source: "/embed",
-      },
-
-  user: {
-    has: [
-      {
-        type: "host",
-        value: nextJsOrgRewriteConfig.orgHostPath,
-      },
-    ],
-    source: orgUserRoutePath,
-  },
-
-  userType: {
-    has: [
-      {
-        type: "host",
-        value: nextJsOrgRewriteConfig.orgHostPath,
-      },
-    ],
-    source: orgUserTypeRoutePath,
-  },
-
-  userTypeEmbed: {
-    has: [
-      {
-        type: "host",
-        value: nextJsOrgRewriteConfig.orgHostPath,
-      },
-    ],
-    source: orgUserTypeEmbedRoutePath,
-  },
-};
-
-const nextConfig = (phase: string): NextConfig => {
-  if (isOrganizationsEnabled) {
-    console.log(
-      `[Phase: ${phase}] Adding rewrite config for organizations - orgHostPath: ${nextJsOrgRewriteConfig.orgHostPath}, orgSlug: ${nextJsOrgRewriteConfig.orgSlug}, disableRootPathRewrite: ${nextJsOrgRewriteConfig.disableRootPathRewrite}`
-    );
-  } else {
-    console.log(
-      `[Phase: ${phase}] Skipping rewrite config for organizations because ORGANIZATIONS_ENABLED is not set`
-    );
-  }
-
+const nextConfig = (): NextConfig => {
   return {
     output: process.env.BUILD_STANDALONE === "true" ? "standalone" : undefined,
     serverExternalPackages: [
@@ -263,7 +167,6 @@ const nextConfig = (phase: string): NextConfig => {
     },
     turbopack: {},
     async rewrites() {
-      const { orgSlug } = nextJsOrgRewriteConfig;
       const beforeFiles = [
         {
           source: `/(${locales.join("|")})/:path*`,
@@ -300,35 +203,7 @@ const nextConfig = (phase: string): NextConfig => {
           source: "/login",
           destination: "/auth/login",
         },
-        ...(isOrganizationsEnabled
-          ? [
-              orgDomainMatcherConfig.root
-                ? {
-                    ...orgDomainMatcherConfig.root,
-                    destination: `/team/${orgSlug}?isOrgProfile=1`,
-                  }
-                : null,
-              orgDomainMatcherConfig.rootEmbed
-                ? {
-                    ...orgDomainMatcherConfig.rootEmbed,
-                    destination: `/team/${orgSlug}/embed?isOrgProfile=1`,
-                  }
-                : null,
-              {
-                ...orgDomainMatcherConfig.user,
-                destination: `/org/${orgSlug}/:user`,
-              },
-              {
-                ...orgDomainMatcherConfig.userType,
-                destination: `/org/${orgSlug}/:user/:type`,
-              },
-              {
-                ...orgDomainMatcherConfig.userTypeEmbed,
-                destination: `/org/${orgSlug}/:user/:type/embed`,
-              },
-            ]
-          : []),
-      ].filter(isNotNull);
+      ];
 
       const afterFiles = [
         {
@@ -374,7 +249,6 @@ const nextConfig = (phase: string): NextConfig => {
       };
     },
     async headers() {
-      const { orgSlug } = nextJsOrgRewriteConfig;
       const CORP_CROSS_ORIGIN_HEADER = {
         key: "Cross-Origin-Resource-Policy",
         value: "cross-origin",
@@ -459,49 +333,7 @@ const nextConfig = (phase: string): NextConfig => {
             },
           ],
         },
-        ...(isOrganizationsEnabled
-          ? [
-              orgDomainMatcherConfig.root
-                ? {
-                    ...orgDomainMatcherConfig.root,
-                    headers: [
-                      {
-                        key: "X-Cal-Org-path",
-                        value: `/team/${orgSlug}`,
-                      },
-                    ],
-                  }
-                : null,
-              {
-                ...orgDomainMatcherConfig.user,
-                headers: [
-                  {
-                    key: "X-Cal-Org-path",
-                    value: `/org/${orgSlug}/:user`,
-                  },
-                ],
-              },
-              {
-                ...orgDomainMatcherConfig.userType,
-                headers: [
-                  {
-                    key: "X-Cal-Org-path",
-                    value: `/org/${orgSlug}/:user/:type`,
-                  },
-                ],
-              },
-              {
-                ...orgDomainMatcherConfig.userTypeEmbed,
-                headers: [
-                  {
-                    key: "X-Cal-Org-path",
-                    value: `/org/${orgSlug}/:user/:type/embed`,
-                  },
-                ],
-              },
-            ]
-          : []),
-      ].filter(isNotNull);
+      ];
     },
     async redirects() {
       const redirects = [
@@ -589,13 +421,6 @@ const nextConfig = (phase: string): NextConfig => {
         },
         {
           source: "/support",
-          missing: [
-            {
-              type: "header" as const,
-              key: "host",
-              value: nextJsOrgRewriteConfig.orgHostPath,
-            },
-          ],
           destination: "/event-types?openSupport=true",
           permanent: true,
         },
@@ -624,24 +449,6 @@ const nextConfig = (phase: string): NextConfig => {
           destination: "/settings/admin/apps/calendar",
           permanent: true,
         },
-        ...(process.env.NODE_ENV === "development" &&
-        isOrganizationsEnabled &&
-        process.env.NEXT_PUBLIC_WEBAPP_URL !== "http://localhost:3000"
-          ? [
-              {
-                has: [
-                  {
-                    type: "header" as const,
-                    key: "host",
-                    value: "localhost:3000",
-                  },
-                ],
-                source: "/api/integrations/:args*",
-                destination: `${process.env.NEXT_PUBLIC_WEBAPP_URL}/api/integrations/:args*`,
-                permanent: false,
-              },
-            ]
-          : []),
       ];
 
       if (process.env.NEXT_PUBLIC_WEBAPP_URL === "https://app.cal.com") {
@@ -669,4 +476,4 @@ const nextConfig = (phase: string): NextConfig => {
   };
 };
 
-export default (phase: string): NextConfig => plugins.reduce((acc, plugin) => plugin(acc), nextConfig(phase));
+export default (): NextConfig => plugins.reduce((acc, plugin) => plugin(acc), nextConfig());

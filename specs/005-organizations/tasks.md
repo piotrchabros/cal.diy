@@ -88,7 +88,7 @@ description: "Task list for Organizations (spec 005)"
   - Return a plain `404` for an unknown host (contracts/request-organization.md).
 
   Keep the existing embed, CSP and signup logic. Extend `apps/web/proxy.test.ts` or create it
-- [ ] T015 Delete the dead upstream subdomain rewrites: `apps/web/getNextjsOrgRewriteConfig.ts`, the `isOrganizationsEnabled` / `orgDomainMatcherConfig` blocks and the `X-Cal-Org-path` headers in `apps/web/next.config.ts`, and the `orgUserRoutePath` regexes in `apps/web/pagesAndRewritePaths.ts` if unused afterwards. Also delete `packages/lib/domainManager/organization.ts` (owner-approved deletions)
+- [X] T015 Delete the dead upstream subdomain rewrites: `apps/web/getNextjsOrgRewriteConfig.ts`, the `isOrganizationsEnabled` / `orgDomainMatcherConfig` blocks and the `X-Cal-Org-path` headers in `apps/web/next.config.ts`, and the `orgUserRoutePath` regexes in `apps/web/pagesAndRewritePaths.ts` if unused afterwards. Also delete `packages/lib/domainManager/organization.ts` (owner-approved deletions)
 
 **Base URL (PR 7)**
 
