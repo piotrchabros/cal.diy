@@ -20,6 +20,16 @@ vi.mock("@calcom/features/bookings/lib/getCalEventResponses", () => ({
   })),
 }));
 
+const { mockGetBaseUrl } = vi.hoisted(() => ({
+  mockGetBaseUrl: vi.fn(async ({ organizationId }: { organizationId: number | null }) =>
+    organizationId === 7 ? "https://org.example" : "https://app.example"
+  ),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
+  getOrganizationUrlService: () => ({ getBaseUrl: mockGetBaseUrl }),
+}));
+
 vi.mock("@calcom/prisma", () => ({
   default: {},
   prisma: {},
@@ -593,7 +603,7 @@ describe("CalendarEventBuilder", () => {
           createdAt: null,
           updatedAt: null,
           delegationCredentialId: null,
-            },
+        },
       ])
       .withIdentifiers({
         iCalUID: "ical-123",
@@ -923,7 +933,7 @@ describe("CalendarEventBuilder", () => {
             createdAt: null,
             updatedAt: null,
             delegationCredentialId: null,
-                },
+          },
           profiles: [],
         },
         destinationCalendar: null,
@@ -977,7 +987,7 @@ describe("CalendarEventBuilder", () => {
                   createdAt: null,
                   updatedAt: null,
                   delegationCredentialId: null,
-                            },
+                },
               },
             },
             {
@@ -1002,7 +1012,7 @@ describe("CalendarEventBuilder", () => {
                   createdAt: null,
                   updatedAt: null,
                   delegationCredentialId: null,
-                            },
+                },
               },
             },
           ],
@@ -1417,6 +1427,98 @@ describe("CalendarEventBuilder", () => {
       }
     });
 
+    const buildOrgBooking = ({
+      team,
+      profileOrganizationId,
+    }: {
+      team: { id: number; name: string; parentId: number | null; members: [] } | null;
+      profileOrganizationId: number;
+    }) =>
+      ({
+        uid: "booking-org",
+        metadata: null,
+        title: "Org Test",
+        startTime: new Date(mockStartTime),
+        endTime: new Date(mockEndTime),
+        description: null,
+        location: null,
+        responses: null,
+        customInputs: null,
+        iCalUID: null,
+        iCalSequence: 0,
+        oneTimePassword: null,
+        attendees: [
+          {
+            name: "Org User",
+            email: "orguser@example.com",
+            timeZone: "UTC",
+            locale: "en",
+            phoneNumber: null,
+          },
+        ],
+        user: {
+          id: 9,
+          name: "Org Host",
+          email: "orghost@example.com",
+          username: "orghost",
+          timeZone: "UTC",
+          locale: "en",
+          timeFormat: 24,
+          destinationCalendar: null,
+          profiles: [{ organizationId: profileOrganizationId }],
+        },
+        destinationCalendar: null,
+        eventType: {
+          id: 800,
+          title: "30 minutes",
+          slug: "org-event",
+          description: null,
+          hideCalendarNotes: false,
+          hideCalendarEventDetails: false,
+          hideOrganizerEmail: false,
+          schedulingType: null,
+          seatsPerTimeSlot: null,
+          seatsShowAttendees: false,
+          seatsShowAvailabilityCount: false,
+          customReplyToEmail: null,
+          disableRescheduling: false,
+          disableCancelling: false,
+          requiresConfirmation: false,
+          recurringEvent: null,
+          bookingFields: [],
+          metadata: null,
+          eventName: null,
+          team,
+          users: [],
+          hosts: [],
+        },
+        references: [],
+        seatsReferences: [],
+      }) satisfies BookingForCalEventBuilder;
+
+    it("should resolve bookerUrl from the team's parent organization over the organizer's profile org", async () => {
+      mockGetBaseUrl.mockClear();
+      const mockBooking = buildOrgBooking({
+        team: { id: 11, name: "Org Team", parentId: 7, members: [] },
+        profileOrganizationId: 99,
+      });
+
+      const builtEvent = (await CalendarEventBuilder.fromBooking(mockBooking)).build();
+
+      expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 7 });
+      expect(builtEvent?.bookerUrl).toBe("https://org.example");
+    });
+
+    it("should resolve bookerUrl from the organizer's profile org when there is no team", async () => {
+      mockGetBaseUrl.mockClear();
+      const mockBooking = buildOrgBooking({ team: null, profileOrganizationId: 7 });
+
+      const builtEvent = (await CalendarEventBuilder.fromBooking(mockBooking)).build();
+
+      expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 7 });
+      expect(builtEvent?.bookerUrl).toBe("https://org.example");
+    });
+
     it("should throw error when booking is missing user", async () => {
       const mockBooking = {
         uid: "booking-no-user",
@@ -1568,7 +1670,7 @@ describe("CalendarEventBuilder", () => {
             createdAt: null,
             updatedAt: null,
             delegationCredentialId: null,
-                },
+          },
           profiles: [{ organizationId: 1 }],
         },
         destinationCalendar: null,
@@ -1629,7 +1731,7 @@ describe("CalendarEventBuilder", () => {
                   createdAt: null,
                   updatedAt: null,
                   delegationCredentialId: null,
-                            },
+                },
               },
             },
             {
@@ -1654,7 +1756,7 @@ describe("CalendarEventBuilder", () => {
                   createdAt: null,
                   updatedAt: null,
                   delegationCredentialId: null,
-                            },
+                },
               },
             },
           ],
