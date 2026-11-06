@@ -1,30 +1,34 @@
-import type { Calendar as OfficeCalendar } from "@microsoft/microsoft-graph-types-beta";
-import type { NextApiRequest, NextApiResponse } from "next";
-
 import { renewSelectedCalendarCredentialId } from "@calcom/lib/connectedCalendar";
-import { WEBAPP_URL, WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { handleErrorsJson } from "@calcom/lib/errors";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import logger from "@calcom/lib/logger";
 import prisma from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
-
+import type { Calendar as OfficeCalendar } from "@microsoft/microsoft-graph-types-beta";
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import {
+  getOAuthAppOrigin,
+  getOAuthRedirectUri,
+  getOAuthSafeRedirectOptions,
+} from "../../_utils/oauth/getOAuthRedirectUri";
 
 const scopes = ["offline_access", "Calendars.Read", "Calendars.ReadWrite"];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = req.query;
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
+  const appOrigin = getOAuthAppOrigin(req);
 
   if (typeof code !== "string") {
     if (state?.onErrorReturnTo || state?.returnTo) {
       res.redirect(
-        getSafeRedirectUrl(state.onErrorReturnTo) ??
-          getSafeRedirectUrl(state?.returnTo) ??
-          `${WEBAPP_URL}/apps/installed`
+        getSafeRedirectUrl(state.onErrorReturnTo, safeRedirectOptions) ??
+          getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+          `${appOrigin}/apps/installed`
       );
       return;
     }
@@ -50,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     grant_type: "authorization_code",
     code,
     scope: scopes.join(" "),
-    redirect_uri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/office365calendar/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "office365calendar"),
     client_secret: clientSecret,
   });
 
@@ -80,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Set the isDefaultCalendar as selectedCalendar
   // If a user has multiple calendars, keep on making calls until we find the default calendar
-  let defaultCalendar: OfficeCalendar | undefined = undefined;
+  let defaultCalendar: OfficeCalendar | undefined;
   let requestUrl = "https://graph.microsoft.com/v1.0/me/calendars?$select=id,isDefaultCalendar";
   let finishedParsingCalendars = false;
 
@@ -126,7 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!defaultCalendar?.id) {
     const errorMessage = "no_default_calendar";
     res.redirect(
-      `${getSafeRedirectUrl(state?.onErrorReturnTo) ?? getInstalledAppPath({ variant: "calendar", slug: "office365-calendar" })}?error=${errorMessage}`
+      `${getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ?? getInstalledAppPath({ variant: "calendar", slug: "office365-calendar" })}?error=${errorMessage}`
     );
     return;
   }
@@ -161,7 +165,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // we want to recover by connecting the existing selectedCalendar to the new Credential.
         if (await renewSelectedCalendarCredentialId(selectedCalendarWhereUnique, credential.id)) {
           res.redirect(
-            getSafeRedirectUrl(state?.returnTo) ??
+            getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
               getInstalledAppPath({ variant: "calendar", slug: "office365-calendar" })
           );
           return;
@@ -172,7 +176,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await prisma.credential.delete({ where: { id: credential.id } });
       res.redirect(
         `${
-          getSafeRedirectUrl(state?.onErrorReturnTo) ??
+          getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ??
           getInstalledAppPath({ variant: "calendar", slug: "office365-calendar" })
         }?error=${errorMessage}`
       );
@@ -181,7 +185,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ??
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
       getInstalledAppPath({ variant: "calendar", slug: "office365-calendar" })
   );
   return;

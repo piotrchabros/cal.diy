@@ -1,25 +1,29 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL, WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import {
+  getOAuthAppOrigin,
+  getOAuthRedirectUri,
+  getOAuthSafeRedirectOptions,
+} from "../../_utils/oauth/getOAuthRedirectUri";
 import { OFFICE365_VIDEO_SCOPES } from "./add";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = req.query;
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
+  const appOrigin = getOAuthAppOrigin(req);
 
   if (typeof code !== "string") {
     if (state?.onErrorReturnTo || state?.returnTo) {
       res.redirect(
-        getSafeRedirectUrl(state.onErrorReturnTo) ??
-          getSafeRedirectUrl(state?.returnTo) ??
-          `${WEBAPP_URL}/apps/installed`
+        getSafeRedirectUrl(state.onErrorReturnTo, safeRedirectOptions) ??
+          getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+          `${appOrigin}/apps/installed`
       );
       return;
     }
@@ -45,7 +49,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     grant_type: "authorization_code",
     code,
     scope: OFFICE365_VIDEO_SCOPES.join(" "),
-    redirect_uri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/office365video/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "office365video"),
     client_secret: clientSecret,
   });
 
@@ -103,6 +107,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: "msteams", type: "office365_video" }, responseBody, req);
 
   return res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "conferencing", slug: "msteams" })
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+      getInstalledAppPath({ variant: "conferencing", slug: "msteams" })
   );
 }
