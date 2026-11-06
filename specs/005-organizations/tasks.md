@@ -183,7 +183,7 @@ description: "Task list for Organizations (spec 005)"
   - The membership is written through `OrganizationMembershipService.addMember`.
 
   Also update `packages/features/auth/signup/utils/createOrUpdateMemberships.ts` and `TeamMembersService.completeInviteSignup`. Add tests
-- [ ] T035 [P] [US2] Make `userAdminRouter.add` in `packages/trpc/server/routers/viewer/users/_router.ts` require an `organizationId` (defaulting to the default org) and use `OrganizationMembershipService.addMember`. Add tests
+- [X] T035 [P] [US2] Make `userAdminRouter.add` in `packages/trpc/server/routers/viewer/users/_router.ts` require an `organizationId` (defaulting to the default org) and use `OrganizationMembershipService.addMember`. Add tests
 
 **PR 21**
 

@@ -337,6 +337,34 @@ describe("OrganizationService", () => {
     });
   });
 
+  describe("getDefault", () => {
+    const DEFAULT_NOT_FOUND = "Default organization not found";
+
+    it("returns the organization on the configured default domain", async () => {
+      repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      const seeded = repository.seed({ name: "Main", slug: "main", domain: DEFAULT_DOMAIN });
+
+      const organization = await service.getDefault();
+
+      expect(organization).toMatchObject({ id: seeded.id, domain: DEFAULT_DOMAIN, isDefault: true });
+    });
+
+    it("throws NotFound when no default domain is configured", async () => {
+      service = buildService({ defaultDomain: null });
+      const findDefault = vi.spyOn(repository, "findDefault");
+      repository.seed({ name: "Main", slug: "main", domain: DEFAULT_DOMAIN });
+
+      await expectRejection(service.getDefault(), ErrorCode.NotFound, DEFAULT_NOT_FOUND);
+      expect(findDefault).not.toHaveBeenCalled();
+    });
+
+    it("throws NotFound when no organization uses the default domain", async () => {
+      repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+
+      await expectRejection(service.getDefault(), ErrorCode.NotFound, DEFAULT_NOT_FOUND);
+    });
+  });
+
   describe("update", () => {
     it("updates only the provided fields", async () => {
       const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
