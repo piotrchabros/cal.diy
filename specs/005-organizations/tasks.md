@@ -208,8 +208,8 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 10: user pages**
 
-- [ ] T038 [US3] In `apps/web/server/lib/[user]/getServerSideProps.ts` (~79-100), replace the `currentOrgDomain = null; isValidOrgDomain = false` stub with `getOrgFromRequest(context.req.headers)` and pass its slug to `getUsersInOrgContext` / `UserRepository.findUsersByUsername({ orgSlug })`. Add a test
-- [ ] T039 [US3] Make the same change in `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` (~127-146, ~226-249), passing `org` to `getPublicEvent`. Add a test
+- [X] T038 [US3] In `apps/web/server/lib/[user]/getServerSideProps.ts` (~79-100), replace the `currentOrgDomain = null; isValidOrgDomain = false` stub with `getOrgFromRequest(context.req.headers)` and pass its slug to `getUsersInOrgContext` / `UserRepository.findUsersByUsername({ orgSlug })`. Add a test
+- [X] T039 [US3] Make the same change in `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` (~127-146, ~226-249), passing `org` to `getPublicEvent`. Add a test
 - [X] T040 [US3] Rewrite `apps/web/lib/handleOrgRedirect.ts`:
   - Look up `TempOrgRedirect` with `fromOrgId = host org id` and `enabled = true`.
   - Return `{ redirect: { destination: toUrl + rest of path + query, permanent: true } }`.
@@ -371,6 +371,9 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T130 [US2] Keep the org `Profile.username` in sync when an org member changes their username in `packages/trpc/server/routers/viewer/me/updateProfile.handler.ts` (data-model.md: `users.username` equals `Profile.username`; both are written on change). Today only `users.username` is updated. Add tests
 - [ ] T131 [US2] In `TeamMembersService.acceptPendingInvitesOnSignup` (`packages/features/membership/services/TeamMembersService.ts`), skip pending invites to teams outside the organization the new user just joined when the flag is on. Add tests
 - [ ] T132 [US2] In `apps/web/app/api/auth/signup/handlers/selfHostedHandler.ts`, when `addMember` fails after `userRepository.create` on the invitation-less path (flag on), the new user is left with the org id and profile but no membership. Create the user and the membership in one step (or compensate by deleting the user) and add tests
+- [ ] T100 [P] [US3] `packages/trpc/server/routers/publicViewer/event.handler.ts` passes the client-supplied `org` straight to `getPublicEvent`; take the org slug from the request host org (`getHostOrganization`) instead, so a booking page can't load another organization's event through the tRPC call. Add a test
+- [ ] T101 [US6] With the flag on, `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` indexes a booking page only when `OrganizationSettings.allowSEOIndexing` is true, and that column defaults to `false`. Make the T061 switch-over migration set `allowSEOIndexing = true` for BlueBee (and default it for organizations created by `OrganizationService.create`), so public pages don't become `noindex` at go-live
+- [ ] T102 [US5] Move redirects are now 308s (`apps/web/lib/handleOrgRedirect.ts`, `apps/web/app/WithAppDirSsr.tsx`, `apps/web/app/WithEmbedSSR.tsx`) and browsers cache them, so disabling a redirect when the old org reuses the username (US5-6) does not reach visitors who already followed it. Document this in `contracts/infra-owner-checklist.md` or send a bounded `Cache-Control` on those redirects
 
 ---
 

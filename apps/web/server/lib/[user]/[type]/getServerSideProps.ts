@@ -4,6 +4,7 @@ import { getBookingForReschedule, getBookingForSeatedEvent } from "@calcom/featu
 import { getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
 import type { getPublicEvent } from "@calcom/features/eventtypes/lib/getPublicEvent";
 import { EventRepository } from "@calcom/features/eventtypes/repositories/EventRepository";
+import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
 import { shouldHideBrandingForUserEvent } from "@calcom/features/profile/lib/hideBranding";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import slugify from "@calcom/lib/slugify";
@@ -120,20 +121,21 @@ export async function processSeatedEvent({
 }
 
 async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
+  const host = await getHostOrganization(context.req.headers);
+  if (host.status === "unresolved") return { notFound: true } as const;
+  const hostOrg = host.status === "resolved" ? host.org : null;
+  const orgSlug = hostOrg?.slug ?? null;
   const session = await getServerSession({ req: context.req });
   const { user: usernames, type: slug } = paramsSchema.parse(context.params);
   const { rescheduleUid, bookingUid } = context.query;
   const allowRescheduleForCancelledBooking = context.query.allowRescheduleForCancelledBooking === "true";
-  const currentOrgDomain = null;
-  const isValidOrgDomain = false;
-  const org = isValidOrgDomain ? currentOrgDomain : null;
 
   const redirect = await handleOrgRedirect({
     slugs: usernames,
     redirectType: RedirectType.User,
     eventTypeSlug: slug,
     query: omitRouteParams(context.query, context.params),
-    hostOrgId: null,
+    hostOrgId: hostOrg?.id ?? null,
   });
 
   if (redirect) {
@@ -143,7 +145,7 @@ async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
   const userRepo = new UserRepository(prisma);
   const usersInOrgContext = await userRepo.findUsersByUsername({
     usernameList: usernames,
-    orgSlug: isValidOrgDomain ? currentOrgDomain : null,
+    orgSlug,
   });
 
   const users = usersInOrgContext;
@@ -161,7 +163,7 @@ async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
     {
       username: usernames.join("+"),
       eventSlug: slug,
-      org,
+      org: orgSlug,
       fromRedirectOfNonOrgLink: context.query.orgRedirection === "true",
     },
     session?.user?.id
@@ -218,27 +220,29 @@ async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
 }
 
 async function getUserPageProps(context: GetServerSidePropsContext) {
+  const host = await getHostOrganization(context.req.headers);
+  if (host.status === "unresolved") return { notFound: true } as const;
+  const hostOrg = host.status === "resolved" ? host.org : null;
+  const orgSlug = hostOrg?.slug ?? null;
   const session = await getServerSession({ req: context.req });
   const { user: usernames, type: slug } = paramsSchema.parse(context.params);
   const username = usernames[0];
   const { rescheduleUid, bookingUid } = context.query;
   const allowRescheduleForCancelledBooking = context.query.allowRescheduleForCancelledBooking === "true";
-  const currentOrgDomain = null;
-  const isValidOrgDomain = false;
 
   const redirect = await handleOrgRedirect({
     slugs: usernames,
     redirectType: RedirectType.User,
     eventTypeSlug: slug,
     query: omitRouteParams(context.query, context.params),
-    hostOrgId: null,
+    hostOrgId: hostOrg?.id ?? null,
   });
 
   if (redirect) {
     return redirect;
   }
 
-  const [user] = await getUsersInOrgContext([username], isValidOrgDomain ? currentOrgDomain : null);
+  const [user] = await getUsersInOrgContext([username], orgSlug);
 
   if (!user) {
     return {
@@ -246,7 +250,7 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
     } as const;
   }
 
-  const org = isValidOrgDomain ? currentOrgDomain : null;
+  const org = orgSlug;
 
   // We use this to both prefetch the query on the server,
   // as well as to check if the event exist, so we can show a 404 otherwise.

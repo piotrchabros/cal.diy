@@ -1,6 +1,7 @@
 import { encode } from "node:querystring";
 import { getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
 import { getEventTypesPublic } from "@calcom/features/eventtypes/lib/getEventTypesPublic";
+import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
 import { getBrandingForUser } from "@calcom/features/profile/lib/getBranding";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { DEFAULT_DARK_BRAND_COLOR, DEFAULT_LIGHT_BRAND_COLOR } from "@calcom/lib/constants";
@@ -76,8 +77,11 @@ type UserPageProps = {
 } & EmbedProps;
 
 export const getServerSideProps: GetServerSideProps<UserPageProps> = async (context) => {
-  const currentOrgDomain = null;
-  const isValidOrgDomain = false;
+  const host = await getHostOrganization(context.req.headers);
+  if (host.status === "unresolved") return { notFound: true } as const;
+  const hostOrg = host.status === "resolved" ? host.org : null;
+  const orgSlug = hostOrg?.slug ?? null;
+  const isValidOrgDomain = hostOrg !== null;
   const usernameList = getUsernameList(context.query.user as string);
   const isARedirectFromNonOrgLink = context.query.orgRedirection === "true";
   const dataFetchStart = Date.now();
@@ -87,20 +91,17 @@ export const getServerSideProps: GetServerSideProps<UserPageProps> = async (cont
     redirectType: RedirectType.User,
     eventTypeSlug: null,
     query: omitRouteParams(context.query, context.params),
-    hostOrgId: null,
+    hostOrgId: hostOrg?.id ?? null,
   });
 
   if (redirect) {
     return redirect;
   }
 
-  const usersInOrgContext = await getUsersInOrgContext(
-    usernameList,
-    isValidOrgDomain ? currentOrgDomain : null
-  );
+  const usersInOrgContext = await getUsersInOrgContext(usernameList, orgSlug);
 
   const isDynamicGroup = usersInOrgContext.length > 1;
-  log.debug(safeStringify({ usersInOrgContext, isValidOrgDomain, currentOrgDomain, isDynamicGroup }));
+  log.debug(safeStringify({ usersInOrgContext, isValidOrgDomain, orgSlug, isDynamicGroup }));
 
   if (isDynamicGroup) {
     const destinationUrl = encodeURI(`/${usernameList.join("+")}/dynamic`);
@@ -197,7 +198,7 @@ export const getServerSideProps: GetServerSideProps<UserPageProps> = async (cont
       entity: {
         ...(org?.logoUrl ? { logoUrl: org?.logoUrl } : {}),
         considerUnpublished: !isARedirectFromNonOrgLink && org?.slug === null,
-        orgSlug: currentOrgDomain,
+        orgSlug,
         name: org?.name ?? null,
       },
       eventTypes,
@@ -219,14 +220,15 @@ export async function getUsersInOrgContext(usernameList: string[], orgSlug: stri
     orgSlug,
   });
 
-  if (usersInOrgContext.length) {
-    return usersInOrgContext;
-  }
-
   // note(Lauris): platform members (people who run platform) are part of platform organization while
   // the platform organization does not have a domain. In this case there is no org domain but also platform member
   // "User.organization" is not null so "UserRepository.findUsersByUsername" returns empty array and we do this as a last resort
-  // call to find platform member.
+  // call to find platform member. The platform search ignores the host organization, so it only runs off any
+  // organization domain; on one it would match members of other organizations.
+  if (usersInOrgContext.length || orgSlug !== null) {
+    return usersInOrgContext;
+  }
+
   return await userRepo.findPlatformMembersByUsernames({
     usernameList,
   });
