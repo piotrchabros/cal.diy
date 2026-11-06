@@ -265,6 +265,7 @@ interface SettingsPermissions {
   canViewRoles?: boolean;
   canViewOrganizationBilling?: boolean;
   canUpdateOrganization?: boolean;
+  canManageOrganizations?: boolean;
 }
 
 const useTabs = ({
@@ -357,6 +358,15 @@ const useTabs = ({
           (childTab) => childTab.href !== "/settings/security/two-factor-auth"
         );
         return { ...tab, children: filtered };
+      } else if (tab.href === "/settings/admin" && permissions?.canManageOrganizations) {
+        const children = [...(tab.children ?? [])];
+        const usersIndex = children.findIndex((child) => child.name === "users");
+        children.splice(usersIndex === -1 ? children.length : usersIndex + 1, 0, {
+          name: "organizations",
+          href: "/settings/admin/organizations",
+          trackingMetadata: { section: "admin", page: "organizations" },
+        });
+        return { ...tab, children };
       } else if (tab.href === "/settings/developer") {
         const filtered = tab?.children?.filter(
           (childTab) => permissions?.canUpdateOrganization || childTab.name !== "api_docs"

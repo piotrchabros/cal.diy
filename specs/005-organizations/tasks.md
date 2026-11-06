@@ -145,7 +145,7 @@ description: "Task list for Organizations (spec 005)"
 
 - [ ] T026 [US1] Create `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/organizations/page.tsx` (list), `.../organizations/new/page.tsx` and `.../organizations/[id]/edit/page.tsx`. The permission check (`role === "ADMIN"`) and the `isOrganizationsEnabled()` check go in each `page.tsx`, returning `notFound()` when the flag is off
 - [ ] T027 [US1] Create the views `apps/web/modules/organizations/views/organizations-listing-view.tsx` (columns: name, slug, domain, members, teams, default badge) and `organization-form-view.tsx` (name, slug, domain, owner picker by user search or email). Show the confirm dialog for the PRECONDITION_FAILED owner move, the domain-change warning (US1-5), and delete with error display
-- [ ] T028 [P] [US1] Add the "Organizations" admin nav entry in `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/SettingsLayoutAppDirClient.tsx`, shown only when the flag is on. Add all strings to `packages/i18n/locales/en/common.json`
+- [X] T028 [P] [US1] Add the "Organizations" admin nav entry in `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/SettingsLayoutAppDirClient.tsx`, shown only when the flag is on. Add all strings to `packages/i18n/locales/en/common.json`
 - [ ] T029 [P] [US1] Add view tests in `apps/web/modules/organizations/views/organizations-listing-view.test.tsx` and `organization-form-view.test.tsx`
 
 **Checkpoint**: US1 works on scratch (S2, S3, S12).
