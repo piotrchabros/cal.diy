@@ -2,12 +2,13 @@ import { getPremiumMonthlyPlanPriceId } from "@calcom/app-store/stripepayment/li
 import { sendChangeOfEmailVerification } from "@calcom/features/auth/lib/verifyEmail";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
 import { checkUsername } from "@calcom/features/profile/lib/checkUsername";
+import { resolveUsernameNamespace } from "@calcom/features/profile/lib/resolveUsernameNamespace";
 import { ScheduleRepository } from "@calcom/features/schedules/repositories/ScheduleRepository";
+import { getTranslation } from "@calcom/i18n/server";
 import hasKeyInMetadata from "@calcom/lib/hasKeyInMetadata";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { uploadAvatar } from "@calcom/lib/server/avatar";
-import { getTranslation } from "@calcom/i18n/server";
 import { resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
 import slugify from "@calcom/lib/slugify";
 import { validateBookerLayouts } from "@calcom/lib/validateBookerLayouts";
@@ -24,7 +25,9 @@ import { type TUpdateProfileInputSchema, updateUserMetadataAllowedKeys } from ".
 const getBillingProviderService = async (..._args: unknown[]) => ({
   createCustomer: async (..._a: unknown[]) => null,
   getCustomer: async (..._a: unknown[]) => null,
-  getSubscriptions: async (..._a: unknown[]): Promise<{ items: { data: { price: { id: string } }[] }; status: string }[]> => [],
+  getSubscriptions: async (
+    ..._a: unknown[]
+  ): Promise<{ items: { data: { price: { id: string } }[] }; status: string }[]> => [],
   updateCustomer: async (..._a: unknown[]) => null,
 });
 const updateNewTeamMemberEventTypes = async (..._args: unknown[]) => {};
@@ -65,12 +68,16 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
     throw new TRPCError({ code: "BAD_REQUEST", message: t(layoutError) });
   }
 
-  if (input.username && !user.organizationId) {
+  const usernameNamespace = resolveUsernameNamespace({ organizationId: user.organizationId });
+  // Users already moved to an org profile keep their username on the profile, not on user.username.
+  const checksInOrg = usernameNamespace !== null && !user.movedToProfileId;
+
+  if (input.username && (!user.organizationId || checksInOrg)) {
     const username = slugify(input.username);
     // Only validate if we're changing usernames
     if (username !== user.username) {
       data.username = username;
-      const response = await checkUsername(username);
+      const response = await checkUsername(username, usernameNamespace);
       isPremiumUsername = response.premium;
       if (!response.available) {
         const t = await getTranslation(locale, "common");

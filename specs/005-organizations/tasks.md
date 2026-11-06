@@ -170,7 +170,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 20**
 
-- [ ] T033 [US2] Scope username checks to the subject's org:
+- [X] T033 [US2] Scope username checks to the subject's org:
   - `packages/features/profile/lib/checkRegularUsername.ts`
   - `packages/lib/server/username.ts` (always pass `orgId`)
   - `packages/features/auth/signup/username.ts`
@@ -367,6 +367,8 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T111 [US3] In `packages/trpc/server/routers/viewer/slots/getSchedule.handler.ts`, refuse (NOT_FOUND) a direct `eventTypeId` whose owner/team organization differs from the request organization; T046 only scopes slug lookups. Add tests
 - [ ] T112 [P] [US3] Let `apps/api/v2` bookings skip the host-organization check explicitly (instead of relying on its Host not resolving): with a loopback Host the resolver returns the default org and would refuse other organizations' event types. Pass a flag from `packages/platform/libraries` into `RegularBookingService`. Add tests
 - [ ] T120 [P] [US2] Add an instance-admin teams list (none exists today) with the `organization: { id, name }` column and `organizationId` filter required by US2-5 / contracts/trpc-organizations.md, e.g. `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/teams/page.tsx` + an admin `teams.listPaginated` procedure (split out of T032)
+- [ ] T130 [US2] Keep the org `Profile.username` in sync when an org member changes their username in `packages/trpc/server/routers/viewer/me/updateProfile.handler.ts` (data-model.md: `users.username` equals `Profile.username`; both are written on change). Today only `users.username` is updated. Add tests
+- [ ] T131 [US2] In `TeamMembersService.acceptPendingInvitesOnSignup` (`packages/features/membership/services/TeamMembersService.ts`), skip pending invites to teams outside the organization the new user just joined when the flag is on. Add tests
 
 ---
 
