@@ -1,7 +1,5 @@
 "use client";
 
-import { useState } from "react";
-
 import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -10,6 +8,7 @@ import { Button } from "@calcom/ui/components/button";
 import { DialogContent, DialogFooter, DialogHeader } from "@calcom/ui/components/dialog";
 import { Select, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
+import { useState } from "react";
 
 const roleOptions = (t: (key: string) => string) => [
   { value: MembershipRole.MEMBER, label: t("member") },
@@ -34,17 +33,19 @@ export default function InviteMemberDialog({
 
   const inviteMutation = trpc.viewer.teams.inviteMember.useMutation({
     onSuccess: (data) => {
-      showToast(
-        data.status === "already-invited" ? t("invite_already_sent") : t("invite_sent"),
-        "success"
-      );
+      showToast(data.status === "already-invited" ? t("invite_already_sent") : t("invite_sent"), "success");
       setEmail("");
       setRole(MembershipRole.MEMBER);
       onOpenChange(false);
       onInvited();
     },
     onError: (error) => {
-      showToast(error.message, "error");
+      showToast(
+        error.message === "user_belongs_to_another_organization"
+          ? t("user_belongs_to_another_organization")
+          : error.message,
+        "error"
+      );
     },
   });
 

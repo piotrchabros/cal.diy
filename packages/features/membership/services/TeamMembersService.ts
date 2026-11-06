@@ -2,12 +2,15 @@ import { randomBytes } from "node:crypto";
 import { sendTeamInviteEmail } from "@calcom/emails/organization-email-service";
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import type { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
 import { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getTranslation } from "@calcom/i18n/server";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 
@@ -65,7 +68,11 @@ export class TeamMembersService {
     private readonly membershipRepository: MembershipRepository = new MembershipRepository(),
     private readonly teamRepository: TeamRepository = new TeamRepository(),
     private readonly userRepository: UserRepository = new UserRepository(prisma),
-    private readonly sendInviteEmail: SendTeamMemberInviteEmail = defaultSendInviteEmail
+    private readonly sendInviteEmail: SendTeamMemberInviteEmail = defaultSendInviteEmail,
+    private readonly getOrganizationMembershipService: () => Pick<
+      OrganizationMembershipService,
+      "addMember"
+    > = defaultGetOrganizationMembershipService
   ) {}
 
   private async requireTeamMembership(teamId: number, userId: number) {
@@ -151,6 +158,9 @@ export class TeamMembersService {
     if (!normalizedEmail || !normalizedEmail.includes("@")) {
       throw ErrorWithCode.Factory.BadRequest(`Invalid invite email for team ${teamId}`);
     }
+    // A team inside an organization only admits that organization's people, so invitees are
+    // checked against (or attached to) the parent organization before joining the team.
+    const organizationId = isOrganizationsEnabled() ? team.parentId : null;
 
     const invitee = await this.userRepository.findInviteeByEmail({ email: normalizedEmail });
     if (!invitee) {
@@ -160,6 +170,7 @@ export class TeamMembersService {
         email: normalizedEmail,
         teamId,
         role,
+        organizationId,
       });
       await this.sendInviteWithToken({
         teamId,
@@ -170,6 +181,10 @@ export class TeamMembersService {
         isExistingUser: false,
       });
       return { status: "invited-new" as const, email: normalizedEmail };
+    }
+
+    if (organizationId !== null) {
+      await this.assertInviteeCanJoinOrganization(invitee, organizationId);
     }
 
     const existing = await this.membershipRepository.findUniqueByUserIdAndTeamId({
@@ -196,6 +211,29 @@ export class TeamMembersService {
       isExistingUser: invitee.hasPassword,
     });
     return { status: existing ? ("already-invited" as const) : ("invited" as const), email: normalizedEmail };
+  }
+
+  private async assertInviteeCanJoinOrganization(
+    invitee: { id: number; organizationId: number | null; username: string | null },
+    organizationId: number
+  ) {
+    if (invitee.organizationId !== null && invitee.organizationId !== organizationId) {
+      throw ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization");
+    }
+    if (invitee.organizationId !== null) {
+      return;
+    }
+    if (invitee.username) {
+      await this.getOrganizationMembershipService().addMember({
+        organizationId,
+        userId: invitee.id,
+        role: "MEMBER",
+      });
+      return;
+    }
+    // addMember needs a username for the organization profile; that profile is created once
+    // the invitee finishes signup, so for now only the organization link is recorded.
+    await this.userRepository.setOrganizationId({ id: invitee.id, organizationId });
   }
 
   private async sendInviteWithToken({

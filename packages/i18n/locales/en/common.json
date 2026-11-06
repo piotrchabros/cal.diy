@@ -2867,6 +2867,7 @@
   "team_names_empty": "Team names can't be empty",
   "team_names_repeated": "Team names can't be repeated",
   "user_belongs_organization": "User belongs to an organization",
+  "user_belongs_to_another_organization": "This person belongs to another organization",
   "org_no_teams_yet": "This organization has no teams yet",
   "org_no_teams_yet_description": "If you are an administrator, be sure to create teams to be shown here.",
   "set_up": "Set up",
