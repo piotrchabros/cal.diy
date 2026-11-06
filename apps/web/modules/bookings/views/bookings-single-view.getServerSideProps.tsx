@@ -3,6 +3,11 @@ import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import getBookingInfo from "@calcom/features/bookings/lib/getBookingInfo";
 import { BookingRepository } from "@calcom/features/bookings/repositories/BookingRepository";
 import { getDefaultEvent } from "@calcom/features/eventtypes/lib/defaultEvents";
+import {
+  buildPathWithQuery,
+  getOrganizerOrganizationRedirect,
+} from "@calcom/features/organizations/lib/getOrganizerOrganizationRedirect";
+import { toHeaderGetter } from "@calcom/features/organizations/lib/orgRequestHeaders";
 import { getBrandingForEventType } from "@calcom/features/profile/lib/getBranding";
 import { shouldHideBrandingForEvent } from "@calcom/features/profile/lib/hideBranding";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
@@ -103,6 +108,20 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
       notFound: true,
     } as const;
   }
+
+  // WithEmbedSSR re-appends /embed and the embed/layout params itself, so they must not be carried over.
+  const isEmbed = "embed" in context.query;
+  const organizerRedirect = await getOrganizerOrganizationRedirect({
+    headers: toHeaderGetter(context.req.headers),
+    organizerUserId: bookingInfoRaw.user?.id ?? null,
+    teamId: eventTypeRaw.team?.id ?? eventTypeRaw.parent?.teamId ?? null,
+    path: buildPathWithQuery(
+      `/booking/${encodeURIComponent(parsedQuery.data.uid)}`,
+      context.query,
+      isEmbed ? ["uid", "embed", "layout"] : ["uid"]
+    ),
+  });
+  if (organizerRedirect) return { redirect: { destination: organizerRedirect, permanent: true } } as const;
 
   if (eventTypeRaw.seatsPerTimeSlot && !seatReferenceUid && !session) {
     requiresLoginToUpdate = true;

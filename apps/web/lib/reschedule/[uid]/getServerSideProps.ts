@@ -1,15 +1,20 @@
 // page can be a server component
-import type { GetServerSidePropsContext } from "next";
-import { URLSearchParams } from "node:url";
-import { z } from "zod";
 
+import { URLSearchParams } from "node:url";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { buildEventUrlFromBooking } from "@calcom/features/bookings/lib/buildEventUrlFromBooking";
 import { determineReschedulePreventionRedirect } from "@calcom/features/bookings/lib/reschedule/determineReschedulePreventionRedirect";
 import { getDefaultEvent } from "@calcom/features/eventtypes/lib/defaultEvents";
+import {
+  buildPathWithQuery,
+  getOrganizerOrganizationRedirect,
+} from "@calcom/features/organizations/lib/getOrganizerOrganizationRedirect";
+import { toHeaderGetter } from "@calcom/features/organizations/lib/orgRequestHeaders";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { maybeGetBookingUidFromSeat } from "@calcom/lib/server/maybeGetBookingUidFromSeat";
 import prisma, { bookingMinimalSelect } from "@calcom/prisma";
+import type { GetServerSidePropsContext } from "next";
+import { z } from "zod";
 
 const querySchema = z.object({
   uid: z.string(),
@@ -99,6 +104,21 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
       notFound: true,
     } as const;
   }
+
+  // WithEmbedSSR re-appends /embed and the embed/layout params itself, so they must not be carried over.
+  const isEmbed = "embed" in context.query;
+  const organizerRedirect = await getOrganizerOrganizationRedirect({
+    headers: toHeaderGetter(context.req.headers),
+    organizerUserId: booking.userId,
+    teamId: booking.eventType?.team?.id ?? null,
+    path: buildPathWithQuery(
+      `/reschedule/${encodeURIComponent(bookingUid)}`,
+      context.query,
+      isEmbed ? ["uid", "embed", "layout"] : ["uid"]
+    ),
+  });
+  if (organizerRedirect) return { redirect: { destination: organizerRedirect, permanent: true } };
+
   const eventType = booking.eventType ? booking.eventType : getDefaultEvent(dynamicEventSlugRef);
 
   const userRepo = new UserRepository(prisma);
