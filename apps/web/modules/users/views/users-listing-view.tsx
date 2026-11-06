@@ -3,10 +3,10 @@
 import NoSSR from "@calcom/lib/components/NoSSR";
 import { UsersTable } from "../components/UsersTable";
 
-export default function UsersListingView() {
+export default function UsersListingView({ organizationsEnabled }: { organizationsEnabled: boolean }) {
   return (
     <NoSSR>
-      <UsersTable />
+      <UsersTable organizationsEnabled={organizationsEnabled} />
     </NoSSR>
   );
 }

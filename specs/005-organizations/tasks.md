@@ -166,7 +166,7 @@ description: "Task list for Organizations (spec 005)"
   - Create new invitees in the team's org through `OrganizationMembershipService.addMember` (replacing `organizationId: null` in `createInvitedWithPendingTeamMembership`, ~line 159).
 
   Update the tests
-- [ ] T032 [P] [US2] In `apps/web/app/(use-page-wrapper)/(main-nav)/teams/page.tsx` (~line 21), exclude memberships whose team has `isOrganization: true`, and make the admin users and teams lists show the organization column and filter (contracts: "organization: { id, name } column and an organizationId filter"). Files: `packages/trpc/server/routers/viewer/admin/listPaginated.handler.ts`, `apps/web/modules/users/components/UsersTable.tsx`
+- [X] T032 [P] [US2] In `apps/web/app/(use-page-wrapper)/(main-nav)/teams/page.tsx` (~line 21), exclude memberships whose team has `isOrganization: true`, and make the admin users and teams lists show the organization column and filter (contracts: "organization: { id, name } column and an organizationId filter"). Files: `packages/trpc/server/routers/viewer/admin/listPaginated.handler.ts`, `apps/web/modules/users/components/UsersTable.tsx`
 
 **PR 20**
 
@@ -363,6 +363,7 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T074 Create OAuth (Google, Azure AD) sign-ups in the request organization when the flag is on. Today they are created without an organization, so the `signIn` domain policy refuses them. Add tests
 - [ ] T075 In `getServerSession` / `ensureSession`, check on each request that the database `user.organizationId` matches the request organization. This defends against a session token copied to another domain. Add tests
 - [ ] T076 Owner checklist (`contracts/infra-owner-checklist.md`): set `AUTH_TRUST_HOST` only together with `ORGANIZATIONS_ENABLED`; Caddy must overwrite `X-Forwarded-*` headers; the Node ports must not be reachable from outside
+- [ ] T120 [P] [US2] Add an instance-admin teams list (none exists today) with the `organization: { id, name }` column and `organizationId` filter required by US2-5 / contracts/trpc-organizations.md, e.g. `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/teams/page.tsx` + an admin `teams.listPaginated` procedure (split out of T032)
 
 ---
 
