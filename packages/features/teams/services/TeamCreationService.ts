@@ -33,6 +33,7 @@ export interface CreateTeamInput {
   slug: string;
   bio?: string;
   logoUrl?: string | null;
+  organizationId?: number | null;
 }
 
 function isSupportedLogoUrl(value: string): boolean {
@@ -44,14 +45,14 @@ export class TeamCreationService {
     return slugify(rawSlug);
   }
 
-  static async isSlugAvailable(slug: string): Promise<boolean> {
+  static async isSlugAvailable(slug: string, organizationId?: number | null): Promise<boolean> {
     const normalized = TeamCreationService.normalizeSlug(slug);
     if (!normalized) {
       return false;
     }
     const existing = await prisma.team.findFirst({
       select: { id: true },
-      where: { slug: normalized },
+      where: organizationId != null ? { slug: normalized, parentId: organizationId } : { slug: normalized },
     });
     return !existing;
   }
@@ -97,7 +98,7 @@ export class TeamCreationService {
       );
     }
 
-    if (!(await TeamCreationService.isSlugAvailable(slug))) {
+    if (!(await TeamCreationService.isSlugAvailable(slug, input.organizationId))) {
       throw ErrorWithCode.Factory.BadRequest(`Unable to create team: team URL "${slug}" is already taken`);
     }
 
@@ -108,6 +109,7 @@ export class TeamCreationService {
         slug,
         bio,
         logoUrl,
+        ...(input.organizationId != null ? { parentId: input.organizationId } : {}),
         members: {
           create: {
             userId,

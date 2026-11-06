@@ -1,4 +1,5 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
+import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { describe, expect, it } from "vitest";
@@ -30,6 +31,33 @@ describe("TeamCreationService", () => {
 
     it("returns false for an empty slug", async () => {
       await expect(TeamCreationService.isSlugAvailable("")).resolves.toBe(false);
+    });
+
+    it("scopes availability to the given organization", async () => {
+      const org = await prismock.team.create({
+        data: { name: "Org", slug: "org", isOrganization: true },
+      });
+      const otherOrg = await prismock.team.create({
+        data: { name: "Other Org", slug: "other-org", isOrganization: true },
+      });
+      await prismock.team.create({
+        data: { name: "Sales", slug: "sales", parentId: org.id },
+      });
+
+      await expect(TeamCreationService.isSlugAvailable("sales", org.id)).resolves.toBe(false);
+      await expect(TeamCreationService.isSlugAvailable("sales", otherOrg.id)).resolves.toBe(true);
+    });
+
+    it("checks slugs globally when no organization is given", async () => {
+      const org = await prismock.team.create({
+        data: { name: "Org", slug: "org", isOrganization: true },
+      });
+      await prismock.team.create({
+        data: { name: "Sales", slug: "sales", parentId: org.id },
+      });
+
+      await expect(TeamCreationService.isSlugAvailable("sales")).resolves.toBe(false);
+      await expect(TeamCreationService.isSlugAvailable("sales", null)).resolves.toBe(false);
     });
   });
 
@@ -91,6 +119,93 @@ describe("TeamCreationService", () => {
       await expect(
         TeamCreationService.createTeam({ userId: user.id, name: "Bad", slug: "---" })
       ).rejects.toBeInstanceOf(ErrorWithCode);
+    });
+
+    it("creates the team inside the given organization", async () => {
+      const user = await prismock.user.create({
+        data: { email: "org-founder@example.com", username: "org-founder" },
+      });
+      const org = await prismock.team.create({
+        data: { name: "Org", slug: "org", isOrganization: true },
+      });
+
+      const team = await TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Sales",
+        slug: "sales",
+        organizationId: org.id,
+      });
+
+      const stored = await prismock.team.findUnique({ where: { id: team.id } });
+      expect(stored?.parentId).toBe(org.id);
+    });
+
+    it("allows the same slug in a different organization", async () => {
+      const user = await prismock.user.create({
+        data: { email: "multi-org@example.com", username: "multi-org" },
+      });
+      const org = await prismock.team.create({
+        data: { name: "Org", slug: "org", isOrganization: true },
+      });
+      const otherOrg = await prismock.team.create({
+        data: { name: "Other Org", slug: "other-org", isOrganization: true },
+      });
+      await TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Sales",
+        slug: "sales",
+        organizationId: org.id,
+      });
+
+      const team = await TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Sales",
+        slug: "sales",
+        organizationId: otherOrg.id,
+      });
+
+      const stored = await prismock.team.findUnique({ where: { id: team.id } });
+      expect(stored?.parentId).toBe(otherOrg.id);
+    });
+
+    it("throws a bad request when the slug is taken in the same organization", async () => {
+      const user = await prismock.user.create({
+        data: { email: "same-org@example.com", username: "same-org" },
+      });
+      const org = await prismock.team.create({
+        data: { name: "Org", slug: "org", isOrganization: true },
+      });
+      await TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Sales",
+        slug: "sales",
+        organizationId: org.id,
+      });
+
+      const result = TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Sales Again",
+        slug: "sales",
+        organizationId: org.id,
+      });
+
+      await expect(result).rejects.toBeInstanceOf(ErrorWithCode);
+      await expect(result).rejects.toMatchObject({ code: ErrorCode.BadRequest });
+    });
+
+    it("creates a team without a parent when no organization is given", async () => {
+      const user = await prismock.user.create({
+        data: { email: "no-org@example.com", username: "no-org" },
+      });
+
+      const team = await TeamCreationService.createTeam({
+        userId: user.id,
+        name: "Solo",
+        slug: "solo",
+      });
+
+      const stored = await prismock.team.findUnique({ where: { id: team.id } });
+      expect(stored?.parentId).toBeNull();
     });
   });
 });
