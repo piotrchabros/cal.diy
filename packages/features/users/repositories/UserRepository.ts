@@ -1666,10 +1666,12 @@ export class UserRepository {
     searchTerm,
     cursor,
     limit,
+    organizationId,
   }: {
     searchTerm?: string | null;
     cursor: number | null | undefined;
     limit?: number | null;
+    organizationId?: number | null;
   }) {
     const bothLockedAndUnlockedWhere: Prisma.UserWhereInput = {
       OR: [{ locked: false }, { locked: true }],
@@ -1697,6 +1699,9 @@ export class UserRepository {
         }
       : // To bypass the excludeLockedUsersExtension
         bothLockedAndUnlockedWhere;
+    const where: Prisma.UserWhereInput = organizationId
+      ? { AND: [searchFilters, { organizationId }] }
+      : searchFilters;
 
     const hasLimit = limit !== undefined && limit !== null;
     const take = hasLimit ? limit + 1 : undefined; // +1 lets us detect "has more" for the cursor
@@ -1705,7 +1710,7 @@ export class UserRepository {
       cursor: cursor ? { id: cursor } : undefined,
       skip: cursor ? 1 : 0,
       ...(take !== undefined ? { take } : {}),
-      where: searchFilters,
+      where,
       orderBy: {
         id: "asc",
       },
@@ -1722,6 +1727,12 @@ export class UserRepository {
             username: true,
           },
         },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -1730,7 +1741,7 @@ export class UserRepository {
     }
 
     const total = await this.prismaClient.user.count({
-      where: searchFilters,
+      where,
     });
     const hasMore = users.length > limit;
     const items = hasMore ? users.slice(0, limit) : users;

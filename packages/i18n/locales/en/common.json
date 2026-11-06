@@ -1196,6 +1196,7 @@
   "upgrade_feature_remove_branding": "Remove branding",
   "team": "Team",
   "organization": "Organization",
+  "all_organizations": "All organizations",
   "org": "Org",
   "team_billing": "Team Billing",
   "team_billing_description": "Manage billing for your team",

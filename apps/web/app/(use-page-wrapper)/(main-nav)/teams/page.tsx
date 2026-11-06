@@ -19,7 +19,8 @@ const Page = async (): Promise<ReactElement> => {
   }
 
   const memberships = await prisma.membership.findMany({
-    where: { userId: session.user.id, accepted: true },
+    // Org admins hold a membership on the organization's own team row, which is not a team they manage here
+    where: { userId: session.user.id, accepted: true, team: { isOrganization: false } },
     select: {
       role: true,
       team: {

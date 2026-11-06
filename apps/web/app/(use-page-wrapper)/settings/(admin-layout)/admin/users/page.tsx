@@ -1,4 +1,5 @@
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { Button } from "@calcom/ui/components/button";
 import { _generateMetadata, getTranslate } from "app/_utils";
 import UsersListingView from "~/users/views/users-listing-view";
@@ -14,6 +15,7 @@ export const generateMetadata = async () =>
 
 const Page = async () => {
   const t = await getTranslate();
+  const organizationsEnabled = isOrganizationsEnabled();
   return (
     <SettingsHeader
       title={t("users")}
@@ -23,7 +25,7 @@ const Page = async () => {
           <Button href="/settings/admin/users/add">{t("add_new_user")}</Button>
         </div>
       }>
-      <UsersListingView />
+      <UsersListingView organizationsEnabled={organizationsEnabled} />
     </SettingsHeader>
   );
 };

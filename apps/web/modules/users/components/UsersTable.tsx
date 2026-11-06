@@ -8,7 +8,7 @@ import { Avatar } from "@calcom/ui/components/avatar";
 import { Badge } from "@calcom/ui/components/badge";
 import { Button } from "@calcom/ui/components/button";
 import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
-import { TextField } from "@calcom/ui/components/form";
+import { SelectField, TextField } from "@calcom/ui/components/form";
 import { DropdownActions, Table } from "@calcom/ui/components/table";
 import { showToast } from "@calcom/ui/components/toast";
 import { keepPreviousData } from "@tanstack/react-query";
@@ -19,20 +19,41 @@ const { Cell, ColumnTitle, Header, Row } = Table;
 
 const FETCH_LIMIT = 25;
 
-export function UsersTable() {
+type OrganizationOption = { value: number | null; label: string };
+
+export function UsersTable({ organizationsEnabled }: { organizationsEnabled: boolean }) {
   const { t } = useLocale();
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const utils = trpc.useUtils();
   const [searchTerm, setSearchTerm] = useState<string>("");
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
+  const [organizationId, setOrganizationId] = useState<number | null>(null);
   const router = useRouter();
+
+  const listInput = {
+    limit: FETCH_LIMIT,
+    searchTerm: debouncedSearchTerm,
+    organizationId: organizationsEnabled ? organizationId : null,
+  };
+
+  const { data: organizationsData } = trpc.viewer.admin.organizations.list.useQuery(
+    { limit: 100 },
+    { enabled: organizationsEnabled }
+  );
+  const organizationOptions: OrganizationOption[] = [
+    { value: null, label: t("all_organizations") },
+    ...(organizationsData?.items ?? []).map((organization) => ({
+      value: organization.id,
+      label: organization.name,
+    })),
+  ];
 
   const [userToDelete, setUserToDelete] = useState<number | null>(null);
 
   const deleteMutation = trpc.viewer.users.delete.useMutation({
     onSuccess: async () => {
       showToast(t("user_has_been_deleted"), "success");
-      utils.viewer.admin.listPaginated.setInfiniteData({ limit: FETCH_LIMIT }, (cachedData) => {
+      utils.viewer.admin.listPaginated.setInfiniteData(listInput, (cachedData) => {
         if (!cachedData) {
           return {
             pages: [],
@@ -57,17 +78,11 @@ export function UsersTable() {
     },
   });
 
-  const { data, fetchNextPage, isFetching } = trpc.viewer.admin.listPaginated.useInfiniteQuery(
-    {
-      limit: FETCH_LIMIT,
-      searchTerm: debouncedSearchTerm,
-    },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      placeholderData: keepPreviousData,
-      refetchOnWindowFocus: false,
-    }
-  );
+  const { data, fetchNextPage, isFetching } = trpc.viewer.admin.listPaginated.useInfiniteQuery(listInput, {
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
 
   const sendPasswordResetEmail = trpc.viewer.admin.sendPasswordReset.useMutation({
     onSuccess: () => {
@@ -115,6 +130,16 @@ export function UsersTable() {
         label={t("search")}
         onChange={(e) => setSearchTerm(e.target.value)}
       />
+      {organizationsEnabled && (
+        <SelectField<OrganizationOption>
+          label={t("organization")}
+          options={organizationOptions}
+          value={
+            organizationOptions.find((option) => option.value === organizationId) ?? organizationOptions[0]
+          }
+          onChange={(option) => setOrganizationId(option?.value ?? null)}
+        />
+      )}
       <p className="text-subtle text-sm">
         {isFetching && totalFetched === 0
           ? t("loading")
@@ -134,6 +159,7 @@ export function UsersTable() {
             <ColumnTitle widthClassNames="w-auto">{t("user")}</ColumnTitle>
             <ColumnTitle>{t("timezone")}</ColumnTitle>
             <ColumnTitle>{t("role")}</ColumnTitle>
+            {organizationsEnabled && <ColumnTitle>{t("organization")}</ColumnTitle>}
             <ColumnTitle widthClassNames="w-auto">
               <span className="sr-only">{t("edit")}</span>
             </ColumnTitle>
@@ -165,6 +191,7 @@ export function UsersTable() {
                     {user.role.toLowerCase()}
                   </Badge>
                 </Cell>
+                {organizationsEnabled && <Cell>{user.organization?.name ?? t("none")}</Cell>}
                 <Cell widthClassNames="w-auto">
                   <div className="flex w-full justify-end">
                     <DropdownActions

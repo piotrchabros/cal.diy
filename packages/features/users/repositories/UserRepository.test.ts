@@ -267,6 +267,104 @@ describe("listUsers", () => {
     expect(total).toEqual(0);
   });
 });
+describe("listUsers organization filter", () => {
+  async function seedUsersAcrossOrganizations() {
+    const orgA = await prismock.team.create({
+      data: { name: "Org A", slug: "org-a-list", isOrganization: true },
+    });
+    const orgB = await prismock.team.create({
+      data: { name: "Org B", slug: "org-b-list", isOrganization: true },
+    });
+    const repo = new UserRepository(prismock);
+    await repo.create({
+      username: "anna",
+      email: "anna@a.example.com",
+      organizationId: orgA.id,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+    });
+    await repo.create({
+      username: "adam",
+      email: "adam@a.example.com",
+      organizationId: orgA.id,
+      creationSource: CreationSource.WEBAPP,
+      locked: true,
+    });
+    await repo.create({
+      username: "bella",
+      email: "bella@b.example.com",
+      organizationId: orgB.id,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+    });
+    await repo.create({
+      username: "nora",
+      email: "nora@example.com",
+      organizationId: null,
+      creationSource: CreationSource.WEBAPP,
+      locked: false,
+    });
+    return { orgA, orgB };
+  }
+
+  test("Should return only the given organization's users, including locked ones", async () => {
+    const { orgA } = await seedUsersAcrossOrganizations();
+
+    const { users, total } = await new UserRepository(prismock).listUsers({
+      searchTerm: null,
+      cursor: null,
+      limit: 10,
+      organizationId: orgA.id,
+    });
+
+    expect(users.map((u) => u.username).sort()).toEqual(["adam", "anna"]);
+    expect(total).toEqual(2);
+  });
+
+  test("Should combine the organization filter with the search term", async () => {
+    const { orgA } = await seedUsersAcrossOrganizations();
+
+    const { users, total } = await new UserRepository(prismock).listUsers({
+      searchTerm: "ANNA",
+      cursor: null,
+      limit: 10,
+      organizationId: orgA.id,
+    });
+
+    expect(users.map((u) => u.username)).toEqual(["anna"]);
+    expect(total).toEqual(1);
+
+    const outside = await new UserRepository(prismock).listUsers({
+      searchTerm: "bella",
+      cursor: null,
+      limit: 10,
+      organizationId: orgA.id,
+    });
+
+    expect(outside.users).toEqual([]);
+    expect(outside.total).toEqual(0);
+  });
+
+  test("Should return every user with their organization when no filter is given", async () => {
+    const { orgA, orgB } = await seedUsersAcrossOrganizations();
+
+    const { users, total } = await new UserRepository(prismock).listUsers({
+      searchTerm: null,
+      cursor: null,
+      limit: 10,
+      organizationId: null,
+    });
+
+    expect(total).toEqual(4);
+    const organizationByUsername = Object.fromEntries(users.map((u) => [u.username, u.organization]));
+    expect(organizationByUsername).toEqual({
+      anna: { id: orgA.id, name: "Org A" },
+      adam: { id: orgA.id, name: "Org A" },
+      bella: { id: orgB.id, name: "Org B" },
+      nora: null,
+    });
+  });
+});
 describe("organization membership of invited users", () => {
   test("createInvitedWithPendingTeamMembership stores organizationId without creating a profile", async () => {
     const team = await prismock.team.create({ data: { name: "Org Team", slug: "org-team-invite" } });
