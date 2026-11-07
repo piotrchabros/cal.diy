@@ -1,6 +1,7 @@
 import { ALLOWED_HOSTNAMES, WEBAPP_URL, WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import type { SafeRedirectOptions } from "@calcom/lib/getSafeRedirectUrl";
 import logger from "@calcom/lib/logger";
+import { buildOrganizationOrigin } from "@calcom/lib/organizations/buildOrganizationOrigin";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { isLoopbackHost, normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 
@@ -42,7 +43,7 @@ export function getOAuthAllowedOrigins(
   allowedHosts: readonly string[] = ALLOWED_HOSTNAMES
 ): string[] {
   const host = getTrustedOrganizationHost(req, allowedHosts);
-  return host ? [`https://${host}`] : [];
+  return host ? [buildOrganizationOrigin(host, WEBAPP_URL)] : [];
 }
 
 export function getOAuthAppOrigin(
@@ -76,5 +77,5 @@ export function getOAuthRedirectUri(
 
   // The callback must stay on the domain the user signed in on, because decodeOAuthState
   // checks the state nonce against that domain's session cookie.
-  return `https://${host}/api/integrations/${appSlug}/callback`;
+  return `${buildOrganizationOrigin(host, WEBAPP_URL)}/api/integrations/${appSlug}/callback`;
 }
