@@ -18,6 +18,15 @@ const callbackQuerySchema = z.object({
   code: z.string().min(1),
 });
 
+// getSafeRedirectUrl throws on a relative returnTo, and this runs inside the catch block, so it must not throw.
+function getErrorRedirectUrl(req: NextApiRequest, returnTo?: string) {
+  try {
+    return getSafeRedirectUrl(returnTo, getOAuthSafeRedirectOptions(req)) ?? "/apps/installed";
+  } catch {
+    return "/apps/installed";
+  }
+}
+
 async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = callbackQuerySchema.parse(req.query);
   const state = decodeOAuthState(req);
@@ -121,7 +130,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
     );
   } catch (error) {
     log.error("handle callback error", error);
-    res.redirect(state?.returnTo ?? "/apps/installed");
+    res.redirect(getErrorRedirectUrl(req, state?.returnTo));
   }
 }
 
