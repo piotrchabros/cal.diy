@@ -37,7 +37,12 @@ import slugify from "@calcom/lib/slugify";
 import type { TrackingData } from "@calcom/lib/tracking";
 import prisma from "@calcom/prisma";
 import type { Membership, Team } from "@calcom/prisma/client";
-import { CreationSource, IdentityProvider, MembershipRole, UserPermissionRole } from "@calcom/prisma/enums";
+import {
+  CreationSource,
+  IdentityProvider,
+  type MembershipRole,
+  UserPermissionRole,
+} from "@calcom/prisma/enums";
 import { teamMetadataSchema, userMetadata } from "@calcom/prisma/zod-utils";
 import type { UserProfile } from "@calcom/types/UserProfile";
 import { calendar_v3 } from "@googleapis/calendar";
@@ -1239,38 +1244,32 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
               identityProvider: idP,
               identityProviderId: account.providerAccountId,
               organization: { connect: { id: organizationId } },
-              ...(orgId && {
-                verified: true,
-                teams: {
-                  create: { role: MembershipRole.MEMBER, accepted: true, team: { connect: { id: orgId } } },
-                },
-              }),
+              ...(orgId && { verified: true }),
               creationSource: CreationSource.WEBAPP,
             },
           });
-          // With the flag off the user still joins the default organization, like selfHostedHandler
-          // sign-ups do; autolinked users already got their membership through `teams.create` above.
-          if (!orgId) {
-            try {
-              const { getOrganizationMembershipService } = await import(
-                "@calcom/features/organizations/di/OrganizationMembershipService.container"
-              );
-              await getOrganizationMembershipService().addMember({
-                organizationId,
-                userId: newUser.id,
-                role: "MEMBER",
-              });
-            } catch (err) {
-              log.error("Error adding the new OAuth user to its organization", {
-                userId: newUser.id,
-                organizationId,
-                error: safeStringify(err),
-              });
-              // Without a Profile and Membership the user would still pass the organization domain
-              // check on the next sign-in, so drop it; any partial Profile or Membership cascades.
-              await prisma.user.delete({ where: { id: newUser.id }, select: { id: true } });
-              return `/auth/error?error=user-creation-error`;
-            }
+          // Every new OAuth user, autolinked or not, joins through addMember like selfHostedHandler
+          // sign-ups do, so the org-scoped username check, the Profile and the move-redirect disable
+          // apply; an inline `teams.create` would skip all three.
+          try {
+            const { getOrganizationMembershipService } = await import(
+              "@calcom/features/organizations/di/OrganizationMembershipService.container"
+            );
+            await getOrganizationMembershipService().addMember({
+              organizationId,
+              userId: newUser.id,
+              role: "MEMBER",
+            });
+          } catch (err) {
+            log.error("Error adding the new OAuth user to its organization", {
+              userId: newUser.id,
+              organizationId,
+              error: safeStringify(err),
+            });
+            // Without a Profile and Membership the user would still pass the organization domain
+            // check on the next sign-in, so drop it; any partial Profile or Membership cascades.
+            await prisma.user.delete({ where: { id: newUser.id }, select: { id: true } });
+            return `/auth/error?error=user-creation-error`;
           }
           const linkAccountNewUserData = AdapterAccountPresenter.fromCalAccount(
             account,
