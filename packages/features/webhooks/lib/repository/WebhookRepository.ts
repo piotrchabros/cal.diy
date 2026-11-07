@@ -517,8 +517,10 @@ export class WebhookRepository implements IWebhookRepository {
       { appId: appId ?? null },
     ];
 
+    let managedParentId: number | null = null;
+
     if (eventTypeId) {
-      const managedParentId = await this.eventTypeRepository.findParentEventTypeId(eventTypeId);
+      managedParentId = await this.eventTypeRepository.findParentEventTypeId(eventTypeId);
 
       if (managedParentId) {
         // Include webhooks from both the event type and its parent (if active)
@@ -583,6 +585,14 @@ export class WebhookRepository implements IWebhookRepository {
       },
     });
 
-    return WebhookOutputMapper.toWebhookList(webhooks);
+    // Inherited parent webhooks are read-only in EventWebhooksTab and the child's owner isn't necessarily
+    // a team admin, so the parent's secret must not leak to them.
+    const visibleWebhooks = managedParentId
+      ? webhooks.map((webhook) =>
+          webhook.eventTypeId === managedParentId ? { ...webhook, secret: null } : webhook
+        )
+      : webhooks;
+
+    return WebhookOutputMapper.toWebhookList(visibleWebhooks);
   }
 }
