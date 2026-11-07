@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
+  moveUser: vi.fn(),
+  previewMoveTeam: vi.fn(),
+  moveTeam: vi.fn(),
+  listTeams: vi.fn(),
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -32,6 +36,15 @@ vi.mock("@calcom/features/organizations/di/OrganizationService.container", () =>
     create: mocks.create,
     update: mocks.update,
     delete: mocks.delete,
+  }),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationMoveService.container", () => ({
+  getOrganizationMoveService: () => ({
+    moveUser: mocks.moveUser,
+    previewMoveTeam: mocks.previewMoveTeam,
+    moveTeam: mocks.moveTeam,
+    listTeams: mocks.listTeams,
   }),
 }));
 
@@ -67,7 +80,19 @@ const sessionFor = (role: "ADMIN" | "USER") => ({
   session: { upId: "usr-7", expires: "2099-01-01T00:00:00.000Z", user: { id: 7 } },
 });
 
-const serviceMocks = () => [mocks.list, mocks.get, mocks.create, mocks.update, mocks.delete];
+const serviceMocks = () => [
+  mocks.list,
+  mocks.get,
+  mocks.create,
+  mocks.update,
+  mocks.delete,
+  mocks.moveUser,
+  mocks.previewMoveTeam,
+  mocks.moveTeam,
+  mocks.listTeams,
+];
+
+const validMoveTeamInput = { teamId: 11, toOrganizationId: 5, outsideMembers: "move" as const };
 
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.list({}),
@@ -75,6 +100,10 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.create(validCreateInput),
   caller.update({ id: 5, name: "Acme 2" }),
   caller.delete({ id: 5 }),
+  caller.moveUser({ userId: 9, toOrganizationId: 5 }),
+  caller.previewMoveTeam({ teamId: 11, toOrganizationId: 5 }),
+  caller.moveTeam(validMoveTeamInput),
+  caller.listTeams({ organizationId: 5 }),
 ];
 
 describe("admin organizations router", () => {
@@ -87,6 +116,10 @@ describe("admin organizations router", () => {
     mocks.create.mockResolvedValue(organization);
     mocks.update.mockResolvedValue(organization);
     mocks.delete.mockResolvedValue({ id: 5 });
+    mocks.moveUser.mockResolvedValue({ userId: 9, organizationId: 5, username: "owner" });
+    mocks.previewMoveTeam.mockResolvedValue({ membersOutsideTarget: [], slugTaken: false });
+    mocks.moveTeam.mockResolvedValue({ teamId: 11, organizationId: 5, slug: "sales" });
+    mocks.listTeams.mockResolvedValue({ items: [], nextCursor: undefined });
   });
 
   afterEach(() => {
@@ -149,6 +182,81 @@ describe("admin organizations router", () => {
         createCaller(ctx).create(input as Parameters<ReturnType<typeof createCaller>["create"]>[0])
       ).rejects.toMatchObject({ code: "BAD_REQUEST" });
       expect(mocks.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("move input validation", () => {
+    it.each([
+      ["a negative user id", () => createCaller(ctx).moveUser({ userId: -1, toOrganizationId: 5 })],
+      [
+        "an empty newUsername",
+        () => createCaller(ctx).moveUser({ userId: 9, toOrganizationId: 5, newUsername: "  " }),
+      ],
+      ["a zero team id", () => createCaller(ctx).previewMoveTeam({ teamId: 0, toOrganizationId: 5 })],
+      [
+        "an unknown outsideMembers mode",
+        () =>
+          createCaller(ctx).moveTeam({
+            ...validMoveTeamInput,
+            outsideMembers: "keep" as unknown as "move",
+          }),
+      ],
+      [
+        "a newSlug over 50 characters",
+        () => createCaller(ctx).moveTeam({ ...validMoveTeamInput, newSlug: "a".repeat(51) }),
+      ],
+      ["a listTeams limit of 101", () => createCaller(ctx).listTeams({ organizationId: 5, limit: 101 })],
+    ])("rejects %s", async (_label, call) => {
+      await expect(call()).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      for (const fn of serviceMocks()) expect(fn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("move service wiring", () => {
+    it("moves a user with the input and the acting admin id", async () => {
+      const input = { userId: 9, toOrganizationId: 5, newUsername: "owner2" };
+
+      await createCaller(ctx).moveUser(input);
+
+      expect(mocks.moveUser).toHaveBeenCalledWith(input, 7);
+    });
+
+    it("previews a team move with the input", async () => {
+      await createCaller(ctx).previewMoveTeam({ teamId: 11, toOrganizationId: 5 });
+
+      expect(mocks.previewMoveTeam).toHaveBeenCalledWith({ teamId: 11, toOrganizationId: 5 });
+    });
+
+    it("moves a team with the input and the acting admin id", async () => {
+      const input = { ...validMoveTeamInput, newSlug: "sales-2" };
+
+      await expect(createCaller(ctx).moveTeam(input)).resolves.toEqual({
+        teamId: 11,
+        organizationId: 5,
+        slug: "sales",
+      });
+      expect(mocks.moveTeam).toHaveBeenCalledWith(input, 7);
+    });
+
+    it("lists teams with the acting admin id", async () => {
+      await createCaller(ctx).listTeams({ organizationId: 5, search: "sal", limit: 20 });
+
+      expect(mocks.listTeams).toHaveBeenCalledWith({
+        organizationId: 5,
+        search: "sal",
+        limit: 20,
+        actorUserId: 7,
+      });
+    });
+
+    it("maps a move Conflict to CONFLICT with its message", async () => {
+      const message = "username_taken_in_target_organization";
+      mocks.moveUser.mockRejectedValue(ErrorWithCode.Factory.Conflict(message));
+
+      await expect(createCaller(ctx).moveUser({ userId: 9, toOrganizationId: 5 })).rejects.toMatchObject({
+        code: "CONFLICT",
+        message,
+      });
     });
   });
 

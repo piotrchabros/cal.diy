@@ -42,6 +42,7 @@ describe("OrganizationService", () => {
   let repository: InMemoryOrganizationRepository;
   let membershipRepo: InMemoryOrganizationMembershipRepository;
   let service: OrganizationService;
+  let moveUser: ReturnType<typeof vi.fn>;
 
   function buildService(
     config: OrganizationsConfig = { defaultDomain: DEFAULT_DOMAIN }
@@ -61,6 +62,7 @@ describe("OrganizationService", () => {
         teamInviteService: { sendInvite: vi.fn() },
         tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
       }),
+      organizationMoveService: { moveUser },
     });
   }
 
@@ -74,6 +76,7 @@ describe("OrganizationService", () => {
     repository = new InMemoryOrganizationRepository();
     membershipRepo = new InMemoryOrganizationMembershipRepository();
     membershipRepo.seedUser({ id: OWNER_ID, username: "owner" });
+    moveUser = vi.fn().mockResolvedValue({ userId: OWNER_ID, organizationId: 0, username: "owner" });
     service = buildService();
   });
 
@@ -133,23 +136,48 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.create({ ...input, owner: OWNER }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
-          "The owner belongs to another organization; confirm to move them"
+          "owner_in_another_organization"
         );
         expect(repository.all()).toHaveLength(1);
-        expect(ownerUser()?.organizationId).toBe(other.id);
+        expect(moveUser).not.toHaveBeenCalled();
       });
 
-      it("refuses to move a confirmed owner from another organization for now", async () => {
-        const other = repository.seed({ name: "Globex", slug: "globex", domain: "globex.com" });
-        membershipRepo.seedUser({ id: OWNER_ID, username: "owner", organizationId: other.id });
+      describe("confirmed owner from another organization", () => {
+        let addMember: ReturnType<typeof vi.spyOn>;
 
-        await expectRejection(
-          service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID),
-          ErrorCode.PreconditionFailed,
-          "Moving an owner from another organization is not available yet"
-        );
-        expect(repository.all()).toHaveLength(1);
-        expect(ownerUser()?.organizationId).toBe(other.id);
+        beforeEach(() => {
+          const other = repository.seed({ name: "Globex", slug: "globex", domain: "globex.com" });
+          membershipRepo.seedUser({ id: OWNER_ID, username: "owner", organizationId: other.id });
+          addMember = vi.spyOn(membershipRepo, "addMember");
+        });
+
+        it("moves the owner in as OWNER instead of adding them", async () => {
+          const created = await service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID);
+
+          expect(moveUser).toHaveBeenCalledWith(
+            { userId: OWNER_ID, toOrganizationId: created.id, role: "OWNER" },
+            ACTOR_ID
+          );
+          expect(addMember).not.toHaveBeenCalled();
+        });
+
+        it("deletes the organization and rethrows when the move fails", async () => {
+          const failure = ErrorWithCode.Factory.Conflict("username_taken_in_target_organization");
+          moveUser.mockRejectedValue(failure);
+
+          await expect(
+            service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID)
+          ).rejects.toBe(failure);
+          expect(repository.all()).toHaveLength(1);
+          expect(repository.all()[0].slug).toBe("globex");
+        });
+      });
+
+      it("adds an owner without an organization even when confirmation is sent", async () => {
+        await service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID);
+
+        expect(moveUser).not.toHaveBeenCalled();
+        expect(membershipRepo.memberships).toHaveLength(1);
       });
 
       it("rejects an owner without a username", async () => {
