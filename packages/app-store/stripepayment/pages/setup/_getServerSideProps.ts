@@ -1,19 +1,19 @@
 import process from "node:process";
 import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import prisma from "@calcom/prisma";
 import type { GetServerSidePropsContext } from "next";
 import stringify from "qs-stringify";
 import type Stripe from "stripe";
 import { z } from "zod";
+import type { AppSetupPageDeps } from "../../../_pages/setup/types";
 import { getOAuthAppOrigin, getOAuthRedirectUri } from "../../../_utils/oauth/getOAuthRedirectUri";
 import { getStripeAppKeys } from "../../lib/getStripeAppKeys";
 
-export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
+export const getServerSideProps = async (ctx: GetServerSidePropsContext, deps: AppSetupPageDeps) => {
   const notFound = { notFound: true } as const;
   if (typeof ctx.params?.slug !== "string") return notFound;
 
-  const session = await getServerSession({ req: ctx.req });
+  const session = await deps.getServerSession({ req: ctx.req });
 
   if (!session?.user?.uuid) {
     return {

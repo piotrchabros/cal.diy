@@ -1,5 +1,4 @@
 import { getPremiumMonthlyPlanPriceId } from "@calcom/app-store/stripepayment/lib/utils";
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { usernameCheck } from "@calcom/lib/server/username";
 import prisma from "@calcom/prisma";
@@ -11,7 +10,8 @@ import stripe from "../lib/server";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
-    const session = await getServerSession({ req });
+    // The apps/web integrations catch-all ([...args].ts) already resolves the session onto req, and app-store must not import features.
+    const session = req.session;
     const userId = session?.user?.id;
     let { intentUsername = null } = req.query;
     const { callbackUrl } = req.query;

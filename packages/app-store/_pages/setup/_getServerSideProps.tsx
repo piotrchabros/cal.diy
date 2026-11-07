@@ -1,4 +1,5 @@
 import type { GetServerSidePropsContext } from "next";
+import type { AppSetupPageDeps } from "./types";
 
 export const AppSetupPageMap = {
   alby: import("../../alby/pages/setup/_getServerSideProps"),
@@ -8,7 +9,7 @@ export const AppSetupPageMap = {
   btcpayserver: import("../../btcpayserver/pages/setup/_getServerSideProps"),
 };
 
-export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
+export const getServerSideProps = async (ctx: GetServerSidePropsContext, deps: AppSetupPageDeps) => {
   const { slug } = ctx.params || {};
   if (typeof slug !== "string") return { notFound: true } as const;
 
@@ -18,7 +19,7 @@ export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
 
   if (!page.getServerSideProps) return { props: {} };
 
-  const props = await page.getServerSideProps(ctx);
+  const props = await page.getServerSideProps(ctx, deps);
 
   return props;
 };

@@ -1,11 +1,8 @@
 import type { GetServerSidePropsContext } from "next";
+import type { Session } from "next-auth";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock dependencies before imports
-vi.mock("@calcom/features/auth/lib/getServerSession", () => ({
-  getServerSession: vi.fn(),
-}));
-
 vi.mock("@calcom/prisma", () => ({
   default: {
     user: {
@@ -26,18 +23,28 @@ vi.mock("@calcom/lib/constants", async (importOriginal) => ({
 }));
 
 import process from "node:process";
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import prisma from "@calcom/prisma";
+import type { AppSetupPageDeps } from "../../../../_pages/setup/types";
 import { getStripeAppKeys } from "../../../lib/getStripeAppKeys";
 import { getServerSideProps } from "../_getServerSideProps";
 
-const mockGetServerSession = vi.mocked(getServerSession);
+const mockGetServerSession = vi.fn<AppSetupPageDeps["getServerSession"]>();
+const deps: AppSetupPageDeps = { getServerSession: mockGetServerSession };
 const mockPrisma = prisma as unknown as {
   user: {
     findUnique: ReturnType<typeof vi.fn>;
   };
 };
 const mockGetStripeAppKeys = vi.mocked(getStripeAppKeys);
+
+function buildSession(uuid: string): Session {
+  return {
+    user: { id: 1, uuid },
+    hasValidLicense: true,
+    upId: "test",
+    expires: "2024-12-31",
+  };
+}
 
 function createMockContext(overrides: Partial<GetServerSidePropsContext> = {}): GetServerSidePropsContext {
   return {
@@ -66,7 +73,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should return notFound when slug is not a string", async () => {
       const ctx = createMockContext({ params: {} });
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({ notFound: true });
     });
@@ -74,7 +81,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should return notFound when params is undefined", async () => {
       const ctx = createMockContext({ params: undefined });
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({ notFound: true });
     });
@@ -85,7 +92,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
       const ctx = createMockContext();
       mockGetServerSession.mockResolvedValue(null);
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({
         redirect: {
@@ -93,18 +100,14 @@ describe("Stripe Setup Page getServerSideProps", () => {
           permanent: false,
         },
       });
+      expect(mockGetServerSession).toHaveBeenCalledWith({ req: ctx.req });
     });
 
     it("should redirect to login when session has no user uuid", async () => {
       const ctx = createMockContext();
-      mockGetServerSession.mockResolvedValue({
-        user: {},
-        hasValidLicense: true,
-        upId: "test",
-        expires: "2024-12-31",
-      } as any);
+      mockGetServerSession.mockResolvedValue(buildSession(""));
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({
         redirect: {
@@ -119,15 +122,10 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should return notFound when user does not exist in database", async () => {
       const ctx = createMockContext();
       const testUuid = "550e8400-e29b-41d4-a716-446655440000";
-      mockGetServerSession.mockResolvedValue({
-        user: { uuid: testUuid },
-        hasValidLicense: true,
-        upId: "test",
-        expires: "2024-12-31",
-      } as any);
+      mockGetServerSession.mockResolvedValue(buildSession(testUuid));
       mockPrisma.user.findUnique.mockResolvedValue(null);
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({ notFound: true });
       expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
@@ -139,12 +137,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
 
   describe("OAuth redirect construction", () => {
     beforeEach(() => {
-      mockGetServerSession.mockResolvedValue({
-        user: { uuid: "550e8400-e29b-41d4-a716-446655440000" },
-        hasValidLicense: true,
-        upId: "test",
-        expires: "2024-12-31",
-      } as any);
+      mockGetServerSession.mockResolvedValue(buildSession("550e8400-e29b-41d4-a716-446655440000"));
       mockPrisma.user.findUnique.mockResolvedValue({
         email: "user@example.com",
         name: "Test User",
@@ -154,7 +147,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should redirect to Stripe OAuth with correct parameters", async () => {
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toHaveProperty("redirect");
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
@@ -168,7 +161,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should include user email in stripe_user params", async () => {
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       expect(redirect.destination).toContain(encodeURIComponent("user@example.com"));
@@ -177,7 +170,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should include user first name in stripe_user params", async () => {
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       expect(redirect.destination).toContain("first_name");
@@ -186,7 +179,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should include correct redirect_uri", async () => {
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       expect(redirect.destination).toContain(
@@ -201,7 +194,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
           req: { headers: { host: "acme.example.org" } } as GetServerSidePropsContext["req"],
         });
 
-        const result = await getServerSideProps(ctx);
+        const result = await getServerSideProps(ctx, deps);
 
         const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
         expect(redirect.destination).toContain(
@@ -215,7 +208,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
     it("should include state with default onErrorReturnTo when not provided", async () => {
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       // State should contain fromApp: true and default onErrorReturnTo
@@ -233,7 +226,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
         query: { returnTo: "/event-types/123" },
       });
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       const stateMatch = redirect.destination.match(/state=([^&]+)/);
@@ -247,7 +240,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
         query: { onErrorReturnTo: "/settings/integrations" },
       });
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       const stateMatch = redirect.destination.match(/state=([^&]+)/);
@@ -263,7 +256,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
       });
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toHaveProperty("redirect");
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
@@ -273,12 +266,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
 
   describe("Error handling", () => {
     beforeEach(() => {
-      mockGetServerSession.mockResolvedValue({
-        user: { uuid: "550e8400-e29b-41d4-a716-446655440000" },
-        hasValidLicense: true,
-        upId: "test",
-        expires: "2024-12-31",
-      } as any);
+      mockGetServerSession.mockResolvedValue(buildSession("550e8400-e29b-41d4-a716-446655440000"));
       mockPrisma.user.findUnique.mockResolvedValue({
         email: "user@example.com",
         name: "Test User",
@@ -289,7 +277,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
       mockGetStripeAppKeys.mockRejectedValue(new Error("Failed to get Stripe keys"));
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       expect(result).toEqual({
         redirect: {
@@ -302,12 +290,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
 
   describe("E2E mode", () => {
     beforeEach(() => {
-      mockGetServerSession.mockResolvedValue({
-        user: { uuid: "550e8400-e29b-41d4-a716-446655440000" },
-        hasValidLicense: true,
-        upId: "test",
-        expires: "2024-12-31",
-      } as any);
+      mockGetServerSession.mockResolvedValue(buildSession("550e8400-e29b-41d4-a716-446655440000"));
       mockPrisma.user.findUnique.mockResolvedValue({
         email: "user@example.com",
         name: "Test User",
@@ -320,7 +303,7 @@ describe("Stripe Setup Page getServerSideProps", () => {
 
       const ctx = createMockContext();
 
-      const result = await getServerSideProps(ctx);
+      const result = await getServerSideProps(ctx, deps);
 
       const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
       expect(redirect.destination).toContain("country");
