@@ -1,3 +1,5 @@
+import type { TeamInviteService } from "@calcom/features/membership/services/TeamInviteService";
+import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type {
   OrganizationMemberDto,
   OrganizationMemberListDto,
@@ -12,6 +14,7 @@ import type {
   OrganizationMemberRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
+import type { OrganizationsConfig } from "./OrganizationService";
 
 const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] });
 
@@ -21,6 +24,12 @@ const MAX_LIST_LIMIT = 100;
 export interface IOrganizationMembershipServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
   organizationRepository: IOrganizationRepository;
+  organizationsConfig: OrganizationsConfig;
+  userRepository: Pick<
+    UserRepository,
+    "findInviteeByEmail" | "createInvitedWithPendingTeamMembership" | "setOrganizationId"
+  >;
+  teamInviteService: Pick<TeamInviteService, "sendInvite">;
 }
 
 export class OrganizationMembershipService {
@@ -85,7 +94,156 @@ export class OrganizationMembershipService {
 
     await this.assertNotLastOwner(organizationId, userId, targetRole, role);
 
-    return repository.updateRole({ organizationId, userId, role });
+    const updated = await repository.updateRole({ organizationId, userId, role });
+    log.info("organization.member.role", {
+      action: "organization.member.role",
+      actorUserId,
+      organizationId,
+      userId,
+      role,
+    });
+    return updated;
+  }
+
+  // Removing a member never deletes the user: they fall back to the default organization (FR-011)
+  async removeMember(params: {
+    organizationId: number;
+    actorUserId: number;
+    userId: number;
+  }): Promise<{ userId: number }> {
+    const { organizationId, actorUserId, userId } = params;
+    const repository = this.deps.organizationMembershipRepository;
+    const actorRole = await this.requireManagerRole(organizationId, actorUserId);
+
+    const { defaultDomain } = this.deps.organizationsConfig;
+    const defaultOrganization = defaultDomain
+      ? await this.deps.organizationRepository.findDefault(defaultDomain)
+      : null;
+    if (!defaultOrganization)
+      throw ErrorWithCode.Factory.PreconditionFailed("Default organization not found");
+    if (organizationId === defaultOrganization.id) {
+      throw ErrorWithCode.Factory.PreconditionFailed(
+        "Members cannot be removed from the default organization"
+      );
+    }
+
+    const membership = await repository.findMembership({ organizationId, userId });
+    if (!membership) throw ErrorWithCode.Factory.NotFound("Member not found");
+    if (membership.role === "OWNER" && actorRole !== "OWNER") {
+      throw ErrorWithCode.Factory.Forbidden("Only owners can remove an owner");
+    }
+    // A pending owner invite never counted as an owner, so withdrawing it cannot orphan the org
+    if (membership.accepted) await this.assertNotLastOwner(organizationId, userId, membership.role, null);
+
+    const user = await repository.findUserById(userId);
+    if (!user) throw ErrorWithCode.Factory.NotFound("Member not found");
+    if (
+      user.username !== null &&
+      (await repository.isUsernameTaken({
+        organizationId: defaultOrganization.id,
+        username: user.username,
+        excludeUserId: userId,
+      }))
+    ) {
+      throw ErrorWithCode.Factory.Conflict("username_taken_in_default_organization");
+    }
+
+    await repository.moveToOrganization({
+      userId,
+      fromOrganizationId: organizationId,
+      toOrganizationId: defaultOrganization.id,
+      username: user.username,
+    });
+
+    log.info("organization.member.remove", {
+      action: "organization.member.remove",
+      actorUserId,
+      organizationId,
+      userId,
+      toOrganizationId: defaultOrganization.id,
+    });
+
+    return { userId };
+  }
+
+  // Org invites reuse the team invite pipeline: the org row is a team, so its id doubles as teamId
+  async inviteMember(params: {
+    organizationId: number;
+    actorUserId: number;
+    actorName: string;
+    email: string;
+    role: OrganizationRoleDto;
+  }): Promise<{ invited: true }> {
+    const { organizationId, actorUserId, actorName, role } = params;
+    const actorRole = await this.requireManagerRole(organizationId, actorUserId);
+    if (role === "OWNER" && actorRole !== "OWNER") {
+      throw ErrorWithCode.Factory.Forbidden("Only owners can grant or remove the owner role");
+    }
+
+    const organization = await this.deps.organizationRepository.findById(organizationId);
+    if (!organization) throw ErrorWithCode.Factory.NotFound("Organization not found");
+
+    const email = params.email.trim().toLowerCase();
+    if (!email || !email.includes("@")) throw ErrorWithCode.Factory.BadRequest("Invalid invite email");
+
+    const sendInvite = (locale: string | null, isExistingUser: boolean) =>
+      this.deps.teamInviteService.sendInvite({
+        teamId: organizationId,
+        teamName: organization.name,
+        email,
+        inviterName: actorName,
+        locale: locale ?? "en",
+        isExistingUser,
+        isOrganization: true,
+      });
+
+    const invitee = await this.deps.userRepository.findInviteeByEmail({ email });
+    let targetUserId: number;
+    if (!invitee) {
+      const created = await this.deps.userRepository.createInvitedWithPendingTeamMembership({
+        email,
+        teamId: organizationId,
+        role,
+        organizationId,
+      });
+      targetUserId = created.id;
+      await sendInvite(created.locale, false);
+    } else {
+      if (invitee.organizationId !== null && invitee.organizationId !== organizationId) {
+        throw ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization");
+      }
+      targetUserId = invitee.id;
+      const membership = await this.deps.organizationMembershipRepository.findMembership({
+        organizationId,
+        userId: invitee.id,
+      });
+      if (membership?.accepted) throw ErrorWithCode.Factory.Conflict("user_is_already_a_member");
+
+      if (!membership && invitee.username) {
+        await this.addMember({ organizationId, userId: invitee.id, role });
+      } else if (!membership) {
+        // Without a username there is no org profile yet, so the invitee stays pending until they accept
+        await this.deps.organizationMembershipRepository.createPendingMembership({
+          organizationId,
+          userId: invitee.id,
+          role,
+        });
+        if (invitee.organizationId === null) {
+          await this.deps.userRepository.setOrganizationId({ id: invitee.id, organizationId });
+        }
+      }
+      await sendInvite(invitee.locale, invitee.hasPassword);
+    }
+
+    log.info("organization.member.invite", {
+      action: "organization.member.invite",
+      actorUserId,
+      organizationId,
+      targetUserId,
+      role,
+    });
+
+    return { invited: true };
   }
 
   async getRole(userId: number, organizationId: number): Promise<OrganizationRoleDto | null> {
@@ -154,6 +312,17 @@ export class OrganizationMembershipService {
       userId: actorUserId,
     });
     if (role === null) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    return role;
+  }
+
+  private async requireManagerRole(
+    organizationId: number,
+    actorUserId: number
+  ): Promise<OrganizationRoleDto> {
+    const role = await this.requireMemberRole(organizationId, actorUserId);
+    if (role === "MEMBER") {
+      throw ErrorWithCode.Factory.Forbidden("Only organization owners and admins can manage members");
+    }
     return role;
   }
 

@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TeamProfileService } from "./TeamProfileService";
 
 type PrismaMock = Pick<PrismaClient, "membership" | "team">;
@@ -24,22 +24,32 @@ const baseTeam = {
   bio: null,
   metadata: {},
   parentId: null,
+  isOrganization: false,
 };
+
+const orgTeam = { ...baseTeam, parentId: 100 };
 
 describe("TeamProfileService", () => {
   let db: ReturnType<typeof buildPrismaMock>;
   let service: TeamProfileService;
   let uploadTeamLogo: ReturnType<typeof vi.fn>;
+  let getOrganizationRole: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     db = buildPrismaMock();
     uploadTeamLogo = vi.fn().mockResolvedValue("/api/avatar/new-logo.png");
-    service = new TeamProfileService(asPrisma(db), uploadTeamLogo);
+    getOrganizationRole = vi.fn().mockResolvedValue(null);
+    service = new TeamProfileService(asPrisma(db), uploadTeamLogo, getOrganizationRole);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("getTeamProfile", () => {
     it("throws not_found when the user has no membership", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.membership.findUnique.mockResolvedValue(null);
       await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
         /no accepted membership/
@@ -47,6 +57,7 @@ describe("TeamProfileService", () => {
     });
 
     it("throws not_found when the invite is still pending", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.membership.findUnique.mockResolvedValue({ ...memberMembership, accepted: false });
       await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
         /no accepted membership/
@@ -100,6 +111,7 @@ describe("TeamProfileService", () => {
     };
 
     it("rejects members without admin or owner role", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.membership.findUnique.mockResolvedValue(memberMembership);
       await expect(service.updateTeamProfile({ teamId: 10, userId: 7, input })).rejects.toThrow(
         /not an admin or owner/
@@ -253,22 +265,141 @@ describe("TeamProfileService", () => {
 
   describe("disbandTeam", () => {
     it("rejects admins: only owners can disband", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.membership.findUnique.mockResolvedValue(adminMembership);
       await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/not the team owner/);
       expect(db.team.delete).not.toHaveBeenCalled();
     });
 
     it("rejects members: only owners can disband", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.membership.findUnique.mockResolvedValue(memberMembership);
       await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/not the team owner/);
     });
 
     it("deletes the team for the owner", async () => {
       db.membership.findUnique.mockResolvedValue(ownerMembership);
-      db.team.findUnique.mockResolvedValue({ id: 10 });
+      db.team.findUnique.mockResolvedValue(baseTeam);
       db.team.delete.mockResolvedValue({ id: 10 });
       await expect(service.disbandTeam({ teamId: 10, userId: 7 })).resolves.toEqual({ id: 10 });
       expect(db.team.delete).toHaveBeenCalledWith({ where: { id: 10 } });
+    });
+  });
+
+  describe("organization admin access", () => {
+    const input = { teamId: 10, name: "BlueBee", slug: "bluebee" };
+
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+      db.team.findUnique.mockResolvedValue(orgTeam);
+      db.membership.findUnique.mockResolvedValue(null);
+    });
+
+    it("lets an admin of the parent organization read the profile as owner without membership", async () => {
+      getOrganizationRole.mockResolvedValue("ADMIN");
+      const profile = await service.getTeamProfile({ teamId: 10, userId: 7 });
+      expect(profile.role).toBe(MembershipRole.OWNER);
+      expect(getOrganizationRole).toHaveBeenCalledWith(7, 100);
+    });
+
+    it("reports owner to an org owner who is only a plain team member", async () => {
+      getOrganizationRole.mockResolvedValue("OWNER");
+      db.membership.findUnique.mockResolvedValue(memberMembership);
+      const profile = await service.getTeamProfile({ teamId: 10, userId: 7 });
+      expect(profile.role).toBe(MembershipRole.OWNER);
+    });
+
+    it("lets an org admin update the team without membership", async () => {
+      getOrganizationRole.mockResolvedValue("ADMIN");
+      db.team.findFirst.mockResolvedValue(null);
+      db.team.update.mockResolvedValue(orgTeam);
+      const profile = await service.updateTeamProfile({ teamId: 10, userId: 7, input });
+      expect(db.team.update).toHaveBeenCalledOnce();
+      expect(profile.role).toBe(MembershipRole.OWNER);
+    });
+
+    it("lets an org owner disband the team without membership", async () => {
+      getOrganizationRole.mockResolvedValue("OWNER");
+      db.team.delete.mockResolvedValue({ id: 10 });
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).resolves.toEqual({ id: 10 });
+    });
+
+    it("denies an org member without team membership", async () => {
+      getOrganizationRole.mockResolvedValue("MEMBER");
+      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
+        /no accepted membership/
+      );
+      await expect(service.updateTeamProfile({ teamId: 10, userId: 7, input })).rejects.toThrow(
+        /no accepted membership/
+      );
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/no accepted membership/);
+      expect(db.team.update).not.toHaveBeenCalled();
+      expect(db.team.delete).not.toHaveBeenCalled();
+    });
+
+    it("keeps an org member who is a team admin out of disbanding", async () => {
+      getOrganizationRole.mockResolvedValue("MEMBER");
+      db.membership.findUnique.mockResolvedValue(adminMembership);
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/not the team owner/);
+    });
+
+    it("denies an admin of another organization", async () => {
+      getOrganizationRole.mockImplementation(async (_userId: number, organizationId: number) =>
+        organizationId === 200 ? "ADMIN" : null
+      );
+      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
+        /no accepted membership/
+      );
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/no accepted membership/);
+      expect(getOrganizationRole).toHaveBeenCalledWith(7, 100);
+    });
+
+    it("ignores organization roles when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "false");
+      getOrganizationRole.mockResolvedValue("OWNER");
+      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
+        /no accepted membership/
+      );
+      await expect(service.updateTeamProfile({ teamId: 10, userId: 7, input })).rejects.toThrow(
+        /no accepted membership/
+      );
+      await expect(service.disbandTeam({ teamId: 10, userId: 7 })).rejects.toThrow(/no accepted membership/);
+      expect(getOrganizationRole).not.toHaveBeenCalled();
+    });
+
+    it("does not look up organization roles for teams outside an organization", async () => {
+      db.team.findUnique.mockResolvedValue(baseTeam);
+      await expect(service.getTeamProfile({ teamId: 10, userId: 7 })).rejects.toThrow(
+        /no accepted membership/
+      );
+      expect(getOrganizationRole).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("organization rows", () => {
+    const input = { teamId: 100, name: "Acme", slug: "acme" };
+    const organizationRow = { ...baseTeam, id: 100, isOrganization: true };
+
+    beforeEach(() => {
+      db.team.findUnique.mockResolvedValue(organizationRow);
+      db.membership.findUnique.mockResolvedValue({ ...ownerMembership, teamId: 100 });
+    });
+
+    it("treats an organization as a missing team for get, update and disband", async () => {
+      await expect(service.getTeamProfile({ teamId: 100, userId: 7 })).rejects.toThrow(/does not exist/);
+      await expect(service.updateTeamProfile({ teamId: 100, userId: 7, input })).rejects.toThrow(
+        /does not exist/
+      );
+      await expect(service.disbandTeam({ teamId: 100, userId: 7 })).rejects.toThrow(/does not exist/);
+      expect(db.team.update).not.toHaveBeenCalled();
+      expect(db.team.delete).not.toHaveBeenCalled();
+    });
+
+    it("guards organization rows even when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+      getOrganizationRole.mockResolvedValue("OWNER");
+      await expect(service.disbandTeam({ teamId: 100, userId: 7 })).rejects.toThrow(/does not exist/);
+      expect(db.team.delete).not.toHaveBeenCalled();
     });
   });
 });

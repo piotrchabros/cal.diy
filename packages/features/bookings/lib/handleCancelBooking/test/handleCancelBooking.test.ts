@@ -1,6 +1,7 @@
 import {
   BookingLocations,
   createBookingScenario,
+  createOrganization,
   getBooker,
   getDate,
   getGoogleCalendarCredential,
@@ -18,6 +19,30 @@ import { expectBookingCancelledWebhookToHaveBeenFired } from "@calcom/testing/li
 import { setupAndTeardown } from "@calcom/testing/lib/bookingScenario/setupAndTeardown";
 import { test } from "@calcom/testing/lib/fixtures/fixtures";
 import { describe, expect, vi } from "vitest";
+
+const { mockGetBaseUrl } = vi.hoisted(() => ({
+  mockGetBaseUrl: vi.fn(async ({ organizationId }: { organizationId?: number | null }) =>
+    organizationId ? `https://org${organizationId}.example.com` : "http://localhost:3000"
+  ),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@calcom/features/organizations/di/OrganizationUrlService.container")
+    >();
+  return {
+    getOrganizationUrlService: () => {
+      const service = actual.getOrganizationUrlService();
+      return {
+        getBaseUrl: mockGetBaseUrl,
+        getBaseUrlForUser: service.getBaseUrlForUser.bind(service),
+        getBaseUrlForTeam: service.getBaseUrlForTeam.bind(service),
+        getBaseUrlForEmail: service.getBaseUrlForEmail.bind(service),
+      };
+    },
+  };
+});
 
 vi.mock("@calcom/features/bookings/lib/payment/processPaymentRefund", () => ({
   processPaymentRefund: vi.fn(),
@@ -150,6 +175,49 @@ describe("Cancel Booking", () => {
         },
       },
     });
+  });
+
+  test("Should build bookerUrl on the organizer's organization", async () => {
+    const handleCancelBooking = (await import("@calcom/features/bookings/lib/handleCancelBooking")).default;
+    const org = await createOrganization({ name: "Acme", slug: "acme" });
+    const booker = getBooker({ email: "booker@example.com", name: "Booker" });
+    const organizer = getOrganizer({
+      name: "Organizer",
+      email: "organizer@example.com",
+      id: 101,
+      organizationId: org.id,
+      schedules: [TestData.schedules.IstWorkHours],
+    });
+    const { dateString: plus1DateString } = getDate({ dateIncrement: 1 });
+
+    await createBookingScenario(
+      getScenarioData(
+        {
+          eventTypes: [{ id: 1, slotInterval: 30, length: 30, users: [{ id: 101 }] }],
+          bookings: [
+            {
+              id: 2020,
+              uid: "org-booking-uid",
+              attendees: [{ email: booker.email, timeZone: "Asia/Kolkata" }],
+              eventTypeId: 1,
+              userId: 101,
+              responses: { email: booker.email, name: booker.name },
+              status: BookingStatus.ACCEPTED,
+              startTime: `${plus1DateString}T05:00:00.000Z`,
+              endTime: `${plus1DateString}T05:15:00.000Z`,
+            },
+          ],
+          organizer,
+        },
+        { id: org.id }
+      )
+    );
+
+    await handleCancelBooking({
+      bookingData: { id: 2020, uid: "org-booking-uid", cancellationReason: "No reason" },
+    });
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: org.id });
   });
 
   test("Should throw when cancelling a non-existing booking", async () => {

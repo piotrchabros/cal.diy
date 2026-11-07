@@ -45,6 +45,7 @@ import {
   type MemberSharingTeamInput,
   resolveMemberSharingTeamIds,
 } from "@calcom/features/notetaker/lib/webhookSharingTeam";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import {
   assertEventTypeInHostOrganization,
   getEventTypeOrganizationId,
@@ -1386,7 +1387,9 @@ async function handler(
   });
 
   const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
-  const bookerUrl = process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+    organizationId: eventType.team?.parentId ?? eventType.parent?.team?.parentId ?? organizerOrganizationId,
+  });
 
   const destinationCalendar = eventType.destinationCalendar
     ? [eventType.destinationCalendar]

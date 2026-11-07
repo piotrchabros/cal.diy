@@ -242,7 +242,7 @@ description: "Task list for Organizations (spec 005)"
   - `packages/sms/attendee/*.ts` (7 files): use `CalendarEvent.bookerUrl` or the organizer's base URL
 
   Add tests
-- [ ] T049 [US3] PR 15, bookings and tRPC:
+- [X] T049 [US3] PR 15, bookings and tRPC:
   - `packages/features/bookings/lib/{buildEventUrlFromBooking,handleCancelBooking}.ts`
   - `packages/features/bookings/lib/service/RegularBookingService.ts` (`bookerUrl`)
   - `packages/trpc/server/routers/viewer/bookings/confirm.handler.ts`
@@ -326,8 +326,8 @@ description: "Task list for Organizations (spec 005)"
 **PR 24**
 
 - [ ] T063 [US4] Create the `viewer.organization` router in `packages/trpc/server/routers/viewer/organization/_router.ts` with `current`, `listMembers`, `inviteMember`, `updateRole`, `removeMember` and `listTeams`, as in contracts/trpc-organizations.md. The org always comes from `ctx.user.organizationId`. Register it in `packages/trpc/server/routers/viewer/_router.tsx`. Add tests
-- [ ] T064 [US4] Add `inviteMember`, `removeMember` (a move to the default org, FR-011) and `listTeams` to `OrganizationMembershipService`, with the role rules. Log the actions with ids only. Add tests
-- [ ] T065 [US4] Extend the `viewer.teams.*` permission checks (`packages/features/membership/services/TeamMembersService.ts`, `TeamProfileService.ts`, delete team) so that "team admin **or** org ADMIN/OWNER of the team's parent org" may act. Add tests
+- [X] T064 [US4] Add `inviteMember`, `removeMember` (a move to the default org, FR-011) and `listTeams` to `OrganizationMembershipService`, with the role rules. Log the actions with ids only. Add tests
+- [X] T065 [US4] Extend the `viewer.teams.*` permission checks (`packages/features/membership/services/TeamMembersService.ts`, `TeamProfileService.ts`, delete team) so that "team admin **or** org ADMIN/OWNER of the team's parent org" may act. Add tests
 
 **PR 25**
 
@@ -377,6 +377,7 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T102 [US5] Move redirects are now 308s (`apps/web/lib/handleOrgRedirect.ts`, `apps/web/app/WithAppDirSsr.tsx`, `apps/web/app/WithEmbedSSR.tsx`) and browsers cache them, so disabling a redirect when the old org reuses the username (US5-6) does not reach visitors who already followed it. Document this in `contracts/infra-owner-checklist.md` or send a bounded `Cache-Control` on those redirects
 - [ ] T150 [US2] With the flag on, make the shared tRPC procedures `createEventPbacProcedure` and `eventOwnerProcedure` (`packages/trpc/server/routers/viewer/eventTypes/util.ts`) and the notetaker `assertActorIsMember` (`packages/features/notetaker/services/NotetakerSharingSettingsService.ts`) refuse callers outside the team's organization with NOT_FOUND instead of FORBIDDEN (FR-008). Add tests
 - [ ] T151 Close the cross-team hole in webhook create without the flag (with the flag on, T037 added an accepted-membership check that answers NOT_FOUND): `packages/trpc/server/routers/viewer/webhook/create.handler.ts` accepts any `input.teamId` (the membership check runs only for `includeMemberMeetings`). Require team admin/owner membership unconditionally, and confirm whether team webhooks currently fail at runtime from mixing the `teamId` scalar with a `user` connect. Add tests
+- [ ] T170 [P] [US3] Secondary-email verification links (`sendEmailVerification` with `secondaryEmailId` in `packages/features/auth/lib/verifyEmail.ts`, called from `packages/trpc/server/routers/loggedInViewer/addSecondaryEmail.handler.ts`) fall back to `WEBAPP_URL`, because `getBaseUrlForEmail` looks up the secondary address, which is not on a user record. Pass the owning user id (or base URL) from the caller. Add tests
 
 ---
 

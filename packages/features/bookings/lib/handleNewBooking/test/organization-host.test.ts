@@ -17,12 +17,25 @@ import {
 } from "@calcom/testing/lib/bookingScenario/getMockRequestDataForBooking";
 import { setupAndTeardown } from "@calcom/testing/lib/bookingScenario/setupAndTeardown";
 import { test } from "@calcom/testing/lib/fixtures/fixtures";
-import { afterEach, beforeAll, describe, expect, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, vi } from "vitest";
 import { getNewBookingHandler } from "./getNewBookingHandler";
 
-const { mockResolveBookingHostOrganization } = vi.hoisted(() => ({
+const { mockResolveBookingHostOrganization, mockGetBaseUrl } = vi.hoisted(() => ({
   mockResolveBookingHostOrganization: vi.fn(),
+  mockGetBaseUrl: vi.fn(),
 }));
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => {
+  const fallback = async () => "http://localhost:3000";
+  return {
+    getOrganizationUrlService: () => ({
+      getBaseUrl: mockGetBaseUrl,
+      getBaseUrlForUser: fallback,
+      getBaseUrlForTeam: fallback,
+      getBaseUrlForEmail: fallback,
+    }),
+  };
+});
 
 vi.mock("@calcom/features/organizations/lib/resolveBookingHostOrganization", async (importOriginal) => {
   const actual =
@@ -52,7 +65,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function createOrganizerEventScenario({ organizationId }: { organizationId: number | null }) {
+beforeEach(() => {
+  mockGetBaseUrl.mockImplementation(async ({ organizationId }: { organizationId?: number | null }) =>
+    organizationId ? `https://org${organizationId}.example.com` : "http://localhost:3000"
+  );
+});
+
+async function createOrganizerEventScenario({
+  organizationId,
+  withOrganizationProfile = false,
+}: {
+  organizationId: number | null;
+  withOrganizationProfile?: boolean;
+}) {
   const organizer = getOrganizer({
     name: "Organizer",
     email: "organizer@example.com",
@@ -62,18 +87,21 @@ async function createOrganizerEventScenario({ organizationId }: { organizationId
   });
 
   await createBookingScenario(
-    getScenarioData({
-      eventTypes: [
-        {
-          id: 1,
-          slotInterval: 30,
-          length: 30,
-          owner: 101,
-          users: [{ id: 101 }],
-        },
-      ],
-      organizer,
-    })
+    getScenarioData(
+      {
+        eventTypes: [
+          {
+            id: 1,
+            slotInterval: 30,
+            length: 30,
+            owner: 101,
+            users: [{ id: 101 }],
+          },
+        ],
+        organizer,
+      },
+      withOrganizationProfile ? { id: organizationId } : null
+    )
   );
 }
 
@@ -133,6 +161,28 @@ describe("handleNewBooking organization host check", () => {
 
       expect(createdBooking.uid).toBeTruthy();
       expect(await prismock.booking.findMany({ where: { uid: createdBooking.uid } })).toHaveLength(1);
+    },
+    timeout
+  );
+
+  test(
+    "builds the booking's bookerUrl on the organizer's organization",
+    async () => {
+      const handleNewBooking = getNewBookingHandler();
+      const org = await createOrganization({ name: "Acme", slug: "acme" });
+      mockResolveBookingHostOrganization.mockResolvedValue({
+        orgSlug: "acme",
+        hostOrganization: { ...hostOrganization, id: org.id },
+      });
+      await createOrganizerEventScenario({ organizationId: org.id, withOrganizationProfile: true });
+
+      const createdBooking = await handleNewBooking({
+        bookingData: getBookingData(),
+        hostname: "acme.example.com",
+      });
+
+      expect(createdBooking.uid).toBeTruthy();
+      expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: org.id });
     },
     timeout
   );

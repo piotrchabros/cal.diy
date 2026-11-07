@@ -16,6 +16,7 @@ type TeamInvite = {
   teamId: number;
   teamName: string;
   email: string;
+  isOrganization: boolean;
 };
 
 type FormValues = {
@@ -72,7 +73,9 @@ function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string 
       return;
     }
 
-    const callbackUrl = `${WEBAPP_URL}/settings/my-teams/${invite.teamId}/members`;
+    const callbackUrl = invite.isOrganization
+      ? `${WEBAPP_URL}/`
+      : `${WEBAPP_URL}/settings/my-teams/${invite.teamId}/members`;
     const signInResult = await signIn<"credentials">("credentials", {
       email: invite.email,
       password: values.password,

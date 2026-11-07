@@ -1,10 +1,46 @@
 import { constantsScenarios } from "@calcom/lib/__mocks__/constants";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEventUrlFromBooking } from "./buildEventUrlFromBooking";
+
+const { getBaseUrl } = vi.hoisted(() => ({ getBaseUrl: vi.fn() }));
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
+  getOrganizationUrlService: () => ({ getBaseUrl }),
+}));
 
 const WEBAPP_URL = "https://buildEventTest.example";
 beforeEach(() => {
   constantsScenarios.set({ WEBAPP_URL });
+  getBaseUrl.mockReset();
+  getBaseUrl.mockResolvedValue(WEBAPP_URL);
+});
+
+describe("buildEventUrlFromBooking organization base URL", () => {
+  it("uses the team's parent organization for a team event", async () => {
+    getBaseUrl.mockResolvedValue("https://org.example.com");
+
+    const result = await buildEventUrlFromBooking({
+      eventType: { slug: "30min", team: { slug: "engineering", parentId: 123 } },
+      profileEnrichedBookingUser: { profile: { organizationId: 456, username: "john" } },
+      dynamicGroupSlugRef: null,
+    });
+
+    expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: 123 });
+    expect(result).toBe("https://org.example.com/team/engineering/30min");
+  });
+
+  it("uses the organizer's organization for a personal event", async () => {
+    getBaseUrl.mockResolvedValue("https://org.example.com");
+
+    const result = await buildEventUrlFromBooking({
+      eventType: { slug: "30min", team: null },
+      profileEnrichedBookingUser: { profile: { organizationId: 456, username: "john" } },
+      dynamicGroupSlugRef: null,
+    });
+
+    expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: 456 });
+    expect(result).toBe("https://org.example.com/john/30min");
+  });
 });
 
 describe("buildEventUrlFromBooking", () => {

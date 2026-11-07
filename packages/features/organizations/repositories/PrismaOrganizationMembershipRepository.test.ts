@@ -3,24 +3,31 @@ import { describe, expect, it, vi } from "vitest";
 import { PrismaOrganizationMembershipRepository } from "./PrismaOrganizationMembershipRepository";
 
 function buildRepository() {
-  const user = { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() };
-  const profile = { findFirst: vi.fn(), upsert: vi.fn() };
+  const user = { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), findFirst: vi.fn(), update: vi.fn() };
+  const profile = { findFirst: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn() };
   const membership = {
     findUnique: vi.fn(),
     findMany: vi.fn(),
+    create: vi.fn(),
     upsert: vi.fn(),
     count: vi.fn(),
     update: vi.fn(),
+    deleteMany: vi.fn(),
   };
   const team = { findMany: vi.fn() };
-  const $transaction = vi.fn((operations: Promise<unknown>[]) => Promise.all(operations));
-  const prismaClient = { user, profile, membership, team, $transaction } as unknown as PrismaClient;
+  const verificationToken = { deleteMany: vi.fn() };
+  const client = { user, profile, membership, team, verificationToken };
+  const $transaction = vi.fn((arg: Promise<unknown>[] | ((tx: typeof client) => Promise<unknown>)) =>
+    typeof arg === "function" ? arg(client) : Promise.all(arg)
+  );
+  const prismaClient = { ...client, $transaction } as unknown as PrismaClient;
   return {
     repository: new PrismaOrganizationMembershipRepository(prismaClient),
     user,
     profile,
     membership,
     team,
+    verificationToken,
     $transaction,
   };
 }
@@ -185,6 +192,101 @@ describe("PrismaOrganizationMembershipRepository", () => {
       membership.findUnique.mockResolvedValue(null);
 
       expect(await repository.findRole({ organizationId: 1, userId: 7 })).toBeNull();
+    });
+  });
+
+  describe("findMembership", () => {
+    it("returns pending memberships too", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findUnique.mockResolvedValue({ role: "OWNER", accepted: false });
+
+      const result = await repository.findMembership({ organizationId: 1, userId: 7 });
+
+      expect(membership.findUnique).toHaveBeenCalledWith({
+        where: { userId_teamId: { userId: 7, teamId: 1 } },
+        select: { role: true, accepted: true },
+      });
+      expect(result).toEqual({ role: "OWNER", accepted: false });
+    });
+
+    it("returns null when there is no membership", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findUnique.mockResolvedValue(null);
+
+      expect(await repository.findMembership({ organizationId: 1, userId: 7 })).toBeNull();
+    });
+  });
+
+  describe("moveToOrganization", () => {
+    function setup() {
+      const built = buildRepository();
+      built.user.findUniqueOrThrow.mockResolvedValue({ email: "alice@acme.com" });
+      built.team.findMany.mockResolvedValue([{ id: 11 }, { id: 12 }]);
+      return built;
+    }
+
+    it("clears the old organization and joins the new one in one transaction", async () => {
+      const { repository, user, profile, membership, team, verificationToken, $transaction } = setup();
+
+      await repository.moveToOrganization({
+        userId: 7,
+        fromOrganizationId: 1,
+        toOrganizationId: 2,
+        username: "alice",
+      });
+
+      expect($transaction).toHaveBeenCalledTimes(1);
+      expect(user.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: 7 }, select: { email: true } });
+      expect(team.findMany).toHaveBeenCalledWith({ where: { parentId: 1 }, select: { id: true } });
+      expect(membership.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 7, teamId: { in: [1, 11, 12] } },
+      });
+      expect(profile.deleteMany).toHaveBeenCalledWith({ where: { userId: 7, organizationId: 1 } });
+      expect(verificationToken.deleteMany).toHaveBeenCalledWith({
+        where: { identifier: "alice@acme.com", teamId: { in: [1, 11, 12] } },
+      });
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { organizationId: 2 },
+        select: { id: true },
+      });
+      expect(profile.upsert.mock.calls[0][0]).toMatchObject({
+        where: { userId_organizationId: { userId: 7, organizationId: 2 } },
+        create: { uid: expect.any(String), userId: 7, organizationId: 2, username: "alice" },
+        update: { username: "alice" },
+      });
+      expect(membership.upsert).toHaveBeenCalledWith({
+        where: { userId_teamId: { userId: 7, teamId: 2 } },
+        create: { userId: 7, teamId: 2, role: "MEMBER", accepted: true },
+        update: { accepted: true },
+        select: { id: true },
+      });
+    });
+
+    it("only repoints organizationId for a user without a username", async () => {
+      const { repository, user, profile, membership } = setup();
+
+      await repository.moveToOrganization({
+        userId: 7,
+        fromOrganizationId: 1,
+        toOrganizationId: 2,
+        username: null,
+      });
+
+      expect(user.update).toHaveBeenCalledTimes(1);
+      expect(profile.upsert).not.toHaveBeenCalled();
+      expect(membership.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  it("createPendingMembership creates a non-accepted membership", async () => {
+    const { repository, membership } = buildRepository();
+
+    await repository.createPendingMembership({ organizationId: 1, userId: 7, role: "ADMIN" });
+
+    expect(membership.create).toHaveBeenCalledWith({
+      data: { userId: 7, teamId: 1, role: "ADMIN", accepted: false },
+      select: { id: true },
     });
   });
 
