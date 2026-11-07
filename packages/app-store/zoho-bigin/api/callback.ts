@@ -1,14 +1,12 @@
+import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import axios from "axios";
 import type { NextApiRequest, NextApiResponse } from "next";
 import qs from "qs";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
-
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 function isAuthorizedAccountsServerUrl(accountsServer: string) {
@@ -58,7 +56,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!clientSecret) return res.status(400).json({ message: "Zoho Bigin client_secret missing." });
 
   const accountsUrl = `${accountsServer}/oauth/v2/token`;
-  const redirectUri = `${WEBAPP_URL}/api/integrations/${appConfig.slug}/callback`;
+  const redirectUri = getOAuthRedirectUri(req, appConfig.slug);
 
   const formData = {
     client_id: clientId,
@@ -80,7 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: appConfig.slug, type: appConfig.type }, tokenInfo.data, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ??
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
       getInstalledAppPath({ variant: appConfig.variant, slug: appConfig.slug })
   );
 }

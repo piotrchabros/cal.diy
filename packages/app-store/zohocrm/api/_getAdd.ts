@@ -1,10 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   let clientId = "";
@@ -16,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const params = {
     client_id: clientId,
     response_type: "code",
-    redirect_uri: `${WEBAPP_URL}/api/integrations/zohocrm/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "zohocrm"),
     scope: ["ZohoCRM.modules.ALL", "ZohoCRM.users.READ", "AaaServer.profile.READ"],
     access_type: "offline",
     state,

@@ -1,18 +1,16 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
 import { renewSelectedCalendarCredentialId } from "@calcom/lib/connectedCalendar";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import logger from "@calcom/lib/logger";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import prisma from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import config from "../config.json";
 import type { ZohoAuthCredentials } from "../types/ZohoCalendar";
 import { appKeysSchema as zohoKeysSchema } from "../zod";
@@ -27,6 +25,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const { code, location } = req.query;
 
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
 
   if (code && typeof code !== "string") {
     res.status(400).json({ message: "`code` must be a string" });
@@ -49,7 +48,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
     client_id,
     grant_type: "authorization_code",
     client_secret,
-    redirect_uri: `${WEBAPP_URL}/api/integrations/${config.slug}/callback`,
+    redirect_uri: getOAuthRedirectUri(req, config.slug),
     code,
   };
 
@@ -132,7 +131,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
         // we want to recover by connecting the existing selectedCalendar to the new Credential.
         if (await renewSelectedCalendarCredentialId(selectedCalendarWhereUnique, credential.id)) {
           res.redirect(
-            getSafeRedirectUrl(state?.returnTo) ??
+            getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
               getInstalledAppPath({ variant: "calendar", slug: config.slug })
           );
           return;
@@ -143,7 +142,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
       await prisma.credential.delete({ where: { id: credential.id } });
       res.redirect(
         `${
-          getSafeRedirectUrl(state?.onErrorReturnTo) ??
+          getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ??
           getInstalledAppPath({ variant: config.variant, slug: config.slug })
         }?error=${errorMessage}`
       );
@@ -152,7 +151,8 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: config.variant, slug: config.slug })
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+      getInstalledAppPath({ variant: config.variant, slug: config.slug })
   );
 }
 

@@ -1,14 +1,12 @@
+import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import axios from "axios";
 import type { NextApiRequest, NextApiResponse } from "next";
 import qs from "qs";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
-
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 function isAuthorizedAccountsServerUrl(accountsServer: string) {
@@ -55,7 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!clientId) return res.status(400).json({ message: "Zoho Crm consumer key missing." });
   if (!clientSecret) return res.status(400).json({ message: "Zoho Crm consumer secret missing." });
   const url = `${accountsServer}/oauth/v2/token`;
-  const redirectUri = `${WEBAPP_URL}/api/integrations/zohocrm/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "zohocrm");
   const formData = {
     grant_type: "authorization_code",
     client_id: clientId,
@@ -80,6 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const state = decodeOAuthState(req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "other", slug: "zohocrm" })
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
+      getInstalledAppPath({ variant: "other", slug: "zohocrm" })
   );
 }

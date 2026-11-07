@@ -1,10 +1,8 @@
 import axios from "axios";
 import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
-
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -14,7 +12,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const clientId = typeof appKeys.client_id === "string" ? appKeys.client_id : "";
     if (!clientId) return res.status(400).json({ message: "Zoho Bigin client_id missing." });
 
-    const redirectUri = `${WEBAPP_URL}/api/integrations/zoho-bigin/callback`;
+    const redirectUri = getOAuthRedirectUri(req, "zoho-bigin");
 
     const authUrl = axios.getUri({
       url: "https://accounts.zoho.com/oauth/v2/auth",
