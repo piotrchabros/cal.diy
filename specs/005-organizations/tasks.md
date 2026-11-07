@@ -210,7 +210,7 @@ description: "Task list for Organizations (spec 005)"
 
 - [ ] T038 [US3] In `apps/web/server/lib/[user]/getServerSideProps.ts` (~79-100), replace the `currentOrgDomain = null; isValidOrgDomain = false` stub with `getOrgFromRequest(context.req.headers)` and pass its slug to `getUsersInOrgContext` / `UserRepository.findUsersByUsername({ orgSlug })`. Add a test
 - [ ] T039 [US3] Make the same change in `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` (~127-146, ~226-249), passing `org` to `getPublicEvent`. Add a test
-- [ ] T040 [US3] Rewrite `apps/web/lib/handleOrgRedirect.ts`:
+- [X] T040 [US3] Rewrite `apps/web/lib/handleOrgRedirect.ts`:
   - Look up `TempOrgRedirect` with `fromOrgId = host org id` and `enabled = true`.
   - Return `{ redirect: { destination: toUrl + rest of path + query, permanent: true } }`.
   - Remove the `orgRedirection=true` guard.

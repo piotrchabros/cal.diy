@@ -11,7 +11,7 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
 import { RedirectType } from "@calcom/prisma/enums";
-import { getRedirectWithOriginAndSearchString } from "@lib/handleOrgRedirect";
+import { getRedirectWithOriginAndSearchString, omitRouteParams } from "@lib/handleOrgRedirect";
 import type { inferSSRProps } from "@lib/types/inferSSRProps";
 import type { EmbedProps } from "app/WithEmbedSSR";
 import type { GetServerSidePropsContext } from "next";
@@ -70,8 +70,8 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
     const redirectWithOriginAndSearchString = await getRedirectWithOriginAndSearchString({
       slugs: [username],
       redirectType: RedirectType.User,
-      context,
-      currentOrgDomain: isValidOrgDomain ? currentOrgDomain : null,
+      query: omitRouteParams(context.query, context.params),
+      hostOrgId: null,
     });
 
     if (redirectWithOriginAndSearchString) {
