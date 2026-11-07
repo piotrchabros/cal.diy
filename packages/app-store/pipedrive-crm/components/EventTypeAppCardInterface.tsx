@@ -1,11 +1,14 @@
-import { usePathname } from "next/navigation";
-
 import AppCard from "@calcom/app-store/_components/AppCard";
+import { getAppReturnToUrl } from "@calcom/app-store/_utils/getAppReturnToUrl";
 import useIsAppEnabled from "@calcom/app-store/_utils/useIsAppEnabled";
 import type { EventTypeAppCardComponent } from "@calcom/app-store/types";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { usePathname } from "next/navigation";
 
-const EventTypeAppCard: EventTypeAppCardComponent = function EventTypeAppCard({ app, eventType, onAppInstallSuccess }) {
+const EventTypeAppCard: EventTypeAppCardComponent = function EventTypeAppCard({
+  app,
+  eventType,
+  onAppInstallSuccess,
+}) {
   const pathname = usePathname();
 
   const { enabled, updateEnabled } = useIsAppEnabled(app);
@@ -13,7 +16,7 @@ const EventTypeAppCard: EventTypeAppCardComponent = function EventTypeAppCard({ 
   return (
     <AppCard
       onAppInstallSuccess={onAppInstallSuccess}
-      returnTo={`${WEBAPP_URL}${pathname}?tabName=apps`}
+      returnTo={getAppReturnToUrl(`${pathname}?tabName=apps`)}
       app={app}
       teamId={eventType.team?.id || undefined}
       switchOnClick={(e) => {
