@@ -17,7 +17,7 @@ const mockIsOrganizationsEnabled: Mock = vi.fn().mockReturnValue(false);
 const mockGetOrgFromRequest: Mock = vi.fn();
 const mockAddMember: Mock = vi.fn();
 const DEFAULT_ORG_ID = 1;
-const mockFindDefaultOrganizationId: Mock = vi.fn().mockResolvedValue(DEFAULT_ORG_ID);
+const mockRequireDefaultOrganizationId: Mock = vi.fn().mockResolvedValue(DEFAULT_ORG_ID);
 
 vi.mock("next/server", async () => {
   const { createNextServerMock } = await import(
@@ -57,7 +57,7 @@ vi.mock("@calcom/features/organizations/lib/getOrgFromRequest", () => ({
   getOrgFromRequest: (...args: unknown[]) => mockGetOrgFromRequest(...args),
 }));
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
+  requireDefaultOrganizationId: () => mockRequireDefaultOrganizationId(),
 }));
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
   getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
@@ -164,7 +164,7 @@ describe("selfHostedHandler – organizations", () => {
     resetPrismaMock();
     mockIsOrganizationsEnabled.mockReturnValue(true);
     mockGetOrgFromRequest.mockResolvedValue(hostOrg);
-    mockFindDefaultOrganizationId.mockResolvedValue(defaultOrgId);
+    mockRequireDefaultOrganizationId.mockResolvedValue(defaultOrgId);
     mockAddMember.mockResolvedValue({ userId: 42, organizationId: hostOrg.id, role: "MEMBER" });
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
     mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
@@ -228,7 +228,7 @@ describe("selfHostedHandler – organizations", () => {
 
   it("creates no user when the flag is off and no default org exists", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    mockFindDefaultOrganizationId.mockRejectedValue(
+    mockRequireDefaultOrganizationId.mockRejectedValue(
       ErrorWithCode.Factory.PreconditionFailed("No default organization")
     );
 
@@ -293,7 +293,7 @@ describe("selfHostedHandler – organizations", () => {
       expect.objectContaining({ usernameOrganizationId: hostOrg.id })
     );
     expect(isUsernameReservedDueToMigration).not.toHaveBeenCalled();
-    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
       userId: 42,
       email: "new@example.com",
@@ -373,7 +373,7 @@ describe("selfHostedHandler – organizations", () => {
       team: expect.objectContaining({ id: 3, parentId: 11, parent: { id: 11 } }),
     });
     expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
-    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     expect(mockAddMember).not.toHaveBeenCalled();
     expect(joinAnyChildTeamOnOrgInvite).toHaveBeenCalledWith({ userId: 42, org: { id: 11 } });
   });

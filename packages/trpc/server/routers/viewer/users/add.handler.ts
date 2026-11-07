@@ -104,10 +104,10 @@ const createUserWithOrganizationsDisabled = async (
   prisma: PrismaClient,
   data: Omit<TAddUserInput, "organizationId" | "avatarUrl"> & { avatarUrl: string | null | undefined }
 ) => {
-  const { findDefaultOrganizationId } = await import(
+  const { requireDefaultOrganizationId } = await import(
     "@calcom/features/organizations/lib/defaultOrganization"
   );
-  const defaultOrganizationId = await findDefaultOrganizationId().catch((e: unknown) => {
+  const defaultOrganizationId = await requireDefaultOrganizationId().catch((e: unknown) => {
     throw convertErrorWithCodeToTRPCError(e);
   });
   return createOrganizationUser(prisma, data, defaultOrganizationId);

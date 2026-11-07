@@ -1,6 +1,6 @@
 import { ErrorWithCode } from "@calcom/lib/errors";
 
-export async function findDefaultOrganizationId(): Promise<number> {
+export async function requireDefaultOrganizationId(): Promise<number> {
   // Loaded lazily so user-creation callers do not pull Prisma into their static import graph.
   const { getOrganizationDomainResolver } = await import("../di/OrganizationDomainResolver.container");
   const organizationId = (await getOrganizationDomainResolver().resolveDefault())?.id;

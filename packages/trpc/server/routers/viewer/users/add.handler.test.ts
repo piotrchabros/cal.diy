@@ -10,7 +10,7 @@ import { addUserHandler } from "./add.handler";
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   getDefault: vi.fn(),
-  findDefaultOrganizationId: vi.fn(),
+  requireDefaultOrganizationId: vi.fn(),
   addMember: vi.fn(),
   storeAdminUserAvatar: vi.fn(),
   userCreate: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationService.container", () =>
 }));
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: mocks.findDefaultOrganizationId,
+  requireDefaultOrganizationId: mocks.requireDefaultOrganizationId,
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
@@ -52,7 +52,7 @@ describe("addUserHandler", () => {
     mocks.userUpdate.mockImplementation(async ({ where, data }) => ({ id: where.id, ...data }));
     mocks.get.mockImplementation(async (id: number) => ({ id }));
     mocks.getDefault.mockResolvedValue({ id: 1 });
-    mocks.findDefaultOrganizationId.mockResolvedValue(3);
+    mocks.requireDefaultOrganizationId.mockResolvedValue(3);
     mocks.addMember.mockResolvedValue({ userId: 42, organizationId: 1, role: "MEMBER" });
     mocks.storeAdminUserAvatar.mockResolvedValue("https://cdn.example.com/avatar.png");
     mocks.userDelete.mockImplementation(async ({ where }) => ({ id: where.id }));
@@ -66,7 +66,7 @@ describe("addUserHandler", () => {
   describe("with ORGANIZATIONS_ENABLED off and no default organization", () => {
     beforeEach(() => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "");
-      mocks.findDefaultOrganizationId.mockRejectedValue(
+      mocks.requireDefaultOrganizationId.mockRejectedValue(
         ErrorWithCode.Factory.PreconditionFailed(
           "No default organization: no organization uses the domain of NEXT_PUBLIC_WEBAPP_URL"
         )
@@ -89,7 +89,7 @@ describe("addUserHandler", () => {
   describe("with ORGANIZATIONS_ENABLED off and a default organization", () => {
     beforeEach(() => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "");
-      mocks.findDefaultOrganizationId.mockResolvedValue(3);
+      mocks.requireDefaultOrganizationId.mockResolvedValue(3);
     });
 
     it("adds the user to the default organization and ignores organizationId", async () => {
@@ -138,7 +138,7 @@ describe("addUserHandler", () => {
       const result = await runAdd();
 
       expect(mocks.getDefault).toHaveBeenCalledOnce();
-      expect(mocks.findDefaultOrganizationId).not.toHaveBeenCalled();
+      expect(mocks.requireDefaultOrganizationId).not.toHaveBeenCalled();
       expect(createdData()).toEqual(
         expect.objectContaining({ organizationId: 1, creationSource: CreationSource.WEBAPP })
       );
