@@ -16,6 +16,10 @@ vi.mock("@calcom/prisma", () => ({
   },
 }));
 
+vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
+  findDefaultOrganizationId: vi.fn().mockResolvedValue(null),
+}));
+
 const mockFindByEmailAndIncludeProfilesAndPassword = vi.fn();
 
 vi.mock("@calcom/features/users/repositories/UserRepository", () => {

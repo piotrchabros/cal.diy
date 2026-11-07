@@ -1,8 +1,13 @@
 import type { PrismaClient } from "@calcom/prisma";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAcceptPendingInvitesOnSignup = vi.fn();
 const mockLoggerError = vi.fn();
+const mockFindDefaultOrganizationId = vi.fn();
+
+vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
+  findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
+}));
 
 vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
   TeamMembersService: class {
@@ -31,6 +36,35 @@ const createdUser = {
   emailVerified: new Date("2026-01-01T00:00:00Z"),
   avatarUrl: null,
 };
+
+beforeEach(() => {
+  mockFindDefaultOrganizationId.mockResolvedValue(null);
+});
+
+describe("CalComAdapter.createUser – default organization", () => {
+  const signUp = { name: "New User", email: "new@example.com", emailVerified: null, image: null };
+
+  it("connects the default organization", async () => {
+    mockFindDefaultOrganizationId.mockResolvedValue(1);
+    const prismaStub = createPrismaStub(createdUser);
+
+    await CalComAdapter(prismaStub).createUser?.(signUp);
+
+    expect(prismaStub.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ organization: { connect: { id: 1 } } }),
+    });
+  });
+
+  it("sets no organization while the default organization does not exist", async () => {
+    const prismaStub = createPrismaStub(createdUser);
+
+    await CalComAdapter(prismaStub).createUser?.(signUp);
+
+    expect(prismaStub.user.create).toHaveBeenCalledWith({
+      data: expect.not.objectContaining({ organization: expect.anything() }),
+    });
+  });
+});
 
 describe("CalComAdapter.createUser – team invite materialization", () => {
   it("accepts pending team invites after an OAuth signup", async () => {

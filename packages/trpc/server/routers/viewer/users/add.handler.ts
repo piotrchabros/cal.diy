@@ -100,6 +100,21 @@ const createOrganizationUser = async (
   }
 };
 
+const createUserWithOrganizationsDisabled = async (
+  prisma: PrismaClient,
+  data: Omit<TAddUserInput, "organizationId" | "avatarUrl"> & { avatarUrl: string | null | undefined }
+) => {
+  const { findDefaultOrganizationId } = await import(
+    "@calcom/features/organizations/lib/defaultOrganization"
+  );
+  const defaultOrganizationId = await findDefaultOrganizationId();
+  // Until the default organization exists (T061 switch-over), users keep a null organization
+  if (defaultOrganizationId === null) {
+    return prisma.user.create({ data: { ...data, creationSource: CreationSource.WEBAPP } });
+  }
+  return createOrganizationUser(prisma, data, defaultOrganizationId);
+};
+
 export const addUserHandler = async ({ ctx, input }: AddUserOptions) => {
   const { prisma } = ctx;
   const { avatarUrl, organizationId: requestedOrganizationId, ...rest } = input;
@@ -108,7 +123,7 @@ export const addUserHandler = async ({ ctx, input }: AddUserOptions) => {
 
   const created = isOrganizationsEnabled()
     ? await createOrganizationUser(prisma, data, requestedOrganizationId)
-    : await prisma.user.create({ data: { ...data, creationSource: CreationSource.WEBAPP } });
+    : await createUserWithOrganizationsDisabled(prisma, data);
 
   const user = hasUploadedAvatar
     ? await prisma.user.update({

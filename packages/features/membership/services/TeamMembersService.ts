@@ -1,6 +1,7 @@
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import {
   type OrganizationMembershipService,
   USERNAME_TAKEN_IN_ORGANIZATION,
@@ -53,7 +54,8 @@ export class TeamMembersService {
     private readonly getOrganizationMembershipService: () => Pick<
       OrganizationMembershipService,
       "addMember" | "getRole"
-    > = defaultGetOrganizationMembershipService
+    > = defaultGetOrganizationMembershipService,
+    private readonly resolveDefaultOrganizationId: () => Promise<number | null> = findDefaultOrganizationId
   ) {
     this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
   }
@@ -189,7 +191,9 @@ export class TeamMembersService {
         email: normalizedEmail,
         teamId,
         role,
-        organizationId,
+        // Users outside an organization team land in the default organization; null (no default
+        // organization yet) keeps the invitee unattached as before.
+        organizationId: organizationId ?? (await this.resolveDefaultOrganizationId()),
       });
       await this.teamInviteService.sendInvite({
         teamId,
