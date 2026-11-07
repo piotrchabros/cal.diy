@@ -1,5 +1,4 @@
 import type BaseEmail from "@calcom/emails/templates/_base-email";
-
 import type { OAuthClientNotification } from "./templates/admin-oauth-client-notification";
 import AdminOAuthClientNotification from "./templates/admin-oauth-client-notification";
 import type { OAuthClientApprovedNotification } from "./templates/oauth-client-approved-notification";
@@ -27,6 +26,9 @@ export const sendAdminOAuthClientNotification = async (input: OAuthClientNotific
   await sendEmail(() => new AdminOAuthClientNotification(input));
 };
 
+// No callers yet. Whoever wires these up must pass `baseUrl` from
+// OrganizationUrlService.getBaseUrlForUser({ userId: <OAuth client owner id> }) so the links use the
+// owner's organization domain instead of WEBAPP_URL. Deletion is pending owner approval (T520).
 export const sendOAuthClientApprovedNotification = async (input: OAuthClientApprovedNotification) => {
   await sendEmail(() => new OAuthClientApprovedEmail(input));
 };

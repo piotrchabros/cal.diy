@@ -10,6 +10,8 @@ import {
 import process from "node:process";
 import { appStoreMetadata } from "@calcom/app-store/apps.metadata.generated";
 import { getBatchProcessorJobAccessLink, getRoomNameFromRecordingId } from "@calcom/app-store/dailyvideo/lib";
+import { sendDailyVideoRecordingEmails } from "@calcom/emails/daily-video-emails";
+import { submitBatchProcessorTranscriptionJob } from "@calcom/features/conferencing/lib/videoClient";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { generateVideoToken } from "@calcom/lib/videoTokens";
 import prisma from "@calcom/prisma";
@@ -66,6 +68,19 @@ vi.mock("@calcom/app-store/dailyvideo/lib", () => {
   return {
     getRoomNameFromRecordingId: vi.fn(),
     getBatchProcessorJobAccessLink: vi.fn(),
+  };
+});
+
+vi.mock("@calcom/emails/daily-video-emails", () => ({
+  sendDailyVideoRecordingEmails: vi.fn(),
+  sendDailyVideoTranscriptEmails: vi.fn(),
+}));
+
+vi.mock("@calcom/features/conferencing/lib/videoClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/features/conferencing/lib/videoClient")>();
+  return {
+    ...actual,
+    submitBatchProcessorTranscriptionJob: vi.fn(),
   };
 });
 
@@ -137,6 +152,22 @@ const BATCH_PROCESSOR_JOB_FINSISHED_PAYLOAD = {
   event_ts: 1717688213.803,
 };
 
+const RECORDING_READY_PAYLOAD = {
+  version: "1.0.0",
+  type: "recording.ready-to-download",
+  id: "0b4f6c2e-3a1d-4e8b-9f7a-5c2d1e0f9a8b",
+  payload: {
+    recording_id: "eb9e84de-783e-4e14-875d-94700ee4b976",
+    room_name: "MOCK_ID",
+    status: "finished",
+    start_ts: 1717686000,
+    max_participants: 2,
+    duration: 900,
+    s3_key: "daily-bucket/MOCK_ID/1717686000",
+  },
+  event_ts: 1717687000.123,
+};
+
 const timeout = process.env.CI ? 5000 : 20000;
 
 const TRANSCRIPTION_ACCESS_LINK = {
@@ -170,7 +201,7 @@ function createNextRequest(mockReq: ReturnType<typeof createMocks>["req"]): Next
   return nextRequest;
 }
 
-async function setupBatchProcessorScenario() {
+async function setupDailyVideoScenario(eventTrigger: WebhookTriggerEvents) {
   const organizer = getOrganizer({
     name: "Organizer",
     email: "organizer@example.com",
@@ -193,7 +224,7 @@ async function setupBatchProcessorScenario() {
       webhooks: [
         {
           userId: organizer.id,
-          eventTriggers: [WebhookTriggerEvents.RECORDING_TRANSCRIPTION_GENERATED],
+          eventTriggers: [eventTrigger],
           subscriberUrl,
           active: true,
           eventTypeId: 1,
@@ -268,6 +299,16 @@ async function postBatchProcessorJobFinished() {
   expect(response).toBeDefined();
 }
 
+async function postRecording(body: object) {
+  const { req } = createMocks({
+    method: "POST",
+    body,
+    prisma,
+  });
+
+  return postHandler(createNextRequest(req));
+}
+
 describe("Handler: /api/recorded-daily-video", () => {
   beforeEach(() => {
     fetchMock.resetMocks();
@@ -284,7 +325,9 @@ describe("Handler: /api/recorded-daily-video", () => {
   test(
     `Batch Processor Job finished triggers RECORDING_TRANSCRIPTION_GENERATED webhooks`,
     async () => {
-      const { organizer, bookingUid, subscriberUrl } = await setupBatchProcessorScenario();
+      const { organizer, bookingUid, subscriberUrl } = await setupDailyVideoScenario(
+        WebhookTriggerEvents.RECORDING_TRANSCRIPTION_GENERATED
+      );
 
       await postBatchProcessorJobFinished();
 
@@ -314,7 +357,9 @@ describe("Handler: /api/recorded-daily-video", () => {
     `Batch Processor Job finished uses the organizer's organization base URL for the recording link`,
     async () => {
       getBaseUrlForUser.mockResolvedValue("https://acme.example.com");
-      const { bookingUid, subscriberUrl } = await setupBatchProcessorScenario();
+      const { bookingUid, subscriberUrl } = await setupDailyVideoScenario(
+        WebhookTriggerEvents.RECORDING_TRANSCRIPTION_GENERATED
+      );
 
       await postBatchProcessorJobFinished();
 
@@ -329,6 +374,60 @@ describe("Handler: /api/recorded-daily-video", () => {
           },
         },
       });
+    },
+    timeout
+  );
+  test(
+    `Recording ready triggers RECORDING_READY webhooks and emails with the organization base URL`,
+    async () => {
+      getBaseUrlForUser.mockResolvedValue("https://acme.example.com");
+      const { bookingUid, subscriberUrl } = await setupDailyVideoScenario(
+        WebhookTriggerEvents.RECORDING_READY
+      );
+      const downloadLink = "https://acme.example.com/api/video/recording?token=MOCK_TOKEN";
+
+      const response = await postRecording(RECORDING_READY_PAYLOAD);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ message: "Success" });
+      expect(getBaseUrlForUser).toHaveBeenCalledWith({ userId: 101 });
+      await expectWebhookToHaveBeenCalledWith(subscriberUrl, {
+        triggerEvent: WebhookTriggerEvents.RECORDING_READY,
+        payload: {
+          uid: bookingUid,
+          downloadLink,
+        },
+      });
+      expect(sendDailyVideoRecordingEmails).toHaveBeenCalledWith(
+        expect.objectContaining({ uid: bookingUid, bookerUrl: "https://acme.example.com" }),
+        downloadLink
+      );
+      expect(submitBatchProcessorTranscriptionJob).toHaveBeenCalledWith(
+        RECORDING_READY_PAYLOAD.payload.recording_id
+      );
+
+      const booking = await prisma.booking.findUnique({
+        where: { uid: bookingUid },
+        select: { isRecorded: true },
+      });
+      expect(booking?.isRecorded).toBe(true);
+    },
+    timeout
+  );
+
+  test(
+    `Recording ready with an unfinished recording is rejected`,
+    async () => {
+      await setupDailyVideoScenario(WebhookTriggerEvents.RECORDING_READY);
+
+      const response = await postRecording({
+        ...RECORDING_READY_PAYLOAD,
+        payload: { ...RECORDING_READY_PAYLOAD.payload, status: "in-progress" },
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ message: "Recording not finished" });
+      expect(sendDailyVideoRecordingEmails).not.toHaveBeenCalled();
     },
     timeout
   );
