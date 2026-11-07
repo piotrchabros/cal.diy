@@ -45,7 +45,7 @@ import type { UserProfile } from "@calcom/types/UserProfile";
 import { calendar_v3 } from "@googleapis/calendar";
 import { waitUntil } from "@vercel/functions";
 import { OAuth2Client } from "googleapis-common";
-import type { Account, AuthOptions, Profile, Session, User } from "next-auth";
+import type { Account, AuthOptions, DefaultSession, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import { encode } from "next-auth/jwt";
 import AzureADProvider from "next-auth/providers/azure-ad";
@@ -424,6 +424,12 @@ async function enforceOrganizationDomain(
   return decision.errorUrl;
 }
 
+// next-auth serves this as the /api/auth/session body and its client treats `{}` (no keys) as signed out;
+// `{ expires }` alone would still read as authenticated, so the required `expires` is deliberately left out.
+function signedOutSession(): DefaultSession {
+  return {} as DefaultSession;
+}
+
 async function findNewUserOrganizationId(
   getRequestHeaders: GetOptionsDeps["getRequestHeaders"]
 ): Promise<number | null> {
@@ -466,6 +472,7 @@ async function isAllowedOrganizationRedirect(url: string): Promise<boolean> {
 export const getOptions = (deps: GetOptionsDeps): AuthOptions => {
   const options = getBaseOptions(deps);
   const baseSignIn = options.callbacks?.signIn;
+  const baseSession = options.callbacks?.session;
 
   return {
     ...options,
@@ -475,6 +482,26 @@ export const getOptions = (deps: GetOptionsDeps): AuthOptions => {
         const result = baseSignIn ? await baseSignIn(params) : true;
         if (result !== true || !isOrganizationsEnabled()) return result;
         return enforceOrganizationDomain(params, deps.getRequestHeaders);
+      },
+      async session(params) {
+        const session = baseSession ? await baseSession(params) : params.session;
+        if (!isOrganizationsEnabled()) return session;
+        const userId = params.token.id;
+        if (typeof userId !== "number") return session;
+        if (!deps.getRequestHeaders) {
+          log.error("callbacks:session - request headers unavailable, refusing organization session");
+          return signedOutSession();
+        }
+        try {
+          const { isSessionInRequestOrganization } = await import("./isSessionInRequestOrganization");
+          if (await isSessionInRequestOrganization({ userId, headers: deps.getRequestHeaders() })) {
+            return session;
+          }
+        } catch (err) {
+          // Thrown errors make next-auth clear the session cookie; an empty body only signs out this request.
+          log.error("callbacks:session - organization check failed", { userId, error: safeStringify(err) });
+        }
+        return signedOutSession();
       },
     },
   };
@@ -1231,8 +1258,9 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
               creationSource: CreationSource.WEBAPP,
             },
           });
-          // Autolinked users already got their membership through `teams.create` above
-          if (isOrganizationsEnabled() && !orgId && organizationId !== null) {
+          // With the flag off the user still joins the default organization, like selfHostedHandler
+          // sign-ups do; autolinked users already got their membership through `teams.create` above.
+          if (!orgId && organizationId !== null) {
             try {
               const { getOrganizationMembershipService } = await import(
                 "@calcom/features/organizations/di/OrganizationMembershipService.container"
@@ -1260,6 +1288,22 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
             user.email
           );
           await calcomAdapter.linkAccount(linkAccountNewUserData);
+
+          try {
+            const { TeamMembersService } = await import(
+              "@calcom/features/membership/services/TeamMembersService"
+            );
+            await new TeamMembersService().acceptPendingInvitesOnSignup({
+              userId: newUser.id,
+              email: newUser.email,
+              organizationId,
+            });
+          } catch (err) {
+            log.error("Failed to materialize pending team invites on OAuth signup", {
+              userId: newUser.id,
+              error: safeStringify(err),
+            });
+          }
 
           // Update profile photo for new Microsoft/Azure AD users
           if (account.provider === "azure-ad" && account.access_token) {

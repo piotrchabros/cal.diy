@@ -148,6 +148,7 @@ describe("calcomHandler – team invite materialization", () => {
   it("accepts pending team invites after a plain signup", async () => {
     vi.clearAllMocks();
     resetPrismaMock();
+    mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
     prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
 
@@ -162,6 +163,29 @@ describe("calcomHandler – team invite materialization", () => {
     expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
       userId: 42,
       email: "invited@example.com",
+      organizationId: DEFAULT_ORG_ID,
+    });
+  });
+
+  it("accepts pending invites without an organization while the default organization does not exist", async () => {
+    vi.clearAllMocks();
+    resetPrismaMock();
+    mockFindDefaultOrganizationId.mockResolvedValue(null);
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
+    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
+
+    const response = await callHandler({
+      email: "invited@example.com",
+      password: "ValidPassword123!",
+      username: "invited",
+      language: "en",
+    });
+
+    expect(response.status).toBe(201);
+    expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+      userId: 42,
+      email: "invited@example.com",
+      organizationId: null,
     });
   });
 
