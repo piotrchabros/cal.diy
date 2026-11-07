@@ -64,11 +64,13 @@ describe("OrganizationMembershipService", () => {
   let userRepository: ReturnType<typeof buildUserRepository>;
   let sendInvite: Mock;
   let disableByFrom: Mock;
+  let moveUser: Mock;
 
   beforeEach(() => {
     userRepository = buildUserRepository();
     sendInvite = vi.fn().mockResolvedValue(undefined);
     disableByFrom = vi.fn().mockResolvedValue(0);
+    moveUser = vi.fn().mockResolvedValue({ userId: 3, organizationId: DEFAULT_ORG_ID, username: "user3" });
     organizationRepository = new InMemoryOrganizationRepository();
     membershipRepository = new InMemoryOrganizationMembershipRepository();
     organizationRepository.seed({ id: ORG_ID, name: "Acme", slug: "acme", domain: "acme.com" });
@@ -82,6 +84,7 @@ describe("OrganizationMembershipService", () => {
       userRepository,
       teamInviteService: { sendInvite },
       tempOrgRedirectRepository: { disableByFrom },
+      organizationMoveService: { moveUser },
     });
   });
 
@@ -540,7 +543,6 @@ describe("OrganizationMembershipService", () => {
     const OWNER_ID = 1;
     const ADMIN_ID = 2;
     const MEMBER_ID = 3;
-    const SUB_TEAM_ID = 11;
 
     beforeEach(() => {
       const seeded: [number, OrganizationRoleDto][] = [
@@ -555,25 +557,23 @@ describe("OrganizationMembershipService", () => {
       }
     });
 
-    function removeMember(actorUserId: number, userId: number, organizationId = ORG_ID) {
-      return service.removeMember({ organizationId, actorUserId, userId });
+    function removeMember(
+      actorUserId: number,
+      userId: number,
+      organizationId = ORG_ID,
+      newUsername?: string
+    ) {
+      return service.removeMember({ organizationId, actorUserId, userId, newUsername });
     }
 
     it("moves the member to the default organization", async () => {
-      membershipRepository.seedTeam({ id: SUB_TEAM_ID, parentId: ORG_ID });
-      membershipRepository.seedMembership({ userId: MEMBER_ID, teamId: SUB_TEAM_ID, role: "MEMBER" });
-
       await expect(removeMember(ADMIN_ID, MEMBER_ID)).resolves.toEqual({ userId: MEMBER_ID });
 
-      expect(membershipRepository.users.find((user) => user.id === MEMBER_ID)?.organizationId).toBe(
-        DEFAULT_ORG_ID
+      expect(moveUser).toHaveBeenCalledWith(
+        { userId: MEMBER_ID, toOrganizationId: DEFAULT_ORG_ID, newUsername: undefined },
+        ADMIN_ID,
+        { allowMissingUsername: true }
       );
-      expect(membershipRepository.memberships.filter((m) => m.userId === MEMBER_ID)).toEqual([
-        { userId: MEMBER_ID, teamId: DEFAULT_ORG_ID, role: "MEMBER", accepted: true },
-      ]);
-      expect(membershipRepository.profiles.filter((p) => p.userId === MEMBER_ID)).toEqual([
-        { userId: MEMBER_ID, organizationId: DEFAULT_ORG_ID, username: `user${MEMBER_ID}` },
-      ]);
       expect(mockLogInfo).toHaveBeenCalledWith("organization.member.remove", {
         action: "organization.member.remove",
         actorUserId: ADMIN_ID,
@@ -583,12 +583,44 @@ describe("OrganizationMembershipService", () => {
       });
     });
 
+    it("passes a new username through to the move", async () => {
+      await removeMember(ADMIN_ID, MEMBER_ID, ORG_ID, "fresh-name");
+
+      expect(moveUser).toHaveBeenCalledWith(
+        { userId: MEMBER_ID, toOrganizationId: DEFAULT_ORG_ID, newUsername: "fresh-name" },
+        ADMIN_ID,
+        { allowMissingUsername: true }
+      );
+    });
+
+    it("reports a username taken in the default organization", async () => {
+      moveUser.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_target_organization"));
+
+      await expectRejection(
+        removeMember(ADMIN_ID, MEMBER_ID),
+        ErrorCode.Conflict,
+        "username_taken_in_default_organization"
+      );
+      expect(mockLogInfo).not.toHaveBeenCalledWith("organization.member.remove", expect.anything());
+    });
+
+    it.each([
+      [ErrorCode.BadRequest, "invalid_username"],
+      [ErrorCode.Conflict, "move_conflict"],
+    ])("rethrows other move errors unchanged (%s %s)", async (code, message) => {
+      const error = new ErrorWithCode(code, message);
+      moveUser.mockRejectedValue(error);
+
+      await expect(removeMember(ADMIN_ID, MEMBER_ID)).rejects.toBe(error);
+    });
+
     it("forbids a MEMBER actor", async () => {
       await expectRejection(
         removeMember(MEMBER_ID, ADMIN_ID),
         ErrorCode.Forbidden,
         "Only organization owners and admins can manage members"
       );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("forbids an admin from removing an owner", async () => {
@@ -597,6 +629,7 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.Forbidden,
         "Only owners can remove an owner"
       );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("refuses to remove the last owner", async () => {
@@ -605,14 +638,33 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.PreconditionFailed,
         "An organization must keep at least one owner"
       );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("lets a pending owner invite be withdrawn", async () => {
-      membershipRepository.seedUser({ id: 4, organizationId: null });
+      membershipRepository.seedUser({ id: 4, username: null, organizationId: ORG_ID });
       membershipRepository.seedMembership({ userId: 4, teamId: ORG_ID, role: "OWNER", accepted: false });
 
       await expect(removeMember(OWNER_ID, 4)).resolves.toEqual({ userId: 4 });
-      expect(await membershipRepository.findMembership({ organizationId: ORG_ID, userId: 4 })).toBeNull();
+      expect(moveUser).toHaveBeenCalledWith(
+        { userId: 4, toOrganizationId: DEFAULT_ORG_ID, newUsername: undefined },
+        OWNER_ID,
+        { allowMissingUsername: true }
+      );
+    });
+
+    it.each([
+      ["no organization", null],
+      ["another organization", OTHER_ORG_ID],
+    ])("refuses a member whose user belongs to %s", async (_label, organizationId) => {
+      membershipRepository.seedUser({ id: MEMBER_ID, organizationId });
+
+      await expectRejection(
+        removeMember(ADMIN_ID, MEMBER_ID),
+        ErrorCode.PreconditionFailed,
+        "member_not_in_organization"
+      );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("refuses removal from the default organization", async () => {
@@ -623,6 +675,7 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.PreconditionFailed,
         "Members cannot be removed from the default organization"
       );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("refuses removal when the default organization is missing", async () => {
@@ -633,6 +686,7 @@ describe("OrganizationMembershipService", () => {
         userRepository,
         teamInviteService: { sendInvite },
         tempOrgRedirectRepository: { disableByFrom },
+        organizationMoveService: { moveUser },
       });
 
       await expectRejection(
@@ -640,42 +694,12 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.PreconditionFailed,
         "Default organization not found"
       );
+      expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("rejects an unknown member", async () => {
       await expectRejection(removeMember(ADMIN_ID, 999), ErrorCode.NotFound, "Member not found");
-    });
-
-    it("refuses when the username is taken in the default organization and moves nothing", async () => {
-      membershipRepository.seedProfile({
-        userId: 50,
-        organizationId: DEFAULT_ORG_ID,
-        username: `user${MEMBER_ID}`,
-      });
-      const moveToOrganization = vi.spyOn(membershipRepository, "moveToOrganization");
-
-      await expectRejection(
-        removeMember(ADMIN_ID, MEMBER_ID),
-        ErrorCode.Conflict,
-        "username_taken_in_default_organization"
-      );
-      expect(moveToOrganization).not.toHaveBeenCalled();
-      expect(await service.getRole(MEMBER_ID, ORG_ID)).toBe("MEMBER");
-    });
-
-    it("moves a username-less member without creating a default-org profile", async () => {
-      membershipRepository.seedUser({ id: MEMBER_ID, username: null, organizationId: ORG_ID });
-      const moveToOrganization = vi.spyOn(membershipRepository, "moveToOrganization");
-
-      await removeMember(ADMIN_ID, MEMBER_ID);
-
-      expect(moveToOrganization).toHaveBeenCalledWith({
-        userId: MEMBER_ID,
-        fromOrganizationId: ORG_ID,
-        toOrganizationId: DEFAULT_ORG_ID,
-        username: null,
-      });
-      expect(membershipRepository.memberships.some((m) => m.userId === MEMBER_ID)).toBe(false);
+      expect(moveUser).not.toHaveBeenCalled();
     });
   });
 

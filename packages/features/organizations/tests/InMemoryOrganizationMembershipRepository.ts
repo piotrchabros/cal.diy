@@ -253,31 +253,6 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     return { userId: params.userId, role: membership.role };
   }
 
-  async moveToOrganization(params: {
-    userId: number;
-    fromOrganizationId: number;
-    toOrganizationId: number;
-    username: string | null;
-  }): Promise<void> {
-    const { userId, fromOrganizationId, toOrganizationId, username } = params;
-    const user = this.users.find((existing) => existing.id === userId);
-    if (!user) throw new Error(`InMemoryOrganizationMembershipRepository: user ${userId} not seeded`);
-    const teamIds = new Set([
-      fromOrganizationId,
-      ...this.teams.filter((team) => team.parentId === fromOrganizationId).map((team) => team.id),
-    ]);
-    this.memberships = this.memberships.filter((m) => !(m.userId === userId && teamIds.has(m.teamId)));
-    this.profiles = this.profiles.filter(
-      (profile) => !(profile.userId === userId && profile.organizationId === fromOrganizationId)
-    );
-    user.organizationId = toOrganizationId;
-    if (username === null) return;
-    this.seedProfile({ userId, organizationId: toOrganizationId, username });
-    const membership = this.findStoredMembership(toOrganizationId, userId);
-    if (membership) membership.accepted = true;
-    else this.pushMembership({ userId, teamId: toOrganizationId, role: "MEMBER", accepted: true });
-  }
-
   async createPendingMembership(params: {
     organizationId: number;
     userId: number;

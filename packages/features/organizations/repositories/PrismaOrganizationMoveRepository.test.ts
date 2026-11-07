@@ -311,6 +311,67 @@ describe("PrismaOrganizationMoveRepository", () => {
       expect(tempOrgRedirect.upsert).toHaveBeenCalledWith(redirectUpsert(RedirectType.User, "alice", toUrl));
     });
 
+    it("moves a user without a username by dropping old org data and changing only the organization", async () => {
+      const { repository, team, user, membership, host, verificationToken, profile, tempOrgRedirect } =
+        buildRepository();
+      team.findMany.mockResolvedValue([{ id: 11 }]);
+
+      await repository.applyMove({ users: [userMove({ username: null })] });
+
+      expect(membership.deleteMany).toHaveBeenCalledWith({ where: { userId: 7, teamId: { in: [1, 11] } } });
+      expect(host.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 7, eventType: { teamId: { in: [1, 11] } } },
+      });
+      expect(verificationToken.deleteMany).toHaveBeenCalledWith({
+        where: { identifier: "alice@acme.com", teamId: { in: [1, 11] } },
+      });
+      expect(profile.deleteMany).toHaveBeenCalledTimes(1);
+      expect(profile.deleteMany).toHaveBeenCalledWith({ where: { userId: 7, organizationId: 1 } });
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { organizationId: 2 },
+        select: { id: true },
+      });
+      for (const query of [
+        profile.findUnique,
+        profile.create,
+        profile.update,
+        membership.upsert,
+        tempOrgRedirect.updateMany,
+        tempOrgRedirect.upsert,
+      ]) {
+        expect(query).not.toHaveBeenCalled();
+      }
+    });
+
+    it("only updates the organization of a user without a username or organization", async () => {
+      const { repository, team, user, membership, host, verificationToken, profile, tempOrgRedirect } =
+        buildRepository();
+
+      await repository.applyMove({ users: [userMove({ username: null, fromOrganizationId: null })] });
+
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { organizationId: 2 },
+        select: { id: true },
+      });
+      for (const query of [
+        team.findMany,
+        membership.deleteMany,
+        host.deleteMany,
+        verificationToken.deleteMany,
+        profile.deleteMany,
+        profile.findUnique,
+        profile.create,
+        profile.update,
+        membership.upsert,
+        tempOrgRedirect.updateMany,
+        tempOrgRedirect.upsert,
+      ]) {
+        expect(query).not.toHaveBeenCalled();
+      }
+    });
+
     it("turns a unique constraint violation into a conflict error", async () => {
       const { repository, user } = buildRepository();
       user.update.mockRejectedValue(
