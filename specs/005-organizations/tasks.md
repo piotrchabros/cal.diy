@@ -317,8 +317,8 @@ description: "Task list for Organizations (spec 005)"
   - Print counts with `RAISE NOTICE` before and after.
 
   Rehearse it on a scratch copy twice: the second run must change nothing. The owner applies it to production
-- [ ] T062 [US6] PR 23 (only after the rollout is verified): change `User.organizationId` to `Int` with `onDelete: Restrict` in `packages/prisma/schema.prisma`, and create a migration that first runs `DO $$ BEGIN IF EXISTS (SELECT 1 FROM users WHERE "organizationId" IS NULL) THEN RAISE EXCEPTION ...` and then `ALTER COLUMN ... SET NOT NULL`. Fix the type errors this causes (`yarn type-check:ci --force`)
-  - POSTPONED: implemented and ready, merge gated. Preparation merged (new users get the default organization; tests, seeds and fixtures assign one): #298, #301, #312, #322, #323, #324, #328, plus part 8 (flag-off username checks). The strict code, the migration and the schema change are stacked draft PRs #346 → #347 → #348. Open question for the owner: merging #346 makes the next deploy need `db-deploy` (which applies the T061 switch-over and the T062 migration together) and makes the default organization mandatory for new users. This task says "only after the rollout is verified", so merge the stack back to back only once T061 is applied in production and the rollout is verified. Both migrations were rehearsed on a disposable Postgres.
+- [X] T062 [US6] PR 23 (only after the rollout is verified): change `User.organizationId` to `Int` with `onDelete: Restrict` in `packages/prisma/schema.prisma`, and create a migration that first runs `DO $$ BEGIN IF EXISTS (SELECT 1 FROM users WHERE "organizationId" IS NULL) THEN RAISE EXCEPTION ...` and then `ALTER COLUMN ... SET NOT NULL`. Fix the type errors this causes (`yarn type-check:ci --force`)
+  - DONE (owner decision 2026-11-07, merged without waiting for the rollout): the stack landed as #371 (part 9 + migration, replaces #346), #372 (part 10, replaces #347) and #373 (schema, replaces #348). Rehearsed T061 + T062 on a disposable Postgres (abort path, deploy, repeat deploy, no schema drift). Every deploy of develop now needs `db-deploy` first (infra-owner-checklist.md, quickstart §5)
 
 ---
 
@@ -472,7 +472,7 @@ description: "Task list for Organizations (spec 005)"
 - **US3 (Phase 5)** depends on T012–T022. Within US3:
   - T038–T046 come before the sweeps.
   - The sweeps T047–T060 are mutually independent.
-- **US6 (Phase 6)**: T061 can be written anytime after T005. It must be applied in production before the flag is turned on. T062 comes last, after rollout verification.
+- **US6 (Phase 6)**: T061 can be written anytime after T005. It must be applied in production before the flag is turned on. T062 is merged (owner decision 2026-11-07), so every deploy of develop is preceded by `db-deploy` (T061, then T062).
 - **US4 (Phase 7)** depends on US2 (T031, T034) and T010.
 - **US5 (Phase 8)** depends on T010, T040 (redirect reading) and US1. It is required before BespokeSoft and JellyMatch get members.
 - **Go-live gate**: Phases 2–8 merged, T061 applied, owner checklist done, then set the flag.
