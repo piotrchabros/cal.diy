@@ -1,23 +1,18 @@
-import { randomBytes } from "node:crypto";
-import { sendTeamInviteEmail } from "@calcom/emails/organization-email-service";
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import type { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
 import { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
-import { getTranslation } from "@calcom/i18n/server";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
+import { defaultSendTeamInviteEmail, type SendTeamInviteEmail, TeamInviteService } from "./TeamInviteService";
 
 export const TEAM_MEMBER_ROLES = [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER] as const;
 export type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
-
-const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ListTeamMembersInput = {
   teamId: number;
@@ -29,51 +24,23 @@ export type ListTeamMembersInput = {
   pageSize?: number;
 };
 
-export type SendTeamMemberInviteEmail = (input: {
-  to: string;
-  teamName: string;
-  joinLink: string;
-  isExistingUser: boolean;
-  inviterName: string;
-  locale: string;
-}) => Promise<void>;
-
-const defaultSendInviteEmail: SendTeamMemberInviteEmail = async ({
-  to,
-  teamName,
-  joinLink,
-  isExistingUser,
-  inviterName,
-  locale,
-}) => {
-  const language = await getTranslation(locale ?? "en", "common");
-  await sendTeamInviteEmail({
-    language,
-    from: inviterName,
-    to,
-    teamName,
-    joinLink,
-    isCalcomMember: isExistingUser,
-    isAutoJoin: false,
-    isOrg: false,
-    parentTeamName: undefined,
-    isExistingUserMovedToOrg: false,
-    prevLink: null,
-    newLink: null,
-  });
-};
+export type SendTeamMemberInviteEmail = SendTeamInviteEmail;
 
 export class TeamMembersService {
+  private readonly teamInviteService: TeamInviteService;
+
   constructor(
     private readonly membershipRepository: MembershipRepository = new MembershipRepository(),
     private readonly teamRepository: TeamRepository = new TeamRepository(),
     private readonly userRepository: UserRepository = new UserRepository(prisma),
-    private readonly sendInviteEmail: SendTeamMemberInviteEmail = defaultSendInviteEmail,
+    sendInviteEmail: SendTeamMemberInviteEmail = defaultSendTeamInviteEmail,
     private readonly getOrganizationMembershipService: () => Pick<
       OrganizationMembershipService,
       "addMember"
     > = defaultGetOrganizationMembershipService
-  ) {}
+  ) {
+    this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
+  }
 
   private async requireTeamMembership(teamId: number, userId: number) {
     const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({ teamId, userId });
@@ -172,7 +139,7 @@ export class TeamMembersService {
         role,
         organizationId,
       });
-      await this.sendInviteWithToken({
+      await this.teamInviteService.sendInvite({
         teamId,
         teamName: team.name,
         email: normalizedEmail,
@@ -202,7 +169,7 @@ export class TeamMembersService {
         accepted: false,
       });
     }
-    await this.sendInviteWithToken({
+    await this.teamInviteService.sendInvite({
       teamId,
       teamName: team.name,
       email: normalizedEmail,
@@ -234,46 +201,6 @@ export class TeamMembersService {
     // addMember needs a username for the organization profile; that profile is created once
     // the invitee finishes signup, so for now only the organization link is recorded.
     await this.userRepository.setOrganizationId({ id: invitee.id, organizationId });
-  }
-
-  private async sendInviteWithToken({
-    teamId,
-    teamName,
-    email,
-    inviterName,
-    locale,
-    isExistingUser,
-  }: {
-    teamId: number;
-    teamName: string;
-    email: string;
-    inviterName: string;
-    locale: string;
-    isExistingUser: boolean;
-  }) {
-    const token = await this.ensureInviteToken({ teamId, email });
-    await this.sendInviteEmail({
-      to: email,
-      teamName,
-      joinLink: `${WEBAPP_URL}/auth/team-invite?token=${token}`,
-      isExistingUser,
-      inviterName,
-      locale,
-    });
-  }
-
-  private async ensureInviteToken({ teamId, email }: { teamId: number; email: string }) {
-    const existing = await this.teamRepository.findTeamInviteTokenByEmail({ teamId, email });
-    if (existing && existing.expires > new Date()) {
-      return existing.token;
-    }
-    if (existing) {
-      await this.teamRepository.deleteTeamInviteTokens({ teamId, email });
-    }
-    const token = randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + INVITE_TOKEN_TTL_MS);
-    await this.teamRepository.createTeamInviteToken({ teamId, email, token, expires });
-    return token;
   }
 
   async getInviteByToken({ token }: { token: string }) {
@@ -441,7 +368,7 @@ export class TeamMembersService {
     if (!membership || membership.accepted) {
       throw ErrorWithCode.Factory.BadRequest(`No pending invitation for ${normalizedEmail}`);
     }
-    await this.sendInviteWithToken({
+    await this.teamInviteService.sendInvite({
       teamId,
       teamName: team.name,
       email: normalizedEmail,
