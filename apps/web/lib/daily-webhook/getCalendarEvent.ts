@@ -1,6 +1,6 @@
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-
 import type { getBookingResponse } from "./getBooking";
 
 export const getCalendarEvent = async (booking: getBookingResponse) => {
@@ -19,7 +19,10 @@ export const getCalendarEvent = async (booking: getBookingResponse) => {
     };
   });
 
-  const attendeesList = await Promise.all(attendeesListPromises);
+  const [attendeesList, bookerUrl] = await Promise.all([
+    Promise.all(attendeesListPromises),
+    getOrganizationUrlService().getBaseUrlForUser({ userId: booking.user?.id }),
+  ]);
   const evt: CalendarEvent = {
     type: booking.title,
     title: booking.title,
@@ -34,6 +37,7 @@ export const getCalendarEvent = async (booking: getBookingResponse) => {
     },
     attendees: attendeesList,
     uid: booking.uid,
+    bookerUrl,
     customReplyToEmail: booking.eventType?.customReplyToEmail,
   };
 
