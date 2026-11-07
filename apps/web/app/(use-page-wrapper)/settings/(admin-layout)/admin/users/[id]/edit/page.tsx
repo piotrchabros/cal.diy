@@ -1,5 +1,6 @@
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import type { Params } from "app/_types";
 import { _generateMetadata, getTranslate } from "app/_utils";
@@ -44,7 +45,7 @@ const Page = async ({ params }: { params: Params }) => {
 
   return (
     <SettingsHeader title={t("editing_user")} description={t("admin_users_edit_description")}>
-      <UsersEditView user={user} />
+      <UsersEditView user={user} organizationsEnabled={isOrganizationsEnabled()} />
     </SettingsHeader>
   );
 };
