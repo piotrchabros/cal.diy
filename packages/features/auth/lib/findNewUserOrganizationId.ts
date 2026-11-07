@@ -1,4 +1,4 @@
-import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
+import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 
 export type GetRequestHeaders = () => Pick<Headers, "get">;
@@ -9,5 +9,5 @@ export async function findNewUserOrganizationId(getRequestHeaders?: GetRequestHe
     const org = await getOrgFromRequest(getRequestHeaders());
     if (org) return org.id;
   }
-  return findDefaultOrganizationId();
+  return requireDefaultOrganizationId();
 }

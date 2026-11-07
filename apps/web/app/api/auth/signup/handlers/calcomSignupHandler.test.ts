@@ -15,7 +15,7 @@ import { vi } from "vitest";
 const mockFindTokenByToken: Mock = vi.fn();
 const mockValidateAndGetCorrectedUsernameForTeam: Mock = vi.fn();
 const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
-const mockFindDefaultOrganizationId: Mock = vi.fn();
+const mockRequireDefaultOrganizationId: Mock = vi.fn();
 
 const DEFAULT_ORG_ID = 99;
 
@@ -108,7 +108,7 @@ vi.mock("@calcom/lib/server/username", () => ({
   },
 }));
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: (...args: unknown[]) => mockFindDefaultOrganizationId(...args),
+  requireDefaultOrganizationId: (...args: unknown[]) => mockRequireDefaultOrganizationId(...args),
 }));
 vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
   TeamMembersService: class {
@@ -139,7 +139,7 @@ runP2002TestSuite("calcomHandler", callHandler, () => {
   mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
   mockValidateAndGetCorrectedUsernameForTeam.mockResolvedValue("testuser");
   mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
-  mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+  mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
   prismaMock.team.findUnique.mockResolvedValue(createMockTeam() as never);
   prismaMock.verificationToken.delete.mockResolvedValue({} as never);
 });
@@ -148,7 +148,7 @@ describe("calcomHandler – team invite materialization", () => {
   it("accepts pending team invites after a plain signup", async () => {
     vi.clearAllMocks();
     resetPrismaMock();
-    mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+    mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
     prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
 
@@ -170,7 +170,7 @@ describe("calcomHandler – team invite materialization", () => {
   it("still signs up when invite materialization fails", async () => {
     vi.clearAllMocks();
     resetPrismaMock();
-    mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+    mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
     mockAcceptPendingInvitesOnSignup.mockRejectedValue(new Error("db down"));
     prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
 
@@ -189,7 +189,7 @@ describe("calcomHandler – default organization", () => {
   function setup(defaultOrgId: number): void {
     vi.clearAllMocks();
     resetPrismaMock();
-    mockFindDefaultOrganizationId.mockResolvedValue(defaultOrgId);
+    mockRequireDefaultOrganizationId.mockResolvedValue(defaultOrgId);
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
     mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
     mockValidateAndGetCorrectedUsernameForTeam.mockResolvedValue("testuser");
@@ -213,7 +213,7 @@ describe("calcomHandler – default organization", () => {
 
   it("creates no user when no default organization exists", async () => {
     setup(DEFAULT_ORG_ID);
-    mockFindDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
+    mockRequireDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
 
     await expect(callHandler(createSignupBody())).rejects.toThrow("No default organization");
     expect(prismaMock.user.create).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ describe("calcomHandler – default organization", () => {
     const response = await callHandler(createSignupBody({ token: "token" }));
 
     expect(response.status).toBe(201);
-    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     expect(prismaMock.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ organizationId: 7 }) })
     );

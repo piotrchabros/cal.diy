@@ -1,7 +1,7 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { findDefaultOrganizationId } from "./defaultOrganization";
+import { requireDefaultOrganizationId } from "./defaultOrganization";
 
 const resolveDefault = vi.fn();
 
@@ -16,17 +16,17 @@ describe("defaultOrganization", () => {
     resolveDefault.mockReset();
   });
 
-  describe("findDefaultOrganizationId", () => {
+  describe("requireDefaultOrganizationId", () => {
     it("returns the default org id", async () => {
       resolveDefault.mockResolvedValue(defaultOrg);
 
-      await expect(findDefaultOrganizationId()).resolves.toBe(7);
+      await expect(requireDefaultOrganizationId()).resolves.toBe(7);
     });
 
     it("throws a precondition error when there is no default org", async () => {
       resolveDefault.mockResolvedValue(null);
 
-      const error = await findDefaultOrganizationId().catch((e: unknown) => e);
+      const error = await requireDefaultOrganizationId().catch((e: unknown) => e);
       expect(error).toBeInstanceOf(ErrorWithCode);
       expect(error).toMatchObject({
         code: ErrorCode.PreconditionFailed,

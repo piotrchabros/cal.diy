@@ -26,7 +26,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
   getOrganizationUrlService: () => ({ getBaseUrl: mockGetBaseUrl }),
 }));
 
-const mockFindDefaultOrganizationId = vi.fn();
+const mockRequireDefaultOrganizationId = vi.fn();
 const mockAddMember = vi.fn();
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
@@ -34,7 +34,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.contain
 }));
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
+  requireDefaultOrganizationId: () => mockRequireDefaultOrganizationId(),
 }));
 
 const mockAcceptPendingInvitesOnSignup = vi.fn();
@@ -299,7 +299,7 @@ describe("next-auth options with organizations", () => {
     mockCheckSignInDomain.mockResolvedValue({ kind: "allowed" });
     mockGetOrganizationOriginForUrl.mockResolvedValue(null);
     mockGetBaseUrl.mockResolvedValue("https://acme.example.org");
-    mockFindDefaultOrganizationId.mockResolvedValue(1);
+    mockRequireDefaultOrganizationId.mockResolvedValue(1);
     mockAddMember.mockResolvedValue({ userId: 100, organizationId: 7, role: "MEMBER" });
     mockPrismaUserDelete.mockResolvedValue({ id: 100 });
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
@@ -585,7 +585,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("joins the default organization with the flag off", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
@@ -598,19 +598,19 @@ describe("next-auth options with organizations", () => {
 
     it("joins the request organization with the flag on", async () => {
       mockIsOrganizationsEnabled.mockReturnValue(true);
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await signIn(googleSignUpParams);
 
       expect(createdUserData()).toMatchObject({ organization: { connect: { id: 7 } } });
-      expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+      expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     });
 
     it("falls back to the default organization when the request has no organization", async () => {
       mockIsOrganizationsEnabled.mockReturnValue(true);
       mockGetOrgFromRequest.mockResolvedValue(null);
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("localhost:3000"));
 
       await signIn(googleSignUpParams);
@@ -620,7 +620,7 @@ describe("next-auth options with organizations", () => {
 
     it("falls back to the default organization when request headers are unavailable", async () => {
       mockIsOrganizationsEnabled.mockReturnValue(true);
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks();
 
       await signIn(googleSignUpParams);
@@ -638,7 +638,7 @@ describe("next-auth options with organizations", () => {
         vi.resetModules();
       });
       mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await signIn(googleSignUpParams);
@@ -648,7 +648,7 @@ describe("next-auth options with organizations", () => {
         organization: { connect: { id: 55 } },
         teams: { create: { role: "MEMBER", accepted: true, team: { connect: { id: 55 } } } },
       });
-      expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+      expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     });
 
     it("does not add another membership for an autolinked user with the flag on", async () => {
@@ -670,7 +670,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("adds the default organization membership with the flag off", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
@@ -682,7 +682,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("creates no user when no default organization exists with the flag off", async () => {
-      mockFindDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
+      mockRequireDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
@@ -692,7 +692,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("deletes the new user when adding the default organization membership fails with the flag off", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       mockAddMember.mockRejectedValue(new Error("username taken"));
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
@@ -704,7 +704,7 @@ describe("next-auth options with organizations", () => {
 
     it("accepts pending invites for the request organization after linking the account with the flag on", async () => {
       mockIsOrganizationsEnabled.mockReturnValue(true);
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
@@ -720,7 +720,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("accepts pending invites for the default organization with the flag off", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await signIn(googleSignUpParams);
@@ -736,7 +736,7 @@ describe("next-auth options with organizations", () => {
     });
 
     it("still signs in when accepting pending invites fails", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
       mockAcceptPendingInvitesOnSignup.mockRejectedValue(new Error("db down"));
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 

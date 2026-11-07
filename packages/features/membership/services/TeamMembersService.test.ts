@@ -9,7 +9,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 
 // The real resolver lazily loads the Prisma-backed DI container; tests must never reach it.
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: vi.fn(async () => 1),
+  requireDefaultOrganizationId: vi.fn(async () => 1),
 }));
 
 vi.mock("@calcom/lib/auth/hashPassword", () => ({

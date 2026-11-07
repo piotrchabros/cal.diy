@@ -1,10 +1,11 @@
+import { ErrorWithCode } from "@calcom/lib/errors";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findNewUserOrganizationId } from "./findNewUserOrganizationId";
 
-const { mockGetOrgFromRequest, mockFindDefaultOrganizationId, mockIsOrganizationsEnabled } = vi.hoisted(
+const { mockGetOrgFromRequest, mockRequireDefaultOrganizationId, mockIsOrganizationsEnabled } = vi.hoisted(
   () => ({
     mockGetOrgFromRequest: vi.fn(),
-    mockFindDefaultOrganizationId: vi.fn(),
+    mockRequireDefaultOrganizationId: vi.fn(),
     mockIsOrganizationsEnabled: vi.fn(),
   })
 );
@@ -14,7 +15,7 @@ vi.mock("@calcom/features/organizations/lib/getOrgFromRequest", () => ({
 }));
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: mockFindDefaultOrganizationId,
+  requireDefaultOrganizationId: mockRequireDefaultOrganizationId,
 }));
 
 vi.mock("@calcom/lib/organizations/isOrganizationsEnabled", () => ({
@@ -29,7 +30,7 @@ describe("findNewUserOrganizationId", () => {
   beforeEach(() => {
     mockIsOrganizationsEnabled.mockReturnValue(true);
     mockGetOrgFromRequest.mockResolvedValue(ORG);
-    mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+    mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
   });
 
   afterEach(() => {
@@ -46,7 +47,7 @@ describe("findNewUserOrganizationId", () => {
   it("returns the organization resolved from the request headers", async () => {
     await expect(findNewUserOrganizationId(getRequestHeaders)).resolves.toBe(ORG.id);
     expect(mockGetOrgFromRequest).toHaveBeenCalledWith(expect.any(Headers));
-    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
   });
 
   it("falls back to the default organization when the request matches no organization", async () => {
@@ -60,10 +61,13 @@ describe("findNewUserOrganizationId", () => {
     expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
   });
 
-  it("returns null when no default organization exists", async () => {
+  it("rejects when no default organization exists", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    mockFindDefaultOrganizationId.mockResolvedValue(null);
+    const error = ErrorWithCode.Factory.PreconditionFailed(
+      "No default organization: no organization uses the domain of NEXT_PUBLIC_WEBAPP_URL"
+    );
+    mockRequireDefaultOrganizationId.mockRejectedValue(error);
 
-    await expect(findNewUserOrganizationId()).resolves.toBeNull();
+    await expect(findNewUserOrganizationId()).rejects.toBe(error);
   });
 });

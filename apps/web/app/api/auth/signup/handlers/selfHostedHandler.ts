@@ -13,7 +13,7 @@ import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/s
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
-import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
+import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { ErrorCode } from "@calcom/lib/errorCodes";
@@ -50,7 +50,7 @@ async function resolveHostOrganizationId(
   orgsEnabled: boolean,
   requestHeaders: Pick<Headers, "get">
 ): Promise<number | null> {
-  if (!orgsEnabled) return findDefaultOrganizationId();
+  if (!orgsEnabled) return requireDefaultOrganizationId();
   return (await getOrgFromRequest(requestHeaders))?.id ?? null;
 }
 

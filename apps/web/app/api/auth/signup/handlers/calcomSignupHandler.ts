@@ -15,7 +15,7 @@ import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/s
 import { getFeatureRepository } from "@calcom/features/di/containers/FeatureRepository";
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
-import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
+import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { GlobalWatchlistRepository } from "@calcom/features/watchlist/lib/repository/GlobalWatchlistRepository";
 import { sentrySpan } from "@calcom/features/watchlist/lib/telemetry";
 import { normalizeEmail } from "@calcom/features/watchlist/lib/utils/normalization";
@@ -195,7 +195,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
     });
     if (team) {
       const teamOrgId = team.isOrganization ? team.id : (team.parent?.id ?? null);
-      const organizationId = teamOrgId ?? (await findDefaultOrganizationId());
+      const organizationId = teamOrgId ?? (await requireDefaultOrganizationId());
 
       if (username) {
         const existingUserByUsername = await userRepository.findByUsernameAndOrganizationId({
@@ -251,7 +251,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
   } else {
     // Create the user
     let createdUser: { id: number };
-    const organizationId = await findDefaultOrganizationId();
+    const organizationId = await requireDefaultOrganizationId();
     try {
       createdUser = await userRepository.create({
         username,

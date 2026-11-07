@@ -18,7 +18,7 @@ vi.mock("@calcom/prisma", () => ({
 }));
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: vi.fn().mockResolvedValue(1),
+  requireDefaultOrganizationId: vi.fn().mockResolvedValue(1),
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({

@@ -1,7 +1,7 @@
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
-import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
+import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import {
   type OrganizationMembershipService,
   USERNAME_TAKEN_IN_ORGANIZATION,
@@ -55,7 +55,7 @@ export class TeamMembersService {
       OrganizationMembershipService,
       "addMember" | "getRole"
     > = defaultGetOrganizationMembershipService,
-    private readonly resolveDefaultOrganizationId: () => Promise<number> = findDefaultOrganizationId
+    private readonly resolveDefaultOrganizationId: () => Promise<number> = requireDefaultOrganizationId
   ) {
     this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
   }
