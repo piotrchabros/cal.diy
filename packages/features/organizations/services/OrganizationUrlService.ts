@@ -1,4 +1,5 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
+import { buildOrganizationOrigin } from "@calcom/lib/organizations/buildOrganizationOrigin";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { isLoopbackHost, normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 import type { IOrganizationMembershipRepository } from "../repositories/interfaces/IOrganizationMembershipRepository";
@@ -74,12 +75,12 @@ export class OrganizationUrlService {
 
   private async load(organizationId: number): Promise<string> {
     const domain = normalizeHost(await this.deps.organizationRepository.findDomainById(organizationId));
-    // WEBAPP_URL keeps the configured protocol and port, which a bare https://<domain> would lose
-    // for the default org and for local development.
+    // The default org and loopback domains are served from WEBAPP_URL itself, which already carries
+    // the configured base URL including any path, so a rebuilt origin would drop that path.
     if (!domain || domain === this.deps.organizationsConfig.defaultDomain || isLoopbackHost(domain)) {
       return WEBAPP_URL;
     }
-    return `https://${domain}`;
+    return buildOrganizationOrigin(domain);
   }
 
   private store(organizationId: number, value: string): void {

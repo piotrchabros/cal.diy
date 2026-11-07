@@ -1,4 +1,5 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
+import { buildOrganizationOrigin } from "@calcom/lib/organizations/buildOrganizationOrigin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrganizationMembershipRepository";
 import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRepository";
@@ -21,6 +22,7 @@ const ORG_B_ID = 3;
 const ORG_WITHOUT_DOMAIN_ID = 4;
 const ORG_A_HOST = "cal.acme.com";
 const ORG_B_HOST = "cal.bespokesoft.pl";
+const ORG_B_ORIGIN = buildOrganizationOrigin(ORG_B_HOST);
 const WEBAPP_HOST = new URL(WEBAPP_URL).host;
 const REASON_QUERY = "?reason=wrong_organization_domain";
 const ERROR_QUERY = "?error=wrong_organization_domain";
@@ -140,7 +142,7 @@ describe("OrganizationSignInService.checkSignInDomain", () => {
         requestOrganizationId: ORG_A_ID,
         requestHost: ORG_A_HOST,
       })
-    ).resolves.toEqual({ kind: "redirect", loginUrl: `https://${ORG_B_HOST}/auth/login${REASON_QUERY}` });
+    ).resolves.toEqual({ kind: "redirect", loginUrl: `${ORG_B_ORIGIN}/auth/login${REASON_QUERY}` });
   });
 
   it("redirects a user of another organization to their organization's login page", async () => {
@@ -152,7 +154,7 @@ describe("OrganizationSignInService.checkSignInDomain", () => {
         requestOrganizationId: ORG_A_ID,
         requestHost: ORG_A_HOST,
       })
-    ).resolves.toEqual({ kind: "redirect", loginUrl: `https://${ORG_B_HOST}/auth/login${REASON_QUERY}` });
+    ).resolves.toEqual({ kind: "redirect", loginUrl: `${ORG_B_ORIGIN}/auth/login${REASON_QUERY}` });
   });
 
   it("redirects a user without an organization from an organization host to the webapp login", async () => {
