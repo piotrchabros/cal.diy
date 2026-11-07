@@ -28,6 +28,10 @@ vi.mock("@calcom/features/organizations/di/OrganizationDomainResolver.container"
   getOrganizationDomainResolver,
 }));
 
+const { handleOrgRedirect } = vi.hoisted(() => ({ handleOrgRedirect: vi.fn() }));
+
+vi.mock("@lib/handleOrgRedirect", () => ({ handleOrgRedirect }));
+
 // Mock NextResponse.json since it's not available in test environment
 vi.mock("next/server", async () => {
   const actual = await vi.importActual<typeof import("next/server")>("next/server");
@@ -667,5 +671,110 @@ describe("Legacy route gating", () => {
 
     expectStatus(res, 307);
     expect(getHeader(res, "location")).toContain("/dashboard");
+  });
+});
+
+describe("Moved team redirects", () => {
+  const org = { id: 7, slug: "bluebee", domain: "bluebee.test", isDefault: false };
+  const teamRequest = (path: string) =>
+    createTestRequest({ url: `https://bluebee.test${path}`, headers: { host: "bluebee.test" } });
+  const movedTo = (destination: string) => ({ redirect: { permanent: true, destination } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveOrg.mockResolvedValue(org);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("does not look anything up with organizations disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    const res = await callProxy(teamRequest("/team/sales"));
+
+    expectStatus(res, 200);
+    expect(getHeader(res, "location")).toBeNull();
+    expect(resolveOrg).not.toHaveBeenCalled();
+    expect(handleOrgRedirect).not.toHaveBeenCalled();
+  });
+
+  describe("with organizations enabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    });
+
+    it("answers a moved team link with a 308", async () => {
+      handleOrgRedirect.mockResolvedValue(movedTo("https://bespoke.test/team/sales?member=1"));
+
+      const res = await callProxy(teamRequest("/team/Sales?member=1"));
+
+      expectStatus(res, 308);
+      expect(getHeader(res, "location")).toBe("https://bespoke.test/team/sales?member=1");
+      expect(handleOrgRedirect).toHaveBeenCalledWith({
+        slugs: ["sales"],
+        redirectType: "Team",
+        eventTypeSlug: null,
+        query: { member: "1" },
+        hostOrgId: 7,
+      });
+    });
+
+    it("answers a moved team event type link with a 308", async () => {
+      handleOrgRedirect.mockResolvedValue(movedTo("https://bespoke.test/team/sales/30min"));
+
+      const res = await callProxy(teamRequest("/team/sales/30min/"));
+
+      expectStatus(res, 308);
+      expect(getHeader(res, "location")).toBe("https://bespoke.test/team/sales/30min");
+      expect(handleOrgRedirect).toHaveBeenCalledWith({
+        slugs: ["sales"],
+        redirectType: "TeamEventType",
+        eventTypeSlug: "30min",
+        query: {},
+        hostOrgId: 7,
+      });
+    });
+
+    it("passes through when the team has not moved", async () => {
+      handleOrgRedirect.mockResolvedValue(null);
+
+      const res = await callProxy(teamRequest("/team/sales"));
+
+      expectStatus(res, 200);
+      expect(getHeader(res, "location")).toBeNull();
+      expect(handleOrgRedirect).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes through when the lookup fails", async () => {
+      handleOrgRedirect.mockRejectedValue(new Error("db down"));
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const res = await callProxy(teamRequest("/team/sales"));
+
+      expectStatus(res, 200);
+      consoleSpy.mockRestore();
+    });
+
+    it.each([
+      "/team/sales/embed",
+      "/team/sales/30min/embed",
+      "/team/sales/30min/extra",
+    ])("ignores %s", async (path) => {
+      await callProxy(teamRequest(path));
+      expect(handleOrgRedirect).not.toHaveBeenCalled();
+    });
+
+    it("ignores team links on a host without an organization", async () => {
+      resolveOrg.mockResolvedValue(null);
+
+      const res = await callProxy(
+        createTestRequest({ url: "http://localhost:3000/team/sales", headers: { host: "localhost:3000" } })
+      );
+
+      expectStatus(res, 200);
+      expect(handleOrgRedirect).not.toHaveBeenCalled();
+    });
   });
 });
