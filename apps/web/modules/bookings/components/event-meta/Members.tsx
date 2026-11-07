@@ -2,7 +2,7 @@ import { useIsPlatform } from "@calcom/atoms/hooks/useIsPlatform";
 import { useIsEmbed } from "@calcom/embed-core/embed-iframe";
 import { useBookerStore } from "@calcom/features/bookings/Booker/store";
 import type { BookerEvent } from "@calcom/features/bookings/types";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { SchedulingType } from "@calcom/prisma/enums";
 import { AvatarGroup } from "@calcom/ui/components/avatar";
@@ -34,6 +34,7 @@ export const EventMembers = ({
   const isDynamic = !!(username && username.indexOf("+") > -1);
   const isEmbed = useIsEmbed();
   const isPlatform = useIsPlatform();
+  const orgBaseUrl = useOrgBaseUrl();
 
   const showMembers = schedulingType !== SchedulingType.ROUND_ROBIN;
   const shownUsers = showMembers ? users : [];
@@ -61,8 +62,8 @@ export const EventMembers = ({
               isEmbed || isPlatform || isPrivateLink || entity.hideProfileLink
                 ? null
                 : entity.teamSlug
-                  ? `${WEBAPP_URL}/team/${entity.teamSlug}`
-                  : WEBAPP_URL,
+                  ? `${orgBaseUrl}/team/${entity.teamSlug}`
+                  : orgBaseUrl,
             image: entity.logoUrl ?? profile.image ?? "",
             alt: entity.name ?? profile.name ?? "",
             title: entity.name ?? profile.name ?? "",
@@ -80,7 +81,7 @@ export const EventMembers = ({
             href:
               isPlatform || isPrivateLink || entity.hideProfileLink
                 ? null
-                : `${WEBAPP_URL}/${user.profile?.username}?redirect=false`,
+                : `${orgBaseUrl}/${user.profile?.username}?redirect=false`,
             alt: user.name || "",
             title: user.name || "",
             image: getUserAvatarUrl(user),

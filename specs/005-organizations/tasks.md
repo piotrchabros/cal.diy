@@ -258,7 +258,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/modules/auth/hooks/useRedirectToLoginIfUnauthenticated.tsx`
   - `apps/web/modules/signup-view.tsx`
   - `apps/web/components/setup/AdminUser.tsx`
-- [ ] T051 [P] [US3] PR 16.2, booking pages:
+- [X] T051 [P] [US3] PR 16.2, booking pages:
   - `apps/web/modules/bookings/components/{BookerWebWrapper,event-meta/AvailableEventLocations,event-meta/Members}.tsx`
   - `packages/features/bookings/components/Header.tsx`
   - `apps/web/app/(booking-page-wrapper)/{[user]/page,[user]/[type]/page,booking/[uid]/page,team/[slug]/[type]/page}.tsx`
