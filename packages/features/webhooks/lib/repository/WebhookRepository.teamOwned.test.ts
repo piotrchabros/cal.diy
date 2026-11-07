@@ -2,7 +2,7 @@ import type { IEventTypesRepository } from "@calcom/features/eventtypes/eventtyp
 import type { IUsersRepository } from "@calcom/features/users/users.repository.interface";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebhookRepository } from "./WebhookRepository";
 
 const baseWebhook = {
@@ -38,10 +38,11 @@ const prismaMock = {
 };
 
 const userRepository = { findUserTeams: vi.fn() };
+const eventTypeRepository = { findParentEventTypeId: vi.fn() };
 
 const repository = new WebhookRepository(
   prismaMock as unknown as PrismaClient,
-  {} as IEventTypesRepository,
+  eventTypeRepository as unknown as IEventTypesRepository,
   userRepository as unknown as IUsersRepository
 );
 
@@ -86,12 +87,54 @@ describe("WebhookRepository team-owned webhook visibility", () => {
 
       expect(ids).toEqual(["wh-team", "wh-team-user"]);
     });
+
+    it("does not let a plain member modify or delete team webhooks", async () => {
+      prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(MembershipRole.MEMBER));
+
+      const { webhookGroups, profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+      const teamGroup = webhookGroups.find((group) => group.teamId === 3);
+      const teamProfile = profiles.find((profile) => profile.teamId === 3);
+
+      expect(teamGroup?.metadata).toEqual({ canModify: false, canDelete: false });
+      expect(teamProfile).toMatchObject({ canModify: false, canDelete: false });
+    });
+
+    it.each([
+      MembershipRole.ADMIN,
+      MembershipRole.OWNER,
+    ])("lets a team %s modify and delete team webhooks", async (role) => {
+      prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(role));
+
+      const { webhookGroups, profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+      const teamGroup = webhookGroups.find((group) => group.teamId === 3);
+      const teamProfile = profiles.find((profile) => profile.teamId === 3);
+
+      expect(teamGroup?.metadata).toEqual({ canModify: true, canDelete: true });
+      expect(teamProfile).toMatchObject({ canModify: true, canDelete: true });
+    });
+
+    it.each([
+      MembershipRole.MEMBER,
+      MembershipRole.ADMIN,
+      MembershipRole.OWNER,
+    ])("always lets the viewer manage personal webhooks (team %s)", async (role) => {
+      prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(role));
+
+      const { profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+      const personalProfile = profiles.find((profile) => profile.teamId === null);
+
+      expect(personalProfile).toMatchObject({ slug: "viewer", canModify: true, canDelete: true });
+    });
   });
 
   describe("listWebhooks", () => {
     beforeEach(() => {
       userRepository.findUserTeams.mockResolvedValue({ teams: [{ teamId: 3 }] });
       prismaMock.webhook.findMany.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
     const whereConditions = () => prismaMock.webhook.findMany.mock.calls[0][0].where.AND;
@@ -129,12 +172,50 @@ describe("WebhookRepository team-owned webhook visibility", () => {
       });
     });
 
-    it("keeps the existing user/team scope condition unchanged", async () => {
+    it("scopes to the viewer's own webhooks when they administer no team", async () => {
       prismaMock.membership.findMany.mockResolvedValue([]);
 
       await repository.listWebhooks({ userId: 7 });
 
+      expect(whereConditions()).toContainEqual({ OR: [{ userId: 7 }] });
+    });
+
+    it("scopes team webhooks to teams the viewer administers", async () => {
+      prismaMock.membership.findMany.mockResolvedValue([{ teamId: 3 }]);
+
+      await repository.listWebhooks({ userId: 7 });
+
       expect(whereConditions()).toContainEqual({ OR: [{ userId: 7 }, { teamId: { in: [3] } }] });
+    });
+
+    it("does not derive team scope from all (including pending) memberships", async () => {
+      prismaMock.membership.findMany.mockResolvedValue([]);
+
+      await repository.listWebhooks({ userId: 7 });
+
+      expect(userRepository.findUserTeams).not.toHaveBeenCalled();
+      expect(JSON.stringify(whereConditions())).not.toContain('"teamId":{"in":[3]}');
+    });
+
+    it("filters by event type without querying memberships", async () => {
+      eventTypeRepository.findParentEventTypeId.mockResolvedValue(null);
+
+      await repository.listWebhooks({ userId: 7, eventTypeId: 11 });
+
+      expect(prismaMock.membership.findMany).not.toHaveBeenCalled();
+      expect(whereConditions()).toContainEqual({ eventTypeId: 11 });
+    });
+
+    it("builds the same where clause with ORGANIZATIONS_ENABLED on", async () => {
+      prismaMock.membership.findMany.mockResolvedValue([{ teamId: 3 }]);
+      await repository.listWebhooks({ userId: 7 });
+      const flagOffWhere = prismaMock.webhook.findMany.mock.calls[0][0].where;
+
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      await repository.listWebhooks({ userId: 7 });
+      const flagOnWhere = prismaMock.webhook.findMany.mock.calls[1][0].where;
+
+      expect(flagOnWhere).toEqual(flagOffWhere);
     });
   });
 });

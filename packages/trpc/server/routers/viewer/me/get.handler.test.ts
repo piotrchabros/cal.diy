@@ -1,4 +1,4 @@
-import { IdentityProvider } from "@calcom/prisma/enums";
+import { IdentityProvider, MembershipRole } from "@calcom/prisma/enums";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrpcSessionUser } from "../../../types";
 
@@ -9,7 +9,7 @@ const {
   mockFindMany,
   mockGetTeamIdsWithPermission,
   MockUserRepository,
-  MockPermissionCheckService,
+  MockTeamRolePermissionService,
 } = vi.hoisted(() => {
   const mockFindAllProfilesForUserIncludingMovedUser = vi.fn();
   const mockEnrichUserWithTheProfile = vi.fn();
@@ -21,7 +21,7 @@ const {
     enrichUserWithTheProfile = (...args: unknown[]) => mockEnrichUserWithTheProfile(...args);
   }
 
-  class MockPermissionCheckService {
+  class MockTeamRolePermissionService {
     getTeamIdsWithPermission = (...args: unknown[]) => mockGetTeamIdsWithPermission(...args);
   }
 
@@ -32,7 +32,7 @@ const {
     mockFindMany,
     mockGetTeamIdsWithPermission,
     MockUserRepository,
-    MockPermissionCheckService,
+    MockTeamRolePermissionService,
   };
 });
 
@@ -48,8 +48,12 @@ vi.mock("@calcom/features/users/repositories/UserRepository", () => ({
   UserRepository: MockUserRepository,
 }));
 
-vi.mock("@calcom/features/pbac/services/permission-check.service", () => ({
-  PermissionCheckService: MockPermissionCheckService,
+vi.mock("@calcom/features/membership/services/TeamRolePermissionService", () => ({
+  TeamRolePermissionService: MockTeamRolePermissionService,
+}));
+
+vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
+  MembershipRepository: class {},
 }));
 
 vi.mock("@calcom/lib/getAvatarUrl", () => ({
@@ -241,5 +245,33 @@ describe("getHandler - identity provider email lookup", () => {
     const result = await getHandler({ ctx, input: {} });
 
     expect(result.organizationId).toBe(5);
+  });
+
+  describe("canUpdateTeams", () => {
+    it("is true when the user can update at least one team", async () => {
+      mockGetTeamIdsWithPermission.mockResolvedValue([5]);
+
+      const result = await getHandler({ ctx: createCtx(), input: {} });
+
+      expect(result.canUpdateTeams).toBe(true);
+    });
+
+    it("is false when the user cannot update any team", async () => {
+      mockGetTeamIdsWithPermission.mockResolvedValue([]);
+
+      const result = await getHandler({ ctx: createCtx(), input: {} });
+
+      expect(result.canUpdateTeams).toBe(false);
+    });
+
+    it("asks for teams the user can update as admin or owner", async () => {
+      await getHandler({ ctx: createCtx(), input: {} });
+
+      expect(mockGetTeamIdsWithPermission).toHaveBeenCalledWith({
+        userId: 1,
+        permission: "team.update",
+        fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+      });
+    });
   });
 });
