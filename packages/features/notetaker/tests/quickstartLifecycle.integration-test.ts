@@ -597,7 +597,8 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
     });
   });
 
-  // dispatchDue acts on every armed booking and live session in the database, not only this file's.
+  // The harness narrows dispatchDue to its own bookings, but those still include the armed bookings
+  // and live sessions earlier tests of this file left behind.
   describe.skipIf(process.env.NOTETAKER_IT_ISOLATED_DB !== "1")("sweep, isolated database only", () => {
     it("the sweep cancels the pending session of a cancelled booking", async () => {
       const booking = await harness.createBooking({ hostId: host.id, label: "lc-sweep-cancelled" });
@@ -623,13 +624,16 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         actorType: "SYSTEM",
         detail: { reason: "BOOKING_NOT_ACTIVE" },
       });
-      expect(gateway.joinRequests).toHaveLength(1);
+      // Filtered because the sweep may also dispatch armed bookings earlier tests of this file left;
+      // a re-dispatch of this booking would have left a session above.
+      const ownJoinRequests = gateway.joinRequests.filter((request) => request.sessionId === pending[0].id);
+      expect(ownJoinRequests).toHaveLength(1);
     });
 
     it("an unreachable bot ends FAILED with INTERRUPTED after the give-up deadline and sends the failed email", async () => {
       // The give-up deadline is capped at the booking's end, so a booking ending soon keeps the clock
       // change below the heartbeat timeout: a larger one would make the sweep fail the live sessions
-      // of the walk-through files running beside this one.
+      // earlier tests of this file left behind.
       const durationMs = 20_000;
       const booking = await harness.createBooking({
         hostId: host.id,
