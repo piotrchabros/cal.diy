@@ -66,10 +66,14 @@ export const getUserEventGroups = async ({ ctx, input }: GetByViewerOptions) => 
     })
   );
 
+  // Mirrors heavy/create.handler.ts, which lets system admins create team event types without a team role.
+  const isSystemAdmin = user.role === "ADMIN";
   const teamPermissions: Record<number, { canCreateEventType: boolean }> = {};
   for (const group of filteredEventTypeGroups) {
     if (group.teamId === null || group.teamId === undefined) continue;
-    teamPermissions[group.teamId] = { canCreateEventType: teamIdsWithCreatePermission.has(group.teamId) };
+    teamPermissions[group.teamId] = {
+      canCreateEventType: isSystemAdmin || teamIdsWithCreatePermission.has(group.teamId),
+    };
   }
 
   return {
