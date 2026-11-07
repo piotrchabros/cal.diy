@@ -25,6 +25,7 @@ import { useSession } from "next-auth/react";
 import type { ComponentProps } from "react";
 import React, { useEffect, useMemo, useState } from "react";
 import Shell from "~/shell/Shell";
+import { getOwnOrganizationTab } from "./ownOrganizationTab";
 
 const getTabs = (
   orgBranding: {
@@ -266,6 +267,7 @@ interface SettingsPermissions {
   canViewOrganizationBilling?: boolean;
   canUpdateOrganization?: boolean;
   canManageOrganizations?: boolean;
+  canViewOwnOrganization?: boolean;
 }
 
 const useTabs = ({
@@ -384,6 +386,16 @@ const useTabs = ({
       if (isAdmin) return true;
       return !adminRequiredKeys.includes(tab.name);
     });
+
+    // Pushed after the visibility filter: the upstream "organization" tab shares
+    // this name and is hidden by organizationRequiredKeys.
+    const ownOrganizationTab = getOwnOrganizationTab({
+      enabled: permissions?.canViewOwnOrganization,
+      organizationId: user?.organizationId,
+    });
+    if (ownOrganizationTab) {
+      visibleTabs.push(ownOrganizationTab);
+    }
 
     const myTeams = (teamsAndProfiles ?? []).filter((item) => item.teamId !== null);
     if (myTeams.length > 0) {

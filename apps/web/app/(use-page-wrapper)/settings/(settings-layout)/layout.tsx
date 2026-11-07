@@ -22,6 +22,7 @@ export default async function SettingsLayoutAppDir(props: SettingsLayoutProps) {
         canViewOrganizationBilling: false,
         canUpdateOrganization: false,
         canManageOrganizations: isOrganizationsEnabled(),
+        canViewOwnOrganization: isOrganizationsEnabled(),
       }}
     />
   );
