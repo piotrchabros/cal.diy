@@ -3,9 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getScheduleHandler } from "./getSchedule.handler";
 import type { ContextForGetSchedule, TGetScheduleInputSchema } from "./types";
 
-const { getAvailableSlots, resolve } = vi.hoisted(() => ({
+const { getAvailableSlots, resolve, findByIdIncludeTeamAndOwnerOrganization } = vi.hoisted(() => ({
   getAvailableSlots: vi.fn(),
   resolve: vi.fn(),
+  findByIdIncludeTeamAndOwnerOrganization: vi.fn(),
+}));
+
+vi.mock("@calcom/prisma", () => ({ prisma: {} }));
+
+vi.mock("@calcom/features/eventtypes/repositories/eventTypeRepository", () => ({
+  EventTypeRepository: class {
+    findByIdIncludeTeamAndOwnerOrganization = findByIdIncludeTeamAndOwnerOrganization;
+  },
 }));
 
 vi.mock("@calcom/features/di/containers/AvailableSlots", () => ({
@@ -36,6 +45,7 @@ describe("getScheduleHandler", () => {
   beforeEach(() => {
     getAvailableSlots.mockReset().mockResolvedValue({ slots: {} });
     resolve.mockReset();
+    findByIdIncludeTeamAndOwnerOrganization.mockReset();
   });
 
   afterEach(() => {
@@ -101,5 +111,99 @@ describe("getScheduleHandler", () => {
     await getScheduleHandler({ ctx, input: baseInput });
 
     expect(passedInput().orgSlug).toBe("acme");
+  });
+
+  describe("with a direct eventTypeId", () => {
+    const idInput = {
+      startTime: baseInput.startTime,
+      endTime: baseInput.endTime,
+      eventTypeId: 42,
+      orgSlug: null,
+    } as TGetScheduleInputSchema;
+    const acmeCtx = () =>
+      buildCtx({ host: "acme.example.com", "x-cal-org-id": "7", "x-cal-org-slug": "acme" });
+
+    function eventTypeOwnedBy(organizationId: number | null) {
+      return { id: 42, team: null, parent: null, owner: { organizationId } };
+    }
+
+    it("does not look up the event type when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+
+      await getScheduleHandler({ ctx: acmeCtx(), input: idInput });
+
+      expect(findByIdIncludeTeamAndOwnerOrganization).not.toHaveBeenCalled();
+      expect(passedInput()).toBe(idInput);
+    });
+
+    it("serves an event type of the request organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue(eventTypeOwnedBy(7));
+
+      await getScheduleHandler({ ctx: acmeCtx(), input: idInput });
+
+      expect(findByIdIncludeTeamAndOwnerOrganization).toHaveBeenCalledWith({ id: 42 });
+      expect(passedInput()).toEqual({ ...idInput, orgSlug: "acme" });
+    });
+
+    it("serves a team event type whose team belongs to the request organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue({
+        id: 42,
+        team: { id: 9, parentId: 7, isOrganization: false },
+        parent: null,
+        owner: null,
+      });
+
+      await getScheduleHandler({ ctx: acmeCtx(), input: idInput });
+
+      expect(getAvailableSlots).toHaveBeenCalled();
+    });
+
+    it("refuses an event type of another organization with NOT_FOUND", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue(eventTypeOwnedBy(8));
+
+      await expect(getScheduleHandler({ ctx: acmeCtx(), input: idInput })).rejects.toMatchObject({
+        code: "not_found_error",
+      });
+      expect(getAvailableSlots).not.toHaveBeenCalled();
+    });
+
+    it("refuses an event type outside any organization on a non-default organization's domain", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue(eventTypeOwnedBy(null));
+
+      await expect(getScheduleHandler({ ctx: acmeCtx(), input: idInput })).rejects.toThrow("event_not_found");
+    });
+
+    it("serves an event type outside any organization on the default organization's domain", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      resolve.mockResolvedValue({ id: 1, slug: "bluebee", domain: "cal.example.com", isDefault: true });
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue(eventTypeOwnedBy(null));
+
+      await getScheduleHandler({ ctx: buildCtx({ host: "cal.example.com" }), input: idInput });
+
+      expect(passedInput()).toEqual({ ...idInput, orgSlug: "bluebee" });
+    });
+
+    it("refuses when the request host resolves to no organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      resolve.mockResolvedValue(null);
+
+      await expect(
+        getScheduleHandler({ ctx: buildCtx({ host: "unknown.example.com" }), input: idInput })
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(findByIdIncludeTeamAndOwnerOrganization).not.toHaveBeenCalled();
+    });
+
+    it("leaves a missing event type to the slots service", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findByIdIncludeTeamAndOwnerOrganization.mockResolvedValue(null);
+
+      await getScheduleHandler({ ctx: acmeCtx(), input: idInput });
+
+      expect(getAvailableSlots).toHaveBeenCalled();
+    });
   });
 });

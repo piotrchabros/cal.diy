@@ -148,6 +148,48 @@ describe("handleNewBooking organization host check", () => {
   );
 
   test(
+    "skips the host organization check when the caller asks for it (API v2)",
+    async () => {
+      const handleNewBooking = getNewBookingHandler();
+      mockResolveBookingHostOrganization.mockResolvedValue({ orgSlug: "acme", hostOrganization });
+      await createOrganizerEventScenario({ organizationId: 2 });
+
+      const createdBooking = await handleNewBooking({
+        bookingData: getBookingData(),
+        hostname: "localhost:5555",
+        skipHostOrganizationCheck: true,
+      });
+
+      expect(createdBooking.uid).toBeTruthy();
+      expect(mockResolveBookingHostOrganization).not.toHaveBeenCalled();
+    },
+    timeout
+  );
+
+  test(
+    "runs the host organization check for API v1 bookings too",
+    async () => {
+      const { getRegularBookingService } = await import(
+        "@calcom/features/bookings/di/RegularBookingService.container"
+      );
+      const { default: getBookingDataSchema } = await import("../../getBookingDataSchema");
+      mockResolveBookingHostOrganization.mockResolvedValue({ orgSlug: "acme", hostOrganization });
+      await createOrganizerEventScenario({ organizationId: 2 });
+
+      await expect(
+        getRegularBookingService().createBookingForApiV1({
+          bookingData: getBookingData(),
+          bookingMeta: { hostname: "acme.example.com" },
+          bookingDataSchemaGetter: getBookingDataSchema,
+        })
+      ).rejects.toThrow("event_not_found");
+
+      expect(await prismock.booking.findMany({ where: { eventTypeId: 1 } })).toHaveLength(0);
+    },
+    timeout
+  );
+
+  test(
     "creates the booking when the event type belongs to the host organization",
     async () => {
       const handleNewBooking = getNewBookingHandler();

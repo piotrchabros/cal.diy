@@ -14,6 +14,14 @@ import { LuckyUserService } from "@/lib/services/lucky-user.service";
 import { BookingEmailAndSmsTasker } from "@/lib/services/tasker/booking-emails-sms-tasker.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 
+type CreateBookingInput = Parameters<BaseRegularBookingService["createBooking"]>[0];
+
+// API v2 authorizes event types itself and its Host header is the API's own host, so the web
+// booking flow's host-organization check must not run here (it would resolve to the default organization).
+function withoutHostOrganizationCheck(input: CreateBookingInput): CreateBookingInput {
+  return { ...input, bookingMeta: { ...input.bookingMeta, skipHostOrganizationCheck: true } };
+}
+
 @Injectable()
 export class RegularBookingService extends BaseRegularBookingService {
   constructor(
@@ -38,5 +46,13 @@ export class RegularBookingService extends BaseRegularBookingService {
       bookingEventHandler,
       webhookProducer,
     });
+  }
+
+  override async createBooking(input: CreateBookingInput) {
+    return super.createBooking(withoutHostOrganizationCheck(input));
+  }
+
+  override async rescheduleBooking(input: CreateBookingInput) {
+    return super.rescheduleBooking(withoutHostOrganizationCheck(input));
   }
 }
