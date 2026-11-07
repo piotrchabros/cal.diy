@@ -2,6 +2,7 @@ import { getDefaultLocations } from "@calcom/app-store/_utils/getDefaultLocation
 import { DailyLocationType } from "@calcom/app-store/constants";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import type { PrismaClient } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -86,17 +87,26 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
   if (teamId && schedulingType) {
     const isSystemAdmin = ctx.user.role === "ADMIN";
 
-    const membership = await new MembershipRepository(ctx.prisma).findUniqueByUserIdAndTeamId({
+    const membershipRepository = new MembershipRepository(ctx.prisma);
+    const membership = await membershipRepository.findUniqueByUserIdAndTeamId({
       userId,
       teamId,
     });
     const isAcceptedMember = !!membership?.accepted;
-    const isTeamAdminOrOwner =
-      isAcceptedMember &&
-      (membership?.role === MembershipRole.ADMIN || membership?.role === MembershipRole.OWNER);
 
-    // Org admin is deliberately not a bypass here: it would grant access to any teamId, not only teams of that org
-    if (!isSystemAdmin && !isTeamAdminOrOwner) {
+    // Parent-org admins pass through the check scoped to this team's parent organization. The session
+    // isOrgAdmin flag is not used: it is unscoped and would grant access to any teamId, not only teams of that org.
+    // A parent-org admin outside the team creates the event type without becoming a host, like a system admin.
+    const canCreateEventType =
+      isSystemAdmin ||
+      (await new TeamRolePermissionService(membershipRepository).checkPermission({
+        userId,
+        teamId,
+        permission: "eventType.create",
+        fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+      }));
+
+    if (!canCreateEventType) {
       console.warn(`User ${userId} does not have eventType.create permission for team ${teamId}`);
       throw new TRPCError({ code: "UNAUTHORIZED" });
     }
