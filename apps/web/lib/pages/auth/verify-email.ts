@@ -1,6 +1,6 @@
 import dayjs from "@calcom/dayjs";
 import { OnboardingPathService } from "@calcom/features/onboarding/lib/onboarding-path.service";
-import { IS_STRIPE_ENABLED, WEBAPP_URL } from "@calcom/lib/constants";
+import { IS_STRIPE_ENABLED } from "@calcom/lib/constants";
 import { prisma } from "@calcom/prisma";
 import { userMetadata } from "@calcom/prisma/zod-utils";
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -31,7 +31,7 @@ export async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   // The user is verifying the secondary email
   if (foundToken?.secondaryEmailId) {
-    await prisma.secondaryEmail.update({
+    const updatedSecondaryEmail = await prisma.secondaryEmail.update({
       where: {
         id: foundToken.secondaryEmailId,
         email: foundToken?.identifier,
@@ -39,11 +39,20 @@ export async function handler(req: NextApiRequest, res: NextApiResponse) {
       data: {
         emailVerified: new Date(),
       },
+      select: { userId: true },
     });
 
     await cleanUpVerificationTokens(foundToken.id);
 
-    return res.redirect(`${WEBAPP_URL}/settings/my-account/profile`);
+    // The session lives on the user's own organization domain, so land them there.
+    const { getOrganizationUrlService } = await import(
+      "@calcom/features/organizations/di/OrganizationUrlService.container"
+    );
+    const baseUrl = await getOrganizationUrlService().getBaseUrlForUser({
+      userId: updatedSecondaryEmail.userId,
+    });
+
+    return res.redirect(`${baseUrl}/settings/my-account/profile`);
   }
 
   const user = await prisma.user.findFirst({
@@ -101,11 +110,11 @@ export async function handler(req: NextApiRequest, res: NextApiResponse) {
     });
 
     if (IS_STRIPE_ENABLED && userMetadataParsed.stripeCustomerId) {
-        const billingService = { updateCustomer: async (_args: { customerId: string; email: string }) => {} };
-        await billingService.updateCustomer({
-          customerId: userMetadataParsed.stripeCustomerId,
-          email: updatedEmail,
-        });
+      const billingService = { updateCustomer: async (_args: { customerId: string; email: string }) => {} };
+      await billingService.updateCustomer({
+        customerId: userMetadataParsed.stripeCustomerId,
+        email: updatedEmail,
+      });
     }
 
     // The user is trying to update the email to an already existing unverified secondary email of his
@@ -143,7 +152,12 @@ export async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const gettingStartedPath = await OnboardingPathService.getGettingStartedPath();
 
-  return res.redirect(`${WEBAPP_URL}${hasCompletedOnboarding ? "/event-types" : gettingStartedPath}`);
+  const { getOrganizationUrlService } = await import(
+    "@calcom/features/organizations/di/OrganizationUrlService.container"
+  );
+  const baseUrl = await getOrganizationUrlService().getBaseUrlForUser({ userId: user.id });
+
+  return res.redirect(`${baseUrl}${hasCompletedOnboarding ? "/event-types" : gettingStartedPath}`);
 }
 
 export async function cleanUpVerificationTokens(id: number) {

@@ -1,5 +1,5 @@
 import process from "node:process";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { symmetricDecrypt } from "@calcom/lib/crypto";
 import { distributedTracing } from "@calcom/lib/tracing/factory";
 import prisma from "@calcom/prisma";
@@ -31,6 +31,7 @@ const decryptedSchema = z.object({
 });
 
 async function handler(request: NextRequest) {
+  const { baseUrl } = await getRequestOrgBaseUrl(request.headers);
   const searchParams = request.nextUrl.searchParams;
 
   const { action, token, reason } = querySchema.parse(Object.fromEntries(searchParams.entries()));
@@ -97,11 +98,11 @@ async function handler(request: NextRequest) {
     let message = "Error confirming booking";
     if (e instanceof TRPCError) message = (e as TRPCError).message;
     return NextResponse.redirect(
-      new URL(`/booking/${bookingUid}?error=${encodeURIComponent(message)}`, WEBAPP_URL)
+      new URL(`/booking/${bookingUid}?error=${encodeURIComponent(message)}`, baseUrl)
     );
   }
 
-  return NextResponse.redirect(new URL(`/booking/${bookingUid}`, WEBAPP_URL));
+  return NextResponse.redirect(new URL(`/booking/${bookingUid}`, baseUrl));
 }
 
 export const GET = defaultResponderForAppDir(handler);

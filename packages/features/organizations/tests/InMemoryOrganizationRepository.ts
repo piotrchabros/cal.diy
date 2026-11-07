@@ -17,6 +17,7 @@ type StoredOrganization = {
   owners: OrganizationOwnerDto[];
   memberCount: number;
   teamCount: number;
+  autoAcceptEmailDomain: string | null;
 };
 
 export class InMemoryOrganizationRepository implements IOrganizationRepository {
@@ -32,6 +33,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     owners?: OrganizationOwnerDto[];
     memberCount?: number;
     teamCount?: number;
+    autoAcceptEmailDomain?: string | null;
   }): OrganizationRecord {
     const id = params.id ?? this.nextId;
     this.nextId = Math.max(this.nextId, id + 1);
@@ -43,6 +45,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
       owners: params.owners ?? [],
       memberCount: params.memberCount ?? 0,
       teamCount: params.teamCount ?? 0,
+      autoAcceptEmailDomain: params.autoAcceptEmailDomain ?? null,
     };
     this.organizations = this.organizations.filter((organization) => organization.id !== id);
     this.organizations.push(stored);
@@ -104,7 +107,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     const pageItems = matching.slice(0, params.limit);
     const hasMore = matching.length > params.limit;
     return {
-      items: pageItems.map(({ owners: _owners, ...item }) => ({ ...item })),
+      items: pageItems.map(({ owners: _owners, autoAcceptEmailDomain: _domain, ...item }) => ({ ...item })),
       nextCursor: hasMore ? pageItems[pageItems.length - 1]?.id : undefined,
     };
   }
@@ -151,6 +154,12 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     return team ? { ...team } : null;
   }
 
+  async findIdByVerifiedAutoAcceptEmailDomain(domain: string): Promise<number | null> {
+    return (
+      this.organizations.find((organization) => organization.autoAcceptEmailDomain === domain)?.id ?? null
+    );
+  }
+
   private findWhere(predicate: (organization: StoredOrganization) => boolean): OrganizationRecord | null {
     const stored = this.organizations.find(predicate);
     return stored ? this.toRecord(stored) : null;
@@ -166,7 +175,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     return [...this.organizations].sort((a, b) => a.id - b.id);
   }
 
-  private toRecord(stored: StoredOrganization): OrganizationRecord {
+  private toRecord({ autoAcceptEmailDomain: _domain, ...stored }: StoredOrganization): OrganizationRecord {
     return { ...stored, owners: stored.owners.map((owner) => ({ ...owner })) };
   }
 }
