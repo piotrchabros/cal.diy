@@ -1,5 +1,5 @@
 import type { OrganizationDto } from "@calcom/lib/dto/OrganizationDto";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OrganizationFormView from "./organization-form-view";
@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   updateUseMutation: vi.fn<(options: MutationOptions) => Mutation>(),
   createMutate: vi.fn<(input: unknown) => void>(),
   updateMutate: vi.fn<(input: unknown) => void>(),
+  demoteUseMutation: vi.fn<(options: MutationOptions) => Mutation>(),
+  demoteMutate: vi.fn<(input: unknown) => void>(),
   getUseQuery: vi.fn<(input: { id: number }) => GetQuery>(),
   listPaginatedUseQuery:
     vi.fn<(input: unknown, options: unknown) => { data: { rows: OwnerRow[] }; isFetching: boolean }>(),
@@ -50,6 +52,7 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
   organization_not_found: "Organization not found",
   organization_domain_taken: "Organization domain is already taken",
   organization_owner_needs_username: "The owner needs a username",
+  organization_must_keep_one_owner: "An organization must keep at least one owner",
 };
 
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
@@ -77,6 +80,7 @@ vi.mock("@calcom/trpc/react", () => ({
           listTeams: { useInfiniteQuery: mocks.listTeamsUseInfiniteQuery },
           create: { useMutation: mocks.createUseMutation },
           update: { useMutation: mocks.updateUseMutation },
+          demoteOwner: { useMutation: mocks.demoteUseMutation },
         },
       },
     },
@@ -119,6 +123,7 @@ function buildOrg(overrides: Partial<OrganizationDto> = {}): OrganizationDto {
 function setupMocks(getQuery?: GetQuery): void {
   mocks.createUseMutation.mockReturnValue({ mutate: mocks.createMutate, isPending: false });
   mocks.updateUseMutation.mockReturnValue({ mutate: mocks.updateMutate, isPending: false });
+  mocks.demoteUseMutation.mockReturnValue({ mutate: mocks.demoteMutate, isPending: false });
   mocks.listPaginatedUseQuery.mockReturnValue({ data: { rows: [OWNER] }, isFetching: false });
   mocks.listTeamsUseInfiniteQuery.mockReturnValue({
     data: {
@@ -413,6 +418,52 @@ describe("OrganizationFormView", () => {
 
       expect(mocks.showToast).toHaveBeenNthCalledWith(1, "owner_in_another_organization", "error");
       expect(mocks.showToast).toHaveBeenNthCalledWith(2, "The owner needs a username", "error");
+    });
+
+    describe("owner list", () => {
+      const TWO_OWNERS = [
+        { userId: 7, name: "Jane", email: "jane@acme.com" },
+        { userId: 8, name: null, email: "joe@acme.com" },
+      ];
+
+      it("offers no demotion for the only owner", () => {
+        renderEdit({ data: buildOrg(), isPending: false, error: null });
+
+        expect(screen.getByText("Jane (jane@acme.com)")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "organization_make_admin" })).not.toBeInTheDocument();
+      });
+
+      it("demotes one of several owners to the chosen role", () => {
+        renderEdit({ data: buildOrg({ owners: TWO_OWNERS }), isPending: false, error: null });
+
+        const rows = screen.getAllByTestId("organization-owner");
+        expect(rows[1]).toHaveTextContent("joe@acme.com (joe@acme.com)");
+        fireEvent.click(within(rows[1]).getByRole("button", { name: "organization_make_member" }));
+        fireEvent.click(within(rows[0]).getByRole("button", { name: "organization_make_admin" }));
+
+        expect(mocks.demoteMutate).toHaveBeenNthCalledWith(1, { id: 2, userId: 8, role: "MEMBER" });
+        expect(mocks.demoteMutate).toHaveBeenNthCalledWith(2, { id: 2, userId: 7, role: "ADMIN" });
+      });
+
+      it("toasts and refreshes the organization after a demotion", async () => {
+        renderEdit({ data: buildOrg({ owners: TWO_OWNERS }), isPending: false, error: null });
+
+        await act(async () => {
+          await getOptions(mocks.demoteUseMutation).onSuccess?.();
+        });
+
+        expect(mocks.showToast).toHaveBeenCalledWith("organization_owner_demoted", "success");
+        expect(mocks.invalidateGet).toHaveBeenCalledWith({ id: 2 });
+        expect(mocks.invalidateList).toHaveBeenCalledTimes(1);
+      });
+
+      it("toasts the translated refusal when the demotion fails", () => {
+        renderEdit({ data: buildOrg({ owners: TWO_OWNERS }), isPending: false, error: null });
+
+        getOptions(mocks.demoteUseMutation).onError?.({ message: "organization_must_keep_one_owner" });
+
+        expect(mocks.showToast).toHaveBeenCalledWith("An organization must keep at least one owner", "error");
+      });
     });
   });
 });

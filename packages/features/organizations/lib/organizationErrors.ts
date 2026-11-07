@@ -30,5 +30,6 @@ export const ORGANIZATION_ERRORS = {
   onlyOwnersCanRemoveOwner: "organization_only_owners_can_remove_owner",
   cannotRemoveFromDefault: "organization_cannot_remove_from_default",
   lastOwner: "organization_must_keep_one_owner",
+  memberNotOwner: "organization_member_not_owner",
   invalidInviteEmail: "organization_invalid_invite_email",
 } as const;

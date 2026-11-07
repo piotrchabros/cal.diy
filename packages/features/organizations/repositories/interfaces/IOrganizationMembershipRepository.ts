@@ -45,6 +45,7 @@ export interface IOrganizationMembershipRepository {
     userId: number;
   }): Promise<{ role: OrganizationRoleDto; accepted: boolean } | null>;
   countOwners(organizationId: number): Promise<number>;
+  countPendingOwners(organizationId: number): Promise<number>;
   updateRole(p: {
     organizationId: number;
     userId: number;

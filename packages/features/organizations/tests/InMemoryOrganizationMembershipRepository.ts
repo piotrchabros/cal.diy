@@ -171,6 +171,13 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     ).length;
   }
 
+  async countPendingOwners(organizationId: number): Promise<number> {
+    return this.memberships.filter(
+      (membership) =>
+        membership.teamId === organizationId && membership.role === "OWNER" && !membership.accepted
+    ).length;
+  }
+
   async listMembers(params: {
     organizationId: number;
     search?: string;

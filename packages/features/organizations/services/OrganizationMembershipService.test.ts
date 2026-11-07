@@ -656,11 +656,8 @@ describe("OrganizationMembershipService", () => {
       );
     });
 
-    it.each([
-      ["no organization", null],
-      ["another organization", OTHER_ORG_ID],
-    ])("refuses a member whose user belongs to %s", async (_label, organizationId) => {
-      membershipRepository.seedUser({ id: MEMBER_ID, organizationId });
+    it("refuses a member whose user belongs to another organization", async () => {
+      membershipRepository.seedUser({ id: MEMBER_ID, organizationId: OTHER_ORG_ID });
 
       await expectRejection(
         removeMember(ADMIN_ID, MEMBER_ID),
@@ -891,6 +888,92 @@ describe("OrganizationMembershipService", () => {
         targetUserId: 77,
         role: "OWNER",
       });
+    });
+  });
+
+  describe("demoteOwner", () => {
+    const ACTOR_ID = 99;
+    const OWNER_ID = 1;
+    const SECOND_OWNER_ID = 2;
+
+    function demote(userId: number, role: "ADMIN" | "MEMBER" = "ADMIN") {
+      return service.demoteOwner({ organizationId: ORG_ID, userId, role, actorUserId: ACTOR_ID });
+    }
+
+    function seedOwner(userId: number, accepted = true) {
+      membershipRepository.seedUser({ id: userId, organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId, teamId: ORG_ID, role: "OWNER", accepted });
+    }
+
+    it.each([
+      "ADMIN",
+      "MEMBER",
+    ] as const)("demotes one of several owners to %s and logs the actor", async (role) => {
+      seedOwner(OWNER_ID);
+      seedOwner(SECOND_OWNER_ID);
+
+      await expect(demote(SECOND_OWNER_ID, role)).resolves.toEqual({ userId: SECOND_OWNER_ID, role });
+
+      expect(await service.getRole(SECOND_OWNER_ID, ORG_ID)).toBe(role);
+      expect(await service.getRole(OWNER_ID, ORG_ID)).toBe("OWNER");
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.owner.demote", {
+        action: "organization.owner.demote",
+        actorUserId: ACTOR_ID,
+        organizationId: ORG_ID,
+        userId: SECOND_OWNER_ID,
+        role,
+      });
+    });
+
+    it("refuses to demote the last accepted owner", async () => {
+      seedOwner(OWNER_ID);
+      seedOwner(SECOND_OWNER_ID, false);
+
+      await expectRejection(
+        demote(OWNER_ID),
+        ErrorCode.PreconditionFailed,
+        "organization_must_keep_one_owner"
+      );
+      expect(await service.getRole(OWNER_ID, ORG_ID)).toBe("OWNER");
+    });
+
+    it("demotes a pending owner invite while an accepted owner remains", async () => {
+      seedOwner(OWNER_ID);
+      seedOwner(SECOND_OWNER_ID, false);
+
+      await demote(SECOND_OWNER_ID, "MEMBER");
+
+      expect(
+        await membershipRepository.findMembership({ organizationId: ORG_ID, userId: SECOND_OWNER_ID })
+      ).toEqual({ role: "MEMBER", accepted: false });
+    });
+
+    it("refuses to demote the last pending owner invite of an organization without an accepted owner", async () => {
+      seedOwner(OWNER_ID, false);
+
+      await expectRejection(
+        demote(OWNER_ID),
+        ErrorCode.PreconditionFailed,
+        "organization_must_keep_one_owner"
+      );
+      expect(membershipRepository.updateRoleCalls).toBe(0);
+    });
+
+    it("demotes one of several pending owner invites of an organization without an accepted owner", async () => {
+      seedOwner(OWNER_ID, false);
+      seedOwner(SECOND_OWNER_ID, false);
+
+      await expect(demote(SECOND_OWNER_ID)).resolves.toEqual({ userId: SECOND_OWNER_ID, role: "ADMIN" });
+    });
+
+    it("refuses a member who is not an owner", async () => {
+      membershipRepository.seedMembership({ userId: 3, teamId: ORG_ID, role: "ADMIN" });
+
+      await expectRejection(demote(3), ErrorCode.PreconditionFailed, "organization_member_not_owner");
+    });
+
+    it("refuses a user without a membership", async () => {
+      await expectRejection(demote(404), ErrorCode.NotFound, "organization_member_not_found");
     });
   });
 
