@@ -1,5 +1,6 @@
 import { Dialog } from "@calcom/features/components/controlled-dialog";
 import CreateEventTypeForm from "@calcom/features/eventtypes/components/CreateEventTypeForm";
+import { useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useTypedQuery } from "@calcom/lib/hooks/useTypedQuery";
 import type { EventType } from "@calcom/prisma/client";
@@ -14,8 +15,6 @@ import { z } from "zod";
 import { useCreateEventType } from "~/event-types/hooks/useCreateEventType";
 import { findCreatableTeamProfile } from "../lib/createEventTypeDialogUtils";
 import { TeamSchedulingTypeField } from "./TeamSchedulingTypeField";
-
-const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL ?? "";
 
 // this describes the uniform data needed to create a new event type on Profile or Team
 export interface EventTypeParent {
@@ -102,7 +101,7 @@ export function CreateEventTypeDialog({ profileOptions }: { profileOptions: Prof
 
   const { form, createMutation, isManagedEventType } = useCreateEventType(onSuccessMutation, onErrorMutation);
 
-  const urlPrefix = WEBSITE_URL;
+  const urlPrefix = useOrgBaseUrlOr(process.env.NEXT_PUBLIC_WEBSITE_URL ?? "");
 
   return (
     <Dialog

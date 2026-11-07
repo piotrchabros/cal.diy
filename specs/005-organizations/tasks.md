@@ -262,7 +262,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/modules/bookings/components/{BookerWebWrapper,event-meta/AvailableEventLocations,event-meta/Members}.tsx`
   - `packages/features/bookings/components/Header.tsx`
   - `apps/web/app/(booking-page-wrapper)/{[user]/page,[user]/[type]/page,booking/[uid]/page,team/[slug]/[type]/page}.tsx`
-- [ ] T052 [P] [US3] PR 16.3, event types:
+- [X] T052 [P] [US3] PR 16.3, event types:
   - `apps/web/modules/event-types/components/{CreateEventTypeDialog,DuplicateDialog,EventTypeWebWrapper,locations/Locations,tabs/setup/EventSetupTabWebWrapper}.tsx`
 - [ ] T053 [P] [US3] PR 16.4, settings and teams:
   - `apps/web/modules/settings/my-account/{appearance-view,profile-view}.tsx`
