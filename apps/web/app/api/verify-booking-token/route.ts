@@ -1,4 +1,4 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { distributedTracing } from "@calcom/lib/tracing/factory";
 import prisma from "@calcom/prisma";
 import { confirmHandler } from "@calcom/trpc/server/routers/viewer/bookings/confirm.handler";
@@ -23,6 +23,8 @@ const querySchema = z.object({
 
 async function getHandler(request: NextRequest) {
   const queryParams = Object.fromEntries(request.nextUrl.searchParams.entries());
+  // An org member's session lives on the organization domain, where WEBAPP_URL would land them logged out.
+  const { baseUrl } = await getRequestOrgBaseUrl(request.headers);
 
   try {
     const { action, token, bookingUid, userId } = querySchema.parse(queryParams);
@@ -32,33 +34,34 @@ async function getHandler(request: NextRequest) {
       return NextResponse.redirect(
         new URL(
           `/booking/${bookingUid}?error=${encodeURIComponent("Rejection requires POST method")}`,
-          WEBAPP_URL
+          baseUrl
         )
       );
     }
 
-    return await handleBookingAction(action, token, bookingUid, userId, request, undefined);
+    return await handleBookingAction(action, token, bookingUid, userId, baseUrl, undefined);
   } catch {
     const bookingUid = queryParams.bookingUid || "";
     return NextResponse.redirect(
-      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, WEBAPP_URL)
+      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, baseUrl)
     );
   }
 }
 
 async function postHandler(request: NextRequest) {
   const queryParams = Object.fromEntries(request.nextUrl.searchParams.entries());
+  const { baseUrl } = await getRequestOrgBaseUrl(request.headers);
 
   try {
     const { action, token, bookingUid, userId } = querySchema.parse(queryParams);
     const body = await parseRequestData(request).catch(() => ({}));
     const { reason } = z.object({ reason: z.string().optional() }).parse(body || {});
 
-    return await handleBookingAction(action, token, bookingUid, userId, request, reason);
+    return await handleBookingAction(action, token, bookingUid, userId, baseUrl, reason);
   } catch {
     const bookingUid = queryParams.bookingUid || "";
     return NextResponse.redirect(
-      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, WEBAPP_URL),
+      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, baseUrl),
       { status: 303 }
     );
   }
@@ -69,7 +72,7 @@ async function handleBookingAction(
   token: string,
   bookingUid: string,
   userId: string,
-  _request: NextRequest,
+  baseUrl: string,
   reason?: string
 ) {
   const booking = await prisma.booking.findUnique({
@@ -78,7 +81,7 @@ async function handleBookingAction(
 
   if (!booking) {
     return NextResponse.redirect(
-      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, WEBAPP_URL),
+      new URL(`/booking/${bookingUid}?error=${encodeURIComponent("Error confirming booking")}`, baseUrl),
       { status: 303 }
     );
   }
@@ -121,7 +124,7 @@ async function handleBookingAction(
     let message = "Error confirming booking";
     if (e instanceof TRPCError) message = (e as TRPCError).message;
     return NextResponse.redirect(
-      new URL(`/booking/${booking.uid}?error=${encodeURIComponent(message)}`, WEBAPP_URL),
+      new URL(`/booking/${booking.uid}?error=${encodeURIComponent(message)}`, baseUrl),
       { status: 303 }
     );
   }
@@ -131,7 +134,7 @@ async function handleBookingAction(
     data: { oneTimePassword: null },
   });
 
-  return NextResponse.redirect(new URL(`/booking/${booking.uid}`, WEBAPP_URL), { status: 303 });
+  return NextResponse.redirect(new URL(`/booking/${booking.uid}`, baseUrl), { status: 303 });
 }
 
 export const GET = defaultResponderForAppDir(getHandler);

@@ -82,6 +82,12 @@ vi.mock("@calcom/features/booking-audit/lib/makeActor", () => ({
   makeUserActor: vi.fn().mockReturnValue({ type: "user", id: "test-uuid" }),
 }));
 
+vi.mock("@calcom/features/organizations/lib/getRequestOrgBaseUrl", () => ({
+  getRequestOrgBaseUrl: vi.fn(),
+}));
+
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import prisma from "@calcom/prisma";
 // Import after mocks are set up
 import { GET } from "../route";
@@ -91,6 +97,7 @@ const createMockRequest = (url: string): NextRequest => {
   return {
     method: "GET",
     url,
+    headers: new Headers({ host: urlObj.host }),
     nextUrl: {
       searchParams: urlObj.searchParams,
     },
@@ -99,10 +106,42 @@ const createMockRequest = (url: string): NextRequest => {
 
 // Vitest sets NEXT_PUBLIC_WEBAPP_URL to http://app.cal.local:3000 (see vitest.config.mts)
 const EXPECTED_REDIRECT_ORIGIN = "http://app.cal.local:3000";
+const ORG_URL = "https://acme.example.com";
 
 describe("link route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getRequestOrgBaseUrl).mockResolvedValue({ baseUrl: WEBAPP_URL, orgSlug: null });
+  });
+
+  describe("GET handler - organization base URL", () => {
+    it("should redirect to the request's organization base URL", async () => {
+      vi.mocked(getRequestOrgBaseUrl).mockResolvedValue({ baseUrl: ORG_URL, orgSlug: "acme" });
+      const req = createMockRequest(`${ORG_URL}/api/link?action=accept&token=encrypted-token`);
+
+      const res = await GET(req, { params: Promise.resolve({}) });
+      const redirectUrl = new URL(res.headers.get("location")!);
+
+      expect(getRequestOrgBaseUrl).toHaveBeenCalledWith(req.headers);
+      expect(redirectUrl.origin).toBe(ORG_URL);
+      expect(redirectUrl.pathname).toBe("/booking/test-booking-uid");
+    });
+
+    it("should redirect errors to the request's organization base URL", async () => {
+      const { TRPCError } = await import("@trpc/server");
+      vi.mocked(getRequestOrgBaseUrl).mockResolvedValue({ baseUrl: ORG_URL, orgSlug: "acme" });
+      mockConfirmHandler.mockRejectedValueOnce(
+        new TRPCError({ code: "BAD_REQUEST", message: "Custom error" })
+      );
+      const req = createMockRequest(`${ORG_URL}/api/link?action=accept&token=encrypted-token`);
+
+      const res = await GET(req, { params: Promise.resolve({}) });
+      const redirectUrl = new URL(res.headers.get("location")!);
+
+      expect(redirectUrl.origin).toBe(ORG_URL);
+      expect(redirectUrl.pathname).toBe("/booking/test-booking-uid");
+      expect(redirectUrl.searchParams.get("error")).toBe("Custom error");
+    });
   });
 
   describe("GET handler - redirect URL construction", () => {
