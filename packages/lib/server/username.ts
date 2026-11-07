@@ -149,8 +149,8 @@ const usernameCheck = async (usernameRaw: string, namespace: UsernameNamespace =
   const user = await prisma.user.findFirst({
     where: {
       username,
-      // Check in the specific organization context, or global namespace if no org
-      organizationId,
+      // A null organization is the global namespace (organizations off), where every user shares one organization.
+      ...(organizationId !== null && { organizationId }),
     },
     select: {
       id: true,
@@ -176,7 +176,7 @@ const usernameCheck = async (usernameRaw: string, namespace: UsernameNamespace =
       username: {
         contains: username,
       },
-      organizationId,
+      ...(organizationId !== null && { organizationId }),
     },
     select: {
       username: true,
