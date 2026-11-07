@@ -208,11 +208,18 @@ export class TeamProfileService {
     };
   }
 
-  async getPublicTeamBySlug({ slug }: { slug: string }): Promise<PublicTeamProfile | null> {
+  async getPublicTeamBySlug({
+    slug,
+    parentId,
+  }: {
+    slug: string;
+    parentId?: number;
+  }): Promise<PublicTeamProfile | null> {
     const normalizedSlug = slugify(slug);
     if (!normalizedSlug) return null;
     const team = await this.prisma.team.findFirst({
-      where: { slug: normalizedSlug, isPrivate: false },
+      // Omitted rather than null when organizations are off: `parentId: null` would add an IS NULL filter.
+      where: { slug: normalizedSlug, isPrivate: false, ...(parentId !== undefined ? { parentId } : {}) },
       select: publicTeamProfileSelect,
     });
     if (!team) return null;

@@ -1,7 +1,10 @@
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { getBookingForReschedule } from "@calcom/features/bookings/lib/get-booking";
 import { EventRepository } from "@calcom/features/eventtypes/repositories/EventRepository";
+import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
 import { getHideBranding } from "@calcom/features/profile/lib/hideBranding";
+import { RedirectType } from "@calcom/prisma/enums";
+import { handleOrgRedirect } from "@lib/handleOrgRedirect";
 import type { GetServerSidePropsContext } from "next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getEventSlugCandidates, getServerSideProps } from "./getServerSideProps";
@@ -14,6 +17,7 @@ vi.mock("@calcom/features/bookings/lib/get-booking", () => ({
 vi.mock("@calcom/features/eventtypes/repositories/EventRepository", () => ({
   EventRepository: { getPublicEvent: vi.fn() },
 }));
+vi.mock("@calcom/features/organizations/lib/getHostOrganization", () => ({ getHostOrganization: vi.fn() }));
 vi.mock("@calcom/features/profile/lib/hideBranding", () => ({
   getHideBranding: vi.fn(),
   shouldHideBrandingForUserEvent: vi.fn(),
@@ -21,10 +25,14 @@ vi.mock("@calcom/features/profile/lib/hideBranding", () => ({
 vi.mock("@calcom/features/eventtypes/lib/defaultEvents", () => ({ getUsernameList: vi.fn() }));
 vi.mock("@calcom/features/users/repositories/UserRepository", () => ({ UserRepository: vi.fn() }));
 vi.mock("@calcom/prisma", () => ({ prisma: {} }));
-vi.mock("@lib/handleOrgRedirect", () => ({ handleOrgRedirect: vi.fn() }));
+vi.mock("@lib/handleOrgRedirect", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@lib/handleOrgRedirect")>()),
+  handleOrgRedirect: vi.fn(),
+}));
 vi.mock("@server/lib/[user]/getServerSideProps", () => ({ getUsersInOrgContext: vi.fn() }));
 
 type PublicEvent = NonNullable<Awaited<ReturnType<typeof EventRepository.getPublicEvent>>>;
+type HostOrganization = Awaited<ReturnType<typeof getHostOrganization>>;
 
 const getPublicEventMock = vi.mocked(EventRepository.getPublicEvent);
 
@@ -39,11 +47,18 @@ const buildEvent = (overrides: Partial<{ teamId: number | null; slug: string; hi
     ...overrides,
   }) as unknown as PublicEvent;
 
-// Only params, query and req are read by the loader.
+const resolvedHost: HostOrganization = {
+  status: "resolved",
+  org: { id: 7, slug: "bespokesoft", domain: "bespokesoft.example", isDefault: false },
+} as HostOrganization;
+
+// Only params, query and req are read by the loader. Next.js merges route params into the query,
+// so the fixture does too.
 const buildContext = (
   params: Record<string, string> | undefined,
-  query: Record<string, string> = {}
-): GetServerSidePropsContext => ({ params, query, req: {} }) as unknown as GetServerSidePropsContext;
+  search: Record<string, string> = {}
+): GetServerSidePropsContext =>
+  ({ params, query: { ...params, ...search }, req: { headers: {} } }) as unknown as GetServerSidePropsContext;
 
 describe("getEventSlugCandidates", () => {
   it("returns a single candidate when the raw and slugified forms match", () => {
@@ -69,6 +84,68 @@ describe("team type getServerSideProps", () => {
     vi.mocked(getServerSession).mockResolvedValue(null);
     vi.mocked(getHideBranding).mockResolvedValue(false);
     getPublicEventMock.mockResolvedValue(null);
+    vi.mocked(getHostOrganization).mockResolvedValue({ status: "disabled" });
+    vi.mocked(handleOrgRedirect).mockResolvedValue(null);
+  });
+
+  it("checks redirects outside any organization when organizations are disabled", async () => {
+    getPublicEventMock.mockResolvedValue(buildEvent());
+
+    await getServerSideProps(buildContext({ slug: "BlueBee", type: "intro" }));
+
+    expect(handleOrgRedirect).toHaveBeenCalledWith({
+      slugs: ["bluebee"],
+      redirectType: RedirectType.TeamEventType,
+      eventTypeSlug: "intro",
+      query: {},
+      hostOrgId: null,
+    });
+    expect(getPublicEventMock).toHaveBeenCalledWith(expect.objectContaining({ org: null }), undefined);
+  });
+
+  it("looks the event up within the host organization", async () => {
+    vi.mocked(getHostOrganization).mockResolvedValue(resolvedHost);
+    getPublicEventMock.mockResolvedValue(buildEvent());
+
+    const result = await getServerSideProps(
+      buildContext({ slug: "BlueBee", type: "intro" }, { month: "2026-11" })
+    );
+
+    expect(handleOrgRedirect).toHaveBeenCalledWith({
+      slugs: ["bluebee"],
+      redirectType: RedirectType.TeamEventType,
+      eventTypeSlug: "intro",
+      query: { month: "2026-11" },
+      hostOrgId: 7,
+    });
+    expect(getPublicEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ username: "bluebee", org: "bespokesoft" }),
+      undefined
+    );
+    expect(result).toHaveProperty("props");
+  });
+
+  it("returns notFound for an unresolved host without reading the session or the event", async () => {
+    vi.mocked(getHostOrganization).mockResolvedValue({ status: "unresolved" });
+
+    const result = await getServerSideProps(buildContext({ slug: "BlueBee", type: "intro" }));
+
+    expect(result).toEqual({ notFound: true });
+    expect(handleOrgRedirect).not.toHaveBeenCalled();
+    expect(getServerSession).not.toHaveBeenCalled();
+    expect(getPublicEventMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the organization redirect unchanged without looking the event up", async () => {
+    const redirect = {
+      redirect: { permanent: true, destination: "https://other.example/team/intro" },
+    } as const;
+    vi.mocked(handleOrgRedirect).mockResolvedValue(redirect);
+
+    const result = await getServerSideProps(buildContext({ slug: "BlueBee", type: "intro" }));
+
+    expect(result).toBe(redirect);
+    expect(getPublicEventMock).not.toHaveBeenCalled();
   });
 
   it("looks the event up as a team event with the slugified team slug", async () => {

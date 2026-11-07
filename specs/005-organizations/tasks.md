@@ -219,9 +219,9 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 11: team pages and /d/**
 
-- [ ] T041 [US3] In `packages/features/teams/services/TeamProfileService.ts` `getPublicTeamBySlug` (~211-216), add a `parentId: <host org id>` parameter and filter. Update `apps/web/app/(booking-page-wrapper)/team/[slug]/page.tsx` to pass the host org and call `handleOrgRedirect` with type `Team`. Add tests
-- [ ] T042 [US3] In `apps/web/server/lib/team/[slug]/[type]/getServerSideProps.ts` (~41,57), pass the host org instead of `org: null` and add redirect handling. Add a test
-- [ ] T043 [US3] In `apps/web/lib/d/[link]/[slug]/getServerSideProps.tsx` (~26-28), remove the stub and return 404 when the hashed link's owner or team is not in the host org. Add a test
+- [X] T041 [US3] In `packages/features/teams/services/TeamProfileService.ts` `getPublicTeamBySlug` (~211-216), add a `parentId: <host org id>` parameter and filter. Update `apps/web/app/(booking-page-wrapper)/team/[slug]/page.tsx` to pass the host org and call `handleOrgRedirect` with type `Team`. Add tests
+- [X] T042 [US3] In `apps/web/server/lib/team/[slug]/[type]/getServerSideProps.ts` (~41,57), pass the host org instead of `org: null` and add redirect handling. Add a test
+- [X] T043 [US3] In `apps/web/lib/d/[link]/[slug]/getServerSideProps.tsx` (~26-28), remove the stub and return 404 when the hashed link's owner or team is not in the host org. Add a test
 
 **PR 12: bookings**
 
