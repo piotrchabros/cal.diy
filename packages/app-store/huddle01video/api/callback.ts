@@ -1,10 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import { storeHuddle01Credential } from "../utils/storage";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -30,6 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await storeHuddle01Credential(userId, token);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "conferencing", slug: "huddle01" })
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
+      getInstalledAppPath({ variant: "conferencing", slug: "huddle01" })
   );
 }

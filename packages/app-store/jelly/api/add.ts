@@ -1,13 +1,11 @@
-import type { NextApiRequest } from "next";
 import { stringify } from "node:querystring";
-import { z } from "zod";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import type { NextApiRequest } from "next";
+import { z } from "zod";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 const jellyAppKeysSchema = z.object({
   client_id: z.string(),
@@ -32,7 +30,7 @@ async function handler(req: NextApiRequest) {
   const params = {
     response_type: "code",
     app_id: client_id,
-    redirect_uri: `${WEBAPP_URL}/api/integrations/jelly/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "jelly"),
     state,
     scope: "write:jellies,read:user_email_phone",
   };

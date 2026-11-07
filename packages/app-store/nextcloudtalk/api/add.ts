@@ -1,12 +1,10 @@
-import type { NextApiRequest } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import type { NextApiRequest } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 async function handler(req: NextApiRequest) {
   const user = req?.session?.user;
@@ -24,7 +22,7 @@ async function handler(req: NextApiRequest) {
     response_type: "code",
     client_id,
     client_secret,
-    redirect_uri: `${WEBAPP_URL}/api/integrations/nextcloudtalk/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "nextcloudtalk"),
     state,
   };
   const query = stringify(params);

@@ -1,13 +1,11 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const state = decodeOAuthState(req);
@@ -28,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       code,
       client_id,
       client_secret,
-      redirect_uri: `${WEBAPP_URL}/api/integrations/nextcloudtalk/callback`,
+      redirect_uri: getOAuthRedirectUri(req, "nextcloudtalk"),
     }),
     headers: {
       "Content-Type": "application/json",
@@ -64,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: "nextcloudtalk", type: "nextcloudtalk_video" }, responseBody, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ??
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
       getInstalledAppPath({ variant: "conferencing", slug: "nextcloudtalk" })
   );
 }

@@ -1,10 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
@@ -26,7 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!clientId) return res.status(400).json({ message: "Tandem client_id missing." });
     if (!baseUrl) return res.status(400).json({ message: "Tandem base_url missing." });
 
-    const redirect_uri = encodeURI(`${WEBAPP_URL}/api/integrations/tandemvideo/callback`);
+    const redirect_uri = encodeURI(getOAuthRedirectUri(req, "tandemvideo"));
 
     const params = {
       client_id: clientId,
