@@ -24,6 +24,14 @@ export type OrganizationMemberRecord = {
   accepted: boolean;
 };
 
+export type OrganizationTeamRecord = {
+  teamId: number;
+  name: string;
+  slug: string | null;
+  memberCount: number;
+  viewerIsMember: boolean;
+};
+
 export interface IOrganizationMembershipRepository {
   findUserById(userId: number): Promise<MembershipUserRecord | null>;
   findUserByEmail(email: string): Promise<MembershipUserRecord | null>;
@@ -44,4 +52,12 @@ export interface IOrganizationMembershipRepository {
     cursor?: number;
     limit: number;
   }): Promise<{ items: OrganizationMemberRecord[]; nextCursor?: number }>;
+  listTeams(p: {
+    organizationId: number;
+    viewerUserId: number;
+    memberUserId?: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }>;
 }

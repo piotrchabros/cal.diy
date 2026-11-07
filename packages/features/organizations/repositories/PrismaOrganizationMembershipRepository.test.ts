@@ -12,13 +12,15 @@ function buildRepository() {
     count: vi.fn(),
     update: vi.fn(),
   };
+  const team = { findMany: vi.fn() };
   const $transaction = vi.fn((operations: Promise<unknown>[]) => Promise.all(operations));
-  const prismaClient = { user, profile, membership, $transaction } as unknown as PrismaClient;
+  const prismaClient = { user, profile, membership, team, $transaction } as unknown as PrismaClient;
   return {
     repository: new PrismaOrganizationMembershipRepository(prismaClient),
     user,
     profile,
     membership,
+    team,
     $transaction,
   };
 }
@@ -309,6 +311,78 @@ describe("PrismaOrganizationMembershipRepository", () => {
 
       expect(result.items.map((item) => item.membershipId)).toEqual([3, 5]);
       expect(result.nextCursor).toBe(5);
+    });
+  });
+
+  describe("listTeams", () => {
+    const teamSelect = {
+      id: true,
+      name: true,
+      slug: true,
+      _count: { select: { members: { where: { accepted: true } } } },
+      members: { where: { userId: 9, accepted: true }, select: { id: true }, take: 1 },
+    };
+
+    it("lists only the organization's sub-teams and counts accepted members", async () => {
+      const { repository, team } = buildRepository();
+      team.findMany.mockResolvedValue([]);
+
+      await repository.listTeams({ organizationId: 1, viewerUserId: 9, limit: 10 });
+
+      expect(team.findMany).toHaveBeenCalledWith({
+        where: { parentId: 1, isOrganization: false },
+        orderBy: { id: "asc" },
+        take: 11,
+        select: teamSelect,
+      });
+      expect(team.findMany.mock.calls[0][0]).not.toHaveProperty("include");
+    });
+
+    it("filters by member, cursor and name/slug search", async () => {
+      const { repository, team } = buildRepository();
+      team.findMany.mockResolvedValue([]);
+
+      await repository.listTeams({
+        organizationId: 1,
+        viewerUserId: 9,
+        memberUserId: 9,
+        search: "eng",
+        cursor: 4,
+        limit: 5,
+      });
+
+      expect(team.findMany.mock.calls[0][0].where).toEqual({
+        parentId: 1,
+        isOrganization: false,
+        members: { some: { userId: 9, accepted: true } },
+        id: { gt: 4 },
+        OR: [
+          { name: { contains: "eng", mode: "insensitive" } },
+          { slug: { contains: "eng", mode: "insensitive" } },
+        ],
+      });
+    });
+
+    it("maps rows to team records and returns the last team id as nextCursor", async () => {
+      const { repository, team } = buildRepository();
+      const row = (id: number, viewerRows: { id: number }[]) => ({
+        id,
+        name: `Team ${id}`,
+        slug: null,
+        _count: { members: id },
+        members: viewerRows,
+      });
+      team.findMany.mockResolvedValue([row(2, [{ id: 50 }]), row(3, []), row(7, [])]);
+
+      const result = await repository.listTeams({ organizationId: 1, viewerUserId: 9, limit: 2 });
+
+      expect(result).toEqual({
+        items: [
+          { teamId: 2, name: "Team 2", slug: null, memberCount: 2, viewerIsMember: true },
+          { teamId: 3, name: "Team 3", slug: null, memberCount: 3, viewerIsMember: false },
+        ],
+        nextCursor: 3,
+      });
     });
   });
 });

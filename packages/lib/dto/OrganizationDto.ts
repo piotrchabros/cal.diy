@@ -53,9 +53,24 @@ export const OrganizationMemberListDtoSchema = z.object({
   nextCursor: z.number().optional(),
 });
 
+export const OrganizationTeamDtoSchema = z.object({
+  teamId: z.number(),
+  name: z.string(),
+  slug: z.string().nullable(),
+  memberCount: z.number(),
+  viewerIsMember: z.boolean(),
+});
+
+export const OrganizationTeamListDtoSchema = z.object({
+  items: z.array(OrganizationTeamDtoSchema),
+  nextCursor: z.number().optional(),
+});
+
 export type CurrentOrganizationDto = z.infer<typeof CurrentOrganizationDtoSchema>;
 export type OrganizationMemberDto = z.infer<typeof OrganizationMemberDtoSchema>;
 export type OrganizationMemberListDto = z.infer<typeof OrganizationMemberListDtoSchema>;
+export type OrganizationTeamDto = z.infer<typeof OrganizationTeamDtoSchema>;
+export type OrganizationTeamListDto = z.infer<typeof OrganizationTeamListDtoSchema>;
 
 export const RequestOrganizationDtoSchema = OrganizationListItemDtoSchema.pick({
   id: true,

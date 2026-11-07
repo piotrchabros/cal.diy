@@ -355,6 +355,72 @@ describe("OrganizationMembershipService", () => {
     });
   });
 
+  describe("listTeams", () => {
+    function seedActor(id: number, role: OrganizationRoleDto, accepted = true) {
+      membershipRepository.seedUser({ id, organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: id, teamId: ORG_ID, role, accepted });
+    }
+
+    beforeEach(() => {
+      membershipRepository.seedTeam({ id: ORG_ID, parentId: null, isOrganization: true });
+      membershipRepository.seedTeam({ id: 101, parentId: ORG_ID, name: "Engineering", slug: "eng" });
+      membershipRepository.seedTeam({ id: 102, parentId: ORG_ID, name: "Sales", slug: "sales" });
+      membershipRepository.seedTeam({ id: 201, parentId: OTHER_ORG_ID });
+      membershipRepository.seedMembership({ userId: 50, teamId: 101, role: "MEMBER" });
+      membershipRepository.seedMembership({ userId: 51, teamId: 101, role: "MEMBER", accepted: false });
+    });
+
+    it.each<OrganizationRoleDto>([
+      "OWNER",
+      "ADMIN",
+    ])("shows a %s every sub-team, including ones they are not in", async (role) => {
+      seedActor(1, role);
+      membershipRepository.seedMembership({ userId: 1, teamId: 102, role: "MEMBER" });
+      const listTeams = vi.spyOn(membershipRepository, "listTeams");
+
+      const result = await service.listTeams({ organizationId: ORG_ID, actorUserId: 1 });
+
+      expect(listTeams.mock.calls[0][0].memberUserId).toBeUndefined();
+      expect(result).toEqual({
+        items: [
+          { teamId: 101, name: "Engineering", slug: "eng", memberCount: 1, viewerIsMember: false },
+          { teamId: 102, name: "Sales", slug: "sales", memberCount: 1, viewerIsMember: true },
+        ],
+        nextCursor: undefined,
+      });
+    });
+
+    it("shows a plain member only the teams they belong to", async () => {
+      seedActor(2, "MEMBER");
+      membershipRepository.seedMembership({ userId: 2, teamId: 102, role: "MEMBER" });
+      const listTeams = vi.spyOn(membershipRepository, "listTeams");
+
+      const result = await service.listTeams({ organizationId: ORG_ID, actorUserId: 2, search: "SAL" });
+
+      expect(listTeams).toHaveBeenCalledWith({
+        organizationId: ORG_ID,
+        viewerUserId: 2,
+        memberUserId: 2,
+        search: "SAL",
+        cursor: undefined,
+        limit: 50,
+      });
+      expect(result.items.map((item) => item.teamId)).toEqual([102]);
+    });
+
+    it("hides the organization from non-members and pending invitees", async () => {
+      seedActor(3, "ADMIN", false);
+
+      for (const actorUserId of [3, 4]) {
+        await expectRejection(
+          service.listTeams({ organizationId: ORG_ID, actorUserId }),
+          ErrorCode.NotFound,
+          "Organization not found"
+        );
+      }
+    });
+  });
+
   describe("findMembershipCandidate", () => {
     it("returns the seeded user", async () => {
       membershipRepository.seedUser({

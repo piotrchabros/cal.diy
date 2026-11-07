@@ -337,6 +337,68 @@ describe("OrganizationService", () => {
     });
   });
 
+  describe("getForMember", () => {
+    const VIEWER_ID = 50;
+
+    it("returns the organization without counts and with the viewer's role", async () => {
+      const owner = { userId: 7, name: "Owner", email: "owner@acme.com" };
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com", owners: [owner] });
+      membershipRepo.seedMembership({ userId: VIEWER_ID, teamId: seeded.id, role: "ADMIN" });
+
+      const organization = await service.getForMember({ organizationId: seeded.id, viewerUserId: VIEWER_ID });
+
+      expect(organization).toEqual({
+        id: seeded.id,
+        name: "Acme",
+        slug: "acme",
+        domain: "acme.com",
+        isDefault: false,
+        owners: [owner],
+        viewerRole: "ADMIN",
+      });
+    });
+
+    it("marks the default organization", async () => {
+      const seeded = repository.seed({ name: "Main", slug: "main", domain: DEFAULT_DOMAIN });
+      membershipRepo.seedMembership({ userId: VIEWER_ID, teamId: seeded.id, role: "MEMBER" });
+
+      const organization = await service.getForMember({ organizationId: seeded.id, viewerUserId: VIEWER_ID });
+
+      expect(organization).toMatchObject({ isDefault: true, viewerRole: "MEMBER" });
+    });
+
+    it("throws NotFound for a viewer who is not a member", async () => {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+
+      await expectRejection(
+        service.getForMember({ organizationId: seeded.id, viewerUserId: VIEWER_ID }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+
+    it("throws NotFound for a viewer whose invitation is still pending", async () => {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      membershipRepo.seedMembership({ userId: VIEWER_ID, teamId: seeded.id, role: "OWNER", accepted: false });
+
+      await expectRejection(
+        service.getForMember({ organizationId: seeded.id, viewerUserId: VIEWER_ID }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+
+    it("throws NotFound when the organization no longer exists", async () => {
+      membershipRepo.seedMembership({ userId: VIEWER_ID, teamId: 999, role: "OWNER" });
+
+      await expectRejection(
+        service.getForMember({ organizationId: 999, viewerUserId: VIEWER_ID }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+  });
+
   describe("getDefault", () => {
     const DEFAULT_NOT_FOUND = "Default organization not found";
 

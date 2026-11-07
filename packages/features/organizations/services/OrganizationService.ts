@@ -1,4 +1,5 @@
 import type {
+  CurrentOrganizationDto,
   OrganizationDto,
   OrganizationListItemDto,
   OrganizationListResultDto,
@@ -69,6 +70,22 @@ export class OrganizationService {
   async get(id: number): Promise<OrganizationDto> {
     const record = await this.findByIdOrThrow(id);
     return this.toDto(record);
+  }
+
+  async getForMember(params: {
+    organizationId: number;
+    viewerUserId: number;
+  }): Promise<CurrentOrganizationDto> {
+    const { organizationId, viewerUserId } = params;
+    const viewerRole = await this.deps.organizationMembershipService.getRole(viewerUserId, organizationId);
+    if (viewerRole === null) throw ErrorWithCode.Factory.NotFound("Organization not found");
+
+    const {
+      memberCount: _memberCount,
+      teamCount: _teamCount,
+      ...organization
+    } = this.toDto(await this.findByIdOrThrow(organizationId));
+    return { ...organization, viewerRole };
   }
 
   async getDefault(): Promise<OrganizationDto> {
