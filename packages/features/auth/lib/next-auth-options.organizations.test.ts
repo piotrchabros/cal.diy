@@ -306,6 +306,16 @@ describe("next-auth options with organizations", () => {
     mockIsSessionInRequestOrganization.mockResolvedValue(true);
   });
 
+  it("hands the request headers to the adapter so magic-link sign-ups join the request's organization", async () => {
+    const { default: CalComAdapter } = await import("./next-auth-custom-adapter");
+    const { prisma } = await import("@calcom/prisma");
+    const getRequestHeaders = () => requestHeaders("acme.example.org");
+
+    await getCallbacks(getRequestHeaders);
+
+    expect(CalComAdapter).toHaveBeenCalledWith(prisma, { getRequestHeaders });
+  });
+
   describe("flag off", () => {
     it("signs in without an organization lookup", async () => {
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
