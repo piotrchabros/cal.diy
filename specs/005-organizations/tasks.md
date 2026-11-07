@@ -333,7 +333,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 25**
 
-- [ ] T066 [US4] Create `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/organization/{members,teams}/page.tsx`, with the flag check and membership check in `page.tsx`. Create the views `apps/web/modules/organizations/views/{org-members-view,org-teams-view}.tsx` (read-only for MEMBER), add the nav entry in `SettingsLayoutAppDirClient.tsx`, the i18n strings and view tests
+- [X] T066 [US4] Create `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/organization/{members,teams}/page.tsx`, with the flag check and membership check in `page.tsx`. Create the views `apps/web/modules/organizations/views/{org-members-view,org-teams-view}.tsx` (read-only for MEMBER), add the nav entry in `SettingsLayoutAppDirClient.tsx`, the i18n strings and view tests
 
 ---
 
@@ -388,6 +388,10 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T165 [P] [US3] `packages/app-store/{feishucalendar,larkcalendar}/api/callback.ts` catch blocks redirect to `state.returnTo` unvalidated; route it through `getSafeRedirectUrl` with `getOAuthSafeRedirectOptions(req)` (relative fallback kept). Add tests
 
 ---
+- [ ] T180 [US4] `OrganizationMembershipService.removeMember` refuses with CONFLICT `username_taken_in_default_organization` when the removed member's username is already used in the default organization (FR-011 gives no rule). Let the remover (or an instance admin) pick a new username, e.g. reuse T067 `moveUser({ newUsername })`, and surface the prompt in `apps/web/modules/organizations/components/org-member-actions.tsx`. Add tests
+- [ ] T181 [US4] Decide whether removing an org member (FR-011 move to the default org) should write a `TempOrgRedirect` for their old public URL like FR-005 moves do (FR-018 only covers instance-admin moves); today it writes none. Implement in `PrismaOrganizationMembershipRepository.moveToOrganization` / T067 if yes. Add tests
+- [ ] T182 [US4] Profile-less org invitees (created by `viewer.organization.inviteMember` / T031 with `username = null`) have `ctx.user.organizationId = null` (it comes from the session profile, `packages/features/auth/lib/userFromSessionUtils.ts`), so they get NOT_FOUND on `/settings/organization/*` and the org invite landing sends them to "/". Resolve together with the T034 username question, then point org invites (`apps/web/app/(use-page-wrapper)/auth/team-invite/page.tsx`, `apps/web/modules/auth/team-invite-view.tsx`) at `/settings/organization/members`
+- [ ] T183 [P] `packages/features/teams/services/TeamProfileService.ts` imports schemas from `@calcom/trpc/server/routers/viewer/teams/teamProfile.schema` (features must not import trpc). Move `ZTeamProfileMetadataSchema`, `TEAM_LOGO_DATA_URL_PATTERN` and the input types into `packages/features/teams/` and re-export from the trpc schema file
 
 ## Dependencies and execution order
 
