@@ -1,9 +1,14 @@
 import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockCheckUsername, mockUserUpdate } = vi.hoisted(() => ({
+const { mockCheckUsername, mockUserUpdate, mockDisableByFrom } = vi.hoisted(() => ({
   mockCheckUsername: vi.fn(),
   mockUserUpdate: vi.fn(),
+  mockDisableByFrom: vi.fn(),
+}));
+
+vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
+  getTempOrgRedirectRepository: () => ({ disableByFrom: mockDisableByFrom }),
 }));
 
 vi.mock("@calcom/features/profile/lib/checkUsername", () => ({
@@ -151,5 +156,76 @@ describe("updateProfileHandler username", () => {
     await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "current" } });
 
     expect(mockCheckUsername).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateProfileHandler reused username redirects", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCheckUsername.mockResolvedValue({ available: true, premium: false });
+    mockDisableByFrom.mockResolvedValue(1);
+    mockUserUpdate.mockResolvedValue({
+      id: 1,
+      username: "new-name",
+      email: "user@example.com",
+      metadata: {},
+      avatarUrl: null,
+      schedules: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("disables User redirects from the new username in the caller's organization", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } });
+
+    expect(mockDisableByFrom).toHaveBeenCalledWith({ fromOrgId: 10, from: "new-name", types: ["User"] });
+  });
+
+  it("does not disable redirects when ORGANIZATIONS_ENABLED is off", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } });
+
+    expect(mockDisableByFrom).not.toHaveBeenCalled();
+  });
+
+  it("does not disable redirects when the username is unchanged", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+    mockUserUpdate.mockResolvedValue({
+      id: 1,
+      username: "current",
+      email: "user@example.com",
+      metadata: {},
+      avatarUrl: null,
+      schedules: [],
+    });
+
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "current" } });
+
+    expect(mockDisableByFrom).not.toHaveBeenCalled();
+  });
+
+  it("does not disable redirects when the user update fails", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+    mockUserUpdate.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } })
+    ).rejects.toThrow("db down");
+
+    expect(mockDisableByFrom).not.toHaveBeenCalled();
+  });
+
+  it("does not disable redirects for a user without an organization", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+
+    await updateProfileHandler({ ctx: makeCtx(), input: { username: "new-name" } });
+
+    expect(mockDisableByFrom).not.toHaveBeenCalled();
   });
 });
