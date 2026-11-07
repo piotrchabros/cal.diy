@@ -234,6 +234,47 @@ describe("WebhookRepository team-owned webhook visibility", () => {
       expect(whereConditions()).toContainEqual({ eventTypeId: 11 });
     });
 
+    it("hides the parent's secret on inherited webhooks of a managed child event type", async () => {
+      eventTypeRepository.findParentEventTypeId.mockResolvedValue(5);
+      prismaMock.webhook.findMany.mockResolvedValue([
+        {
+          ...baseWebhook,
+          id: "wh-child",
+          eventTypeId: 11,
+          teamId: null,
+          userId: null,
+          secret: "child-secret",
+        },
+        {
+          ...baseWebhook,
+          id: "wh-parent",
+          eventTypeId: 5,
+          teamId: null,
+          userId: null,
+          secret: "parent-secret",
+        },
+      ]);
+
+      const webhooks = await repository.listWebhooks({ userId: 7, eventTypeId: 11 });
+
+      expect(whereConditions()).toContainEqual({
+        OR: [{ eventTypeId: 11 }, { eventTypeId: 5, active: true }],
+      });
+      expect(webhooks.find((webhook) => webhook.id === "wh-child")?.secret).toBe("child-secret");
+      expect(webhooks.find((webhook) => webhook.id === "wh-parent")?.secret).toBeNull();
+    });
+
+    it("keeps the secret of an event type's own webhooks when it has no managed parent", async () => {
+      eventTypeRepository.findParentEventTypeId.mockResolvedValue(null);
+      prismaMock.webhook.findMany.mockResolvedValue([
+        { ...baseWebhook, id: "wh-own", eventTypeId: 11, teamId: null, userId: null, secret: "own-secret" },
+      ]);
+
+      const webhooks = await repository.listWebhooks({ userId: 7, eventTypeId: 11 });
+
+      expect(webhooks[0].secret).toBe("own-secret");
+    });
+
     it("builds the same where clause with ORGANIZATIONS_ENABLED on", async () => {
       prismaMock.membership.findMany.mockResolvedValue([{ teamId: 3 }]);
       await repository.listWebhooks({ userId: 7 });
