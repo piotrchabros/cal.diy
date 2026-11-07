@@ -9,17 +9,21 @@ vi.mock("@calcom/lib/checkRateLimitAndThrowError", () => ({
   checkRateLimitAndThrowError: vi.fn(),
 }));
 
-const { mockFindAllByUpIdIncludeTeam, MockMembershipRepository } = vi.hoisted(() => {
-  const mockFindAllByUpIdIncludeTeam = vi.fn();
-  const mockFindUniqueByUserIdAndTeamId = vi.fn();
+const { mockFindAllByUpIdIncludeTeam, mockFindTeamIdsByAcceptedRole, MockMembershipRepository } = vi.hoisted(
+  () => {
+    const mockFindAllByUpIdIncludeTeam = vi.fn();
+    const mockFindUniqueByUserIdAndTeamId = vi.fn();
+    const mockFindTeamIdsByAcceptedRole = vi.fn().mockResolvedValue([]);
 
-  class MockMembershipRepository {
-    static findAllByUpIdIncludeTeam = mockFindAllByUpIdIncludeTeam;
-    findUniqueByUserIdAndTeamId = mockFindUniqueByUserIdAndTeamId;
+    class MockMembershipRepository {
+      static findAllByUpIdIncludeTeam = mockFindAllByUpIdIncludeTeam;
+      findUniqueByUserIdAndTeamId = mockFindUniqueByUserIdAndTeamId;
+      findTeamIdsByAcceptedRole = mockFindTeamIdsByAcceptedRole;
+    }
+
+    return { mockFindAllByUpIdIncludeTeam, mockFindTeamIdsByAcceptedRole, MockMembershipRepository };
   }
-
-  return { mockFindAllByUpIdIncludeTeam, MockMembershipRepository };
-});
+);
 
 vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
   MembershipRepository: MockMembershipRepository,
@@ -86,6 +90,7 @@ describe("getUserEventGroups", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFindTeamIdsByAcceptedRole.mockResolvedValue([]);
   });
 
   describe("Basic functionality", () => {
@@ -178,28 +183,26 @@ describe("getUserEventGroups", () => {
   });
 
   describe("Permissions", () => {
-    it("should grant permissions for team members (stub always returns true)", async () => {
-      const { ProfileRepository } = await import("@calcom/features/profile/repositories/ProfileRepository");
-
-      const mockTeamMembership = {
-        id: 1,
-        teamId: 100,
+    const teamMembership = (teamId: number, role: MembershipRole) =>
+      ({
+        id: teamId,
+        teamId,
         userId: 1,
         accepted: true,
-        role: MembershipRole.ADMIN,
+        role,
         customRoleId: null,
         createdAt: new Date(),
         updatedAt: new Date(),
         team: {
-          id: 100,
-          name: "Test Team",
-          slug: "test-team",
+          id: teamId,
+          name: `Team ${teamId}`,
+          slug: `team-${teamId}`,
           logoUrl: null,
           parentId: null,
           parent: null,
           metadata: {},
         },
-      } as unknown as NonNullable<
+      }) as unknown as NonNullable<
         Awaited<
           ReturnType<
             typeof import("@calcom/features/membership/repositories/MembershipRepository").MembershipRepository.findAllByUpIdIncludeTeam
@@ -207,18 +210,26 @@ describe("getUserEventGroups", () => {
         >
       >[0];
 
+    it("lets only accepted team admins/owners create team event types", async () => {
+      const { ProfileRepository } = await import("@calcom/features/profile/repositories/ProfileRepository");
+      const adminTeam = teamMembership(100, MembershipRole.ADMIN);
+      const memberTeam = teamMembership(200, MembershipRole.MEMBER);
+
       vi.mocked(ProfileRepository.findByUpIdWithAuth).mockResolvedValue(mockProfile);
-      mockFindAllByUpIdIncludeTeam.mockResolvedValue([mockTeamMembership]);
-      mockFilterTeamsByEventTypeReadPermission.mockResolvedValue([mockTeamMembership]);
+      mockFindAllByUpIdIncludeTeam.mockResolvedValue([adminTeam, memberTeam]);
+      mockFilterTeamsByEventTypeReadPermission.mockResolvedValue([adminTeam, memberTeam]);
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([100]);
 
       const result = await getUserEventGroups({
         ctx: mockCtx,
         input: null,
       });
 
-      expect(result.teamPermissions[100]).toMatchObject({
-        canCreateEventType: true,
-      });
+      expect(result.teamPermissions[100]).toEqual({ canCreateEventType: true });
+      expect(result.teamPermissions[200]).toEqual({ canCreateEventType: false });
+      expect(mockFindTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 1, teamRoles: [MembershipRole.OWNER, MembershipRole.ADMIN] })
+      );
     });
   });
 

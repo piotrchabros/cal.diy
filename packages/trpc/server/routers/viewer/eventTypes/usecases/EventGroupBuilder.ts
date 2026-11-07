@@ -50,10 +50,7 @@ export class EventGroupBuilder {
 
     // Filter memberships based on PBAC permissions
     const accessibleMemberships =
-      await this.dependencies.teamAccessUseCase.filterTeamsByEventTypeReadPermission(
-        profileMemberships,
-        userId
-      );
+      await this.dependencies.teamAccessUseCase.filterTeamsByEventTypeReadPermission(profileMemberships);
 
     if (!accessibleMemberships) {
       throw new Error("Failed to filter team memberships");
