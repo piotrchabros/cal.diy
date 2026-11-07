@@ -299,7 +299,7 @@ describe("next-auth options with organizations", () => {
     mockCheckSignInDomain.mockResolvedValue({ kind: "allowed" });
     mockGetOrganizationOriginForUrl.mockResolvedValue(null);
     mockGetBaseUrl.mockResolvedValue("https://acme.example.org");
-    mockFindDefaultOrganizationId.mockResolvedValue(null);
+    mockFindDefaultOrganizationId.mockResolvedValue(1);
     mockAddMember.mockResolvedValue({ userId: 100, organizationId: 7, role: "MEMBER" });
     mockPrismaUserDelete.mockResolvedValue({ id: 100 });
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
@@ -586,14 +586,6 @@ describe("next-auth options with organizations", () => {
       expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
     });
 
-    it("sets no organization while the default organization does not exist", async () => {
-      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
-
-      await signIn(googleSignUpParams);
-
-      expect(createdUserData()).not.toHaveProperty("organization");
-    });
-
     it("joins the request organization with the flag on", async () => {
       mockIsOrganizationsEnabled.mockReturnValue(true);
       mockFindDefaultOrganizationId.mockResolvedValue(1);
@@ -679,14 +671,14 @@ describe("next-auth options with organizations", () => {
       );
     });
 
-    it("does not add an organization membership while the default organization does not exist", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(null);
+    it("creates no user when no default organization exists with the flag off", async () => {
+      mockFindDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
-      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+      await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
 
-      expect(mockAddMember).not.toHaveBeenCalled();
-      expect(mockLinkAccount).toHaveBeenCalledTimes(1);
+      expect(mockPrismaUserCreate).not.toHaveBeenCalled();
+      expect(mockLinkAccount).not.toHaveBeenCalled();
     });
 
     it("deletes the new user when adding the default organization membership fails with the flag off", async () => {
@@ -731,19 +723,6 @@ describe("next-auth options with organizations", () => {
       expect(mockLinkAccount.mock.invocationCallOrder[0]).toBeLessThan(
         mockAcceptPendingInvitesOnSignup.mock.invocationCallOrder[0]
       );
-    });
-
-    it("accepts pending invites without an organization when no default organization exists", async () => {
-      mockFindDefaultOrganizationId.mockResolvedValue(null);
-      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
-
-      await signIn(googleSignUpParams);
-
-      expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
-        userId: 100,
-        email: "new@acme.com",
-        organizationId: null,
-      });
     });
 
     it("still signs in when accepting pending invites fails", async () => {
