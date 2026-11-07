@@ -5,16 +5,20 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import type { StripeData } from "../lib/server";
 import stripe from "../lib/server";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { code, error, error_description } = req.query;
   const state = decodeOAuthState(req, "stripe");
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
 
   if (error) {
     if (error === "access_denied") {
-      return res.redirect(getSafeRedirectUrl(state?.onErrorReturnTo) ?? "/apps/installed/payment");
+      return res.redirect(
+        getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ?? "/apps/installed/payment"
+      );
     }
     const query = stringify({ error, error_description });
     return res.redirect(`/apps/installed?${query}`);
@@ -42,6 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   );
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "payment", slug: "stripe" })
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+      getInstalledAppPath({ variant: "payment", slug: "stripe" })
   );
 }

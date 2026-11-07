@@ -1,10 +1,10 @@
 import { stringify } from "node:querystring";
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import prisma from "@calcom/prisma";
 import type { NextApiRequest } from "next";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getLyraAppKeys, LYRA_API_URL } from "../lib";
 
 async function handler(req: NextApiRequest) {
@@ -23,7 +23,7 @@ async function handler(req: NextApiRequest) {
   const params = {
     response_type: "code",
     client_id,
-    redirect_uri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/lyra/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "lyra"),
     scope: "meeting.create",
     state,
   };

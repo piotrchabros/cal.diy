@@ -1,5 +1,5 @@
 import type { GetServerSidePropsContext } from "next";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock dependencies before imports
 vi.mock("@calcom/features/auth/lib/getServerSession", () => ({
@@ -18,13 +18,16 @@ vi.mock("../../../lib/getStripeAppKeys", () => ({
   getStripeAppKeys: vi.fn(),
 }));
 
-vi.mock("@calcom/lib/constants", () => ({
+vi.mock("@calcom/lib/constants", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@calcom/lib/constants")>()),
   WEBAPP_URL: "https://app.cal.com",
+  WEBAPP_URL_FOR_OAUTH: "https://app.cal.com",
+  ALLOWED_HOSTNAMES: ["acme.example.org"],
 }));
 
+import process from "node:process";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import prisma from "@calcom/prisma";
-
 import { getStripeAppKeys } from "../../../lib/getStripeAppKeys";
 import { getServerSideProps } from "../_getServerSideProps";
 
@@ -189,6 +192,24 @@ describe("Stripe Setup Page getServerSideProps", () => {
       expect(redirect.destination).toContain(
         encodeURIComponent("https://app.cal.com/api/integrations/stripepayment/callback")
       );
+    });
+
+    it("should use the organization domain for redirect_uri when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      try {
+        const ctx = createMockContext({
+          req: { headers: { host: "acme.example.org" } } as GetServerSidePropsContext["req"],
+        });
+
+        const result = await getServerSideProps(ctx);
+
+        const redirect = (result as { redirect: { destination: string; permanent: boolean } }).redirect;
+        expect(redirect.destination).toContain(
+          encodeURIComponent("https://acme.example.org/api/integrations/stripepayment/callback")
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it("should include state with default onErrorReturnTo when not provided", async () => {

@@ -1,13 +1,12 @@
+import process from "node:process";
+import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import prisma from "@calcom/prisma";
 import type { GetServerSidePropsContext } from "next";
 import stringify from "qs-stringify";
 import type Stripe from "stripe";
 import { z } from "zod";
-
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import prisma from "@calcom/prisma";
-
-import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
+import { getOAuthAppOrigin, getOAuthRedirectUri } from "../../../_utils/oauth/getOAuthRedirectUri";
 import { getStripeAppKeys } from "../../lib/getStripeAppKeys";
 
 export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
@@ -44,7 +43,7 @@ export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
     const returnTo = ctx.query.returnTo ? String(ctx.query.returnTo) : undefined;
     const onErrorReturnTo = ctx.query.onErrorReturnTo
       ? String(ctx.query.onErrorReturnTo)
-      : `${WEBAPP_URL}/apps/installed/payment`;
+      : `${getOAuthAppOrigin(ctx.req)}/apps/installed/payment`;
 
     const state: IntegrationOAuthCallbackState = {
       returnTo,
@@ -52,7 +51,7 @@ export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
       fromApp: true,
     };
 
-    const redirect_uri = encodeURI(`${WEBAPP_URL}/api/integrations/stripepayment/callback`);
+    const redirect_uri = encodeURI(getOAuthRedirectUri(ctx.req, "stripepayment"));
     const stripeConnectParams: Stripe.OAuthAuthorizeUrlParams = {
       client_id,
       scope: "read_write",
@@ -80,7 +79,7 @@ export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
   } catch (error) {
     return {
       redirect: {
-        destination: `${WEBAPP_URL}/apps/installed/payment?error=stripe_oauth_failed`,
+        destination: `${getOAuthAppOrigin(ctx.req)}/apps/installed/payment?error=stripe_oauth_failed`,
         permanent: false,
       },
     };
