@@ -45,6 +45,11 @@ export class TeamMembersService {
   private async requireTeamMembership(teamId: number, userId: number) {
     const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({ teamId, userId });
     if (!membership || !membership.accepted) {
+      // FR-008: with organizations on, a team the caller cannot see must look nonexistent so
+      // another organization's team ids cannot be probed.
+      if (isOrganizationsEnabled()) {
+        throw ErrorWithCode.Factory.NotFound("Team not found");
+      }
       throw ErrorWithCode.Factory.Forbidden(`User ${userId} is not a member of team ${teamId}`);
     }
     return membership;
