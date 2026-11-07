@@ -1,4 +1,5 @@
 import { getOrgUsernameFromEmail } from "@calcom/features/auth/signup/utils/getOrgUsernameFromEmail";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import prisma from "@calcom/prisma";
 
 export const getUsernameForOrgMember = async ({
@@ -93,7 +94,7 @@ export const validateAndGetCorrectedUsernameInTeam = async (
   isSignup: boolean
 ) => {
   try {
-    const team = await prisma.team.findUnique({
+    const rawTeam = await prisma.team.findUnique({
       where: {
         id: teamId,
       },
@@ -109,11 +110,7 @@ export const validateAndGetCorrectedUsernameInTeam = async (
         },
       },
     });
-
-    console.log("validateAndGetCorrectedUsernameInTeam", {
-      teamId,
-      team,
-    });
+    const team = rawTeam && withoutOrganizationParent(rawTeam);
     const organization = team?.isOrganization ? team : team?.parent;
     if (organization) {
       // Organization context -> org-context username check

@@ -20,6 +20,7 @@ import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import { isPrismaError } from "@calcom/lib/server/getServerErrorFromUnknown";
 import { isUsernameReservedDueToMigration } from "@calcom/lib/server/username";
 import slugify from "@calcom/lib/slugify";
@@ -111,7 +112,7 @@ export default async function handler(body: Record<string, string>, requestHeade
   const hashedPassword = await hashPassword(password);
 
   if (foundToken?.teamId) {
-    const team = await prisma.team.findUnique({
+    const rawTeam = await prisma.team.findUnique({
       where: {
         id: foundToken.teamId,
       },
@@ -126,6 +127,7 @@ export default async function handler(body: Record<string, string>, requestHeade
         organizationSettings: true,
       },
     });
+    const team = rawTeam && withoutOrganizationParent(rawTeam);
 
     if (team) {
       const isInviteForATeamInOrganization = !!team.parent;

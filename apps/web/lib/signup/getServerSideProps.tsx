@@ -4,6 +4,7 @@ import { getOrgUsernameFromEmail } from "@calcom/features/auth/signup/utils/getO
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
 import { IS_SELF_HOSTED, WEBAPP_URL } from "@calcom/lib/constants";
 import { emailSchema } from "@calcom/lib/emailSchema";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import slugify from "@calcom/lib/slugify";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import { IS_GOOGLE_LOGIN_ENABLED } from "@server/lib/constants";
@@ -167,10 +168,10 @@ export const getServerSideProps = async (ctx: GetServerSidePropsContext) => {
 
   let username = isValidEmail ? guessUsernameFromEmail(verificationToken.identifier) : "";
 
-  const tokenTeam = {
+  const tokenTeam = withoutOrganizationParent({
     ...verificationToken.team,
     metadata: teamMetadataSchema.parse(verificationToken.team.metadata ?? null),
-  };
+  });
 
   const isATeamInOrganization = tokenTeam?.parentId !== null;
   // Detect if the team is an org by either the metadata flag or if it has a parent team

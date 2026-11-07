@@ -86,6 +86,7 @@ vi.mock("@calcom/features/auth/signup/utils/token", () => ({
 import { SIGNUP_ERROR_CODES } from "@calcom/features/auth/signup/constants";
 import { runP2002TestSuite } from "@calcom/features/auth/signup/handlers/__tests__/p2002.test-suite";
 import { createOrUpdateMemberships } from "@calcom/features/auth/signup/utils/createOrUpdateMemberships";
+import { joinAnyChildTeamOnOrgInvite } from "@calcom/features/auth/signup/utils/organization";
 import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
@@ -264,18 +265,24 @@ describe("selfHostedHandler – organizations", () => {
     expect(mockAddMember).not.toHaveBeenCalled();
   });
 
-  it("does not add a default org membership for a sub-team invite with the flag off", async () => {
+  it("treats a sub-team invite as a top-level team invite with the flag off", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    prismaMock.team.findUnique.mockResolvedValue(
-      createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }) as never
-    );
+    prismaMock.team.findUnique.mockResolvedValue({
+      ...createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }),
+      parentId: 11,
+    } as never);
 
     const response = await callHandler({ ...signupBody, token: "invite-token" });
 
     expect(response.status).toBe(201);
-    expect(lastUpsertedOrganizationId()).toBe(11);
-    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
-    expect(mockAddMember).not.toHaveBeenCalled();
+    expect(lastUpsertedOrganizationId()).toBe(defaultOrgId);
+    expect(isUsernameReservedDueToMigration).toHaveBeenCalled();
+    expect(createOrUpdateMemberships).toHaveBeenCalledWith({
+      user: { id: 42 },
+      team: expect.objectContaining({ id: 3, parentId: null, parent: null }),
+    });
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: defaultOrgId, userId: 42, role: "MEMBER" });
+    expect(joinAnyChildTeamOnOrgInvite).not.toHaveBeenCalled();
   });
 
   it("joins the host org as MEMBER without a token", async () => {
@@ -354,17 +361,23 @@ describe("selfHostedHandler – organizations", () => {
   });
 
   it("joins the parent org of an invited sub-team", async () => {
-    prismaMock.team.findUnique.mockResolvedValue(
-      createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }) as never
-    );
+    prismaMock.team.findUnique.mockResolvedValue({
+      ...createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }),
+      parentId: 11,
+    } as never);
 
     const response = await callHandler({ ...signupBody, token: "invite-token" });
 
     expect(response.status).toBe(201);
     expect(lastUpsertedOrganizationId()).toBe(11);
-    expect(createOrUpdateMemberships).toHaveBeenCalled();
+    expect(createOrUpdateMemberships).toHaveBeenCalledWith({
+      user: { id: 42 },
+      team: expect.objectContaining({ id: 3, parentId: 11, parent: { id: 11 } }),
+    });
     expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
     expect(mockAddMember).not.toHaveBeenCalled();
+    expect(joinAnyChildTeamOnOrgInvite).toHaveBeenCalledWith({ userId: 42, org: { id: 11 } });
   });
 
   it("joins the inviting org itself", async () => {
