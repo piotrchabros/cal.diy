@@ -707,11 +707,45 @@ async function addWebhooks(webhooks: InputWebhook[]) {
   await addWebhooksToDb(webhooks);
 }
 
+// Fixed and high because scenarios upsert teams with small explicit ids and prismock does not enforce PK uniqueness.
+export const SCENARIO_DEFAULT_ORGANIZATION_ID = 1_000_000;
+
+// No Membership or Profile rows: booking code derives URLs and credentials from profiles, so adding them would change what scenarios assert.
+export async function ensureScenarioDefaultOrganization(): Promise<number> {
+  const existing = await prismock.team.findUnique({
+    where: { id: SCENARIO_DEFAULT_ORGANIZATION_ID },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  await prismock.team.create({
+    data: {
+      id: SCENARIO_DEFAULT_ORGANIZATION_ID,
+      name: "Default",
+      slug: "scenario-default-organization",
+      isOrganization: true,
+    },
+  });
+  return SCENARIO_DEFAULT_ORGANIZATION_ID;
+}
+
+async function withScenarioOrganization<T extends { organizationId?: number | null }>(
+  users: T[]
+): Promise<(T & { organizationId: number })[]> {
+  let defaultOrganizationId: number | undefined;
+  const usersWithOrganization: (T & { organizationId: number })[] = [];
+  for (const user of users) {
+    const organizationId =
+      user.organizationId ?? (defaultOrganizationId ??= await ensureScenarioDefaultOrganization());
+    usersWithOrganization.push({ ...user, organizationId });
+  }
+  return usersWithOrganization;
+}
+
 export async function addUsersToDb(users: InputUser[]) {
   log.silly("TestData: Creating Users", JSON.stringify(users));
   await prismock.user.createMany({
-    // @ts-expect-error users.organizationId is NOT NULL, but prismock does not enforce it and scenarios outside any organization predate that
-    data: users,
+    data: await withScenarioOrganization(users),
   });
 
   // Create OutOfOfficeEntry for users with outOfOffice data
