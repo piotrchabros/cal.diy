@@ -1,4 +1,5 @@
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import { TRPCError } from "@trpc/server";
 
@@ -46,4 +47,22 @@ export const assertTeamAdminForMemberMeetings = async ({
   if (!membership) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
+};
+
+export const assertCanManageTeamWebhooks = async ({
+  userId,
+  teamId,
+}: {
+  userId: number;
+  teamId: number;
+}): Promise<void> => {
+  // FR-008: another organization's team must look nonexistent, not merely forbidden.
+  if (isOrganizationsEnabled()) {
+    const isMember = await new MembershipRepository().hasMembership({ userId, teamId });
+    if (!isMember) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+    }
+  }
+
+  await assertTeamAdminForMemberMeetings({ userId, teamId });
 };
