@@ -1,8 +1,7 @@
+import type { PrismaTempOrgRedirectRepository } from "@calcom/features/organizations/repositories/PrismaTempOrgRedirectRepository";
+import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import slugify from "@calcom/lib/slugify";
-import { prisma } from "@calcom/prisma";
-import type { Prisma } from "@calcom/prisma/client";
-import { MembershipRole } from "@calcom/prisma/enums";
 
 export const TEAM_NAME_MAX_LENGTH = 100;
 export const TEAM_SLUG_MAX_LENGTH = 50;
@@ -10,14 +9,6 @@ export const TEAM_BIO_MAX_LENGTH = 500;
 export const TEAM_LOGO_URL_MAX_LENGTH = 2048;
 
 const URL_SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-
-const teamSelect = {
-  id: true,
-  name: true,
-  slug: true,
-  bio: true,
-  logoUrl: true,
-} satisfies Prisma.TeamSelect;
 
 export type CreatedTeam = {
   id: number;
@@ -40,24 +31,32 @@ function isSupportedLogoUrl(value: string): boolean {
   return value.startsWith("https://") || value.startsWith("http://") || value.startsWith("/");
 }
 
+export interface ITeamCreationServiceDeps {
+  teamRepo: Pick<TeamRepository, "findIdBySlug" | "createWithOwner">;
+  tempOrgRedirectRepo: Pick<PrismaTempOrgRedirectRepository, "disableByFrom">;
+}
+
 export class TeamCreationService {
+  constructor(private readonly deps: ITeamCreationServiceDeps) {}
+
   static normalizeSlug(rawSlug: string): string {
     return slugify(rawSlug);
   }
 
-  static async isSlugAvailable(slug: string, organizationId?: number | null): Promise<boolean> {
+  async isSlugAvailable(slug: string, organizationId?: number | null): Promise<boolean> {
     const normalized = TeamCreationService.normalizeSlug(slug);
     if (!normalized) {
       return false;
     }
-    const existing = await prisma.team.findFirst({
-      select: { id: true },
-      where: organizationId != null ? { slug: normalized, parentId: organizationId } : { slug: normalized },
+    // Without an organization the slug is checked against every team.
+    const existing = await this.deps.teamRepo.findIdBySlug({
+      slug: normalized,
+      parentId: organizationId ?? undefined,
     });
     return !existing;
   }
 
-  static async createTeam(input: CreateTeamInput): Promise<CreatedTeam> {
+  async createTeam(input: CreateTeamInput): Promise<CreatedTeam> {
     const { userId } = input;
     const name = input.name.trim();
     const slug = TeamCreationService.normalizeSlug(input.slug);
@@ -98,34 +97,22 @@ export class TeamCreationService {
       );
     }
 
-    if (!(await TeamCreationService.isSlugAvailable(slug, input.organizationId))) {
+    if (!(await this.isSlugAvailable(slug, input.organizationId))) {
       throw ErrorWithCode.Factory.BadRequest(`Unable to create team: team URL "${slug}" is already taken`);
     }
 
-    const team = await prisma.team.create({
-      select: teamSelect,
-      data: {
-        name,
-        slug,
-        bio,
-        logoUrl,
-        ...(input.organizationId != null ? { parentId: input.organizationId } : {}),
-        members: {
-          create: {
-            userId,
-            role: MembershipRole.OWNER,
-            accepted: true,
-          },
-        },
-      },
+    const team = await this.deps.teamRepo.createWithOwner({
+      name,
+      slug,
+      bio,
+      logoUrl,
+      parentId: input.organizationId ?? null,
+      ownerUserId: userId,
     });
 
     // A slug freed by a team move may still redirect to the moved team; the new team wins
     if (input.organizationId != null) {
-      const { getTempOrgRedirectRepository } = await import(
-        "@calcom/features/organizations/di/TempOrgRedirectRepository.container"
-      );
-      await getTempOrgRedirectRepository().disableByFrom({
+      await this.deps.tempOrgRedirectRepo.disableByFrom({
         fromOrgId: input.organizationId,
         from: slug,
         types: ["Team", "TeamEventType"],

@@ -1,4 +1,4 @@
-import { TeamCreationService } from "@calcom/features/teams/services/TeamCreationService";
+import { getTeamCreationService } from "@calcom/features/teams/di/TeamCreationService.container";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { getHttpStatusCode } from "@calcom/lib/server/getServerErrorFromUnknown";
@@ -17,7 +17,7 @@ type CreateHandlerOptions = {
 export const createHandler = async ({ ctx, input }: CreateHandlerOptions) => {
   const organizationId = isOrganizationsEnabled() ? (ctx.user.organizationId ?? null) : null;
   try {
-    return await TeamCreationService.createTeam({
+    return await getTeamCreationService().createTeam({
       userId: ctx.user.id,
       name: input.name,
       slug: input.slug,

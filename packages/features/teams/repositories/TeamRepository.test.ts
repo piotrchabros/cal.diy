@@ -111,3 +111,61 @@ describe("TeamRepository.findManyPaginated", () => {
     expect(result.total).toBe(7);
   });
 });
+
+describe("TeamRepository.findIdBySlug", () => {
+  function buildSlugRepository() {
+    const team = { findFirst: vi.fn().mockResolvedValue(null) };
+    return { repository: new TeamRepository({ team } as unknown as PrismaClient), team };
+  }
+
+  it("searches every team when no parent is given", async () => {
+    const { repository, team } = buildSlugRepository();
+
+    await repository.findIdBySlug({ slug: "sales" });
+
+    expect(team.findFirst).toHaveBeenCalledWith({ where: { slug: "sales" }, select: { id: true } });
+  });
+
+  it("filters by parent, including teams outside any organization, and can exclude a team", async () => {
+    const { repository, team } = buildSlugRepository();
+
+    await repository.findIdBySlug({ slug: "sales", parentId: 4, excludeTeamId: 9 });
+    await repository.findIdBySlug({ slug: "sales", parentId: null });
+
+    expect(team.findFirst).toHaveBeenNthCalledWith(1, {
+      where: { slug: "sales", parentId: 4, NOT: { id: 9 } },
+      select: { id: true },
+    });
+    expect(team.findFirst).toHaveBeenNthCalledWith(2, {
+      where: { slug: "sales", parentId: null },
+      select: { id: true },
+    });
+  });
+});
+
+describe("TeamRepository.createWithOwner", () => {
+  it("creates the team with the owner as an accepted OWNER and omits a missing parent", async () => {
+    const team = { create: vi.fn().mockResolvedValue({ id: 1 }) };
+    const repository = new TeamRepository({ team } as unknown as PrismaClient);
+
+    await repository.createWithOwner({
+      name: "Sales",
+      slug: "sales",
+      bio: null,
+      logoUrl: null,
+      parentId: null,
+      ownerUserId: 7,
+    });
+
+    expect(team.create).toHaveBeenCalledWith({
+      select: { id: true, name: true, slug: true, bio: true, logoUrl: true },
+      data: {
+        name: "Sales",
+        slug: "sales",
+        bio: null,
+        logoUrl: null,
+        members: { create: { userId: 7, role: "OWNER", accepted: true } },
+      },
+    });
+  });
+});
