@@ -535,6 +535,99 @@ describe("OrganizationMoveService", () => {
       expect(moveRepository.isTeamSlugTaken).toHaveBeenCalledTimes(slug === null ? 0 : 1);
     });
 
+    describe("with newUsernames", () => {
+      const moveWith = (
+        newUsernames: { userId: number; username: string }[],
+        outsideMembers: "move" | "remove" = "move"
+      ) =>
+        service.moveTeam(
+          { teamId: TEAM_ID, toOrganizationId: TO_ORG_ID, outsideMembers, newUsernames },
+          ACTOR_ID
+        );
+
+      it("moves a mover whose username is taken under the new one, redirecting old to new", async () => {
+        seedTeam();
+        moveRepository.findTakenUsernames.mockImplementation(async ({ usernames }) =>
+          usernames.filter((u) => u === "alice")
+        );
+
+        await moveWith([{ userId: USER_ID, username: "alice2" }]);
+
+        expect(moveRepository.findTakenUsernames).toHaveBeenCalledWith({
+          organizationId: TO_ORG_ID,
+          usernames: ["alice2", "bob"],
+          excludeUserIds: [USER_ID, 2],
+        });
+        const alice = moveRepository.applyMove.mock.calls[0][0].users.find((u) => u.userId === USER_ID);
+        expect(alice?.username).toBe("alice2");
+        expect(alice?.redirect).toEqual({
+          fromOrgId: FROM_ORG_ID,
+          from: "alice",
+          toUrl: "https://globex.example.com/alice2",
+        });
+      });
+
+      it("normalises a new username to lower case", async () => {
+        seedTeam();
+
+        await moveWith([{ userId: USER_ID, username: " Alice-EU " }]);
+
+        const alice = moveRepository.applyMove.mock.calls[0][0].users.find((u) => u.userId === USER_ID);
+        expect(alice?.username).toBe("alice-eu");
+      });
+
+      it("lets a mover without a username move under the new one, without a redirect", async () => {
+        seedTeam({ members: [member(USER_ID, null, FROM_ORG_ID)] });
+
+        await moveWith([{ userId: USER_ID, username: "alice" }]);
+
+        expect(moveRepository.applyMove.mock.calls[0][0].users).toEqual([
+          expect.objectContaining({ userId: USER_ID, username: "alice", redirect: null }),
+        ]);
+      });
+
+      it("ignores new usernames when outside members are removed", async () => {
+        seedTeam();
+
+        await moveWith([{ userId: USER_ID, username: "alice2" }], "remove");
+
+        const move = moveRepository.applyMove.mock.calls[0][0];
+        expect(move.users).toEqual([]);
+        expect(move.team?.removeMembers.map((m) => m.userId)).toEqual([USER_ID, 2, 3]);
+        expect(moveRepository.findTakenUsernames).toHaveBeenCalledWith(
+          expect.objectContaining({ usernames: [] })
+        );
+      });
+
+      it.each([
+        {
+          case: "an invalid new username",
+          newUsernames: [{ userId: USER_ID, username: "alice smith" }],
+          code: ErrorCode.BadRequest,
+          message: MOVE_ERRORS.invalidUsername,
+        },
+        {
+          case: "a new username that is still taken",
+          newUsernames: [{ userId: USER_ID, username: "alice2" }],
+          taken: ["alice2"],
+          code: ErrorCode.Conflict,
+          message: MOVE_ERRORS.memberUsernamesTaken,
+        },
+        {
+          case: "two movers ending with the same username",
+          newUsernames: [{ userId: USER_ID, username: "bob" }],
+          code: ErrorCode.Conflict,
+          message: MOVE_ERRORS.memberUsernamesTaken,
+        },
+      ])("rejects $case without applying anything", async (c) => {
+        seedTeam();
+        if (c.taken) moveRepository.findTakenUsernames.mockResolvedValue(c.taken);
+
+        await expectRejection(moveWith(c.newUsernames), c.code, c.message);
+        expect(moveRepository.applyMove).not.toHaveBeenCalled();
+      });
+    });
+
     it.each([
       {
         case: "a team already in the target",

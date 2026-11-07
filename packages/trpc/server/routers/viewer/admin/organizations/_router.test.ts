@@ -214,6 +214,14 @@ describe("admin organizations router", () => {
         "a newSlug over 50 characters",
         () => createCaller(ctx).moveTeam({ ...validMoveTeamInput, newSlug: "a".repeat(51) }),
       ],
+      [
+        "an empty new username for a team member",
+        () =>
+          createCaller(ctx).moveTeam({
+            ...validMoveTeamInput,
+            newUsernames: [{ userId: 9, username: "  " }],
+          }),
+      ],
       ["a listTeams limit of 101", () => createCaller(ctx).listTeams({ organizationId: 5, limit: 101 })],
     ])("rejects %s", async (_label, call) => {
       await expect(call()).rejects.toMatchObject({ code: "BAD_REQUEST" });
@@ -244,6 +252,14 @@ describe("admin organizations router", () => {
         organizationId: 5,
         slug: "sales",
       });
+      expect(mocks.moveTeam).toHaveBeenCalledWith(input, 7);
+    });
+
+    it("passes per-member new usernames through to the team move", async () => {
+      const input = { ...validMoveTeamInput, newUsernames: [{ userId: 9, username: "owner2" }] };
+
+      await createCaller(ctx).moveTeam(input);
+
       expect(mocks.moveTeam).toHaveBeenCalledWith(input, 7);
     });
 
