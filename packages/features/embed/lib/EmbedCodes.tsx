@@ -4,6 +4,23 @@ import { embedLibUrl } from "./constants";
 import { getApiNameForReactSnippet, getApiNameForVanillaJsSnippet } from "./getApiName";
 import { getDimension } from "./getDimension";
 
+export function buildEmbedSnippetString({
+  namespace,
+  bookerUrl,
+  embedLibUrl,
+}: {
+  namespace: string | null;
+  bookerUrl: string;
+  embedLibUrl: string;
+}) {
+  // TODO: Import this string from @calcom/embed-snippet
+  // Right now the problem is that embed-snippet export is not minified and has comments which makes it unsuitable for giving it to users.
+  // If we can minify that during build time and then import the built code here, that could work
+  return `(function (C, A, L) { let p = function (a, ar) { a.q.push(ar); }; let d = C.document; C.Cal = C.Cal || function () { let cal = C.Cal; let ar = arguments; if (!cal.loaded) { cal.ns = {}; cal.q = cal.q || []; d.head.appendChild(d.createElement("script")).src = A; cal.loaded = true; } if (ar[0] === L) { const api = function () { p(api, arguments); }; const namespace = ar[1]; api.q = api.q || []; if(typeof namespace === "string"){cal.ns[namespace] = cal.ns[namespace] || api;p(cal.ns[namespace], ar);p(cal, ["initNamespace", namespace]);} else p(cal, ar); return;} p(cal, ar); }; })(window, "${embedLibUrl}", "init");
+Cal("init", ${namespace ? `"${namespace}",` : ""} {origin:"${bookerUrl}"});
+`;
+}
+
 // Each organization is served on its own domain, so snippets always say where to load the booker from.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Codes = {
