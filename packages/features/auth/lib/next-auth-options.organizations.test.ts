@@ -37,6 +37,22 @@ vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
   findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
 }));
 
+const mockAcceptPendingInvitesOnSignup = vi.fn();
+
+vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
+  TeamMembersService: class {
+    acceptPendingInvitesOnSignup(...args: unknown[]) {
+      return mockAcceptPendingInvitesOnSignup(...args);
+    }
+  },
+}));
+
+const mockIsSessionInRequestOrganization = vi.fn();
+
+vi.mock("./isSessionInRequestOrganization", () => ({
+  isSessionInRequestOrganization: (...args: unknown[]) => mockIsSessionInRequestOrganization(...args),
+}));
+
 const mockPrismaUserFindFirst = vi.fn();
 const mockPrismaUserCreate = vi.fn();
 const mockPrismaUserDelete = vi.fn();
@@ -240,6 +256,7 @@ type Callbacks = NonNullable<ReturnType<AuthModule["getOptions"]>["callbacks"]>;
 type SignInParams = Parameters<NonNullable<Callbacks["signIn"]>>[0];
 type RedirectParams = Parameters<NonNullable<Callbacks["redirect"]>>[0];
 type JwtParams = Parameters<NonNullable<Callbacks["jwt"]>>[0];
+type SessionParams = Parameters<NonNullable<Callbacks["session"]>>[0];
 
 const requestHeaders = (host: string) => ({
   get: (name: string) => (name === "host" ? host : null),
@@ -261,8 +278,15 @@ async function getCallbacks(getRequestHeaders?: () => Pick<Headers, "get">) {
     getRequestHeaders,
   });
   const callbacks = options.callbacks;
-  if (!callbacks?.signIn || !callbacks.redirect || !callbacks.jwt) throw new Error("callbacks missing");
-  return { signIn: callbacks.signIn, redirect: callbacks.redirect, jwt: callbacks.jwt };
+  if (!callbacks?.signIn || !callbacks.redirect || !callbacks.jwt || !callbacks.session) {
+    throw new Error("callbacks missing");
+  }
+  return {
+    signIn: callbacks.signIn,
+    redirect: callbacks.redirect,
+    jwt: callbacks.jwt,
+    session: callbacks.session,
+  };
 }
 
 const redirectParams = (url: string): RedirectParams => ({ url, baseUrl });
@@ -278,6 +302,8 @@ describe("next-auth options with organizations", () => {
     mockFindDefaultOrganizationId.mockResolvedValue(null);
     mockAddMember.mockResolvedValue({ userId: 100, organizationId: 7, role: "MEMBER" });
     mockPrismaUserDelete.mockResolvedValue({ id: 100 });
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
+    mockIsSessionInRequestOrganization.mockResolvedValue(true);
   });
 
   describe("flag off", () => {
@@ -641,13 +667,91 @@ describe("next-auth options with organizations", () => {
       expect(mockLinkAccount).toHaveBeenCalledTimes(1);
     });
 
-    it("does not add an organization membership with the flag off", async () => {
+    it("adds the default organization membership with the flag off", async () => {
       mockFindDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
 
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 1, userId: 100, role: "MEMBER" });
+      expect(mockAddMember.mock.invocationCallOrder[0]).toBeLessThan(
+        mockLinkAccount.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("does not add an organization membership while the default organization does not exist", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(null);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
       expect(mockAddMember).not.toHaveBeenCalled();
+      expect(mockLinkAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("deletes the new user when adding the default organization membership fails with the flag off", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockAddMember.mockRejectedValue(new Error("username taken"));
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
+
+      expect(mockPrismaUserDelete).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 100 } }));
+      expect(mockLinkAccount).not.toHaveBeenCalled();
+    });
+
+    it("accepts pending invites for the request organization after linking the account with the flag on", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+        userId: 100,
+        email: "new@acme.com",
+        organizationId: 7,
+      });
+      expect(mockLinkAccount.mock.invocationCallOrder[0]).toBeLessThan(
+        mockAcceptPendingInvitesOnSignup.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("accepts pending invites for the default organization with the flag off", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await signIn(googleSignUpParams);
+
+      expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+        userId: 100,
+        email: "new@acme.com",
+        organizationId: 1,
+      });
+      expect(mockLinkAccount.mock.invocationCallOrder[0]).toBeLessThan(
+        mockAcceptPendingInvitesOnSignup.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("accepts pending invites without an organization when no default organization exists", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(null);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await signIn(googleSignUpParams);
+
+      expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+        userId: 100,
+        email: "new@acme.com",
+        organizationId: null,
+      });
+    });
+
+    it("still signs in when accepting pending invites fails", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      mockAcceptPendingInvitesOnSignup.mockRejectedValue(new Error("db down"));
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
       expect(mockLinkAccount).toHaveBeenCalledTimes(1);
     });
 
@@ -700,6 +804,71 @@ describe("next-auth options with organizations", () => {
 
       await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
       expect(mockLinkAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("session organization check", () => {
+    const baseSessionParams = (tokenId: unknown = 1) =>
+      ({
+        session: { expires: "2099-01-01T00:00:00.000Z", user: { email: "user@example.com" } },
+        token: { sub: "1", id: tokenId, email: "user@example.com" },
+        user: undefined,
+      }) as unknown as SessionParams;
+
+    it("returns the base session without the check when the flag is off", async () => {
+      const { session } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      const result = await session(baseSessionParams());
+
+      expect(result).toMatchObject({ expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } });
+      expect(mockIsSessionInRequestOrganization).not.toHaveBeenCalled();
+    });
+
+    it("returns the session when it belongs to the request organization", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      const { session } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      const result = await session(baseSessionParams());
+
+      expect(result).toMatchObject({ expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } });
+      expect(mockIsSessionInRequestOrganization).toHaveBeenCalledWith({
+        userId: 1,
+        headers: expect.anything(),
+      });
+    });
+
+    it("returns a signed-out session when it does not belong to the request organization", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockIsSessionInRequestOrganization.mockResolvedValue(false);
+      const { session } = await getCallbacks(() => requestHeaders("other.example.org"));
+
+      await expect(session(baseSessionParams())).resolves.toEqual({});
+    });
+
+    it("returns a signed-out session instead of rejecting when the check throws", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockIsSessionInRequestOrganization.mockRejectedValue(new Error("db down"));
+      const { session } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(session(baseSessionParams())).resolves.toEqual({});
+    });
+
+    it("returns a signed-out session when request headers are unavailable", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      const { session } = await getCallbacks();
+
+      await expect(session(baseSessionParams())).resolves.toEqual({});
+      expect(mockIsSessionInRequestOrganization).not.toHaveBeenCalled();
+    });
+
+    it("returns the base session without the check when the token has no numeric user id", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      const { session } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      const result = await session(baseSessionParams("1"));
+
+      expect(result).toMatchObject({ expires: "2099-01-01T00:00:00.000Z" });
+      expect(mockIsSessionInRequestOrganization).not.toHaveBeenCalled();
     });
   });
 });

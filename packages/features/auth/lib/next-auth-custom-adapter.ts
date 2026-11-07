@@ -76,6 +76,7 @@ export default function CalComAdapter(prismaClient: PrismaClient): Adapter {
           await new TeamMembersService().acceptPendingInvitesOnSignup({
             userId: user.id,
             email: user.email,
+            organizationId,
           });
         } catch {
           logger.error("Failed to materialize pending team invites on OAuth signup", {

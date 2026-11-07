@@ -81,8 +81,28 @@ describe("CalComAdapter.createUser – team invite materialization", () => {
     expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
       userId: 42,
       email: "invited@example.com",
+      organizationId: null,
     });
     expect(result).toMatchObject({ id: "42", email: "invited@example.com" });
+  });
+
+  it("scopes pending invites to the default organization", async () => {
+    mockFindDefaultOrganizationId.mockResolvedValue(1);
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
+    const adapter = CalComAdapter(createPrismaStub(createdUser));
+
+    await adapter.createUser?.({
+      name: "Invited User",
+      email: "invited@example.com",
+      emailVerified: null,
+      image: null,
+    });
+
+    expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+      userId: 42,
+      email: "invited@example.com",
+      organizationId: 1,
+    });
   });
 
   it("still creates the user when invite materialization fails", async () => {

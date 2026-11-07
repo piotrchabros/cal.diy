@@ -337,6 +337,16 @@ export default function Signup({
     }
   };
 
+  const getOAuthCallbackUrl = () => {
+    const callbackUrlParam = searchParams?.get("callbackUrl");
+    if (callbackUrlParam) {
+      const url = `${orgBaseUrl}/${callbackUrlParam}`;
+      return isOrgInviteByLink ? url : addOrUpdateQueryParam(url, "from", "signup");
+    }
+    const gettingStartedPath = onboardingV3Enabled ? "onboarding/getting-started" : "getting-started";
+    return `${orgBaseUrl}/${gettingStartedPath}?from=signup`;
+  };
+
   return (
     <>
       {IS_CALCOM && (!IS_EUROPE || userConsentToCookie) ? (
@@ -623,22 +633,7 @@ export default function Signup({
                               has_prepopulated_username: !!prepopulateFormValues?.username,
                             });
                             setIsGoogleLoading(true);
-                            const baseUrl = process.env.NEXT_PUBLIC_WEBAPP_URL;
-                            const GOOGLE_AUTH_URL = `${baseUrl}/auth/sso/google`;
-                            const searchQueryParams = new URLSearchParams();
-                            if (prepopulateFormValues?.username) {
-                              // If username is present we save it in query params to check for premium
-                              searchQueryParams.set("username", prepopulateFormValues.username);
-                              localStorage.setItem("username", prepopulateFormValues.username);
-                            }
-                            if (token && prepopulateFormValues?.email) {
-                              searchQueryParams.set("email", prepopulateFormValues.email);
-                            }
-                            const url = searchQueryParams.toString()
-                              ? `${GOOGLE_AUTH_URL}?${searchQueryParams.toString()}`
-                              : GOOGLE_AUTH_URL;
-
-                            router.push(url);
+                            await signIn("google", { callbackUrl: getOAuthCallbackUrl() });
                           }}>
                           {t("continue_with_google")}
                         </Button>
@@ -674,22 +669,7 @@ export default function Signup({
                               has_prepopulated_username: !!prepopulateFormValues?.username,
                             });
                             setIsMicrosoftLoading(true);
-                            const baseUrl = process.env.NEXT_PUBLIC_WEBAPP_URL;
-                            const MICROSOFT_AUTH_URL = `${baseUrl}/auth/sso/microsoft`;
-                            const searchQueryParams = new URLSearchParams();
-                            if (prepopulateFormValues?.username) {
-                              // If username is present we save it in query params to check for premium
-                              searchQueryParams.set("username", prepopulateFormValues.username);
-                              localStorage.setItem("username", prepopulateFormValues.username);
-                            }
-                            if (token && prepopulateFormValues?.email) {
-                              searchQueryParams.set("email", prepopulateFormValues.email);
-                            }
-                            const url = searchQueryParams.toString()
-                              ? `${MICROSOFT_AUTH_URL}?${searchQueryParams.toString()}`
-                              : MICROSOFT_AUTH_URL;
-
-                            router.push(url);
+                            await signIn("azure-ad", { callbackUrl: getOAuthCallbackUrl() });
                           }}>
                           {t("continue_with_microsoft")}
                         </Button>

@@ -251,12 +251,13 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
   } else {
     // Create the user
     let createdUser: { id: number };
+    const organizationId = await findDefaultOrganizationId();
     try {
       createdUser = await userRepository.create({
         username,
         email,
         hashedPassword,
-        organizationId: await findDefaultOrganizationId(),
+        organizationId,
         creationSource: CreationSource.WEBAPP,
         locked: shouldLockByDefault,
         identityProvider: IdentityProvider.CAL,
@@ -276,7 +277,11 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
       throw error;
     }
     try {
-      await new TeamMembersService().acceptPendingInvitesOnSignup({ userId: createdUser.id, email });
+      await new TeamMembersService().acceptPendingInvitesOnSignup({
+        userId: createdUser.id,
+        email,
+        organizationId,
+      });
     } catch {
       log.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });
     }

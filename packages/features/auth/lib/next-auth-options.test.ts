@@ -1,3 +1,4 @@
+import process from "node:process";
 import { IdentityProvider, UserPermissionRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCode } from "./ErrorCode";
@@ -18,6 +19,18 @@ vi.mock("@calcom/prisma", () => ({
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
   findDefaultOrganizationId: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ addMember: vi.fn() }),
+}));
+
+vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
+  TeamMembersService: class {
+    acceptPendingInvitesOnSignup() {
+      return Promise.resolve({ status: "no-invites", teamIds: [] });
+    }
+  },
 }));
 
 const mockFindByEmailAndIncludeProfilesAndPassword = vi.fn();

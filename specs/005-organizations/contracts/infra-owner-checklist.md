@@ -55,7 +55,7 @@ For every app below that the query returns, add the callback for **each** organi
 | Alby (`alby`) | Alby developer portal → OAuth client → Callback URL | `https://<domain>/apps/alby/setup?callback=true` (Alby's callback is the setup page, not `/api/integrations`; its webhook stays on `cal.bluebee.marketing`) |
 | HubSpot, Salesforce, Pipedrive, Close, Zoho CRM / Bigin / Calendar, Intercom, Basecamp, Feishu, Lark, Huddle01, Tandem, Nextcloud Talk, Jelly, Lyra, Vital | each provider's app settings | `https://<domain>/api/integrations/<slug>/callback` with the slug `hubspot`, `salesforce`, `pipedrive-crm`, `closecom`, `zohocrm`, `zoho-bigin`, `zohocalendar`, `intercom`, `basecamp3`, `feishucalendar`, `larkcalendar`, `huddle01video`, `tandemvideo`, `nextcloudtalk`, `jelly`, `lyra`, `vital` |
 
-Sign-in with Google or Microsoft (NextAuth `/api/auth/callback/google`, `/api/auth/callback/azure-ad`) still starts on `cal.bluebee.marketing` and needs no per-domain registration for now; T210 decides whether that changes.
+Sign-in with Google or Microsoft starts on the domain the user is on (T210, research.md R6: one session per domain). If Google or Microsoft sign-in is enabled (`GOOGLE_LOGIN_ENABLED`, `OUTLOOK_LOGIN_ENABLED`), register `https://<domain>/api/auth/callback/google` (Google OAuth client) and `https://<domain>/api/auth/callback/azure-ad` (Azure app registration) for **every** organization domain, next to the existing `cal.bluebee.marketing` ones.
 
 Until a domain is registered with a provider, members of that organization cannot connect that app. Existing connections keep working: tokens are not tied to the domain, and webhooks and token refreshes keep using `cal.bluebee.marketing`.
 
