@@ -1,24 +1,28 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { UserRepository } from "./UserRepository";
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
+import { prisma } from "@calcom/prisma";
 import { IdentityProvider } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import bcrypt from "bcryptjs";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { UserRepository } from "./UserRepository";
 
 const testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 const createdUserIds: number[] = [];
 
 describe("UserRepository Integration Tests - Signup Methods", () => {
   let userRepository: UserRepository;
+  let defaultOrganizationId: number;
 
   async function cleanupTestUsers() {
     if (createdUserIds.length > 0) {
-      await userRepository.deleteMany({ userIds: createdUserIds })
-      createdUserIds.length = 0
+      await userRepository.deleteMany({ userIds: createdUserIds });
+      createdUserIds.length = 0;
     }
   }
 
   beforeAll(async () => {
     userRepository = getUserRepository();
+    defaultOrganizationId = await getOrCreateDefaultOrganizationId(prisma);
   });
 
   afterEach(async () => {
@@ -34,7 +38,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `signupuser-${testRunId}`,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(Date.now()),
         identityProvider: IdentityProvider.CAL,
       });
@@ -43,7 +47,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
       expect(result.id).toBeDefined();
       createdUserIds.push(result.id);
 
-      const createdUser = await userRepository.findByEmail({ email: testEmail});
+      const createdUser = await userRepository.findByEmail({ email: testEmail });
 
       expect(createdUser).not.toBeNull();
       expect(createdUser?.email).toBe(testEmail);
@@ -59,7 +63,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}`,
         hashedPassword: hashedPassword1,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(Date.now() - 86400000),
         identityProvider: IdentityProvider.CAL,
       });
@@ -69,14 +73,14 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}-updated`,
         hashedPassword: hashedPassword2,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(),
         identityProvider: IdentityProvider.CAL,
       });
 
       expect(user2.id).toBe(user1.id);
 
-      const updatedUser = await userRepository.findByEmailAndIncludeProfilesAndPassword({ email: testEmail});
+      const updatedUser = await userRepository.findByEmailAndIncludeProfilesAndPassword({ email: testEmail });
 
       expect(updatedUser?.username).toBe(`user-${testRunId}-updated`);
       expect(updatedUser?.password?.hash).toBe(hashedPassword2);
@@ -90,7 +94,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}-p1`,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(),
         identityProvider: IdentityProvider.CAL,
       });
@@ -101,7 +105,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}-p2`,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(),
         identityProvider: IdentityProvider.CAL,
       });
@@ -118,7 +122,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}-v1`,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: verificationDate,
         identityProvider: IdentityProvider.CAL,
       });
@@ -142,15 +146,17 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail,
         username: `user-${testRunId}-pwd`,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(),
         identityProvider: IdentityProvider.CAL,
       });
       createdUserIds.push(result.id);
 
-      const userWithPassword = await userRepository.findByEmailAndIncludeProfilesAndPassword({ email: testEmail })
+      const userWithPassword = await userRepository.findByEmailAndIncludeProfilesAndPassword({
+        email: testEmail,
+      });
 
-       if (!userWithPassword) {
+      if (!userWithPassword) {
         throw new Error("User was not found after signup");
       }
 
@@ -169,7 +175,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
         email: testEmail1,
         username: duplicateUsername,
         hashedPassword,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         emailVerified: new Date(),
         identityProvider: IdentityProvider.CAL,
       });
@@ -180,7 +186,7 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
           email: testEmail2,
           username: duplicateUsername,
           hashedPassword,
-          organizationId: null,
+          organizationId: defaultOrganizationId,
           emailVerified: new Date(),
           identityProvider: IdentityProvider.CAL,
         })
@@ -189,48 +195,52 @@ describe("UserRepository Integration Tests - Signup Methods", () => {
   });
 
   describe("Integration: Individual Signup flow", () => {
-  it("should complete full individual signup flow: check email, check username, then upsert", async () => {
-    const testEmail = `flow-${testRunId}@example.com`;
-    const testUsername = `flowuser-${testRunId}`;
-    const hashedPassword = await bcrypt.hash("password123", 10);
+    it("should complete full individual signup flow: check email, check username, then upsert", async () => {
+      const testEmail = `flow-${testRunId}@example.com`;
+      const testUsername = `flowuser-${testRunId}`;
+      const hashedPassword = await bcrypt.hash("password123", 10);
 
-    const existingUser = await userRepository.findByEmail({
-      email: testEmail,
+      const existingUser = await userRepository.findByEmail({
+        email: testEmail,
+      });
+      expect(existingUser).toBeNull();
+
+      const usersWithUsername = await userRepository.findUsersByUsername({
+        orgSlug: null,
+        usernameList: [testUsername],
+      });
+      const usernameTaken = usersWithUsername.length > 0 ? usersWithUsername[0] : null;
+      expect(usernameTaken).toBeNull();
+
+      const signupResult = await userRepository.upsertForSignup({
+        email: testEmail,
+        username: testUsername,
+        hashedPassword,
+        organizationId: defaultOrganizationId,
+        emailVerified: new Date(Date.now()),
+        identityProvider: IdentityProvider.CAL,
+      });
+      createdUserIds.push(signupResult.id);
+
+      expect(signupResult.id).toBeDefined();
+
+      const userWithPassword = await userRepository.findByEmailAndIncludeProfilesAndPassword({
+        email: testEmail,
+      });
+
+      if (!userWithPassword) {
+        throw new Error("User was not found after signup");
+      }
+
+      expect(userWithPassword?.email).toBe(testEmail);
+      expect(userWithPassword?.username).toBe(testUsername);
+      expect(userWithPassword?.password).not.toBeNull();
+
+      const userWithOrganizationId = await userRepository.getUserOrganizationAndTeams({
+        userId: userWithPassword.id,
+      });
+
+      expect(userWithOrganizationId?.organizationId).toBe(defaultOrganizationId);
     });
-    expect(existingUser).toBeNull();
-
-    const usersWithUsername = await userRepository.findUsersByUsername({
-      orgSlug: null,
-      usernameList: [testUsername],
-    });
-    const usernameTaken = usersWithUsername.length > 0 ? usersWithUsername[0] : null;
-    expect(usernameTaken).toBeNull();
-
-    const signupResult = await userRepository.upsertForSignup({
-      email: testEmail,
-      username: testUsername,
-      hashedPassword,
-      organizationId: null,
-      emailVerified: new Date(Date.now()),
-      identityProvider: IdentityProvider.CAL,
-    });
-    createdUserIds.push(signupResult.id);
-
-    expect(signupResult.id).toBeDefined();
-
-    const userWithPassword = await userRepository.findByEmailAndIncludeProfilesAndPassword({ email: testEmail })
-
-    if (!userWithPassword) {
-      throw new Error("User was not found after signup");
-    }
-
-    expect(userWithPassword?.email).toBe(testEmail);
-    expect(userWithPassword?.username).toBe(testUsername);
-    expect(userWithPassword?.password).not.toBeNull();
-
-    const userWithOrganizationId = await userRepository.getUserOrganizationAndTeams({ userId: userWithPassword.id});
-
-    expect(userWithOrganizationId?.organizationId).toBeNull();
   });
-});
 });

@@ -1,7 +1,7 @@
 import { prisma } from "@calcom/prisma";
 import type { Booking, Credential } from "@calcom/prisma/client";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-
 import { BookingReferenceRepository } from "./BookingReferenceRepository";
 
 const testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -56,6 +56,7 @@ describe("BookingReferenceRepository Integration Tests", () => {
         data: {
           email: `bookingreference-test-${testRunId}@example.com`,
           username: `bookingreference-test-${testRunId}`,
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
         },
       });
     }

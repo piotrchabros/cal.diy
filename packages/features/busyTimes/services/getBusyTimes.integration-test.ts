@@ -2,6 +2,7 @@ import dayjs from "@calcom/dayjs";
 import { getBusyTimesService } from "@calcom/features/di/containers/BusyTimes";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterEach, describe, expect, it } from "vitest";
 
 type CreatedResources = {
@@ -22,6 +23,7 @@ const createTestUser = async (overrides?: { email?: string; username?: string })
     data: {
       email: overrides?.email ?? `busy-times-${timestamp}@example.com`,
       username: overrides?.username ?? `busy-times-${timestamp}`,
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
     },
   });
   createdResources.users.push(user.id);
