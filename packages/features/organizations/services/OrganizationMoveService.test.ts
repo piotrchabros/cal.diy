@@ -3,6 +3,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   IOrganizationMoveRepository,
+  MoveTeamRecord,
   MoveUserRecord,
 } from "../repositories/interfaces/IOrganizationMoveRepository";
 import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrganizationMembershipRepository";
@@ -20,6 +21,24 @@ const FROM_ORG_ID = 10;
 const TO_ORG_ID = 20;
 const USER_ID = 1;
 const ACTOR_ID = 100;
+const TEAM_ID = 5;
+
+const member = (userId: number, username: string | null, organizationId: number | null, accepted = true) => ({
+  userId,
+  name: username,
+  email: `${username ?? userId}@example.com`,
+  username,
+  organizationId,
+  accepted,
+});
+
+// alice is in the source org, bob has no org, carol is a pending invitee and dave is already in the target
+const TEAM_MEMBERS = [
+  member(USER_ID, "alice", FROM_ORG_ID),
+  member(2, "bob", null),
+  member(3, "carol", null, false),
+  member(4, "dave", TO_ORG_ID),
+];
 
 const BASE_URLS: Record<number, string> = {
   [FROM_ORG_ID]: "https://acme.example.com",
@@ -56,6 +75,17 @@ describe("OrganizationMoveService", () => {
     });
   };
 
+  const seedTeam = (team: Partial<MoveTeamRecord> = {}) => {
+    moveRepository.findTeamForMove.mockResolvedValue({
+      id: TEAM_ID,
+      slug: "sales",
+      parentId: FROM_ORG_ID,
+      isOrganization: false,
+      members: TEAM_MEMBERS,
+      ...team,
+    });
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     organizationRepository = new InMemoryOrganizationRepository();
@@ -65,7 +95,7 @@ describe("OrganizationMoveService", () => {
     moveRepository = {
       findUserForMove: vi.fn<IOrganizationMoveRepository["findUserForMove"]>(),
       findTeamForMove: vi.fn<IOrganizationMoveRepository["findTeamForMove"]>(),
-      isTeamSlugTaken: vi.fn<IOrganizationMoveRepository["isTeamSlugTaken"]>(),
+      isTeamSlugTaken: vi.fn<IOrganizationMoveRepository["isTeamSlugTaken"]>().mockResolvedValue(false),
       findTakenUsernames: vi.fn<IOrganizationMoveRepository["findTakenUsernames"]>().mockResolvedValue([]),
       applyMove: vi.fn<IOrganizationMoveRepository["applyMove"]>().mockResolvedValue(undefined),
     };
@@ -270,6 +300,254 @@ describe("OrganizationMoveService", () => {
       await service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID, newUsername }, ACTOR_ID);
 
       expect(moveRepository.applyMove.mock.calls[0][0].users[0].redirect).toEqual(redirect);
+    });
+  });
+
+  it.each([
+    { case: "a missing team", team: null, to: TO_ORG_ID, message: "Team not found" },
+    { case: "an organization", team: { isOrganization: true }, to: TO_ORG_ID, message: "Team not found" },
+    { case: "a standalone team", team: { parentId: null }, to: TO_ORG_ID, message: "Team not found" },
+    { case: "a missing target organization", team: {}, to: 999, message: "Organization not found" },
+  ])("previewMoveTeam and moveTeam reject $case", async ({ team, to, message }) => {
+    if (team) seedTeam(team);
+    else moveRepository.findTeamForMove.mockResolvedValue(null);
+
+    await expectRejection(
+      service.previewMoveTeam({ teamId: TEAM_ID, toOrganizationId: to }),
+      ErrorCode.NotFound,
+      message
+    );
+    await expectRejection(
+      service.moveTeam({ teamId: TEAM_ID, toOrganizationId: to, outsideMembers: "move" }, ACTOR_ID),
+      ErrorCode.NotFound,
+      message
+    );
+  });
+
+  describe("previewMoveTeam", () => {
+    it("lists accepted members outside the target with username and slug conflicts", async () => {
+      seedTeam({ members: [...TEAM_MEMBERS, member(6, null, null)] });
+      moveRepository.findTakenUsernames.mockResolvedValue(["bob"]);
+      moveRepository.isTeamSlugTaken.mockResolvedValue(true);
+
+      const preview = await service.previewMoveTeam({ teamId: TEAM_ID, toOrganizationId: TO_ORG_ID });
+
+      expect(preview).toEqual({
+        membersOutsideTarget: [
+          { userId: USER_ID, name: "alice", email: "alice@example.com", usernameTaken: false },
+          { userId: 2, name: "bob", email: "bob@example.com", usernameTaken: true },
+          { userId: 6, name: null, email: "6@example.com", usernameTaken: false },
+        ],
+        slugTaken: true,
+      });
+      expect(moveRepository.findTakenUsernames).toHaveBeenCalledWith({
+        organizationId: TO_ORG_ID,
+        usernames: ["alice", "bob"],
+        excludeUserIds: [USER_ID, 2, 6],
+      });
+    });
+
+    it("does not check the slug of a team without one", async () => {
+      seedTeam({ slug: null });
+
+      const preview = await service.previewMoveTeam({ teamId: TEAM_ID, toOrganizationId: TO_ORG_ID });
+
+      expect(preview.slugTaken).toBe(false);
+      expect(moveRepository.isTeamSlugTaken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("moveTeam", () => {
+    it("moves accepted outside members, removes pending ones and writes team and user redirects", async () => {
+      seedTeam();
+
+      const result = await service.moveTeam(
+        { teamId: TEAM_ID, toOrganizationId: TO_ORG_ID, outsideMembers: "move" },
+        ACTOR_ID
+      );
+
+      expect(result).toEqual({ teamId: TEAM_ID, organizationId: TO_ORG_ID, slug: "sales" });
+      expect(moveRepository.findTakenUsernames).toHaveBeenCalledWith({
+        organizationId: TO_ORG_ID,
+        usernames: ["alice", "bob"],
+        excludeUserIds: [USER_ID, 2],
+      });
+      const userMove = { toOrganizationId: TO_ORG_ID, role: "MEMBER", keepTeamIds: [TEAM_ID] };
+      expect(moveRepository.applyMove).toHaveBeenCalledWith({
+        team: {
+          teamId: TEAM_ID,
+          toOrganizationId: TO_ORG_ID,
+          slug: "sales",
+          removeMembers: [{ userId: 3, email: "carol@example.com" }],
+          redirect: { fromOrgId: FROM_ORG_ID, from: "sales", toUrl: "https://globex.example.com/team/sales" },
+        },
+        users: [
+          {
+            ...userMove,
+            userId: USER_ID,
+            email: "alice@example.com",
+            fromOrganizationId: FROM_ORG_ID,
+            username: "alice",
+            redirect: { fromOrgId: FROM_ORG_ID, from: "alice", toUrl: "https://globex.example.com/alice" },
+          },
+          {
+            ...userMove,
+            userId: 2,
+            email: "bob@example.com",
+            fromOrganizationId: null,
+            username: "bob",
+            redirect: null,
+          },
+        ],
+      });
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.team.move", {
+        action: "organization.team.move",
+        actorUserId: ACTOR_ID,
+        targetTeamId: TEAM_ID,
+        fromOrganizationId: FROM_ORG_ID,
+        organizationId: TO_ORG_ID,
+        movedUserIds: [USER_ID, 2],
+        removedUserIds: [3],
+      });
+    });
+
+    it("removes every outside member when asked to, skipping the owner check", async () => {
+      seedTeam({ members: [member(USER_ID, null, FROM_ORG_ID), member(3, "carol", null, false)] });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: FROM_ORG_ID, role: "OWNER" });
+
+      await service.moveTeam(
+        { teamId: TEAM_ID, toOrganizationId: TO_ORG_ID, outsideMembers: "remove" },
+        ACTOR_ID
+      );
+
+      const move = moveRepository.applyMove.mock.calls[0][0];
+      expect(move.users).toEqual([]);
+      expect(move.team?.removeMembers).toEqual([
+        { userId: USER_ID, email: `${USER_ID}@example.com` },
+        { userId: 3, email: "carol@example.com" },
+      ]);
+    });
+
+    it("uses a valid new slug, normalised to lower case, in the team redirect", async () => {
+      seedTeam();
+
+      const result = await service.moveTeam(
+        { teamId: TEAM_ID, toOrganizationId: TO_ORG_ID, newSlug: " Sales-EU ", outsideMembers: "remove" },
+        ACTOR_ID
+      );
+
+      expect(result.slug).toBe("sales-eu");
+      expect(moveRepository.isTeamSlugTaken.mock.calls[0][0]).toMatchObject({
+        slug: "sales-eu",
+        excludeTeamId: TEAM_ID,
+      });
+      expect(moveRepository.applyMove.mock.calls[0][0].team?.redirect).toEqual({
+        fromOrgId: FROM_ORG_ID,
+        from: "sales",
+        toUrl: "https://globex.example.com/team/sales-eu",
+      });
+    });
+
+    it.each([
+      { case: "a team without a slug", slug: null, baseUrl: undefined },
+      { case: "a shared base URL and unchanged slug", slug: "sales", baseUrl: "https://cal.example.com" },
+    ])("writes no team redirect for $case", async ({ slug, baseUrl }) => {
+      seedTeam({ slug });
+      if (baseUrl) getBaseUrl.mockResolvedValue(baseUrl);
+
+      await service.moveTeam(
+        { teamId: TEAM_ID, toOrganizationId: TO_ORG_ID, outsideMembers: "remove" },
+        ACTOR_ID
+      );
+
+      const team = moveRepository.applyMove.mock.calls[0][0].team;
+      expect(team?.slug).toBe(slug);
+      expect(team?.redirect).toBeNull();
+      expect(moveRepository.isTeamSlugTaken).toHaveBeenCalledTimes(slug === null ? 0 : 1);
+    });
+
+    it.each([
+      {
+        case: "a team already in the target",
+        team: { parentId: TO_ORG_ID },
+        code: ErrorCode.BadRequest,
+        message: MOVE_ERRORS.teamAlreadyInOrganization,
+      },
+      {
+        case: "an invalid new slug",
+        newSlug: "sales team",
+        code: ErrorCode.BadRequest,
+        message: MOVE_ERRORS.invalidSlug,
+      },
+      { case: "a taken slug", slugTaken: true, code: ErrorCode.Conflict, message: MOVE_ERRORS.slugTaken },
+      {
+        case: "a mover without a username",
+        team: { members: [member(2, null, null)] },
+        code: ErrorCode.PreconditionFailed,
+        message: MOVE_ERRORS.usernameRequired,
+      },
+      {
+        case: "duplicate mover usernames",
+        team: { members: [member(2, "bob", null), member(6, "bob", null)] },
+        code: ErrorCode.Conflict,
+        message: MOVE_ERRORS.memberUsernamesTaken,
+      },
+      {
+        case: "a taken mover username",
+        taken: ["bob"],
+        code: ErrorCode.Conflict,
+        message: MOVE_ERRORS.memberUsernamesTaken,
+      },
+      {
+        case: "moving the last owner",
+        lastOwner: true,
+        code: ErrorCode.PreconditionFailed,
+        message: MOVE_ERRORS.lastOwner,
+      },
+    ])("rejects $case without applying anything", async (c) => {
+      seedTeam(c.team);
+      if (c.slugTaken) moveRepository.isTeamSlugTaken.mockResolvedValue(true);
+      if (c.taken) moveRepository.findTakenUsernames.mockResolvedValue(c.taken);
+      if (c.lastOwner)
+        membershipRepository.seedMembership({ userId: USER_ID, teamId: FROM_ORG_ID, role: "OWNER" });
+
+      const input = {
+        teamId: TEAM_ID,
+        toOrganizationId: TO_ORG_ID,
+        newSlug: c.newSlug,
+        outsideMembers: "move" as const,
+      };
+      await expectRejection(service.moveTeam(input, ACTOR_ID), c.code, c.message);
+      expect(moveRepository.applyMove).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("listTeams", () => {
+    it("lists every team of the organization without requiring membership, clamping the limit", async () => {
+      membershipRepository.seedTeam({ id: 6, parentId: TO_ORG_ID, name: "Sales" });
+      membershipRepository.seedTeam({ id: 7, parentId: TO_ORG_ID, name: "Support" });
+      membershipRepository.seedTeam({ id: 8, parentId: FROM_ORG_ID, name: "Elsewhere" });
+      const listTeams = vi.spyOn(membershipRepository, "listTeams");
+
+      const page = await service.listTeams({ organizationId: TO_ORG_ID, actorUserId: ACTOR_ID, limit: 0 });
+
+      expect(page).toEqual({
+        items: [{ teamId: 6, name: "Sales", slug: "team-6", memberCount: 0, viewerIsMember: false }],
+        nextCursor: 6,
+      });
+      expect(listTeams.mock.calls[0][0]).toMatchObject({ viewerUserId: ACTOR_ID, memberUserId: undefined });
+
+      await service.listTeams({ organizationId: TO_ORG_ID, actorUserId: ACTOR_ID, search: "sup", cursor: 6 });
+      await service.listTeams({ organizationId: TO_ORG_ID, actorUserId: ACTOR_ID, limit: 500 });
+      expect(listTeams.mock.calls.map(([params]) => params.limit)).toEqual([1, 50, 100]);
+    });
+
+    it("rejects a missing organization", async () => {
+      await expectRejection(
+        service.listTeams({ organizationId: 999, actorUserId: ACTOR_ID }),
+        ErrorCode.NotFound,
+        "Organization not found"
+      );
     });
   });
 });
