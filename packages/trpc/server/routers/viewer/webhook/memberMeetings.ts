@@ -66,3 +66,30 @@ export const assertCanManageTeamWebhooks = async ({
 
   await assertTeamAdminForMemberMeetings({ userId, teamId });
 };
+
+export const assertCanListEventTypeWebhooks = async ({
+  userId,
+  eventTypeId,
+}: {
+  userId: number;
+  eventTypeId: number;
+}): Promise<void> => {
+  const eventType = await prisma.eventType.findUnique({
+    where: { id: eventTypeId },
+    select: { userId: true, teamId: true },
+  });
+
+  if (!eventType) {
+    throw new TRPCError({ code: "NOT_FOUND" });
+  }
+
+  if (eventType.userId === userId) return;
+
+  // Team event types have no owner (userId null) and their webhooks expose secrets, so only team admins may list them.
+  if (eventType.teamId != null) {
+    await assertTeamAdminForMemberMeetings({ userId, teamId: eventType.teamId });
+    return;
+  }
+
+  throw new TRPCError({ code: "FORBIDDEN" });
+};
