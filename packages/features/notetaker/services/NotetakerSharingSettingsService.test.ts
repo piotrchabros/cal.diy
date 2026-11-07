@@ -1,6 +1,6 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotetakerConfig } from "../lib/config";
 import type { INotetakerUserLookup } from "../lib/userLookup";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
@@ -117,6 +117,10 @@ describe("NotetakerSharingSettingsService", () => {
     service = buildService();
     seedEventType();
     addMembers([ACTOR_ID, 2, 3, 4]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("get", () => {
@@ -258,12 +262,25 @@ describe("NotetakerSharingSettingsService", () => {
     });
 
     it("refuses an actor who is not an accepted member of the team", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
       membershipLookup.addMember({ teamId: TEAM_ID, userId: ACTOR_ID, accepted: false });
 
       await expectRejection(
         service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", userId: ACTOR_ID }),
         ErrorCode.Forbidden,
         "NOT_ALLOWED"
+      );
+      expect(repositories.store.sharingChanges).toHaveLength(0);
+    });
+
+    it("reports the team as not found to a non-member when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      membershipLookup.addMember({ teamId: TEAM_ID, userId: ACTOR_ID, accepted: false });
+
+      await expectRejection(
+        service.set({ eventTypeId: EVENT_TYPE_ID, mode: "TEAM", userId: ACTOR_ID }),
+        ErrorCode.NotFound,
+        "Team not found"
       );
       expect(repositories.store.sharingChanges).toHaveLength(0);
     });
@@ -510,12 +527,24 @@ describe("NotetakerSharingSettingsService", () => {
     });
 
     it("refuses an actor who is not an accepted member", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
       membershipLookup.removeMember({ teamId: TEAM_ID, userId: ACTOR_ID });
 
       await expectRejection(
         service.listCandidates({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID }),
         ErrorCode.Forbidden,
         "NOT_ALLOWED"
+      );
+    });
+
+    it("reports the team as not found to a non-member when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      membershipLookup.removeMember({ teamId: TEAM_ID, userId: ACTOR_ID });
+
+      await expectRejection(
+        service.listCandidates({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID }),
+        ErrorCode.NotFound,
+        "Team not found"
       );
     });
 
