@@ -1,10 +1,9 @@
-import sendVerificationRequest from "@calcom/features/auth/lib/sendVerificationRequest";
-import { HttpError } from "@calcom/lib/http-error";
 import { prisma } from "@calcom/prisma";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getCustomerAndCheckoutSession } from "../../lib/getCustomerAndCheckoutSession";
 import { VerificationTokenService } from "../../lib/VerificationTokenService";
+import type { AssignPremiumUsername, SendVerificationRequest } from "../paymentCallback";
 
 // Mock dependencies
 vi.mock("@calcom/prisma", () => ({
@@ -17,7 +16,6 @@ vi.mock("@calcom/prisma", () => ({
 }));
 
 vi.mock("../../lib/getCustomerAndCheckoutSession");
-vi.mock("@calcom/features/auth/lib/sendVerificationRequest");
 vi.mock("../../lib/VerificationTokenService", () => ({
   VerificationTokenService: {
     create: vi.fn(),
@@ -25,7 +23,7 @@ vi.mock("../../lib/VerificationTokenService", () => ({
 }));
 
 const mockGetCustomerAndCheckoutSession = vi.mocked(getCustomerAndCheckoutSession);
-const mockSendVerificationRequest = vi.mocked(sendVerificationRequest);
+const mockSendVerificationRequest = vi.fn<SendVerificationRequest>();
 const mockVerificationTokenServiceCreate = vi.mocked(VerificationTokenService.create);
 
 // Type the mocked prisma properly
@@ -35,6 +33,14 @@ const mockPrisma = prisma as unknown as {
     update: ReturnType<typeof vi.fn>;
   };
 };
+
+async function buildHandler(assignUsername?: AssignPremiumUsername) {
+  const { createPaymentCallbackHandler } = await import("../paymentCallback");
+  return createPaymentCallbackHandler({
+    sendVerificationRequest: mockSendVerificationRequest,
+    assignUsername,
+  });
+}
 
 describe("paymentCallback", () => {
   let mockReq: Partial<NextApiRequest>;
@@ -93,7 +99,7 @@ describe("paymentCallback", () => {
 
   describe("VerificationTokenService integration", () => {
     it("should call VerificationTokenService.create with correct parameters", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -113,7 +119,7 @@ describe("paymentCallback", () => {
     });
 
     it("should send verification email with token from service", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -124,7 +130,7 @@ describe("paymentCallback", () => {
     });
 
     it("should create verification token before sending email", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
       const callOrder: string[] = [];
 
       mockVerificationTokenServiceCreate.mockImplementation(async function () {
@@ -153,7 +159,7 @@ describe("paymentCallback", () => {
         },
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -173,7 +179,7 @@ describe("paymentCallback", () => {
           organizationId: 5,
         } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -184,7 +190,7 @@ describe("paymentCallback", () => {
     });
 
     it("should update user with premium username before creating token", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
       const callOrder: string[] = [];
 
       mockPrisma.user.update.mockImplementation(async () => {
@@ -203,7 +209,7 @@ describe("paymentCallback", () => {
     });
 
     it("should redirect with correct parameters after successful payment", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -220,31 +226,29 @@ describe("paymentCallback", () => {
         checkoutSession: { payment_status: "paid" },
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
-      try {
-        await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
-      } catch (error) {
-        expect(error).toBeInstanceOf(HttpError);
-        expect((error as HttpError).statusCode).toBe(404);
-      }
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
+      expect(mockRes.status).toHaveBeenCalledWith(404);
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("Stripe customer not found or deleted") })
+      );
       expect(mockVerificationTokenServiceCreate).not.toHaveBeenCalled();
+      expect(mockSendVerificationRequest).not.toHaveBeenCalled();
     });
 
     it("should not create verification token when user is not found", async () => {
       mockPrisma.user.findFirst.mockResolvedValue(null);
 
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
-      try {
-        await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
-      } catch (error) {
-        expect(error).toBeInstanceOf(HttpError);
-        expect((error as HttpError).statusCode).toBe(404);
-      }
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
+      expect(mockRes.status).toHaveBeenCalledWith(404);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({ message: "User not found" }));
       expect(mockVerificationTokenServiceCreate).not.toHaveBeenCalled();
+      expect(mockSendVerificationRequest).not.toHaveBeenCalled();
     });
 
     it("should use user email if stripe customer email is missing", async () => {
@@ -257,7 +261,7 @@ describe("paymentCallback", () => {
         checkoutSession: { payment_status: "paid" },
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -270,7 +274,7 @@ describe("paymentCallback", () => {
 
   describe("premium username assignment", () => {
     it("default handler writes the username, then the isPremium metadata", async () => {
-      const { default: handler } = await import("../paymentCallback");
+      const handler = await buildHandler();
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -289,8 +293,7 @@ describe("paymentCallback", () => {
 
     it("injected assigner receives the organization and the username is not written through prisma", async () => {
       const assignUsername = vi.fn().mockResolvedValue(undefined);
-      const { createPaymentCallbackHandler } = await import("../paymentCallback");
-      const handler = createPaymentCallbackHandler(assignUsername);
+      const handler = await buildHandler(assignUsername);
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -305,8 +308,7 @@ describe("paymentCallback", () => {
 
     it("a refused username gives a 400 and does not mark the user premium", async () => {
       const assignUsername = vi.fn().mockRejectedValue(new Error("username taken"));
-      const { createPaymentCallbackHandler } = await import("../paymentCallback");
-      const handler = createPaymentCallbackHandler(assignUsername);
+      const handler = await buildHandler(assignUsername);
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
@@ -331,8 +333,7 @@ describe("paymentCallback", () => {
         checkoutSession: { payment_status: "unpaid" },
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
       const assignUsername = vi.fn().mockResolvedValue(undefined);
-      const { createPaymentCallbackHandler } = await import("../paymentCallback");
-      const handler = createPaymentCallbackHandler(assignUsername);
+      const handler = await buildHandler(assignUsername);
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 

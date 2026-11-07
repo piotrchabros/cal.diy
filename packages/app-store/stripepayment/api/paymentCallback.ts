@@ -1,5 +1,4 @@
 import { getCustomerAndCheckoutSession } from "@calcom/app-store/stripepayment/lib/getCustomerAndCheckoutSession";
-import sendVerificationRequest from "@calcom/features/auth/lib/sendVerificationRequest";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
@@ -27,6 +26,13 @@ export type AssignPremiumUsername = (params: {
   username: string;
 }) => Promise<void>;
 
+export type SendVerificationRequest = (params: { identifier: string; url: string }) => Promise<void>;
+
+export type PaymentCallbackDeps = {
+  sendVerificationRequest: SendVerificationRequest;
+  assignUsername?: AssignPremiumUsername;
+};
+
 async function assignUsernameDirectly({
   userId,
   username,
@@ -39,7 +45,10 @@ async function assignUsernameDirectly({
 }
 
 // It handles premium user payment success/failure
-export function createPaymentCallbackHandler(assignUsername: AssignPremiumUsername = assignUsernameDirectly) {
+export function createPaymentCallbackHandler({
+  sendVerificationRequest,
+  assignUsername = assignUsernameDirectly,
+}: PaymentCallbackDeps) {
   async function getHandler(req: NextApiRequest, res: NextApiResponse) {
     const { callbackUrl, checkoutSessionId } = querySchema.parse(req.query);
     const log = logger.getSubLogger({
@@ -165,5 +174,3 @@ export function createPaymentCallbackHandler(assignUsername: AssignPremiumUserna
     GET: Promise.resolve({ default: defaultResponder(getHandler) }),
   });
 }
-
-export default createPaymentCallbackHandler();
