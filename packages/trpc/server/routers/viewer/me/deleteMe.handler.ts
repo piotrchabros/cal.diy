@@ -1,14 +1,15 @@
+import process from "node:process";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
 import { verifyPassword } from "@calcom/features/auth/lib/verifyPassword";
 import { deleteUser } from "@calcom/features/users/lib/deleteUser";
-import { symmetricDecrypt } from "@calcom/lib/crypto";
 import { isPasswordValid } from "@calcom/lib/auth/isPasswordValid";
+import { symmetricDecrypt } from "@calcom/lib/crypto";
 import { HttpError } from "@calcom/lib/http-error";
 import { totpAuthenticatorCheck } from "@calcom/lib/totp";
 import { prisma } from "@calcom/prisma";
 import { IdentityProvider } from "@calcom/prisma/enums";
+import { convertErrorWithCodeToTRPCError } from "@calcom/trpc/server/lib/toTRPCError";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import type { TDeleteMeInputSchema } from "./deleteMe.schema";
 
 export type DeleteMeOptions = {
@@ -95,6 +96,9 @@ export const deleteMeHandler = async ({ ctx, input }: DeleteMeOptions) => {
     }
   }
 
-  await deleteUser(user);
+  // tRPC v11 hands resolver errors back without running errorConversionMiddleware
+  await deleteUser(user).catch((error: unknown) => {
+    throw convertErrorWithCodeToTRPCError(error);
+  });
   return;
 };

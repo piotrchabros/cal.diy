@@ -1,8 +1,11 @@
+import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
 import { repointUserRedirectsForRename } from "@calcom/features/organizations/lib/repointUserRedirectsForRename";
+import { assertUserCanBeDeleted } from "@calcom/features/users/lib/deleteUser";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { convertErrorWithCodeToTRPCError } from "@calcom/trpc/server/lib/toTRPCError";
 import { authedAdminProcedure } from "@calcom/trpc/server/procedures/authedProcedure";
 import { router } from "@calcom/trpc/server/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -86,8 +89,11 @@ export const userAdminRouter = router({
       return { user, message: `User with id: ${user.id} updated successfully` };
     }),
   delete: authedAdminProcedureWithRequestedUser.input(userIdSchema).mutation(async ({ ctx }) => {
-    const { prisma, requestedUser } = ctx;
-    await prisma.user.delete({ where: { id: requestedUser.id } });
+    const { requestedUser } = ctx;
+    await assertUserCanBeDeleted(requestedUser.id).catch((error: unknown) => {
+      throw convertErrorWithCodeToTRPCError(error);
+    });
+    await getUserRepository().deleteById({ id: requestedUser.id });
     return { message: `User with id: ${requestedUser.id} deleted successfully` };
   }),
 });

@@ -280,6 +280,21 @@ export class OrganizationMembershipService {
     return { userId, role: "OWNER" };
   }
 
+  // Deleting a user cascades their memberships away, so the last owner would leave the org ownerless (FR-003)
+  async assertUserCanBeDeleted(userId: number): Promise<void> {
+    const repository = this.deps.organizationMembershipRepository;
+    const user = await repository.findUserById(userId);
+    if (!user) return;
+    const membership = await repository.findMembership({ organizationId: user.organizationId, userId });
+    if (!membership) return;
+    await this.assertNotLastOwner(
+      user.organizationId,
+      membership,
+      null,
+      ORGANIZATION_ERRORS.lastOwnerCannotBeDeleted
+    );
+  }
+
   // Instance admins manage owners without being org members, so there is no actor role to check (US1-5)
   async demoteOwner({
     organizationId,
@@ -492,18 +507,19 @@ export class OrganizationMembershipService {
   private async assertNotLastOwner(
     organizationId: number,
     membership: { role: OrganizationRoleDto; accepted: boolean },
-    newRole: OrganizationRoleDto | null
+    newRole: OrganizationRoleDto | null,
+    errorKey: string = ORGANIZATION_ERRORS.lastOwner
   ): Promise<void> {
     if (membership.role !== "OWNER" || newRole === "OWNER") return;
     const repository = this.deps.organizationMembershipRepository;
     const acceptedOwners = await repository.countOwners(organizationId);
     if (membership.accepted) {
-      if (acceptedOwners <= 1) throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.lastOwner);
+      if (acceptedOwners <= 1) throw ErrorWithCode.Factory.PreconditionFailed(errorKey);
       return;
     }
     if (acceptedOwners > 0) return;
     if ((await repository.countPendingOwners(organizationId)) <= 1) {
-      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.lastOwner);
+      throw ErrorWithCode.Factory.PreconditionFailed(errorKey);
     }
   }
 }

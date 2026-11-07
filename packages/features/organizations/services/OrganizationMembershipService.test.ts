@@ -891,6 +891,58 @@ describe("OrganizationMembershipService", () => {
     });
   });
 
+  describe("assertUserCanBeDeleted", () => {
+    function seedMember(userId: number, role: OrganizationRoleDto, accepted = true) {
+      membershipRepository.seedUser({ id: userId, organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId, teamId: ORG_ID, role, accepted });
+    }
+
+    it("refuses deleting the last accepted owner", async () => {
+      seedMember(1, "OWNER");
+      seedMember(2, "ADMIN");
+
+      await expectRejection(
+        service.assertUserCanBeDeleted(1),
+        ErrorCode.PreconditionFailed,
+        "organization_last_owner_cannot_be_deleted"
+      );
+    });
+
+    it("refuses deleting the last pending owner of an organization without an accepted owner", async () => {
+      seedMember(1, "OWNER", false);
+
+      await expectRejection(
+        service.assertUserCanBeDeleted(1),
+        ErrorCode.PreconditionFailed,
+        "organization_last_owner_cannot_be_deleted"
+      );
+    });
+
+    it("allows deleting one of several owners", async () => {
+      seedMember(1, "OWNER");
+      seedMember(2, "OWNER");
+
+      await expect(service.assertUserCanBeDeleted(1)).resolves.toBeUndefined();
+    });
+
+    it("allows deleting a non-owner, a user without a membership or an unknown user", async () => {
+      seedMember(1, "OWNER");
+      seedMember(2, "MEMBER");
+      membershipRepository.seedUser({ id: 3, organizationId: ORG_ID });
+
+      await expect(service.assertUserCanBeDeleted(2)).resolves.toBeUndefined();
+      await expect(service.assertUserCanBeDeleted(3)).resolves.toBeUndefined();
+      await expect(service.assertUserCanBeDeleted(404)).resolves.toBeUndefined();
+    });
+
+    it("only looks at the user's own organization", async () => {
+      membershipRepository.seedUser({ id: 1, organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: 1, teamId: OTHER_ORG_ID, role: "OWNER" });
+
+      await expect(service.assertUserCanBeDeleted(1)).resolves.toBeUndefined();
+    });
+  });
+
   describe("demoteOwner", () => {
     const ACTOR_ID = 99;
     const OWNER_ID = 1;

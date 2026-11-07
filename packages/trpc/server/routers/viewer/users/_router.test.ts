@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   userUpdate: vi.fn(),
   changeUsername: vi.fn(),
+  assertUserCanBeDeleted: vi.fn(),
+  deleteById: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -35,7 +37,14 @@ vi.mock("@calcom/features/organizations/lib/repointUserRedirectsForRename", () =
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
-  getOrganizationMembershipService: () => ({ changeUsername: mocks.changeUsername }),
+  getOrganizationMembershipService: () => ({
+    changeUsername: mocks.changeUsername,
+    assertUserCanBeDeleted: mocks.assertUserCanBeDeleted,
+  }),
+}));
+
+vi.mock("@calcom/features/di/containers/UserRepository", () => ({
+  getUserRepository: () => ({ deleteById: mocks.deleteById }),
 }));
 
 const ctx = {
@@ -179,5 +188,55 @@ describe("admin users router update", () => {
     expect(mocks.userUpdate).toHaveBeenCalled();
     expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
     expect(mocks.disableByFrom).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin users router delete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getUserSession.mockResolvedValue({
+      user: { id: 1, role: "ADMIN" },
+      session: { upId: "usr-1", expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } },
+    });
+    mocks.findUnique.mockResolvedValue(requestedUser);
+    mocks.assertUserCanBeDeleted.mockResolvedValue(undefined);
+    mocks.deleteById.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("deletes the user through the repository after the last-owner check", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    await expect(createCaller(ctx).delete({ userId: 11 })).resolves.toEqual({
+      message: "User with id: 11 deleted successfully",
+    });
+
+    expect(mocks.assertUserCanBeDeleted).toHaveBeenCalledWith(11);
+    expect(mocks.deleteById).toHaveBeenCalledWith({ id: 11 });
+  });
+
+  it("answers PRECONDITION_FAILED with the translatable key for the last owner", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    mocks.assertUserCanBeDeleted.mockRejectedValue(
+      ErrorWithCode.Factory.PreconditionFailed("organization_last_owner_cannot_be_deleted")
+    );
+
+    await expect(createCaller(ctx).delete({ userId: 11 })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "organization_last_owner_cannot_be_deleted",
+    });
+    expect(mocks.deleteById).not.toHaveBeenCalled();
+  });
+
+  it("deletes without the organization check while organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+
+    await createCaller(ctx).delete({ userId: 11 });
+
+    expect(mocks.assertUserCanBeDeleted).not.toHaveBeenCalled();
+    expect(mocks.deleteById).toHaveBeenCalledWith({ id: 11 });
   });
 });

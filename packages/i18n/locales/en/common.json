@@ -5222,5 +5222,6 @@
   "organization_make_admin": "Make admin",
   "organization_make_member": "Make member",
   "organization_owner_demoted": "Owner removed",
+  "organization_last_owner_cannot_be_deleted": "This account is the last owner of its organization. Make someone else an owner before deleting it.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
