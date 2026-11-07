@@ -3,13 +3,13 @@
 import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
 import SectionBottomActions from "@calcom/features/settings/SectionBottomActions";
+import { ZTeamLogoUrlSchema } from "@calcom/features/teams/lib/teamProfileSchema";
 import { useCopy } from "@calcom/lib/hooks/useCopy";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { md } from "@calcom/lib/markdownIt";
 import turndown from "@calcom/lib/turndownService";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
-import { ZTeamLogoUrlSchema } from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
 import { Editor } from "@calcom/ui/components/editor";
