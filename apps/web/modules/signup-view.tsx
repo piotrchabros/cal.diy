@@ -9,6 +9,7 @@ import {
   isUserAlreadyExistsError,
 } from "@calcom/features/auth/signup/lib/fetchSignup";
 import { getOrgUsernameFromEmail } from "@calcom/features/auth/signup/utils/getOrgUsernameFromEmail";
+import { useOrgBaseUrl, useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import ServerTrans from "@calcom/lib/components/ServerTrans";
 import {
   APP_NAME,
@@ -211,6 +212,8 @@ export default function Signup({
   const searchParams = useCompatSearchParams();
   const { t, i18n } = useLocale();
   const router = useRouter();
+  const orgBaseUrl = useOrgBaseUrl();
+  const publicBase = useOrgBaseUrlOr(WEBSITE_URL);
   const formMethods = useForm<FormValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: prepopulateFormValues satisfies FormValues,
@@ -295,13 +298,13 @@ export default function Signup({
       const verifyOrGettingStarted = emailVerificationEnabled ? "auth/verify-email" : gettingStartedPath;
       const constructCallBackIfUrlPresent = () => {
         if (isOrgInviteByLink) {
-          return `${WEBAPP_URL}/${searchParams.get("callbackUrl")}`;
+          return `${orgBaseUrl}/${searchParams.get("callbackUrl")}`;
         }
-        return addOrUpdateQueryParam(`${WEBAPP_URL}/${searchParams.get("callbackUrl")}`, "from", "signup");
+        return addOrUpdateQueryParam(`${orgBaseUrl}/${searchParams.get("callbackUrl")}`, "from", "signup");
       };
 
       const constructCallBackIfUrlNotPresent = () => {
-        return `${WEBAPP_URL}/${verifyOrGettingStarted}?from=signup`;
+        return `${orgBaseUrl}/${verifyOrGettingStarted}?from=signup`;
       };
 
       const constructCallBackUrl = () => {
@@ -511,15 +514,8 @@ export default function Signup({
                           setPremium={(value) => setPremiumUsername(value)}
                           addOnLeading={
                             orgSlug
-                              ? truncateDomain(
-                                  `${WEBAPP_URL.replace(
-                                    URL_PROTOCOL_REGEX,
-                                    ""
-                                  )}/`
-                                )
-                              : truncateDomain(
-                                  `${WEBSITE_URL.replace(URL_PROTOCOL_REGEX, "")}/`
-                                )
+                              ? truncateDomain(`${orgBaseUrl.replace(URL_PROTOCOL_REGEX, "")}/`)
+                              : truncateDomain(`${publicBase.replace(URL_PROTOCOL_REGEX, "")}/`)
                           }
                         />
                       ) : null}
