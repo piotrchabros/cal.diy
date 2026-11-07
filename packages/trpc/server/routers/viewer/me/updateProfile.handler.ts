@@ -1,12 +1,15 @@
 import { getPremiumMonthlyPlanPriceId } from "@calcom/app-store/stripepayment/lib/utils";
 import { sendChangeOfEmailVerification } from "@calcom/features/auth/lib/verifyEmail";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
 import { repointUserRedirectsForRename } from "@calcom/features/organizations/lib/repointUserRedirectsForRename";
 import { checkUsername } from "@calcom/features/profile/lib/checkUsername";
 import { resolveUsernameNamespace } from "@calcom/features/profile/lib/resolveUsernameNamespace";
 import { ScheduleRepository } from "@calcom/features/schedules/repositories/ScheduleRepository";
 import { getTranslation } from "@calcom/i18n/server";
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import hasKeyInMetadata from "@calcom/lib/hasKeyInMetadata";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
@@ -51,7 +54,7 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
   const featuresRepository = new FeaturesRepository(prisma);
   const emailVerification = await featuresRepository.checkIfFeatureIsEnabledGlobally("email-verification");
 
-  const { travelSchedules, ...rest } = input;
+  const { travelSchedules, username: _username, ...rest } = input;
 
   const secondaryEmails = input?.secondaryEmails || [];
   delete input.secondaryEmails;
@@ -72,23 +75,20 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
 
   const usernameNamespace = resolveUsernameNamespace({ organizationId: user.organizationId });
   // Users already moved to an org profile keep their username on the profile, not on user.username.
-  const checksInOrg = usernameNamespace !== null && !user.movedToProfileId;
+  const skipsUsernameChange = Boolean(user.organizationId && user.movedToProfileId);
+  let newUsername: string | undefined;
 
-  if (input.username && (!user.organizationId || checksInOrg)) {
+  if (input.username && !skipsUsernameChange) {
     const username = slugify(input.username);
-    // Only validate if we're changing usernames
     if (username !== user.username) {
-      data.username = username;
       const response = await checkUsername(username, usernameNamespace);
       isPremiumUsername = response.premium;
       if (!response.available) {
         const t = await getTranslation(locale, "common");
         throw new TRPCError({ code: "BAD_REQUEST", message: t("username_already_taken") });
       }
+      newUsername = username;
     }
-  } else if (input.username && user.organizationId && user.movedToProfileId) {
-    // don't change user.username if we have profile.username
-    delete data.username;
   }
 
   if (isPremiumUsername) {
@@ -122,6 +122,19 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
       });
     }
   }
+  // Written before any other change so a username conflict found inside the transaction aborts the whole update.
+  if (newUsername) {
+    try {
+      await getOrganizationMembershipService().changeUsername({ userId: user.id, username: newUsername });
+    } catch (e) {
+      if (e instanceof ErrorWithCode && e.code === ErrorCode.Conflict) {
+        const t = await getTranslation(locale, "common");
+        throw new TRPCError({ code: "BAD_REQUEST", message: t("username_already_taken") });
+      }
+      throw e;
+    }
+  }
+
   const hasEmailBeenChanged = data.email && user.email !== data.email;
 
   let secondaryEmail:

@@ -1,10 +1,16 @@
+import { ErrorCode } from "@calcom/lib/errorCodes";
 import type { PrismaClient } from "@calcom/prisma";
+import { Prisma } from "@calcom/prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaOrganizationMembershipRepository } from "./PrismaOrganizationMembershipRepository";
 
+function uniqueConstraintError() {
+  return new Prisma.PrismaClientKnownRequestError("x", { code: "P2002", clientVersion: "6" });
+}
+
 function buildRepository() {
   const user = { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() };
-  const profile = { findFirst: vi.fn(), upsert: vi.fn() };
+  const profile = { findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() };
   const membership = {
     findUnique: vi.fn(),
     findMany: vi.fn(),
@@ -420,6 +426,111 @@ describe("PrismaOrganizationMembershipRepository", () => {
         ],
         nextCursor: 3,
       });
+    });
+  });
+
+  describe("updateUsername", () => {
+    it("updates the user and the existing organization profile in one transaction", async () => {
+      const { repository, user, profile, $transaction } = buildRepository();
+      user.update.mockResolvedValue({ id: 7 });
+      profile.updateMany.mockResolvedValue({ count: 1 });
+
+      await repository.updateUsername({ userId: 7, organizationId: 1, username: "alice" });
+
+      expect($transaction).toHaveBeenCalledTimes(1);
+      expect($transaction.mock.calls[0][0]).toHaveLength(2);
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { username: "alice" },
+        select: { id: true },
+      });
+      expect(profile.updateMany).toHaveBeenCalledWith({
+        where: { userId: 7, organizationId: 1 },
+        data: { username: "alice" },
+      });
+      expect(profile.upsert).not.toHaveBeenCalled();
+    });
+
+    it("writes no profile when the user has no organization", async () => {
+      const { repository, user, profile, $transaction } = buildRepository();
+      user.update.mockResolvedValue({ id: 7 });
+
+      await repository.updateUsername({ userId: 7, organizationId: null, username: "alice" });
+
+      expect($transaction.mock.calls[0][0]).toHaveLength(1);
+      expect(user.update).toHaveBeenCalledTimes(1);
+      expect(profile.updateMany).not.toHaveBeenCalled();
+      expect(profile.upsert).not.toHaveBeenCalled();
+    });
+
+    it("maps a unique-constraint violation to a Conflict error", async () => {
+      const { repository, user, profile } = buildRepository();
+      user.update.mockResolvedValue({ id: 7 });
+      profile.updateMany.mockRejectedValue(uniqueConstraintError());
+
+      await expect(
+        repository.updateUsername({ userId: 7, organizationId: 1, username: "alice" })
+      ).rejects.toMatchObject({
+        code: ErrorCode.Conflict,
+        message: "Username is already taken in this organization",
+      });
+    });
+
+    it("rethrows other errors unchanged", async () => {
+      const { repository, user } = buildRepository();
+      const error = new Error("connection lost");
+      user.update.mockRejectedValue(error);
+
+      await expect(
+        repository.updateUsername({ userId: 7, organizationId: null, username: "alice" })
+      ).rejects.toBe(error);
+    });
+  });
+
+  describe("updateUsernameAndUpsertProfile", () => {
+    it("updates the user and upserts the organization profile in one transaction", async () => {
+      const { repository, user, profile, $transaction } = buildRepository();
+      user.update.mockResolvedValue({ id: 7 });
+      profile.upsert.mockResolvedValue({ id: 3 });
+
+      await repository.updateUsernameAndUpsertProfile({ userId: 7, organizationId: 1, username: "alice" });
+
+      expect($transaction).toHaveBeenCalledTimes(1);
+      expect($transaction.mock.calls[0][0]).toHaveLength(2);
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { username: "alice" },
+        select: { id: true },
+      });
+      expect(profile.upsert).toHaveBeenCalledWith({
+        where: { userId_organizationId: { userId: 7, organizationId: 1 } },
+        create: { uid: expect.any(String), userId: 7, organizationId: 1, username: "alice" },
+        update: { username: "alice" },
+        select: { id: true },
+      });
+      expect(profile.upsert.mock.calls[0][0].create.uid).not.toBe("");
+    });
+
+    it("maps a unique-constraint violation to a Conflict error", async () => {
+      const { repository, user } = buildRepository();
+      user.update.mockRejectedValue(uniqueConstraintError());
+
+      await expect(
+        repository.updateUsernameAndUpsertProfile({ userId: 7, organizationId: 1, username: "alice" })
+      ).rejects.toMatchObject({
+        code: ErrorCode.Conflict,
+        message: "Username is already taken in this organization",
+      });
+    });
+
+    it("rethrows other errors unchanged", async () => {
+      const { repository, profile } = buildRepository();
+      const error = new Error("connection lost");
+      profile.upsert.mockRejectedValue(error);
+
+      await expect(
+        repository.updateUsernameAndUpsertProfile({ userId: 7, organizationId: 1, username: "alice" })
+      ).rejects.toBe(error);
     });
   });
 });
