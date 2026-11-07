@@ -22,17 +22,23 @@ vi.mock("@calcom/i18n/server", () => {
   };
 });
 
-describe("UserRepository", () => {
-  beforeEach(() => {
-    prismock;
-  });
+let defaultOrganizationId: number;
 
+// users.organizationId is NOT NULL, so every created user needs an existing organization to connect to.
+beforeEach(async () => {
+  const organization = await prismock.team.create({
+    data: { name: "Default Org", slug: "default-org", isOrganization: true },
+  });
+  defaultOrganizationId = organization.id;
+});
+
+describe("UserRepository", () => {
   describe("create", () => {
     test("Should create a user without a password", async () => {
       const user = await new UserRepository(prismock).create({
         username: "test",
         email: "test@example.com",
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         creationSource: CreationSource.WEBAPP,
         locked: false,
       });
@@ -41,7 +47,7 @@ describe("UserRepository", () => {
         expect.objectContaining({
           username: "test",
           email: "test@example.com",
-          organizationId: null,
+          organizationId: defaultOrganizationId,
           creationSource: CreationSource.WEBAPP,
           locked: false,
         })
@@ -60,7 +66,7 @@ describe("UserRepository", () => {
       const user = await new UserRepository(prismock).create({
         username: "test",
         email: "test@example.com",
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         creationSource: CreationSource.WEBAPP,
         locked: true,
       });
@@ -82,7 +88,7 @@ describe("UserRepository", () => {
     });
 
     test("If organizationId is passed, user should be associated with the organization", async () => {
-      const organizationId = 123;
+      const organizationId = defaultOrganizationId;
       const username = "test";
 
       const user = await new UserRepository(prismock).create({
@@ -120,14 +126,14 @@ describe("listUsers", () => {
     await new UserRepository(prismock).create({
       username: "alice",
       email: "alice@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
     await new UserRepository(prismock).create({
       username: "bob",
       email: "bob@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -144,14 +150,14 @@ describe("listUsers", () => {
     await new UserRepository(prismock).create({
       username: "alice",
       email: "alice@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
     await new UserRepository(prismock).create({
       username: "bob",
       email: "bob@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -186,14 +192,14 @@ describe("listUsers", () => {
     await new UserRepository(prismock).create({
       username: "locked-user",
       email: "locked@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: true,
     });
     await new UserRepository(prismock).create({
       username: "unlocked-user",
       email: "unlocked@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -213,7 +219,7 @@ describe("listUsers", () => {
       await new UserRepository(prismock).create({
         username: `user${i}`,
         email: `user${i}@example.com`,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         creationSource: CreationSource.WEBAPP,
         locked: false,
       });
@@ -234,7 +240,7 @@ describe("listUsers", () => {
       await new UserRepository(prismock).create({
         username: `nolimituser${i}`,
         email: `nolimituser${i}@example.com`,
-        organizationId: null,
+        organizationId: defaultOrganizationId,
         creationSource: CreationSource.WEBAPP,
         locked: false,
       });
@@ -254,7 +260,7 @@ describe("listUsers", () => {
     await new UserRepository(prismock).create({
       username: "alice",
       email: "alice@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -302,7 +308,7 @@ describe("listUsers organization filter", () => {
     await repo.create({
       username: "nora",
       email: "nora@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -363,14 +369,14 @@ describe("listUsers organization filter", () => {
       anna: { id: orgA.id, name: "Org A" },
       adam: { id: orgA.id, name: "Org A" },
       bella: { id: orgB.id, name: "Org B" },
-      nora: null,
+      nora: { id: defaultOrganizationId, name: "Default Org" },
     });
   });
 });
 describe("organization membership of invited users", () => {
   test("createInvitedWithPendingTeamMembership stores organizationId without creating a profile", async () => {
     const team = await prismock.team.create({ data: { name: "Org Team", slug: "org-team-invite" } });
-    const organizationId = 456;
+    const organizationId = defaultOrganizationId;
 
     const { id } = await new UserRepository(prismock).createInvitedWithPendingTeamMembership({
       email: "Invitee@Example.com",
@@ -387,24 +393,11 @@ describe("organization membership of invited users", () => {
     expect(profile).toBeNull();
   });
 
-  test("createInvitedWithPendingTeamMembership leaves organizationId null when not given", async () => {
-    const team = await prismock.team.create({ data: { name: "Plain Team", slug: "plain-team-invite" } });
-
-    const { id } = await new UserRepository(prismock).createInvitedWithPendingTeamMembership({
-      email: "plain-invitee@example.com",
-      teamId: team.id,
-      role: MembershipRole.MEMBER,
-    });
-
-    const user = await prismock.user.findUnique({ where: { id } });
-    expect(user?.organizationId).toBeNull();
-  });
-
   test("findInviteeByEmail returns organizationId and username", async () => {
     await new UserRepository(prismock).create({
       username: "org-member",
       email: "org-member@example.com",
-      organizationId: 789,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -414,7 +407,11 @@ describe("organization membership of invited users", () => {
     });
 
     expect(invitee).toEqual(
-      expect.objectContaining({ username: "org-member", organizationId: 789, hasPassword: false })
+      expect.objectContaining({
+        username: "org-member",
+        organizationId: defaultOrganizationId,
+        hasPassword: false,
+      })
     );
   });
 
@@ -422,7 +419,7 @@ describe("organization membership of invited users", () => {
     const user = await new UserRepository(prismock).create({
       username: null,
       email: "no-org@example.com",
-      organizationId: null,
+      organizationId: defaultOrganizationId,
       creationSource: CreationSource.WEBAPP,
       locked: false,
     });
@@ -452,7 +449,7 @@ describe("_getWhereClauseForFindingUsersByUsername", () => {
     findManySpy.mockRestore();
   });
 
-  test("Should only match users outside any organization when no orgSlug is given", async () => {
+  test("Should match nobody when no orgSlug is given, since every user belongs to an organization", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     const findManySpy = vi.spyOn(ProfileRepository, "findManyByOrgSlugOrRequestedSlug");
 
@@ -462,7 +459,7 @@ describe("_getWhereClauseForFindingUsersByUsername", () => {
     });
 
     expect(findManySpy).not.toHaveBeenCalled();
-    expect(where).toEqual({ username: { in: ["a"] }, organization: null });
+    expect(where).toEqual({ username: { in: ["a"] }, id: { in: [] } });
     findManySpy.mockRestore();
   });
 
