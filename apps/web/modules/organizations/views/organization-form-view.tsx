@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { Controller, useForm } from "react-hook-form";
+import { OrganizationTeamsSection } from "../components/OrganizationTeamsSection";
 
 const ORGANIZATIONS_PATH = "/settings/admin/organizations";
 const OWNER_SEARCH_LIMIT = 10;
@@ -229,7 +230,12 @@ function EditOrganizationForm({ organizationId }: { organizationId: number }) {
   if (isPending) return <p>{t("loading")}</p>;
   if (error) return <p>{error.message}</p>;
 
-  return <EditOrganizationFormInner key={data.id} organization={data} />;
+  return (
+    <>
+      <EditOrganizationFormInner key={data.id} organization={data} />
+      <OrganizationTeamsSection organizationId={data.id} />
+    </>
+  );
 }
 
 export default function OrganizationFormView({ organizationId }: OrganizationFormViewProps) {
