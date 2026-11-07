@@ -1,4 +1,5 @@
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import type { NotetakerSessionCreateInput } from "./interfaces/INotetakerSessionRepository";
@@ -68,6 +69,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
       data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
         email: `${prefix}${runId}@example.com`,
         username: `${prefix}${runId}`,
       },

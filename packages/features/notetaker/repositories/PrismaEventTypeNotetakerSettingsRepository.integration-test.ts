@@ -1,4 +1,5 @@
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import { PrismaEventTypeNotetakerSettingsRepository } from "./PrismaEventTypeNotetakerSettingsRepository";
@@ -53,7 +54,12 @@ function fx(): Fixtures {
 async function createUser(label: string) {
   const name = `Settings IT ${label} ${runId}`;
   const user = await prisma.user.create({
-    data: { email: `${PREFIX}-${label}@example.com`, username: `${PREFIX}-${label}`, name },
+    data: {
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
+      email: `${PREFIX}-${label}@example.com`,
+      username: `${PREFIX}-${label}`,
+      name,
+    },
     select: { id: true },
   });
   userIds.push(user.id);
@@ -151,7 +157,12 @@ function createPersonalScope() {
       const key = nextKey();
       const name = `Personal IT user ${key}`;
       const user = await prisma.user.create({
-        data: { email: `${key}@example.com`, username: key, name },
+        data: {
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
+          email: `${key}@example.com`,
+          username: key,
+          name,
+        },
         select: { id: true },
       });
       created.userIds.push(user.id);
