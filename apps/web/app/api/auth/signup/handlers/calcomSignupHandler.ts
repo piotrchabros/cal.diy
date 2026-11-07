@@ -16,7 +16,6 @@ import { getFeatureRepository } from "@calcom/features/di/containers/FeatureRepo
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
-import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { GlobalWatchlistRepository } from "@calcom/features/watchlist/lib/repository/GlobalWatchlistRepository";
 import { sentrySpan } from "@calcom/features/watchlist/lib/telemetry";
 import { normalizeEmail } from "@calcom/features/watchlist/lib/utils/normalization";
@@ -26,6 +25,7 @@ import { WEBAPP_URL } from "@calcom/lib/constants";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import { isPrismaError } from "@calcom/lib/server/getServerErrorFromUnknown";
 import type { CustomNextApiHandler } from "@calcom/lib/server/username";
 import { usernameHandler } from "@calcom/lib/server/username";
@@ -42,6 +42,7 @@ import { signupSchema } from "@calcom/prisma/zod-utils";
 import { buildLegacyRequest } from "@calcom/web/lib/buildLegacyCtx";
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { resolveHostOrganizationId } from "./resolveHostOrganizationId";
 import { respondConflictAs409 } from "./respondConflictAs409";
 
 const log = logger.getSubLogger({ prefix: ["signupCalcomHandler"] });
@@ -68,6 +69,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
     })
     .parse(body);
 
+  const orgsEnabled = isOrganizationsEnabled();
   const userRepository = getUserRepository();
 
   const shouldLockByDefault = await checkIfEmailIsBlockedInWatchlistController({
@@ -97,7 +99,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
   const email = _email.toLowerCase();
 
   let foundToken: { id: number; teamId: number | null; expires: Date } | null = null;
-  let defaultOrganizationId: number | null = null;
+  let hostOrgId: number | null = null;
   if (token) {
     foundToken = await findTokenByToken({ token });
     throwIfTokenExpired(foundToken?.expires);
@@ -116,13 +118,16 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
       }
     }
   } else {
-    defaultOrganizationId = await requireDefaultOrganizationId();
+    hostOrgId = await resolveHostOrganizationId(orgsEnabled, await headers());
+    if (hostOrgId === null) {
+      return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+    }
     const usernameAndEmailValidation = await validateAndGetCorrectedUsernameAndEmail({
       username,
       email,
       isSignup: true,
       // With the flag off usernames stay globally unique, so validation must not narrow to the default org
-      ...(isOrganizationsEnabled() && { usernameOrganizationId: defaultOrganizationId }),
+      ...(orgsEnabled && { usernameOrganizationId: hostOrgId }),
     });
     if (!usernameAndEmailValidation.isValid) {
       throw new HttpError({
@@ -185,7 +190,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
   const hashedPassword = await hashPassword(password);
 
   if (foundToken?.teamId) {
-    const team = await prisma.team.findUnique({
+    const rawTeam = await prisma.team.findUnique({
       where: {
         id: foundToken.teamId,
       },
@@ -200,9 +205,16 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
         organizationSettings: true,
       },
     });
+    const team = rawTeam && withoutOrganizationParent(rawTeam);
     if (team) {
       const teamOrgId = team.isOrganization ? team.id : (team.parent?.id ?? null);
-      const organizationId = teamOrgId ?? (await requireDefaultOrganizationId());
+      // A team outside any org has no org namespace of its own, so its invitees join the host org
+      const fallbackHostOrgId =
+        teamOrgId === null ? await resolveHostOrganizationId(orgsEnabled, await headers()) : null;
+      const organizationId = teamOrgId ?? fallbackHostOrgId;
+      if (organizationId === null) {
+        return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+      }
 
       if (username) {
         const existingUserByUsername = await userRepository.findByUsernameAndOrganizationId({
@@ -235,10 +247,18 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
         throw error;
       }
 
-      await createOrUpdateMemberships({
-        user,
-        team,
+      const conflictResponse = await respondConflictAs409(async () => {
+        await createOrUpdateMemberships({ user, team });
+        // addMember needs a username; for a premium username awaiting payment the payment callback sets it later (T500)
+        if (fallbackHostOrgId !== null && username !== null) {
+          await getOrganizationMembershipService().addMember({
+            organizationId: fallbackHostOrgId,
+            userId: user.id,
+            role: "MEMBER",
+          });
+        }
       });
+      if (conflictResponse) return conflictResponse;
 
       // Accept any child team invites for orgs.
       if (team.parent) {
@@ -258,7 +278,11 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
   } else {
     // Create the user
     let createdUser: { id: number };
-    const organizationId = defaultOrganizationId ?? (await requireDefaultOrganizationId());
+    // A token without a team skips the host org lookup above, yet every user needs an organization
+    const organizationId = hostOrgId ?? (await resolveHostOrganizationId(orgsEnabled, await headers()));
+    if (organizationId === null) {
+      return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+    }
     try {
       createdUser = await userRepository.create({
         username,
@@ -372,9 +396,10 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
 
 // With the flag off usernames stay globally unique. Invitees belong to the inviting team's org, which is only
 // known later in the token branch, so they get the legacy global check (the 418 refusal fires before that branch).
+// Everyone else is checked within the host organization.
 async function resolveSignupUsernameOrganizationId(body: Record<string, string>): Promise<number | null> {
   if (!isOrganizationsEnabled() || body.token) return null;
-  return requireDefaultOrganizationId();
+  return resolveHostOrganizationId(true, await headers());
 }
 
 export default usernameHandler(handler, { resolveOrganizationId: resolveSignupUsernameOrganizationId });
