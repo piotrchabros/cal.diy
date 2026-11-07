@@ -3,6 +3,7 @@ import type { GetBookingType } from "@calcom/features/bookings/lib/get-booking";
 import { getBookingForReschedule, getMultipleDurationValue } from "@calcom/features/bookings/lib/get-booking";
 import { EventRepository } from "@calcom/features/eventtypes/repositories/EventRepository";
 import { HashedLinkService } from "@calcom/features/hashedLink/lib/service/HashedLinkService";
+import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
 import {
   shouldHideBrandingForTeamEvent,
   shouldHideBrandingForUserEvent,
@@ -20,12 +21,14 @@ import { z } from "zod";
 export type PageProps = inferSSRProps<typeof getServerSideProps> & EmbedProps;
 
 async function getUserPageProps(context: GetServerSidePropsContext) {
+  const host = await getHostOrganization(context.req.headers);
+  if (host.status === "unresolved") return { notFound: true } as const;
+  const hostOrg = host.status === "resolved" ? host.org : null;
+  const orgSlug = hostOrg?.slug ?? null;
+
   const session = await getServerSession({ req: context.req });
   const { link, slug } = paramsSchema.parse(context.params);
   const { rescheduleUid, duration: queryDuration } = context.query;
-  const currentOrgDomain = null;
-  const isValidOrgDomain = false;
-  const org = isValidOrgDomain ? currentOrgDomain : null;
 
   let name: string;
   let hideBranding = false;
@@ -54,6 +57,9 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
   const profileUsername = hashedLink.eventType.users[0]?.profiles[0]?.username;
 
   if (hashedLink.eventType.team) {
+    if (hostOrg && hashedLink.eventType.team.parentId !== hostOrg.id) {
+      return notFound;
+    }
     name = hashedLink.eventType.team.slug || "";
     hideBranding = shouldHideBrandingForTeamEvent({
       eventTypeId: hashedLink.eventTypeId,
@@ -71,7 +77,7 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
       slugs: [username],
       redirectType: RedirectType.User,
       query: omitRouteParams(context.query, context.params),
-      hostOrgId: null,
+      hostOrgId: hostOrg?.id ?? null,
     });
 
     if (redirectWithOriginAndSearchString) {
@@ -86,12 +92,24 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
       };
     }
 
-    name = profileUsername || username;
+    // Checked after the redirect lookup: a user who moved out of the host org has no profile there
+    // but still has a redirect from it.
+    if (hostOrg) {
+      const hostProfile = hashedLink.eventType.users[0]?.profiles.find(
+        (profile) => profile.organizationId === hostOrg.id
+      );
+      if (!hostProfile) {
+        return notFound;
+      }
+      name = hostProfile.username;
+    } else {
+      name = profileUsername || username;
+    }
 
     const userRepo = new UserRepository(prisma);
     const [user] = await userRepo.findUsersByUsername({
       usernameList: [name],
-      orgSlug: org,
+      orgSlug,
     });
 
     if (!user) {
@@ -116,7 +134,7 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
       username: name,
       eventSlug: slug,
       isTeamEvent,
-      org,
+      org: orgSlug,
       fromRedirectOfNonOrgLink: context.query.orgRedirection === "true",
     },
     session?.user?.id

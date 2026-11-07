@@ -2,8 +2,11 @@ import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import type { GetBookingType } from "@calcom/features/bookings/lib/get-booking";
 import type { getPublicEvent } from "@calcom/features/eventtypes/lib/getPublicEvent";
 import { EventRepository } from "@calcom/features/eventtypes/repositories/EventRepository";
+import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
 import { getHideBranding } from "@calcom/features/profile/lib/hideBranding";
 import slugify from "@calcom/lib/slugify";
+import { RedirectType } from "@calcom/prisma/enums";
+import { handleOrgRedirect, omitRouteParams } from "@lib/handleOrgRedirect";
 import { processReschedule, processSeatedEvent } from "@server/lib/[user]/[type]/getServerSideProps";
 import type { GetServerSidePropsContext } from "next";
 import { z } from "zod";
@@ -43,6 +46,22 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
     return { notFound: true } as const;
   }
 
+  const host = await getHostOrganization(context.req.headers);
+  if (host.status === "unresolved") return { notFound: true } as const;
+  const hostOrg = host.status === "resolved" ? host.org : null;
+  const orgSlug = hostOrg?.slug ?? null;
+
+  const redirect = await handleOrgRedirect({
+    slugs: [teamSlug],
+    redirectType: RedirectType.TeamEventType,
+    eventTypeSlug: parsedParams.data.type,
+    query: omitRouteParams(context.query, context.params),
+    hostOrgId: hostOrg?.id ?? null,
+  });
+  if (redirect) {
+    return redirect;
+  }
+
   const session = await getServerSession({ req: context.req });
   const { rescheduleUid, bookingUid } = context.query;
   const allowRescheduleForCancelledBooking = context.query.allowRescheduleForCancelledBooking === "true";
@@ -54,7 +73,7 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
         username: teamSlug,
         eventSlug,
         isTeamEvent: true,
-        org: null,
+        org: orgSlug,
         fromRedirectOfNonOrgLink: context.query.orgRedirection === "true",
       },
       session?.user?.id

@@ -212,6 +212,16 @@ describe("TeamProfileService", () => {
       });
     });
 
+    it("scopes the lookup to the host organization when a parentId is given", async () => {
+      db.team.findFirst.mockResolvedValue(publicTeam);
+      await service.getPublicTeamBySlug({ slug: "BlueBee", parentId: 7 });
+      expect(db.team.findFirst.mock.calls[0][0].where).toEqual({
+        slug: "bluebee",
+        isPrivate: false,
+        parentId: 7,
+      });
+    });
+
     it("returns the public profile with location, socials and event types", async () => {
       db.team.findFirst.mockResolvedValue({
         ...publicTeam,

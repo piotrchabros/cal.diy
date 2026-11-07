@@ -36,6 +36,7 @@ export const hashedLinkSelect = {
           id: true,
           slug: true,
           hideBranding: true,
+          parentId: true,
           parent: {
             select: {
               hideBranding: true,
