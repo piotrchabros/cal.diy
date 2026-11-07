@@ -1,4 +1,5 @@
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
+import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import logger from "@calcom/lib/logger";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Account, IdentityProvider, User } from "@calcom/prisma/client";
@@ -36,11 +37,15 @@ const toAdapterAccount = (account: Account): AdapterAccount => ({
   session_state: account.session_state ?? undefined,
 });
 
-const createUserData = (data: Omit<AdapterUser, "id">): Prisma.UserCreateInput => ({
+const createUserData = (
+  data: Omit<AdapterUser, "id">,
+  organizationId: number | null
+): Prisma.UserCreateInput => ({
   name: data.name || null,
   email: data.email,
   emailVerified: data.emailVerified || null,
   avatarUrl: data.image || null,
+  ...(organizationId !== null && { organization: { connect: { id: organizationId } } }),
 });
 
 const createAccountData = (account: AdapterAccount): Prisma.AccountCreateInput => ({
@@ -64,7 +69,8 @@ const getAccountWhere = (provider: string, providerAccountId: string) => ({
 export default function CalComAdapter(prismaClient: PrismaClient): Adapter {
   return {
     createUser: async (data: Omit<AdapterUser, "id">) => {
-      const user = await prismaClient.user.create({ data: createUserData(data) });
+      const organizationId = await findDefaultOrganizationId();
+      const user = await prismaClient.user.create({ data: createUserData(data, organizationId) });
       if (user.email) {
         try {
           await new TeamMembersService().acceptPendingInvitesOnSignup({

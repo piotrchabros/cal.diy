@@ -10,6 +10,7 @@ import {
 } from "@calcom/features/auth/lib/outlook";
 import { CredentialRepository } from "@calcom/features/credentials/repositories/CredentialRepository";
 import { buildCredentialCreateData } from "@calcom/features/credentials/services/CredentialDataService";
+import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { isPasswordValid } from "@calcom/lib/auth/isPasswordValid";
@@ -423,6 +424,17 @@ async function enforceOrganizationDomain(
   return decision.errorUrl;
 }
 
+async function findNewUserOrganizationId(
+  getRequestHeaders: GetOptionsDeps["getRequestHeaders"]
+): Promise<number | null> {
+  if (isOrganizationsEnabled() && getRequestHeaders) {
+    const { getOrgFromRequest } = await import("@calcom/features/organizations/lib/getOrgFromRequest");
+    const org = await getOrgFromRequest(getRequestHeaders());
+    if (org) return org.id;
+  }
+  return findDefaultOrganizationId();
+}
+
 function getHostname(url: string | undefined): string | null {
   if (!url) return null;
   try {
@@ -468,7 +480,7 @@ export const getOptions = (deps: GetOptionsDeps): AuthOptions => {
   };
 };
 
-const getBaseOptions = ({ getDubId, getTrackingData }: GetOptionsDeps): AuthOptions => ({
+const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOptionsDeps): AuthOptions => ({
   adapter: calcomAdapter,
   session: {
     strategy: "jwt",
@@ -1197,6 +1209,7 @@ const getBaseOptions = ({ getDubId, getTrackingData }: GetOptionsDeps): AuthOpti
 
         try {
           const newUsername = orgId ? slugify(orgUsername) : usernameSlug(user.name);
+          const organizationId = orgId ?? (await findNewUserOrganizationId(getRequestHeaders));
           const newUser = await prisma.user.create({
             data: {
               // Slugify the incoming name and append a few random characters to
@@ -1208,9 +1221,9 @@ const getBaseOptions = ({ getDubId, getTrackingData }: GetOptionsDeps): AuthOpti
               email: user.email,
               identityProvider: idP,
               identityProviderId: account.providerAccountId,
+              ...(organizationId !== null && { organization: { connect: { id: organizationId } } }),
               ...(orgId && {
                 verified: true,
-                organization: { connect: { id: orgId } },
                 teams: {
                   create: { role: MembershipRole.MEMBER, accepted: true, team: { connect: { id: orgId } } },
                 },

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 const mockIsOrganizationsEnabled = vi.fn();
 const mockGetOrgFromRequest = vi.fn();
@@ -26,12 +26,25 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
   getOrganizationUrlService: () => ({ getBaseUrl: mockGetBaseUrl }),
 }));
 
+const mockFindDefaultOrganizationId = vi.fn();
+
+vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
+  findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
+}));
+
 const mockPrismaUserFindFirst = vi.fn();
+const mockPrismaUserCreate = vi.fn();
+const mockPrismaTeamFindFirst = vi.fn();
 const mockPrismaMembershipFindUnique = vi.fn();
 
 vi.mock("@calcom/prisma", () => {
   const client = {
-    user: { findFirst: (...args: unknown[]) => mockPrismaUserFindFirst(...args), update: vi.fn() },
+    user: {
+      findFirst: (...args: unknown[]) => mockPrismaUserFindFirst(...args),
+      create: (...args: unknown[]) => mockPrismaUserCreate(...args),
+      update: vi.fn(),
+    },
+    team: { findFirst: (...args: unknown[]) => mockPrismaTeamFindFirst(...args) },
     membership: { findUnique: (...args: unknown[]) => mockPrismaMembershipFindUnique(...args) },
   };
   return { prisma: client, default: client };
@@ -253,6 +266,7 @@ describe("next-auth options with organizations", () => {
     mockCheckSignInDomain.mockResolvedValue({ kind: "allowed" });
     mockGetOrganizationOriginForUrl.mockResolvedValue(null);
     mockGetBaseUrl.mockResolvedValue("https://acme.example.org");
+    mockFindDefaultOrganizationId.mockResolvedValue(null);
   });
 
   describe("flag off", () => {
@@ -501,6 +515,101 @@ describe("next-auth options with organizations", () => {
 
       expect(token.org?.fullDomain).toBe("https://acme.example.org");
       expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 42 });
+    });
+  });
+
+  describe("new OAuth user organization", () => {
+    const googleSignUpParams: SignInParams = {
+      user: { id: "1", email: "new@acme.com", name: "New User" },
+      account: { provider: "google", providerAccountId: "google-1", type: "oauth" },
+      profile: { email: "new@acme.com", email_verified: true } as SignInParams["profile"],
+    };
+
+    const createdUserData = () => {
+      const [args] = mockPrismaUserCreate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      return args.data;
+    };
+
+    beforeEach(() => {
+      mockGetIdentityProvider.mockReturnValue("GOOGLE");
+      mockPrismaUserFindFirst.mockResolvedValue(null);
+      mockPrismaTeamFindFirst.mockResolvedValue(null);
+      mockPrismaUserCreate.mockResolvedValue({ id: 100, email: "new@acme.com", twoFactorEnabled: false });
+    });
+
+    it("joins the default organization with the flag off", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 1 } } });
+      expect(createdUserData()).not.toHaveProperty("teams");
+      expect(createdUserData()).not.toHaveProperty("verified");
+      expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+    });
+
+    it("sets no organization while the default organization does not exist", async () => {
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await signIn(googleSignUpParams);
+
+      expect(createdUserData()).not.toHaveProperty("organization");
+    });
+
+    it("joins the request organization with the flag on", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await signIn(googleSignUpParams);
+
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 7 } } });
+      expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the default organization when the request has no organization", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockGetOrgFromRequest.mockResolvedValue(null);
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("localhost:3000"));
+
+      await signIn(googleSignUpParams);
+
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 1 } } });
+    });
+
+    it("falls back to the default organization when request headers are unavailable", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks();
+
+      await signIn(googleSignUpParams);
+
+      expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 1 } } });
+    });
+
+    it("keeps the autolinked organization with its verified membership", async () => {
+      // ORGANIZATIONS_AUTOLINK is read when the module loads.
+      vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
+      vi.resetModules();
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      });
+      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await signIn(googleSignUpParams);
+
+      expect(createdUserData()).toMatchObject({
+        verified: true,
+        organization: { connect: { id: 55 } },
+        teams: { create: { role: "MEMBER", accepted: true, team: { connect: { id: 55 } } } },
+      });
+      expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
     });
   });
 });

@@ -10,6 +10,7 @@ import { addUserHandler } from "./add.handler";
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   getDefault: vi.fn(),
+  findDefaultOrganizationId: vi.fn(),
   addMember: vi.fn(),
   storeAdminUserAvatar: vi.fn(),
   userCreate: vi.fn(),
@@ -19,6 +20,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@calcom/features/organizations/di/OrganizationService.container", () => ({
   getOrganizationService: () => ({ get: mocks.get, getDefault: mocks.getDefault }),
+}));
+
+vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
+  findDefaultOrganizationId: mocks.findDefaultOrganizationId,
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
@@ -47,6 +52,7 @@ describe("addUserHandler", () => {
     mocks.userUpdate.mockImplementation(async ({ where, data }) => ({ id: where.id, ...data }));
     mocks.get.mockImplementation(async (id: number) => ({ id }));
     mocks.getDefault.mockResolvedValue({ id: 1 });
+    mocks.findDefaultOrganizationId.mockResolvedValue(null);
     mocks.addMember.mockResolvedValue({ userId: 42, organizationId: 1, role: "MEMBER" });
     mocks.storeAdminUserAvatar.mockResolvedValue("https://cdn.example.com/avatar.png");
     mocks.userDelete.mockImplementation(async ({ where }) => ({ id: where.id }));
@@ -57,7 +63,7 @@ describe("addUserHandler", () => {
     vi.clearAllMocks();
   });
 
-  describe("with ORGANIZATIONS_ENABLED off", () => {
+  describe("with ORGANIZATIONS_ENABLED off and no default organization", () => {
     beforeEach(() => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "");
     });
@@ -93,6 +99,49 @@ describe("addUserHandler", () => {
     });
   });
 
+  describe("with ORGANIZATIONS_ENABLED off and a default organization", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mocks.findDefaultOrganizationId.mockResolvedValue(3);
+    });
+
+    it("adds the user to the default organization and ignores organizationId", async () => {
+      const result = await runAdd({ organizationId: 9 });
+
+      expect(mocks.get).toHaveBeenCalledWith(3);
+      expect(createdData()).toEqual(
+        expect.objectContaining({ organizationId: 3, creationSource: CreationSource.WEBAPP })
+      );
+      expect(mocks.addMember).toHaveBeenCalledWith({ organizationId: 3, userId: 42, role: "MEMBER" });
+      expect(result.message).toBe("User with id: 42 added successfully");
+    });
+
+    it("rejects a missing username with BAD_REQUEST", async () => {
+      const error = await runAdd({ username: null }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({ code: "BAD_REQUEST" });
+      expect(mocks.userCreate).not.toHaveBeenCalled();
+    });
+
+    it("deletes the created user when joining the organization fails", async () => {
+      mocks.addMember.mockRejectedValue(
+        ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+      );
+
+      await expect(runAdd()).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(mocks.userDelete).toHaveBeenCalledWith({ where: { id: 42 }, select: { id: true } });
+    });
+
+    it("stores an uploaded avatar after joining the organization", async () => {
+      const result = await runAdd({ avatarUrl: "data:image/png;base64,AAAA" });
+
+      expect(createdData().avatarUrl).toBeNull();
+      expect(mocks.addMember).toHaveBeenCalledOnce();
+      expect(result.user.avatarUrl).toBe("https://cdn.example.com/avatar.png");
+    });
+  });
+
   describe("with ORGANIZATIONS_ENABLED on", () => {
     beforeEach(() => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
@@ -102,6 +151,7 @@ describe("addUserHandler", () => {
       const result = await runAdd();
 
       expect(mocks.getDefault).toHaveBeenCalledOnce();
+      expect(mocks.findDefaultOrganizationId).not.toHaveBeenCalled();
       expect(createdData()).toEqual(
         expect.objectContaining({ organizationId: 1, creationSource: CreationSource.WEBAPP })
       );
