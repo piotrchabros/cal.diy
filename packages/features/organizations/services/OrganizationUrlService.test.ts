@@ -4,6 +4,18 @@ import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrgan
 import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRepository";
 import { ORGANIZATION_URL_CACHE_TTL_MS, OrganizationUrlService } from "./OrganizationUrlService";
 
+const constants = vi.hoisted(() => ({ webappUrl: "https://cal.bluebee.marketing" }));
+
+vi.mock("@calcom/lib/constants", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/lib/constants")>();
+  return {
+    ...actual,
+    get WEBAPP_URL() {
+      return constants.webappUrl;
+    },
+  };
+});
+
 const DEFAULT_DOMAIN = "cal.example.com";
 const ORG_URL = "https://cal.bespokesoft.pl";
 
@@ -34,6 +46,7 @@ function setup() {
 
 describe("OrganizationUrlService", () => {
   beforeEach(() => {
+    constants.webappUrl = "https://cal.bluebee.marketing";
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
@@ -68,10 +81,27 @@ describe("OrganizationUrlService", () => {
   });
 
   describe("getBaseUrl", () => {
-    it("returns the normalized custom domain over https", async () => {
+    it("returns the normalized custom domain with WEBAPP_URL's https scheme and no port", async () => {
       const { service } = setup();
 
       await expect(service.getBaseUrl({ organizationId: 2 })).resolves.toBe(ORG_URL);
+    });
+
+    it("carries WEBAPP_URL's http scheme and port onto the custom domain", async () => {
+      constants.webappUrl = "http://bluebee.test:3747";
+      const { service } = setup();
+
+      await expect(service.getBaseUrl({ organizationId: 2 })).resolves.toBe("http://cal.bespokesoft.pl:3747");
+    });
+
+    it.each([
+      ["the org on the default domain", 1],
+      ["an org on a loopback domain", 4],
+    ])("returns the http WEBAPP_URL for %s", async (_label, organizationId) => {
+      constants.webappUrl = "http://bluebee.test:3747";
+      const { service } = setup();
+
+      await expect(service.getBaseUrl({ organizationId })).resolves.toBe("http://bluebee.test:3747");
     });
 
     it.each([
@@ -91,6 +121,15 @@ describe("OrganizationUrlService", () => {
       const { service } = setup();
 
       await expect(service.getBaseUrlForUser({ userId: 100 })).resolves.toBe(ORG_URL);
+    });
+
+    it("carries WEBAPP_URL's http scheme and port onto the user's organization domain", async () => {
+      constants.webappUrl = "http://bluebee.test:3747";
+      const { service } = setup();
+
+      await expect(service.getBaseUrlForUser({ userId: 100 })).resolves.toBe(
+        "http://cal.bespokesoft.pl:3747"
+      );
     });
 
     it("returns WEBAPP_URL for a user without an organization", async () => {

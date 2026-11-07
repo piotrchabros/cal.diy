@@ -10,6 +10,18 @@ const { mockResolve, mockGetOrganizationDomainResolver } = vi.hoisted(() => {
   };
 });
 
+const constants = vi.hoisted(() => ({ webappUrl: "https://cal.bluebee.marketing" }));
+
+vi.mock("@calcom/lib/constants", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/lib/constants")>();
+  return {
+    ...actual,
+    get WEBAPP_URL() {
+      return constants.webappUrl;
+    },
+  };
+});
+
 vi.mock("../di/OrganizationDomainResolver.container", () => ({
   getOrganizationDomainResolver: mockGetOrganizationDomainResolver,
 }));
@@ -18,6 +30,7 @@ const ACME = { id: 7, slug: "acme", domain: "cal.acme.com", isDefault: false };
 
 describe("getOrganizationOriginForUrl", () => {
   beforeEach(() => {
+    constants.webappUrl = "https://cal.bluebee.marketing";
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     mockResolve.mockImplementation(async (host: string) => (host === "cal.acme.com" ? ACME : null));
   });
@@ -81,6 +94,7 @@ describe("getOrganizationOriginForUrl", () => {
 
 describe("getSafeRedirectUrlForOrganizations", () => {
   beforeEach(() => {
+    constants.webappUrl = "https://cal.bluebee.marketing";
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     mockResolve.mockImplementation(async (host: string) => (host === "cal.acme.com" ? ACME : null));
   });
@@ -117,5 +131,45 @@ describe("getSafeRedirectUrlForOrganizations", () => {
   it("returns null for an empty URL and throws for a relative one, like getSafeRedirectUrl", async () => {
     await expect(getSafeRedirectUrlForOrganizations()).resolves.toBeNull();
     await expect(getSafeRedirectUrlForOrganizations("/bookings")).rejects.toThrow("Pass an absolute URL");
+  });
+});
+
+describe("with an http WEBAPP_URL on a port", () => {
+  beforeEach(() => {
+    constants.webappUrl = "http://bluebee.test:3747";
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    mockResolve.mockImplementation(async (host: string) => (host === "cal.acme.com" ? ACME : null));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("returns the origin with the webapp's scheme and port", async () => {
+    await expect(getOrganizationOriginForUrl("http://cal.acme.com:3747/team/x")).resolves.toBe(
+      "http://cal.acme.com:3747"
+    );
+    expect(mockResolve).toHaveBeenCalledWith("cal.acme.com");
+  });
+
+  it.each([
+    ["https://cal.acme.com/x"],
+    ["http://cal.acme.com/x"],
+    ["http://cal.acme.com:3000/x"],
+    ["http://user@cal.acme.com:3747/x"],
+    ["http://user:pass@cal.acme.com:3747/x"],
+    ["http://localhost:3747/x"],
+    ["http://127.0.0.1:3747/x"],
+    ["http://[::1]:3747/x"],
+  ])("returns null for %s without a lookup", async (url) => {
+    await expect(getOrganizationOriginForUrl(url)).resolves.toBeNull();
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it("keeps an organization URL in getSafeRedirectUrlForOrganizations", async () => {
+    await expect(getSafeRedirectUrlForOrganizations("http://cal.acme.com:3747/team/x")).resolves.toBe(
+      "http://cal.acme.com:3747/team/x"
+    );
   });
 });
