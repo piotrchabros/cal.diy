@@ -1,15 +1,9 @@
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import authedProcedure from "./authedProcedure";
-
-type PermissionString = string;
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
-}
 
 /**
  * Creates a procedure that checks team-level PBAC permissions.
@@ -20,7 +14,7 @@ class PermissionCheckService {
  * @returns A procedure that checks the specified permission for the team
  */
 function createTeamPbacProcedure(
-  permission: PermissionString,
+  permission: string,
   fallbackRoles: MembershipRole[] = [MembershipRole.ADMIN, MembershipRole.OWNER]
 ): ReturnType<typeof authedProcedure.input> {
   return authedProcedure
@@ -30,7 +24,7 @@ function createTeamPbacProcedure(
       })
     )
     .use(async ({ ctx, input, next }) => {
-      const permissionCheckService: PermissionCheckService = new PermissionCheckService();
+      const permissionCheckService = new TeamRolePermissionService(new MembershipRepository(ctx.prisma));
       const hasPermission: boolean = await permissionCheckService.checkPermission({
         userId: ctx.user.id,
         teamId: input.teamId,
@@ -58,7 +52,7 @@ function createTeamPbacProcedure(
  * @returns A procedure that checks the specified permission for the organization and adds organizationId to context
  */
 function createOrgPbacProcedure(
-  permission: PermissionString,
+  permission: string,
   fallbackRoles: MembershipRole[] = [MembershipRole.ADMIN, MembershipRole.OWNER]
 ) {
   return authedProcedure.use(async ({ ctx, next }) => {
@@ -71,7 +65,7 @@ function createOrgPbacProcedure(
       });
     }
 
-    const permissionCheckService = new PermissionCheckService();
+    const permissionCheckService = new TeamRolePermissionService(new MembershipRepository(ctx.prisma));
     const hasPermission = await permissionCheckService.checkPermission({
       userId: ctx.user.id,
       teamId: organizationId,

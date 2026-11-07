@@ -1,14 +1,8 @@
+import type { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type { WatchlistRepository } from "@calcom/features/watchlist/lib/repository/WatchlistRepository";
 import { MembershipRole, type WatchlistSource, type WatchlistType } from "@calcom/prisma/enums";
 import { WatchlistErrors } from "../errors/WatchlistErrors";
-
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
-}
 
 export interface ListWatchlistEntriesInput {
   organizationId: number;
@@ -31,7 +25,7 @@ export interface GetWatchlistEntryDetailsInput {
 type Deps = {
   watchlistRepo: WatchlistRepository;
   userRepo: UserRepository;
-  permissionCheckService: PermissionCheckService;
+  permissionCheckService: Pick<TeamRolePermissionService, "checkPermission">;
 };
 
 export class OrganizationWatchlistQueryService {
