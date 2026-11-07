@@ -1,6 +1,3 @@
-import { v4 as uuidv4 } from "uuid";
-import z from "zod";
-
 import Paypal from "@calcom/app-store/paypal/lib/Paypal";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorCode } from "@calcom/lib/errorCodes";
@@ -9,7 +6,8 @@ import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
 import type { Booking, Payment, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { IAbstractPaymentService } from "@calcom/types/PaymentService";
-
+import { v4 as uuidv4 } from "uuid";
+import z from "zod";
 import { paymentOptionEnum } from "../zod";
 
 const log = logger.getSubLogger({ prefix: ["payment-service:paypal"] });
@@ -34,7 +32,16 @@ class PaypalPaymentService implements IAbstractPaymentService {
 
   async create(
     payment: Pick<Prisma.PaymentUncheckedCreateInput, "amount" | "currency">,
-    bookingId: Booking["id"]
+    bookingId: Booking["id"],
+    _userId?: Booking["userId"],
+    _username?: string | null,
+    _bookerName?: string | null,
+    _paymentOption?: PaymentOption,
+    _bookerEmail?: string,
+    _bookerPhoneNumber?: string | null,
+    _eventTitle?: string,
+    _bookingTitle?: string,
+    bookerUrl?: string
   ) {
     try {
       const booking = await prisma.booking.findUnique({
@@ -51,6 +58,8 @@ class PaypalPaymentService implements IAbstractPaymentService {
       }
 
       const uid = uuidv4();
+      // The capture route redirects relatively, so returning the booker to their org domain keeps them there.
+      const baseUrl = bookerUrl ?? WEBAPP_URL;
 
       const paypalClient = new Paypal({
         clientId: this.credentials.client_id,
@@ -60,8 +69,8 @@ class PaypalPaymentService implements IAbstractPaymentService {
         referenceId: uid,
         amount: payment.amount,
         currency: payment.currency,
-        returnUrl: `${WEBAPP_URL}/api/integrations/paypal/capture?bookingUid=${booking.uid}`,
-        cancelUrl: `${WEBAPP_URL}/payment/${uid}`,
+        returnUrl: `${baseUrl}/api/integrations/paypal/capture?bookingUid=${booking.uid}`,
+        cancelUrl: `${baseUrl}/payment/${uid}`,
       });
       const paymentData = await prisma.payment.create({
         data: {
@@ -106,7 +115,9 @@ class PaypalPaymentService implements IAbstractPaymentService {
     payment: Pick<Prisma.PaymentUncheckedCreateInput, "amount" | "currency">,
     bookingId: number,
     paymentOption: PaymentOption,
-    _bookerEmail?: string | null
+    _bookerEmail?: string | null,
+    _bookerPhoneNumber?: string | null,
+    bookerUrl?: string
   ): Promise<Payment> {
     // Ensure that the payment service can support the passed payment option
     if (paymentOptionEnum.parse(paymentOption) !== "HOLD") {
@@ -127,6 +138,7 @@ class PaypalPaymentService implements IAbstractPaymentService {
       }
 
       const uid = uuidv4();
+      const baseUrl = bookerUrl ?? WEBAPP_URL;
 
       const paypalClient = new Paypal({
         clientId: this.credentials.client_id,
@@ -136,8 +148,8 @@ class PaypalPaymentService implements IAbstractPaymentService {
         referenceId: uid,
         amount: payment.amount,
         currency: payment.currency,
-        returnUrl: `${WEBAPP_URL}/booking/${booking.uid}`,
-        cancelUrl: `${WEBAPP_URL}/payment/${uid}`,
+        returnUrl: `${baseUrl}/booking/${booking.uid}`,
+        cancelUrl: `${baseUrl}/payment/${uid}`,
         intent: "AUTHORIZE",
       });
 

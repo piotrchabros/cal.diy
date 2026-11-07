@@ -1,5 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handlePayment } from "./handlePayment";
 
 vi.mock("@calcom/app-store/zod-utils", () => ({
@@ -8,22 +7,25 @@ vi.mock("@calcom/app-store/zod-utils", () => ({
   },
 }));
 
+const { createMock, collectCardMock } = vi.hoisted(() => {
+  const mockPayment = async (paymentData: { amount: number; currency: string }) => ({
+    ...paymentData,
+    id: "mock-payment-id",
+    externalId: "mock-external-id",
+    success: true,
+  });
+  return {
+    createMock: vi.fn(mockPayment),
+    collectCardMock: vi.fn(mockPayment),
+  };
+});
+
 vi.mock("@calcom/app-store/payment.services.generated", () => ({
   PaymentServiceMap: {
     stripepayment: Promise.resolve({
       BuildPaymentService: () => ({
-        create: async (paymentData: { amount: number; currency: string }) => ({
-          ...paymentData,
-          id: "mock-payment-id",
-          externalId: "mock-external-id",
-          success: true,
-        }),
-        collectCard: async (paymentData: { amount: number; currency: string }) => ({
-          ...paymentData,
-          id: "mock-payment-id",
-          externalId: "mock-external-id",
-          success: true,
-        }),
+        create: createMock,
+        collectCard: collectCardMock,
         afterPayment: async () => true,
       }),
     }),
@@ -288,5 +290,42 @@ describe("handlePayment", () => {
     });
 
     expect(result?.amount).toBe(3000); // Base 1000 cents + ($20 * 100 cents)
+  });
+
+  it("passes the booker URL as the last argument when charging on booking", async () => {
+    await handlePayment({
+      evt: { ...mockEvent, bookerUrl: "https://acme.example.org" },
+      selectedEventType: mockEventType,
+      paymentAppCredentials: mockPaymentCredentials,
+      booking: mockBooking,
+      bookerName: "John Doe",
+      bookerEmail: "john@example.com",
+      bookingFields: [],
+    });
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock.mock.calls[0].at(-1)).toBe("https://acme.example.org");
+    expect(collectCardMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the booker URL as the last argument when holding the card", async () => {
+    await handlePayment({
+      evt: { ...mockEvent, bookerUrl: "https://acme.example.org" },
+      selectedEventType: {
+        ...mockEventType,
+        metadata: {
+          apps: { stripe: { ...mockEventType.metadata.apps.stripe, paymentOption: "HOLD" } },
+        },
+      },
+      paymentAppCredentials: mockPaymentCredentials,
+      booking: mockBooking,
+      bookerName: "John Doe",
+      bookerEmail: "john@example.com",
+      bookingFields: [],
+    });
+
+    expect(collectCardMock).toHaveBeenCalledTimes(1);
+    expect(collectCardMock.mock.calls[0].at(-1)).toBe("https://acme.example.org");
+    expect(createMock).not.toHaveBeenCalled();
   });
 });
