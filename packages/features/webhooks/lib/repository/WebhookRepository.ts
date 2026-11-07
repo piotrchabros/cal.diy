@@ -36,13 +36,6 @@ interface WebhookQueryResult {
 const isTeamAdminRole = (role: MembershipRole): boolean =>
   role === MembershipRole.ADMIN || role === MembershipRole.OWNER;
 
-// Member-meeting webhooks have no owning user (userId null), so only team admins/owners may see them.
-const isTeamOwnedWebhook = (webhook: {
-  userId: number | null;
-  teamId: number | null;
-  eventTypeId: number | null;
-}): boolean => webhook.userId == null && webhook.teamId != null && webhook.eventTypeId == null;
-
 const filterWebhooks = (webhook: { appId: string | null }): boolean => {
   const appIds = [
     "zapier",
@@ -435,7 +428,8 @@ export class WebhookRepository implements IWebhookRepository {
       },
     });
 
-    // Mirrors the server guards (assertCanManageTeamWebhooks): only accepted direct ADMIN/OWNER members manage team webhooks.
+    // Mirrors the server guards (assertCanManageTeamWebhooks) and listWebhooks: team webhooks carry their secret,
+    // so only accepted direct ADMIN/OWNER members may read or manage them; plain members see none.
     for (const membership of user.teams) {
       const canManage = isTeamAdminRole(membership.role);
 
@@ -446,11 +440,9 @@ export class WebhookRepository implements IWebhookRepository {
           slug: membership.team.slug || null,
           image: getPlaceholderAvatar(membership.team.logoUrl, membership.team.name),
         },
-        webhooks: WebhookOutputMapper.toWebhookList(
-          membership.team.webhooks
-            .filter(filterWebhooks)
-            .filter((webhook) => isTeamAdminRole(membership.role) || !isTeamOwnedWebhook(webhook))
-        ),
+        webhooks: canManage
+          ? WebhookOutputMapper.toWebhookList(membership.team.webhooks.filter(filterWebhooks))
+          : [],
         metadata: {
           canModify: canManage,
           canDelete: canManage,
