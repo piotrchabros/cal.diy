@@ -2,12 +2,13 @@ import prismaMock from "@calcom/testing/lib/__mocks__/prismaMock";
 import { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
 import { TRPCError } from "@trpc/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHandler } from "./create.handler";
 
-const { createEventType, findUniqueByUserIdAndTeamId } = vi.hoisted(() => ({
+const { createEventType, findUniqueByUserIdAndTeamId, findTeamIdsByAcceptedRole } = vi.hoisted(() => ({
   createEventType: vi.fn(),
   findUniqueByUserIdAndTeamId: vi.fn(),
+  findTeamIdsByAcceptedRole: vi.fn(),
 }));
 
 vi.mock("@calcom/prisma", () => ({
@@ -21,6 +22,7 @@ vi.mock("@calcom/features/eventtypes/repositories/eventTypeRepository", () => ({
 vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
   MembershipRepository: class {
     findUniqueByUserIdAndTeamId = findUniqueByUserIdAndTeamId;
+    findTeamIdsByAcceptedRole = findTeamIdsByAcceptedRole;
   },
 }));
 vi.mock("@calcom/app-store/_utils/getDefaultLocations", () => ({
@@ -57,20 +59,58 @@ function membership(role: MembershipRole, accepted = true) {
   return { id: 1, userId: USER_ID, teamId: TEAM_ID, role, accepted };
 }
 
-describe("createHandler", () => {
+type Membership = ReturnType<typeof membership>;
+
+let fixture: { membership: Membership | null; isParentOrgAdmin: boolean };
+
+function givenMembership(value: Membership | null, { isParentOrgAdmin = false } = {}) {
+  fixture = { membership: value, isParentOrgAdmin };
+}
+
+// Mirrors the repository query: a direct accepted membership with one of teamRoles, or an accepted
+// admin/owner membership in the parent organization when parentRoles are requested.
+function findTeamIdsByAcceptedRoleFromFixture({
+  teamId,
+  teamRoles,
+  parentRoles,
+}: {
+  teamId?: number;
+  teamRoles: readonly MembershipRole[];
+  parentRoles: readonly MembershipRole[];
+}) {
+  const hasTeamRole = !!fixture.membership?.accepted && teamRoles.includes(fixture.membership.role);
+  const hasParentRole = parentRoles.length > 0 && fixture.isParentOrgAdmin;
+  return Promise.resolve(hasTeamRole || hasParentRole ? [teamId ?? TEAM_ID] : []);
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  givenMembership(null);
+  createEventType.mockResolvedValue({ id: 1 });
+  findUniqueByUserIdAndTeamId.mockImplementation(() => Promise.resolve(fixture.membership));
+  findTeamIdsByAcceptedRole.mockImplementation(findTeamIdsByAcceptedRoleFromFixture);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+describe("createHandler with organizations disabled", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
-    createEventType.mockResolvedValue({ id: 1 });
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("makes a team OWNER the fixed host of a COLLECTIVE event type", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(membership(MembershipRole.OWNER));
+    givenMembership(membership(MembershipRole.OWNER));
 
     const result = await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) });
 
     expect(result).toEqual({ eventType: { id: 1 } });
     expect(findUniqueByUserIdAndTeamId).toHaveBeenCalledWith({ userId: USER_ID, teamId: TEAM_ID });
+    expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, teamId: TEAM_ID, parentRoles: [] })
+    );
     expect(createEventType).toHaveBeenCalledTimes(1);
     const data = createEventType.mock.calls[0][0];
     expect(data.team).toEqual({ connect: { id: TEAM_ID } });
@@ -83,7 +123,7 @@ describe("createHandler", () => {
   });
 
   it("makes a team ADMIN a non-fixed host of a ROUND_ROBIN event type", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(membership(MembershipRole.ADMIN));
+    givenMembership(membership(MembershipRole.ADMIN));
 
     await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.ROUND_ROBIN) });
 
@@ -95,7 +135,7 @@ describe("createHandler", () => {
   });
 
   it("rejects a team MEMBER with UNAUTHORIZED", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(membership(MembershipRole.MEMBER));
+    givenMembership(membership(MembershipRole.MEMBER));
 
     await expect(
       createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) })
@@ -104,7 +144,7 @@ describe("createHandler", () => {
   });
 
   it("rejects a user without membership with UNAUTHORIZED", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(null);
+    givenMembership(null);
 
     await expect(
       createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) })
@@ -113,7 +153,7 @@ describe("createHandler", () => {
   });
 
   it("rejects an OWNER whose membership is not accepted with UNAUTHORIZED", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(membership(MembershipRole.OWNER, false));
+    givenMembership(membership(MembershipRole.OWNER, false));
 
     await expect(
       createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) })
@@ -122,7 +162,7 @@ describe("createHandler", () => {
   });
 
   it("lets a system admin without membership create the event type without a host", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(null);
+    givenMembership(null);
 
     await createHandler({ ctx: buildCtx("ADMIN"), input: teamInput(SchedulingType.COLLECTIVE) });
 
@@ -133,7 +173,7 @@ describe("createHandler", () => {
   });
 
   it("creates a MANAGED event type for an OWNER without a host", async () => {
-    findUniqueByUserIdAndTeamId.mockResolvedValue(membership(MembershipRole.OWNER));
+    givenMembership(membership(MembershipRole.OWNER));
 
     await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.MANAGED) });
 
@@ -147,6 +187,7 @@ describe("createHandler", () => {
     await createHandler({ ctx: buildCtx(), input: baseInput });
 
     expect(findUniqueByUserIdAndTeamId).not.toHaveBeenCalled();
+    expect(findTeamIdsByAcceptedRole).not.toHaveBeenCalled();
     const data = createEventType.mock.calls[0][0];
     expect(data.owner).toEqual({ connect: { id: USER_ID } });
     expect(data.users).toEqual({ connect: { id: USER_ID } });
@@ -166,5 +207,85 @@ describe("createHandler", () => {
     await expect(createHandler({ ctx: buildCtx(), input: baseInput })).rejects.toThrow(
       new TRPCError({ code: "BAD_REQUEST", message: "URL Slug already exists for given user." })
     );
+  });
+
+  it("rejects a parent-org admin without team membership with UNAUTHORIZED", async () => {
+    givenMembership(null, { isParentOrgAdmin: true });
+
+    await expect(
+      createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) })
+    ).rejects.toThrow(new TRPCError({ code: "UNAUTHORIZED" }));
+    expect(createEventType).not.toHaveBeenCalled();
+  });
+});
+
+describe("createHandler with organizations enabled", () => {
+  beforeEach(() => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("lets a parent-org admin without team membership create the event type without a host", async () => {
+    givenMembership(null, { isParentOrgAdmin: true });
+
+    const result = await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) });
+
+    expect(result).toEqual({ eventType: { id: 1 } });
+    expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        teamId: TEAM_ID,
+        teamRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+        parentRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+      })
+    );
+    const data = createEventType.mock.calls[0][0];
+    expect(data.team).toEqual({ connect: { id: TEAM_ID } });
+    expect(data).not.toHaveProperty("hosts");
+  });
+
+  it("makes a parent-org admin who is an accepted team MEMBER the host of a COLLECTIVE event type", async () => {
+    givenMembership(membership(MembershipRole.MEMBER), { isParentOrgAdmin: true });
+
+    await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) });
+
+    const data = createEventType.mock.calls[0][0];
+    expect(data.hosts).toEqual({
+      create: [{ userId: USER_ID, isFixed: true, priority: 2, weight: 100 }],
+    });
+  });
+
+  it("does not trust the unscoped session isOrgAdmin flag", async () => {
+    givenMembership(null);
+    const ctx = buildCtx();
+    ctx.user.organization.isOrgAdmin = true;
+
+    await expect(createHandler({ ctx, input: teamInput(SchedulingType.COLLECTIVE) })).rejects.toThrow(
+      new TRPCError({ code: "UNAUTHORIZED" })
+    );
+    expect(createEventType).not.toHaveBeenCalled();
+  });
+
+  it("lets a team OWNER create the event type as host", async () => {
+    givenMembership(membership(MembershipRole.OWNER));
+
+    await createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.ROUND_ROBIN) });
+
+    const data = createEventType.mock.calls[0][0];
+    expect(data.hosts).toEqual({
+      create: [{ userId: USER_ID, isFixed: false, priority: 2, weight: 100 }],
+    });
+  });
+
+  it("rejects a team MEMBER who is not a parent-org admin with UNAUTHORIZED", async () => {
+    givenMembership(membership(MembershipRole.MEMBER));
+
+    await expect(
+      createHandler({ ctx: buildCtx(), input: teamInput(SchedulingType.COLLECTIVE) })
+    ).rejects.toThrow(new TRPCError({ code: "UNAUTHORIZED" }));
+    expect(createEventType).not.toHaveBeenCalled();
   });
 });
