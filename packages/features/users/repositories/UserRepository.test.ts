@@ -557,3 +557,46 @@ describe("getUserAdminTeams", () => {
     });
   });
 });
+
+describe("findForAvailabilityCheck", () => {
+  const findFirst = vi.fn();
+  const fakePrismaClient = { user: { findFirst } } as unknown as PrismaClient;
+
+  beforeEach(() => {
+    findFirst.mockReset();
+  });
+
+  test("passes an organization-scoped username lookup through unchanged", async () => {
+    findFirst.mockResolvedValue(null);
+
+    const result = await new UserRepository(fakePrismaClient).findForAvailabilityCheck({
+      username: "jan",
+      organizationId: 3,
+    });
+
+    expect(result).toBeNull();
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { username: "jan", organizationId: 3 },
+        select: expect.objectContaining({ selectedCalendars: true, credentials: expect.any(Object) }),
+      })
+    );
+  });
+
+  test("returns the user with its selected calendars split by level", async () => {
+    findFirst.mockResolvedValue({
+      id: 7,
+      selectedCalendars: [
+        { eventTypeId: null, externalId: "a" },
+        { eventTypeId: 5, externalId: "b" },
+      ],
+      credentials: [],
+    });
+
+    const result = await new UserRepository(fakePrismaClient).findForAvailabilityCheck({ id: 7 });
+
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7 } }));
+    expect(result?.id).toBe(7);
+    expect(result?.userLevelSelectedCalendars).toEqual([{ eventTypeId: null, externalId: "a" }]);
+  });
+});

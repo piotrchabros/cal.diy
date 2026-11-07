@@ -11,17 +11,19 @@ type UserOptions = {
   input: TUserInputSchema;
 };
 
-function getUser(username: string) {
-  return findUsersForAvailabilityCheck({
-    where: {
-      username,
-    },
-  });
+function getUser(sessionUser: UserOptions["ctx"]["user"], username: string) {
+  if (username === sessionUser.username) {
+    return findUsersForAvailabilityCheck({ where: { id: sessionUser.id } });
+  }
+  // FR-008: usernames repeat across organizations, so another organization's user must look nonexistent.
+  const { organizationId } = sessionUser;
+  if (organizationId == null) return null;
+  return findUsersForAvailabilityCheck({ where: { username, organizationId } });
 }
 
-export const userHandler = async ({ input }: UserOptions) => {
+export const userHandler = async ({ ctx, input }: UserOptions) => {
   const userAvailabilityService = getUserAvailabilityService();
-  const user = await getUser(input.username);
+  const user = await getUser(ctx.user, input.username);
   if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
   return userAvailabilityService.getUserAvailabilityIncludingBusyTimesFromLimits(
     { returnDateOverrides: true, bypassBusyCalendarTimes: false, ...input },
