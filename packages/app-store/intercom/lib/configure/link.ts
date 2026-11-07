@@ -1,17 +1,34 @@
-import type { NextApiRequest } from "next";
-
 import { WEBAPP_URL } from "@calcom/lib/constants";
+import {
+  getDefaultOrganizationDomain,
+  getOrganizationBaseUrlFromDomain,
+} from "@calcom/lib/organizations/getOrganizationBaseUrlFromDomain";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest } from "next";
 import type {
-  NewCanvas,
+  InputComponent,
   ListComponent,
   ListItem,
+  NewCanvas,
   SpacerComponent,
   TextComponent,
-  InputComponent,
 } from "../../lib";
 import { isValidCalURL } from "../../lib/isValidCalURL";
+
+// app-store cannot depend on @calcom/features, so the org domain is read here with the same query
+// as PrismaOrganizationRepository.findDomainById.
+async function getOrganizationBaseUrl(organizationId: number | null): Promise<string> {
+  if (!isOrganizationsEnabled() || organizationId === null) return WEBAPP_URL;
+  const organization = await prisma.team.findFirst({
+    where: { id: organizationId, isOrganization: true, parentId: null },
+    select: { organizationSettings: { select: { customDomain: true } } },
+  });
+  return getOrganizationBaseUrlFromDomain(
+    organization?.organizationSettings?.customDomain,
+    getDefaultOrganizationDomain()
+  );
+}
 
 export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | string> {
   const { admin, component_id, input_values } = req.body;
@@ -50,6 +67,7 @@ export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | s
         string_contains: admin.id,
       },
     },
+    select: { teamId: true, userId: true },
   });
 
   if (!credential) return defaultCanvasData;
@@ -59,6 +77,7 @@ export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | s
         where: {
           id: credential.teamId,
         },
+        select: { id: true, slug: true, parentId: true, isOrganization: true },
       })
     : null;
 
@@ -69,8 +88,14 @@ export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | s
         where: {
           id: userId,
         },
+        select: { username: true, organizationId: true },
       })
     : null;
+
+  const organizationId = team
+    ? (team.parentId ?? (team.isOrganization ? team.id : null))
+    : (user?.organizationId ?? null);
+  const baseUrl = await getOrganizationBaseUrl(organizationId);
 
   const eventTypes = await prisma.eventType.findMany({
     where: {
@@ -93,7 +118,7 @@ export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | s
     }
 
     return {
-      id: `${WEBAPP_URL}/${slug}/${eventType.slug}`,
+      id: `${baseUrl}/${slug}/${eventType.slug}`,
       type: "item",
       title: eventType.title,
       subtitle: `${slug}/${eventType.slug}`,

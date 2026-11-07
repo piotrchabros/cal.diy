@@ -1,14 +1,11 @@
-import { z } from "zod";
-
 import { sendNotification } from "@calcom/features/notifications/sendNotification";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import logger from "@calcom/lib/logger";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
+import logger from "@calcom/lib/logger";
 import prisma from "@calcom/prisma";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import { TRPCError } from "@trpc/server";
-
+import { z } from "zod";
 import type { TAddNotificationsSubscriptionInputSchema } from "./addNotificationsSubscription.schema";
 
 const subscriptionSchema = z.object({
@@ -79,7 +76,7 @@ export const addNotificationsSubscriptionHandler = async ({ ctx, input }: AddSec
     },
     title: t("test_notification_title"),
     body: t("test_notification_body"),
-    url: WEBAPP_URL,
+    url: await getOrganizationUrlService().getBaseUrl({ organizationId: user.organizationId }),
     requireInteraction: false,
     type: "TEST_NOTIFICATION",
   });

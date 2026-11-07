@@ -1,7 +1,6 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
-import { buildOrganizationOrigin } from "@calcom/lib/organizations/buildOrganizationOrigin";
+import { getOrganizationBaseUrlFromDomain } from "@calcom/lib/organizations/getOrganizationBaseUrlFromDomain";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import { isLoopbackHost, normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 import type { IOrganizationMembershipRepository } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
 import type { OrganizationsConfig } from "./OrganizationService";
@@ -74,13 +73,8 @@ export class OrganizationUrlService {
   }
 
   private async load(organizationId: number): Promise<string> {
-    const domain = normalizeHost(await this.deps.organizationRepository.findDomainById(organizationId));
-    // The default org and loopback domains are served from WEBAPP_URL itself, which already carries
-    // the configured base URL including any path, so a rebuilt origin would drop that path.
-    if (!domain || domain === this.deps.organizationsConfig.defaultDomain || isLoopbackHost(domain)) {
-      return WEBAPP_URL;
-    }
-    return buildOrganizationOrigin(domain);
+    const domain = await this.deps.organizationRepository.findDomainById(organizationId);
+    return getOrganizationBaseUrlFromDomain(domain, this.deps.organizationsConfig.defaultDomain);
   }
 
   private store(organizationId: number, value: string): void {
