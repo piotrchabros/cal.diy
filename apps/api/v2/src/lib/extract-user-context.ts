@@ -1,8 +1,7 @@
-import { Request } from "express";
-
 import type { Team } from "@calcom/prisma/client";
-
+import { Request } from "express";
 import { ApiAuthGuardUser } from "../modules/auth/strategies/api-auth/api-auth.strategy";
+import { isOrganizationProfileActive } from "./organizations-enabled";
 
 export interface UserContext {
   userId?: string;
@@ -19,7 +18,7 @@ export function extractUserContext(request: Request): UserContext {
   if (user) {
     context.userId = String(user.id);
     context.userEmail = user.email;
-    if (user.profiles?.[0]?.organizationId) {
+    if (user.profiles?.[0]?.organizationId && isOrganizationProfileActive(user.profiles[0])) {
       context.userOrgId = String(user.profiles?.[0].organizationId);
     }
   }

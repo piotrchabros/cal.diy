@@ -15,3 +15,11 @@ export function outsideOrganizationsFilter<T extends Record<string, unknown>>(fi
 export function topLevelTeamFilter(): { parentId: null } | { isOrganization: false } {
   return isOrganizationsEnabled() ? { parentId: null } : { isOrganization: false };
 }
+
+// Switch-over (BlueBee) profiles must not surface while organizations are off; platform
+// organizations were never part of the switch-over (spec 005, T324)
+export function isOrganizationProfileActive(
+  profile: { organization?: { isPlatform: boolean } | null } | null | undefined
+): boolean {
+  return isOrganizationsEnabled() || !!profile?.organization?.isPlatform;
+}
