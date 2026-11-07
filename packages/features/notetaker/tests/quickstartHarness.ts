@@ -17,6 +17,11 @@ import { getNotetakerTasker } from "../di/tasker/NotetakerTasker.container";
 import type { NotetakerFakeScenario } from "../lib/config";
 import { getNotetakerConfig } from "../lib/config";
 import { MembershipRepositoryNotetakerLookup } from "../lib/MembershipRepositoryNotetakerLookup";
+import type {
+  NotetakerBookingContext,
+  NotetakerBookingStatus,
+} from "../repositories/interfaces/IBookingNotetakerRepository";
+import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import { PrismaBookingNotetakerRepository } from "../repositories/PrismaBookingNotetakerRepository";
 import { PrismaEventTypeNotetakerSettingsRepository } from "../repositories/PrismaEventTypeNotetakerSettingsRepository";
 import { PrismaNotetakerActivityRepository } from "../repositories/PrismaNotetakerActivityRepository";
@@ -59,6 +64,37 @@ const silentLogger: ISimpleLogger = {
 
 function createMembershipLookup(): MembershipRepositoryNotetakerLookup {
   return new MembershipRepositoryNotetakerLookup(new MembershipRepository(prisma));
+}
+
+// dispatchDue sweeps every armed booking and live session in the database by design. The harness
+// narrows the sweep to its own bookings so test files running in parallel and rows left over by
+// earlier suites on the same database neither get acted on nor inflate the fake gateway's requests.
+// The filter runs after the repository's take limit, so more than NOTETAKER_SWEEP_BATCH_SIZE foreign
+// rows ahead of the harness's own in startTime order would still hide them from the sweep.
+class HarnessScopedBookingNotetakerRepository extends PrismaBookingNotetakerRepository {
+  constructor(private readonly ownsBooking: (bookingId: number) => boolean) {
+    super(prisma);
+  }
+
+  override async findEnabledIncludeBooking(
+    params: Parameters<PrismaBookingNotetakerRepository["findEnabledIncludeBooking"]>[0]
+  ): Promise<NotetakerBookingContext[]> {
+    const bookings = await super.findEnabledIncludeBooking(params);
+    return bookings.filter((booking) => this.ownsBooking(booking.id));
+  }
+}
+
+class HarnessScopedNotetakerSessionRepository extends PrismaNotetakerSessionRepository {
+  constructor(private readonly ownsBooking: (bookingId: number) => boolean) {
+    super(prisma);
+  }
+
+  override async findByStatusInIncludeBooking(
+    params: Parameters<PrismaNotetakerSessionRepository["findByStatusInIncludeBooking"]>[0]
+  ): Promise<(NotetakerSessionRecord & { bookingStatus: NotetakerBookingStatus })[]> {
+    const sessions = await super.findByStatusInIncludeBooking(params);
+    return sessions.filter((session) => this.ownsBooking(session.bookingId));
+  }
 }
 
 function buildAccessService(
@@ -176,6 +212,8 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
   const eventTypeIds: number[] = [];
   const teamIds: number[] = [];
   const bookingIds: number[] = [];
+  // Read at sweep time, so bookings created after createDispatch count as the harness's own.
+  const ownsBooking = (bookingId: number): boolean => bookingIds.includes(bookingId);
   let sequence = 0;
   // Dispatch defers a booking while another booking's session is live at the same link, so bookings
   // of this harness and of test files running in parallel never share a default Meet link.
@@ -199,8 +237,8 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
   function createDispatch(gateway: INotetakerBotGateway): NotetakerDispatchService {
     const binding: NotetakerBotGatewayBinding = { gateway, provider: "FAKE" };
     return new NotetakerDispatchService({
-      bookingNotetakerRepository,
-      sessionRepository,
+      bookingNotetakerRepository: new HarnessScopedBookingNotetakerRepository(ownsBooking),
+      sessionRepository: new HarnessScopedNotetakerSessionRepository(ownsBooking),
       activityRepository,
       botGatewayResolver: { resolve: () => binding },
       config,
