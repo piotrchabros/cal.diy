@@ -1,12 +1,10 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import config from "../config.json";
 import { appKeysSchema as zohoKeysSchema } from "../zod";
 
@@ -21,7 +19,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const params = {
     client_id,
     response_type: "code",
-    redirect_uri: `${WEBAPP_URL}/api/integrations/zohocalendar/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "zohocalendar"),
     scope: [
       "ZohoCalendar.calendar.ALL",
       "ZohoCalendar.event.ALL",
