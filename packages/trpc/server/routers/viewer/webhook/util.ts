@@ -1,7 +1,7 @@
 import { prisma } from "@calcom/prisma";
 import { TRPCError } from "@trpc/server";
 import authedProcedure from "../../../procedures/authedProcedure";
-import { assertTeamAdminForMemberMeetings } from "./memberMeetings";
+import { assertCanManageEventTypeWebhooks, assertTeamAdminForMemberMeetings } from "./memberMeetings";
 import { webhookIdAndEventTypeIdSchema } from "./types";
 
 export const createWebhookProcedure = () => {
@@ -32,18 +32,7 @@ export const createWebhookProcedure = () => {
       }
 
       if (webhook.eventTypeId) {
-        const eventType = await prisma.eventType.findUnique({
-          where: { id: webhook.eventTypeId },
-          select: { id: true, userId: true },
-        });
-
-        if (!eventType) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-
-        if (eventType.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "FORBIDDEN" });
-        }
+        await assertCanManageEventTypeWebhooks({ userId: ctx.user.id, eventTypeId: webhook.eventTypeId });
       } else if (webhook.userId && webhook.userId !== ctx.user.id) {
         throw new TRPCError({ code: "FORBIDDEN" });
       } else if (!webhook.userId && webhook.teamId != null) {
@@ -51,18 +40,7 @@ export const createWebhookProcedure = () => {
         await assertTeamAdminForMemberMeetings({ userId: ctx.user.id, teamId: webhook.teamId });
       }
     } else if (eventTypeId) {
-      const eventType = await prisma.eventType.findUnique({
-        where: { id: eventTypeId },
-        select: { id: true, userId: true },
-      });
-
-      if (!eventType) {
-        throw new TRPCError({ code: "NOT_FOUND" });
-      }
-
-      if (eventType.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
+      await assertCanManageEventTypeWebhooks({ userId: ctx.user.id, eventTypeId });
     }
 
     return next();

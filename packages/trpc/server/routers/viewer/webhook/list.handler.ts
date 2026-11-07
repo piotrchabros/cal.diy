@@ -2,7 +2,7 @@ import { getWebhookFeature } from "@calcom/features/di/webhooks/containers/webho
 import type { Webhook } from "@calcom/features/webhooks/lib/dto/types";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import type { TListInputSchema } from "./list.schema";
-import { assertCanListEventTypeWebhooks } from "./memberMeetings";
+import { assertCanManageEventTypeWebhooks } from "./memberMeetings";
 
 type ListOptions = {
   ctx: {
@@ -14,7 +14,7 @@ type ListOptions = {
 export const listHandler = async ({ ctx, input }: ListOptions): Promise<Webhook[]> => {
   // listWebhooks does no access check for eventTypeId; repeat it here so the guard does not depend on the procedure alone.
   if (input?.eventTypeId) {
-    await assertCanListEventTypeWebhooks({ userId: ctx.user.id, eventTypeId: input.eventTypeId });
+    await assertCanManageEventTypeWebhooks({ userId: ctx.user.id, eventTypeId: input.eventTypeId });
   }
 
   const { repository } = getWebhookFeature();
