@@ -62,7 +62,8 @@ const render = async (overrides: Partial<NotetakerSharedEmailInput> = {}) => {
 const URL_PATTERN = /https?:\/\/[^\s"'<>)]+/g;
 
 // Typed as a Record so adding or removing an input field fails type-check here, not just the assertion.
-const FIELDS: Record<keyof NotetakerSharedEmailInput, true> = {
+// logoHref is excluded because it only sets the footer logo link and carries no content.
+const FIELDS: Record<Exclude<keyof NotetakerSharedEmailInput, "logoHref">, true> = {
   t: true,
   locale: true,
   timeZone: true,

@@ -14,6 +14,7 @@ export type NotetakerSharedEmailInput = {
   bookingStartTime: Date;
   sharedByName: string;
   notetakerUrl: string;
+  logoHref?: string | null;
 };
 
 export default class AttendeeNotetakerSharedEmail extends BaseEmail {
@@ -46,6 +47,7 @@ export default class AttendeeNotetakerSharedEmail extends BaseEmail {
         bookingDate,
         sharedByName,
         notetakerUrl,
+        logoHref: this.input.logoHref,
       }),
       text: this.getTextBody(),
     };
