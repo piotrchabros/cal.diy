@@ -2,6 +2,7 @@ import type {
   OrganizationMemberDto,
   OrganizationMemberListDto,
   OrganizationRoleDto,
+  OrganizationTeamListDto,
 } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
@@ -119,6 +120,31 @@ export class OrganizationMembershipService {
     });
 
     return { items: page.items.map((record) => this.toMemberDto(record)), nextCursor: page.nextCursor };
+  }
+
+  async listTeams(params: {
+    organizationId: number;
+    actorUserId: number;
+    search?: string;
+    cursor?: number;
+    limit?: number;
+  }): Promise<OrganizationTeamListDto> {
+    const { organizationId, actorUserId } = params;
+    const role = await this.requireMemberRole(organizationId, actorUserId);
+
+    // Owners and admins manage every team in the org; plain members only see teams they belong to
+    const page = await this.deps.organizationMembershipRepository.listTeams({
+      organizationId,
+      viewerUserId: actorUserId,
+      memberUserId: role === "MEMBER" ? actorUserId : undefined,
+      search: params.search,
+      cursor: params.cursor,
+      limit: this.clampLimit(params.limit),
+    });
+
+    log.debug("organization.team.list", { action: "organization.team.list", actorUserId, organizationId });
+
+    return { items: page.items, nextCursor: page.nextCursor };
   }
 
   // Pending invitees have no accepted membership, so they are treated like outsiders and the org stays hidden

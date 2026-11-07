@@ -4,11 +4,20 @@ import type {
   IOrganizationMembershipRepository,
   MembershipUserRecord,
   OrganizationMemberRecord,
+  OrganizationTeamRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 
 type StoredUser = MembershipUserRecord & { name: string | null };
 
 type StoredProfile = { userId: number; organizationId: number; username: string };
+
+type StoredTeam = {
+  id: number;
+  name: string;
+  slug: string | null;
+  parentId: number | null;
+  isOrganization: boolean;
+};
 
 type StoredMembership = { userId: number; teamId: number; role: OrganizationRoleDto; accepted: boolean };
 
@@ -16,6 +25,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
   users: StoredUser[] = [];
   profiles: StoredProfile[] = [];
   memberships: StoredMembership[] = [];
+  teams: StoredTeam[] = [];
   updateRoleCalls = 0;
   private membershipIds = new Map<StoredMembership, number>();
   private nextMembershipId = 1;
@@ -51,6 +61,25 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     );
     this.pushMembership(membership);
     return { ...membership };
+  }
+
+  seedTeam(params: {
+    id: number;
+    parentId: number | null;
+    name?: string;
+    slug?: string | null;
+    isOrganization?: boolean;
+  }): StoredTeam {
+    const team: StoredTeam = {
+      id: params.id,
+      parentId: params.parentId,
+      name: params.name ?? `Team ${params.id}`,
+      slug: params.slug === undefined ? `team-${params.id}` : params.slug,
+      isOrganization: params.isOrganization ?? false,
+    };
+    this.teams = this.teams.filter((existing) => existing.id !== params.id);
+    this.teams.push(team);
+    return { ...team };
   }
 
   seedProfile(params: StoredProfile): StoredProfile {
@@ -162,6 +191,40 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
 
     const items = records.slice(0, params.limit);
     const nextCursor = records.length > params.limit ? items[items.length - 1].membershipId : undefined;
+    return { items, nextCursor };
+  }
+
+  async listTeams(params: {
+    organizationId: number;
+    viewerUserId: number;
+    memberUserId?: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }> {
+    const search = params.search?.toLowerCase();
+    const isAcceptedMember = (teamId: number, userId: number) =>
+      this.findMembership(teamId, userId)?.accepted === true;
+    const records = this.teams
+      .filter(
+        (team) =>
+          team.parentId === params.organizationId &&
+          !team.isOrganization &&
+          (params.cursor === undefined || team.id > params.cursor) &&
+          (params.memberUserId === undefined || isAcceptedMember(team.id, params.memberUserId)) &&
+          (!search || [team.name, team.slug].some((v) => v?.toLowerCase().includes(search)))
+      )
+      .sort((a, b) => a.id - b.id)
+      .map((team) => ({
+        teamId: team.id,
+        name: team.name,
+        slug: team.slug,
+        memberCount: this.memberships.filter((m) => m.teamId === team.id && m.accepted).length,
+        viewerIsMember: isAcceptedMember(team.id, params.viewerUserId),
+      }));
+
+    const items = records.slice(0, params.limit);
+    const nextCursor = records.length > params.limit ? items[items.length - 1].teamId : undefined;
     return { items, nextCursor };
   }
 

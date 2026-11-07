@@ -7,6 +7,7 @@ import type {
   IOrganizationMembershipRepository,
   MembershipUserRecord,
   OrganizationMemberRecord,
+  OrganizationTeamRecord,
 } from "./interfaces/IOrganizationMembershipRepository";
 
 const toRoleDto: Record<MembershipRole, OrganizationRoleDto> = {
@@ -173,5 +174,55 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     }));
     if (rows.length <= limit) return { items };
     return { items, nextCursor: items[limit - 1].membershipId };
+  }
+
+  async listTeams({
+    organizationId,
+    viewerUserId,
+    memberUserId,
+    search,
+    cursor,
+    limit,
+  }: {
+    organizationId: number;
+    viewerUserId: number;
+    memberUserId?: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }> {
+    const rows = await this.prismaClient.team.findMany({
+      where: {
+        parentId: organizationId,
+        isOrganization: false,
+        ...(memberUserId !== undefined && { members: { some: { userId: memberUserId, accepted: true } } }),
+        ...(cursor !== undefined && { id: { gt: cursor } }),
+        ...(search && {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { slug: { contains: search, mode: "insensitive" } },
+          ],
+        }),
+      },
+      orderBy: { id: "asc" },
+      take: limit + 1,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        _count: { select: { members: { where: { accepted: true } } } },
+        members: { where: { userId: viewerUserId, accepted: true }, select: { id: true }, take: 1 },
+      },
+    });
+
+    const items = rows.slice(0, limit).map((row) => ({
+      teamId: row.id,
+      name: row.name,
+      slug: row.slug,
+      memberCount: row._count.members,
+      viewerIsMember: row.members.length > 0,
+    }));
+    if (rows.length <= limit) return { items };
+    return { items, nextCursor: items[limit - 1].teamId };
   }
 }
