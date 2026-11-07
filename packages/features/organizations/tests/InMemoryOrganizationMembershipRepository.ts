@@ -132,7 +132,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
       });
     }
 
-    let membership = this.findMembership(input.organizationId, input.userId);
+    let membership = this.findStoredMembership(input.organizationId, input.userId);
     if (membership) {
       membership.accepted = true;
     } else {
@@ -149,8 +149,16 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
   }
 
   async findRole(params: { organizationId: number; userId: number }): Promise<OrganizationRoleDto | null> {
-    const membership = this.findMembership(params.organizationId, params.userId);
+    const membership = this.findStoredMembership(params.organizationId, params.userId);
     return membership?.accepted ? membership.role : null;
+  }
+
+  async findMembership(params: {
+    organizationId: number;
+    userId: number;
+  }): Promise<{ role: OrganizationRoleDto; accepted: boolean } | null> {
+    const membership = this.findStoredMembership(params.organizationId, params.userId);
+    return membership ? { role: membership.role, accepted: membership.accepted } : null;
   }
 
   async countOwners(organizationId: number): Promise<number> {
@@ -204,7 +212,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
   }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }> {
     const search = params.search?.toLowerCase();
     const isAcceptedMember = (teamId: number, userId: number) =>
-      this.findMembership(teamId, userId)?.accepted === true;
+      this.findStoredMembership(teamId, userId)?.accepted === true;
     const records = this.teams
       .filter(
         (team) =>
@@ -234,7 +242,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     role: OrganizationRoleDto;
   }): Promise<{ userId: number; role: OrganizationRoleDto }> {
     this.updateRoleCalls += 1;
-    const membership = this.findMembership(params.organizationId, params.userId);
+    const membership = this.findStoredMembership(params.organizationId, params.userId);
     if (!membership) {
       throw new Error(
         `InMemoryOrganizationMembershipRepository: membership ${params.userId}/${params.organizationId} not found`
@@ -242,6 +250,31 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     }
     membership.role = params.role;
     return { userId: params.userId, role: membership.role };
+  }
+
+  async moveToOrganization(params: {
+    userId: number;
+    fromOrganizationId: number;
+    toOrganizationId: number;
+    username: string | null;
+  }): Promise<void> {
+    const { userId, fromOrganizationId, toOrganizationId, username } = params;
+    const user = this.users.find((existing) => existing.id === userId);
+    if (!user) throw new Error(`InMemoryOrganizationMembershipRepository: user ${userId} not seeded`);
+    const teamIds = new Set([
+      fromOrganizationId,
+      ...this.teams.filter((team) => team.parentId === fromOrganizationId).map((team) => team.id),
+    ]);
+    this.memberships = this.memberships.filter((m) => !(m.userId === userId && teamIds.has(m.teamId)));
+    this.profiles = this.profiles.filter(
+      (profile) => !(profile.userId === userId && profile.organizationId === fromOrganizationId)
+    );
+    user.organizationId = toOrganizationId;
+    if (username === null) return;
+    this.seedProfile({ userId, organizationId: toOrganizationId, username });
+    const membership = this.findStoredMembership(toOrganizationId, userId);
+    if (membership) membership.accepted = true;
+    else this.pushMembership({ userId, teamId: toOrganizationId, role: "MEMBER", accepted: true });
   }
 
   private pushMembership(membership: StoredMembership): void {
@@ -260,7 +293,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     );
   }
 
-  private findMembership(organizationId: number, userId: number): StoredMembership | undefined {
+  private findStoredMembership(organizationId: number, userId: number): StoredMembership | undefined {
     return this.memberships.find(
       (membership) => membership.teamId === organizationId && membership.userId === userId
     );

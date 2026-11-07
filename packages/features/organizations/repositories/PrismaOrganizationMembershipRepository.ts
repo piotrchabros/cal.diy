@@ -105,6 +105,21 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     return toRoleDto[membership.role];
   }
 
+  async findMembership({
+    organizationId,
+    userId,
+  }: {
+    organizationId: number;
+    userId: number;
+  }): Promise<{ role: OrganizationRoleDto; accepted: boolean } | null> {
+    const membership = await this.prismaClient.membership.findUnique({
+      where: { userId_teamId: { userId, teamId: organizationId } },
+      select: { role: true, accepted: true },
+    });
+    if (!membership) return null;
+    return { role: toRoleDto[membership.role], accepted: membership.accepted };
+  }
+
   async countOwners(organizationId: number): Promise<number> {
     return this.prismaClient.membership.count({
       where: { teamId: organizationId, role: MembershipRole.OWNER, accepted: true },
@@ -224,5 +239,51 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     }));
     if (rows.length <= limit) return { items };
     return { items, nextCursor: items[limit - 1].teamId };
+  }
+
+  async moveToOrganization({
+    userId,
+    fromOrganizationId,
+    toOrganizationId,
+    username,
+  }: {
+    userId: number;
+    fromOrganizationId: number;
+    toOrganizationId: number;
+    username: string | null;
+  }): Promise<void> {
+    await this.prismaClient.$transaction(async (tx) => {
+      const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
+      const subTeams = await tx.team.findMany({
+        where: { parentId: fromOrganizationId },
+        select: { id: true },
+      });
+      const teamIds = [fromOrganizationId, ...subTeams.map((team) => team.id)];
+
+      await tx.membership.deleteMany({ where: { userId, teamId: { in: teamIds } } });
+      await tx.profile.deleteMany({ where: { userId, organizationId: fromOrganizationId } });
+      // Outstanding invite tokens would otherwise let the removed member rejoin the old org or its teams
+      await tx.verificationToken.deleteMany({ where: { identifier: user.email, teamId: { in: teamIds } } });
+      await tx.user.update({
+        where: { id: userId },
+        data: { organizationId: toOrganizationId },
+        select: { id: true },
+      });
+
+      // Org profiles are keyed by username, so a user without one only gets the organizationId pointer
+      if (username === null) return;
+      await tx.profile.upsert({
+        where: { userId_organizationId: { userId, organizationId: toOrganizationId } },
+        create: { uid: uuidv4(), userId, organizationId: toOrganizationId, username },
+        update: { username },
+        select: { id: true },
+      });
+      await tx.membership.upsert({
+        where: { userId_teamId: { userId, teamId: toOrganizationId } },
+        create: { userId, teamId: toOrganizationId, role: MembershipRole.MEMBER, accepted: true },
+        update: { accepted: true },
+        select: { id: true },
+      });
+    });
   }
 }
