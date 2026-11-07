@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockCheckUsername, mockUserUpdate, mockDisableByFrom } = vi.hoisted(() => ({
+const { mockCheckUsername, mockUserUpdate, mockDisableByFrom, mockRepoint } = vi.hoisted(() => ({
+  mockRepoint: vi.fn(),
   mockCheckUsername: vi.fn(),
   mockUserUpdate: vi.fn(),
   mockDisableByFrom: vi.fn(),
@@ -9,6 +10,10 @@ const { mockCheckUsername, mockUserUpdate, mockDisableByFrom } = vi.hoisted(() =
 
 vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
   getTempOrgRedirectRepository: () => ({ disableByFrom: mockDisableByFrom }),
+}));
+
+vi.mock("@calcom/features/organizations/lib/repointUserRedirectsForRename", () => ({
+  repointUserRedirectsForRename: mockRepoint,
 }));
 
 vi.mock("@calcom/features/profile/lib/checkUsername", () => ({
@@ -186,6 +191,18 @@ describe("updateProfileHandler reused username redirects", () => {
     expect(mockDisableByFrom).toHaveBeenCalledWith({ fromOrgId: 10, from: "new-name", types: ["User"] });
   });
 
+  it("repoints move redirects in the caller's organization from the old to the new username", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } });
+
+    expect(mockRepoint).toHaveBeenCalledWith({
+      organizationId: 10,
+      oldUsername: "current",
+      newUsername: "new-name",
+    });
+  });
+
   it("does not disable redirects when ORGANIZATIONS_ENABLED is off", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "");
 
@@ -218,6 +235,7 @@ describe("updateProfileHandler reused username redirects", () => {
       updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } })
     ).rejects.toThrow("db down");
 
+    expect(mockRepoint).not.toHaveBeenCalled();
     expect(mockDisableByFrom).not.toHaveBeenCalled();
   });
 

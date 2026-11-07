@@ -6,6 +6,7 @@ import { userAdminRouter } from "./_router";
 const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   disableByFrom: vi.fn(),
+  repointUserRedirectsForRename: vi.fn(),
   findUnique: vi.fn(),
   $transaction: vi.fn(),
   txUserUpdate: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock("@sentry/nextjs", () => ({ setUser: vi.fn() }));
 
 vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
   getTempOrgRedirectRepository: () => ({ disableByFrom: mocks.disableByFrom }),
+}));
+
+vi.mock("@calcom/features/organizations/lib/repointUserRedirectsForRename", () => ({
+  repointUserRedirectsForRename: mocks.repointUserRedirectsForRename,
 }));
 
 const tx = {
@@ -62,6 +67,9 @@ describe("admin users router update", () => {
       mocks.calls.push("transaction");
       return result;
     });
+    mocks.repointUserRedirectsForRename.mockImplementation(async () => {
+      mocks.calls.push("repoint");
+    });
     mocks.disableByFrom.mockImplementation(async () => {
       mocks.calls.push("disableByFrom");
       return 1;
@@ -76,7 +84,28 @@ describe("admin users router update", () => {
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
     expect(mocks.disableByFrom).toHaveBeenCalledWith({ fromOrgId: 5, from: "new-name", types: ["User"] });
-    expect(mocks.calls).toEqual(["transaction", "disableByFrom"]);
+    expect(mocks.calls).toEqual(["transaction", "repoint", "disableByFrom"]);
+  });
+
+  it("repoints move redirects in the user's organization from the old to the new username", async () => {
+    await createCaller(ctx).update({ userId: 11, username: "new-name" });
+
+    expect(mocks.repointUserRedirectsForRename).toHaveBeenCalledWith({
+      organizationId: 5,
+      oldUsername: "old-name",
+      newUsername: "new-name",
+    });
+  });
+
+  it("renames a legacy moved-to profile without rewriting redirects inside the transaction", async () => {
+    mocks.findUnique.mockResolvedValue({ ...requestedUser, movedToProfileId: 77 });
+    mocks.txProfileUpdate.mockResolvedValue({ id: 77, organizationId: 5 });
+
+    await createCaller(ctx).update({ userId: 11, username: "new-name" });
+
+    expect(mocks.txProfileUpdate).toHaveBeenCalledWith({ where: { id: 77 }, data: { username: "new-name" } });
+    expect(mocks.txProfileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.calls).toEqual(["transaction", "repoint", "disableByFrom"]);
   });
 
   it("does not disable redirects when ORGANIZATIONS_ENABLED is off", async () => {
@@ -102,6 +131,7 @@ describe("admin users router update", () => {
     await createCaller(ctx).update(input);
 
     expect(mocks.$transaction).toHaveBeenCalled();
+    expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
     expect(mocks.disableByFrom).not.toHaveBeenCalled();
   });
 });

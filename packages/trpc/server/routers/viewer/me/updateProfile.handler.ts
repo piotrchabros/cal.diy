@@ -2,6 +2,7 @@ import { getPremiumMonthlyPlanPriceId } from "@calcom/app-store/stripepayment/li
 import { sendChangeOfEmailVerification } from "@calcom/features/auth/lib/verifyEmail";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
 import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
+import { repointUserRedirectsForRename } from "@calcom/features/organizations/lib/repointUserRedirectsForRename";
 import { checkUsername } from "@calcom/features/profile/lib/checkUsername";
 import { resolveUsernameNamespace } from "@calcom/features/profile/lib/resolveUsernameNamespace";
 import { ScheduleRepository } from "@calcom/features/schedules/repositories/ScheduleRepository";
@@ -289,6 +290,11 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
   }
 
   if (updatedUser.username && updatedUser.username !== user.username) {
+    await repointUserRedirectsForRename({
+      organizationId: user.organizationId,
+      oldUsername: user.username,
+      newUsername: updatedUser.username,
+    });
     await disableUserRedirectsForReusedUsername({
       organizationId: user.organizationId,
       username: updatedUser.username,

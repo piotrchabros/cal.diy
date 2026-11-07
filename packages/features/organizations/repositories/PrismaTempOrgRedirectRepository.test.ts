@@ -70,4 +70,39 @@ describe("PrismaTempOrgRedirectRepository", () => {
       expect(tempOrgRedirect.updateMany).not.toHaveBeenCalled();
     });
   });
+
+  describe("updateToUrl", () => {
+    it("rewrites the target of redirects of the given types that point at the URL", async () => {
+      const { repository, tempOrgRedirect } = buildRepository();
+      tempOrgRedirect.updateMany.mockResolvedValue({ count: 3 });
+
+      const result = await repository.updateToUrl({
+        types: ["User"],
+        toUrl: "https://acme.cal.com/alice",
+        newToUrl: "https://acme.cal.com/alicia",
+      });
+
+      expect(tempOrgRedirect.updateMany).toHaveBeenCalledWith({
+        where: { toUrl: "https://acme.cal.com/alice", type: { in: ["User"] } },
+        data: { toUrl: "https://acme.cal.com/alicia" },
+      });
+      expect(result).toBe(3);
+    });
+
+    it.each([
+      { name: "no types", types: [] as const, newToUrl: "https://acme.cal.com/alicia" },
+      { name: "an unchanged URL", types: ["User"] as const, newToUrl: "https://acme.cal.com/alice" },
+    ])("returns 0 without querying for $name", async ({ types, newToUrl }) => {
+      const { repository, tempOrgRedirect } = buildRepository();
+
+      const result = await repository.updateToUrl({
+        types: [...types],
+        toUrl: "https://acme.cal.com/alice",
+        newToUrl,
+      });
+
+      expect(result).toBe(0);
+      expect(tempOrgRedirect.updateMany).not.toHaveBeenCalled();
+    });
+  });
 });
