@@ -271,7 +271,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/app/(use-page-wrapper)/teams/new/{create-team-view,team-public-preview}.tsx`
   - `apps/web/app/(use-page-wrapper)/(main-nav)/teams/page.tsx`
   - `apps/web/components/ui/UsernameAvailability/{index,PremiumTextfield}.tsx`
-- [ ] T054 [P] [US3] PR 16.5, users, shell and webhooks:
+- [X] T054 [P] [US3] PR 16.5, users, shell and webhooks:
   - `apps/web/modules/users/components/{UsersTable,UserTable/UserListTable,UserTable/EditSheet/EditUserSheet}.tsx`
   - `apps/web/modules/shell/{SideBar,navigation/useMobileMoreItems}.tsx`
   - `apps/web/modules/webhooks/{components/WebhookForm,views/webhooks-view}.tsx`

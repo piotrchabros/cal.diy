@@ -2,7 +2,8 @@
 
 import { HAS_ORG_OPT_IN_FEATURES } from "@calcom/features/feature-opt-in/config";
 import type { TeamFeatures } from "@calcom/features/flags/config";
-import { IS_CALCOM, WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { IS_CALCOM } from "@calcom/lib/constants";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { useIsStandalone } from "@calcom/lib/hooks/useIsStandalone";
@@ -34,7 +35,8 @@ const getTabs = (
     name?: string;
     logoUrl?: string | null;
     fullDomain?: string | null;
-  } | null
+  } | null,
+  baseUrl: string
 ) => {
   const tabs: VerticalTabItemProps[] = [
     {
@@ -150,7 +152,7 @@ const getTabs = (
           ? [
               {
                 name: "members",
-                href: `${WEBAPP_URL}/settings/organizations/${orgBranding?.slug}/members`,
+                href: `${baseUrl}/settings/organizations/${orgBranding?.slug}/members`,
                 isExternalLink: true,
                 trackingMetadata: { section: "organization", page: "members" },
               },
@@ -284,9 +286,10 @@ const useTabs = ({
   const { data: teamsAndProfiles } = trpc.viewer.loggedInViewerRouter.teamsAndUserProfilesQuery.useQuery();
   const orgBranding = null as { id?: number; slug?: string; name?: string; logoUrl?: string | null } | null;
   const isAdmin = session.data?.user.role === UserPermissionRole.ADMIN;
+  const orgBaseUrl = useOrgBaseUrl();
 
   const processTabsMemod = useMemo(() => {
-    const processedTabs = getTabs(orgBranding).map((tab) => {
+    const processedTabs = getTabs(orgBranding, orgBaseUrl).map((tab) => {
       if (tab.href === "/settings/my-account") {
         return {
           ...tab,
@@ -421,7 +424,15 @@ const useTabs = ({
     }
 
     return visibleTabs;
-  }, [isAdmin, user, isDelegationCredentialEnabled, isPbacEnabled, permissions, teamsAndProfiles]);
+  }, [
+    isAdmin,
+    user,
+    isDelegationCredentialEnabled,
+    isPbacEnabled,
+    permissions,
+    teamsAndProfiles,
+    orgBaseUrl,
+  ]);
 
   return processTabsMemod;
 };

@@ -1,9 +1,9 @@
 "use client";
 
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import SectionBottomActions from "@calcom/features/settings/SectionBottomActions";
 import customTemplate, { hasTemplateIntegration } from "@calcom/features/webhooks/lib/integrationTemplate";
 import { WebhookVersion } from "@calcom/features/webhooks/lib/interface/IWebhookRepository";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { TimeUnit, WebhookTriggerEvents } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc/react";
@@ -252,6 +252,7 @@ const WebhookForm = (props: {
   const { apps = [], overrideTriggerOptions } = props;
   const { t } = useLocale();
   const webhookVariables = getWebhookVariables(t);
+  const orgBaseUrl = useOrgBaseUrl();
 
   const triggerOptions = overrideTriggerOptions
     ? [...overrideTriggerOptions]
@@ -626,7 +627,7 @@ const WebhookForm = (props: {
           type="button"
           color="minimal"
           onClick={props.onCancel}
-          {...(!props.onCancel ? { href: `${WEBAPP_URL}/settings/developer/webhooks` } : {})}>
+          {...(!props.onCancel ? { href: `${orgBaseUrl}/settings/developer/webhooks` } : {})}>
           {t("cancel")}
         </Button>
         <Button

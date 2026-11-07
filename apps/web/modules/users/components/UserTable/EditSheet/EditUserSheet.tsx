@@ -1,4 +1,4 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { Avatar } from "@calcom/ui/components/avatar";
@@ -31,6 +31,7 @@ export function EditUserSheet({
   canChangeMemberRole?: boolean;
 }) {
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const { user: selectedUser } = state.editSheet;
   const [editMode, setEditMode] = useEditMode((state) => [state.editMode, state.setEditMode], shallow);
   const loadedUser = selectedUser as
@@ -48,7 +49,7 @@ export function EditUserSheet({
 
   type TeamWithAccepted = { name: string; accepted: boolean };
 
-  const avatarURL = `${WEBAPP_URL}/${loadedUser?.username}/avatar.png`;
+  const avatarURL = `${orgBaseUrl}/${loadedUser?.username}/avatar.png`;
 
   const schedulesNames = loadedUser?.schedules?.map((s) => s.name);
   const teamNames = (loadedUser?.teams as TeamWithAccepted[] | undefined)?.map(
@@ -85,7 +86,7 @@ export function EditUserSheet({
                   <h3 className="mb-1 font-semibold text-base text-emphasis">{t("profile")}</h3>
                   <DisplayInfo
                     label="Cal"
-                    value={removeProtocol(`${WEBAPP_URL}/${loadedUser?.username}`)}
+                    value={removeProtocol(`${orgBaseUrl}/${loadedUser?.username}`)}
                     icon="external-link"
                   />
                   <DisplayInfo label={t("email")} value={loadedUser?.email ?? ""} icon="at-sign" />
@@ -115,7 +116,7 @@ export function EditUserSheet({
             <EditForm
               selectedUser={loadedUser}
               avatarUrl={loadedUser.avatarUrl ?? avatarURL}
-              domainUrl={WEBAPP_URL}
+              domainUrl={orgBaseUrl}
               dispatch={dispatch}
             />
           )
