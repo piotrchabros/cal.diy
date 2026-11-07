@@ -52,7 +52,7 @@ describe("addUserHandler", () => {
     mocks.userUpdate.mockImplementation(async ({ where, data }) => ({ id: where.id, ...data }));
     mocks.get.mockImplementation(async (id: number) => ({ id }));
     mocks.getDefault.mockResolvedValue({ id: 1 });
-    mocks.findDefaultOrganizationId.mockResolvedValue(null);
+    mocks.findDefaultOrganizationId.mockResolvedValue(3);
     mocks.addMember.mockResolvedValue({ userId: 42, organizationId: 1, role: "MEMBER" });
     mocks.storeAdminUserAvatar.mockResolvedValue("https://cdn.example.com/avatar.png");
     mocks.userDelete.mockImplementation(async ({ where }) => ({ id: where.id }));
@@ -66,36 +66,23 @@ describe("addUserHandler", () => {
   describe("with ORGANIZATIONS_ENABLED off and no default organization", () => {
     beforeEach(() => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mocks.findDefaultOrganizationId.mockRejectedValue(
+        ErrorWithCode.Factory.PreconditionFailed(
+          "No default organization: no organization uses the domain of NEXT_PUBLIC_WEBAPP_URL"
+        )
+      );
     });
 
-    it("creates the user as before and ignores organizationId", async () => {
-      const result = await runAdd({ organizationId: 9 });
+    it("rejects with PRECONDITION_FAILED and creates no user", async () => {
+      const error = await runAdd().catch((e: unknown) => e);
 
-      expect(createdData()).toEqual({
-        name: "Ada",
-        email: "ada@example.com",
-        username: "ada",
-        avatarUrl: undefined,
-        creationSource: CreationSource.WEBAPP,
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "No default organization: no organization uses the domain of NEXT_PUBLIC_WEBAPP_URL",
       });
-      expect(mocks.get).not.toHaveBeenCalled();
-      expect(mocks.getDefault).not.toHaveBeenCalled();
+      expect(mocks.userCreate).not.toHaveBeenCalled();
       expect(mocks.addMember).not.toHaveBeenCalled();
-      expect(result.message).toBe("User with id: 42 added successfully");
-    });
-
-    it("does not require a username", async () => {
-      await runAdd({ username: null });
-
-      expect(mocks.userCreate).toHaveBeenCalledOnce();
-    });
-
-    it("stores an uploaded avatar instead of the data URL", async () => {
-      const result = await runAdd({ avatarUrl: "data:image/png;base64,AAAA" });
-
-      expect(createdData().avatarUrl).toBeNull();
-      expect(mocks.storeAdminUserAvatar).toHaveBeenCalledWith(42, "data:image/png;base64,AAAA");
-      expect(result.user.avatarUrl).toBe("https://cdn.example.com/avatar.png");
     });
   });
 

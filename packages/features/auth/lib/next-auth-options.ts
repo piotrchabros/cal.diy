@@ -1238,7 +1238,7 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
               email: user.email,
               identityProvider: idP,
               identityProviderId: account.providerAccountId,
-              ...(organizationId !== null && { organization: { connect: { id: organizationId } } }),
+              organization: { connect: { id: organizationId } },
               ...(orgId && {
                 verified: true,
                 teams: {
@@ -1250,7 +1250,7 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
           });
           // With the flag off the user still joins the default organization, like selfHostedHandler
           // sign-ups do; autolinked users already got their membership through `teams.create` above.
-          if (!orgId && organizationId !== null) {
+          if (!orgId) {
             try {
               const { getOrganizationMembershipService } = await import(
                 "@calcom/features/organizations/di/OrganizationMembershipService.container"
