@@ -1,3 +1,12 @@
+import type {
+  TDisbandTeamInput,
+  TTeamProfileMetadata,
+  TUpdateTeamProfileInput,
+} from "@calcom/features/teams/lib/teamProfileSchema";
+import {
+  TEAM_LOGO_DATA_URL_PATTERN,
+  ZTeamProfileMetadataSchema,
+} from "@calcom/features/teams/lib/teamProfileSchema";
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
@@ -7,15 +16,6 @@ import { isBase64Image, resizeBase64Image } from "@calcom/lib/server/resizeBase6
 import slugify from "@calcom/lib/slugify";
 import type { EventType, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
-import type {
-  TDisbandTeamInput,
-  TTeamProfileMetadata,
-  TUpdateTeamProfileInput,
-} from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
-import {
-  TEAM_LOGO_DATA_URL_PATTERN,
-  ZTeamProfileMetadataSchema,
-} from "@calcom/trpc/server/routers/viewer/teams/teamProfile.schema";
 
 type PrismaLike = Pick<PrismaClient, "membership" | "team">;
 
