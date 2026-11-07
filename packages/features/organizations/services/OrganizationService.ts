@@ -25,6 +25,9 @@ const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 100;
 const MAX_NAME_LENGTH = 100;
 const MIN_SLUG_LENGTH = 2;
+const DEFAULT_ORGANIZATION_NAME = "Default";
+const DEFAULT_ORGANIZATION_SLUG = "default";
+const DEFAULT_ORGANIZATION_FALLBACK_SLUG = "default-organization";
 
 export type OrganizationsConfig = { defaultDomain: string | null };
 
@@ -95,6 +98,44 @@ export class OrganizationService {
     if (!defaultDomain) throw ErrorWithCode.Factory.NotFound("Default organization not found");
     const record = await this.deps.organizationRepository.findDefault(defaultDomain);
     if (!record) throw ErrorWithCode.Factory.NotFound("Default organization not found");
+    return this.toDto(record);
+  }
+
+  // Bypasses create()'s domain validation on purpose: a fresh install's own host is often localhost or
+  // localhost:3000, and its first admin needs this organization before anyone can own it
+  async ensureDefault(): Promise<OrganizationDto> {
+    const { defaultDomain } = this.deps.organizationsConfig;
+    if (!defaultDomain) {
+      throw ErrorWithCode.Factory.PreconditionFailed(
+        "Cannot create the default organization: NEXT_PUBLIC_WEBAPP_URL has no host"
+      );
+    }
+
+    const existing = await this.deps.organizationRepository.findDefault(defaultDomain);
+    if (existing) return this.toDto(existing);
+
+    const slugTaken = await this.deps.organizationRepository.findBySlug(DEFAULT_ORGANIZATION_SLUG);
+    const slug = slugTaken ? DEFAULT_ORGANIZATION_FALLBACK_SLUG : DEFAULT_ORGANIZATION_SLUG;
+
+    let record: OrganizationRecord;
+    try {
+      record = await this.deps.organizationRepository.create({
+        name: DEFAULT_ORGANIZATION_NAME,
+        slug,
+        domain: defaultDomain,
+      });
+    } catch (error) {
+      // A concurrent setup request may have created it between the lookup and the insert
+      const created = await this.deps.organizationRepository.findDefault(defaultDomain);
+      if (created) return this.toDto(created);
+      throw error;
+    }
+
+    log.info("organization.default.create", {
+      action: "organization.default.create",
+      organizationId: record.id,
+    });
+
     return this.toDto(record);
   }
 
