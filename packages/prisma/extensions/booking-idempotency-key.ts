@@ -1,5 +1,4 @@
 import { v5 as uuidv5 } from "uuid";
-
 import { Prisma } from "../client";
 import { BookingStatus } from "../enums";
 
@@ -20,6 +19,16 @@ function generateIdempotencyKey({
   );
 }
 
+// Bookings created with the scalar `userId` (unchecked input) must hash their organizer too; reading only
+// `user.connect.id` made every such booking hash as `undefined`, so two users' bookings at the same time collided
+export function bookingCreateUserId(
+  data: Prisma.BookingCreateInput | Prisma.BookingUncheckedCreateInput
+): number | undefined {
+  const scalarUserId = "userId" in data ? data.userId : undefined;
+  const connectedUserId = "user" in data ? data.user?.connect?.id : undefined;
+  return scalarUserId ?? connectedUserId;
+}
+
 export function bookingIdempotencyKeyExtension() {
   return Prisma.defineExtension({
     query: {
@@ -29,7 +38,7 @@ export function bookingIdempotencyKeyExtension() {
             const idempotencyKey = generateIdempotencyKey({
               startTime: args.data.startTime,
               endTime: args.data.endTime,
-              userId: args.data.user?.connect?.id,
+              userId: bookingCreateUserId(args.data),
               reassignedById: args.data.reassignById,
             });
             args.data.idempotencyKey = idempotencyKey;

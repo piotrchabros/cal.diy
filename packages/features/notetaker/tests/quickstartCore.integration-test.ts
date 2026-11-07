@@ -19,7 +19,6 @@ import type { QuickstartBooking, QuickstartHarness, QuickstartUser } from "./qui
 import {
   createQuickstartHarness,
   isQuickstartIsolatedDatabase,
-  QUICKSTART_MEET_LINK,
   QUICKSTART_SKIP_MESSAGE,
 } from "./quickstartHarness";
 
@@ -395,7 +394,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       expect(sessions).toHaveLength(1);
       const stored = await prisma.booking.findUniqueOrThrow({
         where: { id: booking.id },
-        select: { startTime: true },
+        select: { startTime: true, location: true },
       });
 
       expect(gateway.joinRequests).toHaveLength(1);
@@ -403,7 +402,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       expect(gateway.joinRequests[0]).toEqual({
         sessionId: sessions[0].id,
         platform: "GOOGLE_MEET",
-        meetingUrl: QUICKSTART_MEET_LINK,
+        meetingUrl: stored.location,
         displayName: `en:notetaker_display_name:${JSON.stringify({ appName: APP_NAME, hostName: host.name })}`,
         noticeMessage: `en:notetaker_meeting_notice:${JSON.stringify({ hostName: host.name })}`,
         scheduledStartAt: stored.startTime.toISOString(),

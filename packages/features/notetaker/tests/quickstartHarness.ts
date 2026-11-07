@@ -30,6 +30,22 @@ import { NotetakerDispatchService } from "../services/NotetakerDispatchService";
 const DEFAULT_STARTS_IN_MS = 60_000;
 const DEFAULT_DURATION_MS = 30 * 60_000;
 
+function randomLetters(count: number): string {
+  return Array.from({ length: count }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join(
+    ""
+  );
+}
+
+function lettersFromNumber(value: number, count: number): string {
+  let rest = value;
+  let letters = "";
+  for (let index = 0; index < count; index += 1) {
+    letters = String.fromCharCode(97 + (rest % 26)) + letters;
+    rest = Math.floor(rest / 26);
+  }
+  return letters;
+}
+
 const eventTypeLocationsSchema = z.array(
   z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
 );
@@ -86,7 +102,6 @@ function assertQuickstartEnvironment(): void {
   }
 }
 
-export const QUICKSTART_MEET_LINK = "https://meet.google.com/abc-defg-hij";
 export const QUICKSTART_BOT_SECRET = "quickstart-it-secret";
 
 export const QUICKSTART_ISOLATED_DATABASE = "localhost:5547/calendso_it";
@@ -111,6 +126,7 @@ export interface QuickstartHarness {
     fromReschedule?: string;
   }): Promise<QuickstartBooking>;
   createTeam(opts: { label: string; memberIds: number[] }): Promise<{ id: number; name: string }>;
+  createMeetLink(): string;
   createDispatch(gateway: INotetakerBotGateway): NotetakerDispatchService;
   createAdHocService(dispatch: NotetakerDispatchService): NotetakerAdHocService;
   createFakeBot(scenario: NotetakerFakeScenario): {
@@ -161,6 +177,10 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
   const teamIds: number[] = [];
   const bookingIds: number[] = [];
   let sequence = 0;
+  // Dispatch defers a booking while another booking's session is live at the same link, so bookings
+  // of this harness and of test files running in parallel never share a default Meet link.
+  const meetLinkPrefix = `https://meet.google.com/${randomLetters(3)}-${randomLetters(4)}`;
+  const meetLinkFor = (value: number): string => `${meetLinkPrefix}-${lettersFromNumber(value, 3)}`;
 
   const bookingNotetakerRepository = new PrismaBookingNotetakerRepository(prisma);
   const sessionRepository = new PrismaNotetakerSessionRepository(prisma);
@@ -234,6 +254,11 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
       return { id: eventType.id };
     },
 
+    createMeetLink() {
+      sequence += 1;
+      return meetLinkFor(sequence);
+    },
+
     async createBooking(opts) {
       // The booking idempotency-key extension derives a unique key for every ACCEPTED create from
       // startTime, endTime and `user.connect.id`. Hence the relation form of the host, and one
@@ -249,7 +274,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
           startTime: new Date(start),
           endTime: new Date(end),
           status: opts.status ?? "ACCEPTED",
-          location: opts.location === undefined ? QUICKSTART_MEET_LINK : opts.location,
+          location: opts.location === undefined ? meetLinkFor(sequence) : opts.location,
           fromReschedule: opts.fromReschedule,
           user: { connect: { id: opts.hostId } },
           eventType: opts.eventTypeId === undefined ? undefined : { connect: { id: opts.eventTypeId } },

@@ -17,7 +17,6 @@ import type { QuickstartBooking, QuickstartHarness, QuickstartUser } from "./qui
 import {
   createQuickstartHarness,
   isQuickstartIsolatedDatabase,
-  QUICKSTART_MEET_LINK,
   QUICKSTART_SKIP_MESSAGE,
 } from "./quickstartHarness";
 
@@ -360,9 +359,10 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       const { content } = exported;
       expect(content).toContain("## en:notetaker_export_summary_heading:{}");
       expect(content).toContain("### en:notetaker_summary_overview:{}");
-      expect(content).toContain("### en:notetaker_summary_key_points:{}");
-      expect(content).toContain("### en:notetaker_summary_decisions:{}");
-      expect(content).toContain("### en:notetaker_summary_action_items:{}");
+      // The offline summarizer writes v2 summaries, whose export has no decisions or action items sections
+      expect(content).toContain("### en:notetaker_summary_key_findings:{}");
+      expect(content).toContain("### en:notetaker_summary_next_steps:{}");
+      expect(content).toContain("### en:notetaker_summary_key_topics:{}");
       expect(content).toContain(escapeMarkdown(overview));
       expect(content).toContain("## en:notetaker_export_transcript_heading:{}");
       expect(content).toContain("**[00:00:00] Alex Example:** Welcome everyone");
@@ -532,10 +532,11 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       const team = await harness.createTeam({ label: "lc-adhoc", memberIds: [owner.id, member.id] });
       const { gateway, dispatch } = harness.createFakeBot("happy");
       const adHocService = harness.createAdHocService(dispatch);
+      const meetLink = harness.createMeetLink();
 
       const { bookingUid, reused } = await adHocService.dispatchToMeeting({
         userId: owner.id,
-        meetingUrl: QUICKSTART_MEET_LINK,
+        meetingUrl: meetLink,
         durationMinutes: 30,
         sharingTeamId: team.id,
       });
@@ -550,7 +551,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         id: expect.any(Number),
         eventTypeId: null,
         status: "ACCEPTED",
-        location: QUICKSTART_MEET_LINK,
+        location: meetLink,
         metadata: { notetakerAdHoc: "true", notetakerSharingTeamId: String(team.id) },
       });
       expect(await findChoice(booking.id)).toMatchObject({ enabled: true, source: "HOST" });
@@ -586,7 +587,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       // The first bot has finished, so pasting the same link again starts a new meeting with a second bot.
       const again = await adHocService.dispatchToMeeting({
         userId: owner.id,
-        meetingUrl: QUICKSTART_MEET_LINK,
+        meetingUrl: meetLink,
         sharingTeamId: null,
       });
       await harness.settle(gateway);
