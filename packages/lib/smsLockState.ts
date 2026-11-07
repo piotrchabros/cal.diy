@@ -1,5 +1,6 @@
 import { prisma } from "@calcom/prisma";
 import { SMSLockState } from "@calcom/prisma/enums";
+import { outsideOrganizationsFilter } from "./organizations/outsideOrganizationsFilter";
 import type { RateLimitHelper } from "./rateLimit";
 import { rateLimiter } from "./rateLimit";
 
@@ -32,13 +33,15 @@ async function changeSMSLockState(identifier: string, status: SMSLockState) {
   }
 
   if (userId) {
-    const user = await prisma.user.findUnique({ where: { id: userId, profiles: { none: {} } } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId, ...outsideOrganizationsFilter({ profiles: { none: {} } }) },
+    });
     if (user?.smsLockReviewedByAdmin) return;
 
     await prisma.user.update({
       where: {
         id: userId,
-        profiles: { none: {} },
+        ...outsideOrganizationsFilter({ profiles: { none: {} } }),
       },
       data: {
         smsLockState: status,
@@ -46,14 +49,14 @@ async function changeSMSLockState(identifier: string, status: SMSLockState) {
     });
   } else {
     const team = await prisma.team.findUnique({
-      where: { id: teamId, parentId: null, isOrganization: false },
+      where: { id: teamId, ...outsideOrganizationsFilter({ parentId: null }), isOrganization: false },
     });
     if (team?.smsLockReviewedByAdmin) return;
 
     await prisma.team.update({
       where: {
         id: teamId,
-        parentId: null,
+        ...outsideOrganizationsFilter({ parentId: null }),
         isOrganization: false,
       },
       data: {

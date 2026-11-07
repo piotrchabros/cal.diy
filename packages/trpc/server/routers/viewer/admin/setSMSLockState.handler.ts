@@ -1,8 +1,8 @@
+import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
+import { topLevelTeamFilter } from "@calcom/lib/organizations/topLevelTeamFilter";
 import { prisma } from "@calcom/prisma";
 import { SMSLockState } from "@calcom/prisma/enums";
-
 import { TRPCError } from "@trpc/server";
-
 import type { TrpcSessionUser } from "../../../types";
 import type { TSetSMSLockState } from "./setSMSLockState.schema";
 
@@ -32,7 +32,7 @@ const setSMSLockState = async ({ input }: GetOptions) => {
     const userToUpdate = await prisma.user.findFirst({
       where: {
         username,
-        profiles: { none: {} },
+        ...outsideOrganizationsFilter({ profiles: { none: {} } }),
       },
     });
     if (!userToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "User not found" });
@@ -67,7 +67,7 @@ const setSMSLockState = async ({ input }: GetOptions) => {
     const teamToUpdate = await prisma.team.findFirst({
       where: {
         slug: teamSlug,
-        parentId: null,
+        ...topLevelTeamFilter(),
       },
     });
     if (!teamToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "Team not found" });
