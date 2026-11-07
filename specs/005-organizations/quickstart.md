@@ -26,10 +26,12 @@ Expected: all pass. Coverage of the new and changed code is at least 80%.
 
 ## 2. Local multi-domain setup (scratch)
 
-1. Add these to `/etc/hosts`: `127.0.0.2 bluebee.test bespoke.test jelly.test`.
-2. In the scratch `.env`, set `NEXT_PUBLIC_WEBAPP_URL=http://bluebee.test:3000`, `ORGANIZATIONS_ENABLED=1` and `AUTH_TRUST_HOST=true`.
-3. Apply the migrations to scratch: `yarn workspace @calcom/prisma db-deploy`. This includes PR 1 and the switch-over from PR 22. Check that the printed counts match.
-4. Start with `yarn dev`.
+1. Add these to `/etc/hosts` (as new lines, leaving existing ones alone): `127.0.0.2 bluebee.test bespoke.test jelly.test unknown.test`.
+2. Start a disposable Postgres (no volume), e.g. `docker run -d --name caldiy-e2e-pg -e POSTGRES_USER=e2e -e POSTGRES_PASSWORD=e2e -e POSTGRES_DB=calcom_e2e -p 127.0.0.1:5547:5432 postgres:16-alpine`, and for S2's invitation email a mail catcher: `docker run -d --name caldiy-e2e-mailhog -p 127.0.0.1:1025:1025 -p 127.0.0.1:8025:8025 mailhog/mailhog`.
+3. Write a separate env file for the worktree (never copy the production `.env`; generate fresh `NEXTAUTH_SECRET` / `CALENDSO_ENCRYPTION_KEY`) with `DATABASE_URL`/`DATABASE_DIRECT_URL` pointing at the scratch container, `NEXT_PUBLIC_WEBAPP_URL=http://bluebee.test:<port>`, `NEXTAUTH_URL=http://bluebee.test:<port>/api/auth`, `ORGANIZATIONS_ENABLED=1`, `AUTH_TRUST_HOST=true`, `ALLOWED_HOSTNAMES` listing the three hosts (with and without the port), `ALLOWED_DEV_ORIGINS=bluebee.test,bespoke.test,jelly.test,unknown.test` (without it `next dev` blocks HMR on those hosts and pages reload in a loop), `EMAIL_SERVER_HOST=127.0.0.1`, `EMAIL_SERVER_PORT=1025`, `E2E_TEST_MAILHOG_ENABLED=1` and `NEXT_PUBLIC_IS_E2E=1`. Load it with `set -a && . ./.env.e2e && set +a` before every command below. Pick a free port; 3221/3222 serve production.
+4. Apply the migrations to scratch: `cd packages/prisma && npx prisma migrate deploy`. This includes PR 1 and the switch-over from PR 22. Check that the printed counts match.
+5. Seed: `yarn workspace @calcom/prisma db-seed`. The seed runs after the switch-over, so re-run the repeat-safe switch-over SQL (`packages/prisma/migrations/20261107000100_organizations_bluebee_switchover/migration.sql`) with `psql` to put the seeded users and teams into BlueBee, then point BlueBee at the local domain: `UPDATE "OrganizationSettings" SET "customDomain"='bluebee.test' WHERE "organizationId"=(SELECT id FROM "Team" WHERE slug='bluebee' AND "isOrganization");`.
+6. Start the app: `cd apps/web && node scripts/copy-app-store-static.js && npx next dev --turbopack -p <port> -H 0.0.0.0` (not `next build`). If deep `/settings/...` routes answer 404 after a compile error, stop the server and delete `apps/web/.next/dev` (stale Turbopack routes).
 
 ## 3. Scenarios
 
@@ -51,7 +53,7 @@ Expected: all pass. Coverage of the new and changed code is at least 80%.
 
 ## 4. E2E (scratch only; asks for the owner's go-ahead per constitution)
 
-`apps/web/playwright/organizations.e2e.ts` covers S2, S4, S5 and S6 against the scratch setup.
+`apps/web/playwright/organizations.e2e.ts` covers S2, S4, S5 and S6 against the scratch setup (it skips unless `ORGANIZATIONS_ENABLED` is set and `NEXT_PUBLIC_WEBAPP_URL` is on `bluebee.test`, so CI never runs it). With the dev server from §2 running and the env file loaded: `PLAYWRIGHT_HEADLESS=1 yarn e2e apps/web/playwright/organizations.e2e.ts --workers=1`. The spec creates its own users and teams with a random suffix and removes them (and the BespokeSoft/JellyMatch organizations on `bespoke.test` / `jelly.test`) before and after the run, so it can be repeated. S4 checks the moved team's old link by following it in the browser because it redirects client-side today (T350).
 
 ## 5. Production rollout (owner)
 

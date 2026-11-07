@@ -149,6 +149,11 @@ const nextConfig = (): NextConfig => {
       // uploads (5mb team logos, ~7mb encoded); 25mb leaves headroom without being unbounded.
       proxyClientMaxBodySize: "25mb",
     },
+    // Dev only: lets `next dev` serve HMR to extra hosts such as the organization domains of the
+    // multi-domain scratch setup (specs/005-organizations quickstart §2). Ignored by `next build`.
+    allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     productionBrowserSourceMaps: true,
     transpilePackages: [
       "@calcom/app-store",
