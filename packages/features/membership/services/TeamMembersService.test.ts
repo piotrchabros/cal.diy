@@ -1527,7 +1527,7 @@ describe("TeamMembersService", () => {
           invitee: { ...orgInvitee, hasPassword: false },
         });
         orgMembership.addMember.mockRejectedValueOnce(
-          ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+          ErrorWithCode.Factory.Conflict("username_taken_in_organization")
         );
 
         await expect(

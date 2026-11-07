@@ -304,10 +304,10 @@ describe("viewer organization router", () => {
 
   describe("error mapping", () => {
     it.each([
-      ["Forbidden", "FORBIDDEN", "Only owners can grant or remove the owner role"],
+      ["Forbidden", "FORBIDDEN", "organization_only_owners_can_manage_owner_role"],
       ["Conflict", "CONFLICT", "user_belongs_to_another_organization"],
       ["PreconditionFailed", "PRECONDITION_FAILED", "An organization needs at least one owner"],
-      ["NotFound", "NOT_FOUND", "Member not found"],
+      ["NotFound", "NOT_FOUND", "organization_member_not_found"],
     ] as const)("maps ErrorWithCode %s to %s with its message", async (factory, code, message) => {
       mocks.setRole.mockRejectedValue(ErrorWithCode.Factory[factory](message));
 
@@ -326,7 +326,7 @@ describe("viewer organization router", () => {
     });
 
     it("maps a NotFound from current", async () => {
-      mocks.getForMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("Organization not found"));
+      mocks.getForMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("organization_not_found"));
 
       await expect(createCaller(ctx).current()).rejects.toMatchObject({ code: "NOT_FOUND" });
     });

@@ -323,7 +323,7 @@ describe("admin organizations router", () => {
     it.each([
       ["Conflict", "CONFLICT", "Slug already taken"],
       ["PreconditionFailed", "PRECONDITION_FAILED", "Owner belongs to another organization"],
-      ["NotFound", "NOT_FOUND", "Organization not found"],
+      ["NotFound", "NOT_FOUND", "organization_not_found"],
       ["BadRequest", "BAD_REQUEST", "Invalid domain"],
     ] as const)("maps ErrorWithCode %s to %s with its message", async (factory, code, message) => {
       mocks.create.mockRejectedValue(ErrorWithCode.Factory[factory](message));

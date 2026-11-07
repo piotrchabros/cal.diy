@@ -7,6 +7,7 @@ import type {
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
 import { normalizeHost } from "@calcom/lib/organizations/normalizeHost";
+import { ORGANIZATION_ERRORS } from "../lib/organizationErrors";
 import type {
   IOrganizationRepository,
   OrganizationListItemRecord,
@@ -85,7 +86,7 @@ export class OrganizationService {
   }): Promise<CurrentOrganizationDto> {
     const { organizationId, viewerUserId } = params;
     const viewerRole = await this.deps.organizationMembershipService.getRole(viewerUserId, organizationId);
-    if (viewerRole === null) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    if (viewerRole === null) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
 
     const {
       memberCount: _memberCount,
@@ -97,9 +98,9 @@ export class OrganizationService {
 
   async getDefault(): Promise<OrganizationDto> {
     const { defaultDomain } = this.deps.organizationsConfig;
-    if (!defaultDomain) throw ErrorWithCode.Factory.NotFound("Default organization not found");
+    if (!defaultDomain) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.defaultNotFound);
     const record = await this.deps.organizationRepository.findDefault(defaultDomain);
-    if (!record) throw ErrorWithCode.Factory.NotFound("Default organization not found");
+    if (!record) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.defaultNotFound);
     return this.toDto(record);
   }
 
@@ -108,9 +109,7 @@ export class OrganizationService {
   async ensureDefault(): Promise<OrganizationDto> {
     const { defaultDomain } = this.deps.organizationsConfig;
     if (!defaultDomain) {
-      throw ErrorWithCode.Factory.PreconditionFailed(
-        "Cannot create the default organization: NEXT_PUBLIC_WEBAPP_URL has no host"
-      );
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.defaultRequiresHost);
     }
 
     const existing = await this.deps.organizationRepository.findDefault(defaultDomain);
@@ -215,7 +214,7 @@ export class OrganizationService {
     // The default org owns the app's own domain; loopback and invitation-less sign-ups resolve to it,
     // so moving it elsewhere would leave those requests without an organization
     if (domain !== undefined && this.isDefault(existing) && domain !== existing.domain) {
-      throw ErrorWithCode.Factory.PreconditionFailed("The default organization's domain cannot be changed");
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.defaultDomainLocked);
     }
 
     if (slug !== undefined) await this.assertSlugAvailable(slug, id);
@@ -230,7 +229,7 @@ export class OrganizationService {
     }
 
     const updated = await this.deps.organizationRepository.update(id, { name, slug, domain });
-    if (!updated) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    if (!updated) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
 
     const changed = Object.entries({ name, slug, domain, owner: input.ownerUserId })
       .filter(([, value]) => value !== undefined)
@@ -252,7 +251,7 @@ export class OrganizationService {
     const existing = await this.findByIdOrThrow(id);
 
     if (this.isDefault(existing)) {
-      throw ErrorWithCode.Factory.PreconditionFailed("The default organization cannot be deleted");
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.defaultCannotBeDeleted);
     }
 
     const [memberCount, teamCount] = await Promise.all([
@@ -260,13 +259,11 @@ export class OrganizationService {
       this.deps.organizationRepository.countTeams(id),
     ]);
     if (memberCount > 0 || teamCount > 0) {
-      throw ErrorWithCode.Factory.PreconditionFailed(
-        "Move the organization's members and teams out before deleting it"
-      );
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.notEmpty);
     }
 
     const deleted = await this.deps.organizationRepository.delete(id);
-    if (!deleted) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    if (!deleted) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
 
     log.info("organization.delete", { action: "organization.delete", actorUserId, organizationId: id });
 
@@ -277,8 +274,7 @@ export class OrganizationService {
     if ("userId" in owner) return { kind: "user", userId: owner.userId };
 
     const email = owner.email.trim().toLowerCase();
-    if (!email.includes("@"))
-      throw ErrorWithCode.Factory.BadRequest("Owner email must be a valid email address");
+    if (!email.includes("@")) throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.ownerEmailInvalid);
 
     const candidate = await this.deps.organizationMembershipService.findMembershipCandidateByEmail(email);
     return candidate ? { kind: "user", userId: candidate.id } : { kind: "invite", email };
@@ -286,32 +282,29 @@ export class OrganizationService {
 
   private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<"add" | "move"> {
     const candidate = await this.deps.organizationMembershipService.findMembershipCandidate(userId);
-    if (!candidate) throw ErrorWithCode.Factory.NotFound("Owner user not found");
+    if (!candidate) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.ownerNotFound);
 
     if (candidate.username === null) {
-      throw ErrorWithCode.Factory.PreconditionFailed(
-        "The owner needs a username before joining an organization"
-      );
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerNeedsUsername);
     }
 
     if (candidate.organizationId === null) return "add";
     // Stable code-like message so the admin UI can recognise it and ask for confirmation
-    if (!confirmMoveOwner) throw ErrorWithCode.Factory.PreconditionFailed("owner_in_another_organization");
+    if (!confirmMoveOwner)
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerInAnotherOrganization);
     return "move";
   }
 
   private async findByIdOrThrow(id: number): Promise<OrganizationRecord> {
     const record = await this.deps.organizationRepository.findById(id);
-    if (!record) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    if (!record) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
     return record;
   }
 
   private parseName(input: string): string {
     const name = input.trim();
     if (name.length < 1 || name.length > MAX_NAME_LENGTH) {
-      throw ErrorWithCode.Factory.BadRequest(
-        `Organization name must be between 1 and ${MAX_NAME_LENGTH} characters`
-      );
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.nameInvalid);
     }
     return name;
   }
@@ -319,9 +312,7 @@ export class OrganizationService {
   private parseSlug(input: string): string {
     const slug = input.trim().toLowerCase();
     if (slug.length < MIN_SLUG_LENGTH || !ORGANIZATION_SLUG_REGEX.test(slug)) {
-      throw ErrorWithCode.Factory.BadRequest(
-        "Organization slug must be 2-63 lowercase letters, digits or hyphens and cannot start or end with a hyphen"
-      );
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.slugInvalid);
     }
     return slug;
   }
@@ -329,7 +320,7 @@ export class OrganizationService {
   private parseDomain(input: string): string {
     const domain = normalizeHost(input);
     if (!domain || !ORGANIZATION_DOMAIN_REGEX.test(domain)) {
-      throw ErrorWithCode.Factory.BadRequest("Organization domain must be a valid hostname such as acme.com");
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.domainInvalid);
     }
     return domain;
   }
@@ -337,14 +328,14 @@ export class OrganizationService {
   private async assertSlugAvailable(slug: string, ownId: number | null): Promise<void> {
     const existing = await this.deps.organizationRepository.findBySlug(slug);
     if (existing && existing.id !== ownId) {
-      throw ErrorWithCode.Factory.Conflict("Organization slug is already taken");
+      throw ErrorWithCode.Factory.Conflict(ORGANIZATION_ERRORS.slugTaken);
     }
   }
 
   private async assertDomainAvailable(domain: string, ownId: number | null): Promise<void> {
     const existing = await this.deps.organizationRepository.findByDomain(domain);
     if (existing && existing.id !== ownId) {
-      throw ErrorWithCode.Factory.Conflict("Organization domain is already taken");
+      throw ErrorWithCode.Factory.Conflict(ORGANIZATION_ERRORS.domainTaken);
     }
   }
 

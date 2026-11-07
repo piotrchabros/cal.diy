@@ -22,11 +22,10 @@ const OWNER_ID = 1;
 const OWNER = { userId: OWNER_ID };
 const INVITED_ID = 500;
 
-const SLUG_INVALID =
-  "Organization slug must be 2-63 lowercase letters, digits or hyphens and cannot start or end with a hyphen";
-const DOMAIN_INVALID = "Organization domain must be a valid hostname such as acme.com";
-const NAME_INVALID = "Organization name must be between 1 and 100 characters";
-const NOT_FOUND = "Organization not found";
+const SLUG_INVALID = "organization_slug_invalid";
+const DOMAIN_INVALID = "organization_domain_invalid";
+const NAME_INVALID = "organization_name_invalid";
+const NOT_FOUND = "organization_not_found";
 
 async function expectRejection(promise: Promise<unknown>, code: ErrorCode, message: string) {
   const error = await promise.then(
@@ -131,7 +130,7 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.create({ ...input, owner: { userId: 999 } }, ACTOR_ID),
           ErrorCode.NotFound,
-          "Owner user not found"
+          "organization_owner_not_found"
         );
         expect(repository.all()).toHaveLength(0);
         expect(mockLogInfo).not.toHaveBeenCalled();
@@ -194,14 +193,14 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.create({ ...input, owner: OWNER }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
-          "The owner needs a username before joining an organization"
+          "organization_owner_needs_username"
         );
         expect(repository.all()).toHaveLength(0);
       });
 
       it.each([
-        ["slug", { slug: "acme", domain: "other.com" }, "Organization slug is already taken"],
-        ["domain", { slug: "other", domain: "acme.com" }, "Organization domain is already taken"],
+        ["slug", { slug: "acme", domain: "other.com" }, "organization_slug_taken"],
+        ["domain", { slug: "other", domain: "acme.com" }, "organization_domain_taken"],
       ])("leaves the owner untouched on a %s conflict", async (_label, taken, message) => {
         repository.seed({ name: "Other", ...taken });
 
@@ -313,7 +312,7 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.create({ ...input, owner: { email: "owner@acme.com" } }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
-          "The owner needs a username before joining an organization"
+          "organization_owner_needs_username"
         );
         expect(repository.all()).toHaveLength(0);
       });
@@ -322,7 +321,7 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.create({ ...input, owner: { email: "not-an-email" } }, ACTOR_ID),
           ErrorCode.BadRequest,
-          "Owner email must be a valid email address"
+          "organization_owner_email_invalid"
         );
         expect(repository.all()).toHaveLength(0);
       });
@@ -425,7 +424,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.create({ name: "Acme", slug: "ACME", domain: "acme.com", owner: OWNER }, ACTOR_ID),
         ErrorCode.Conflict,
-        "Organization slug is already taken"
+        "organization_slug_taken"
       );
     });
 
@@ -435,7 +434,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.create({ name: "Acme", slug: "acme", domain: "ACME.com:443", owner: OWNER }, ACTOR_ID),
         ErrorCode.Conflict,
-        "Organization domain is already taken"
+        "organization_domain_taken"
       );
     });
 
@@ -535,7 +534,7 @@ describe("OrganizationService", () => {
   });
 
   describe("getDefault", () => {
-    const DEFAULT_NOT_FOUND = "Default organization not found";
+    const DEFAULT_NOT_FOUND = "default_organization_not_found";
 
     it("returns the organization on the configured default domain", async () => {
       repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
@@ -631,7 +630,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.ensureDefault(),
         ErrorCode.PreconditionFailed,
-        "Cannot create the default organization: NEXT_PUBLIC_WEBAPP_URL has no host"
+        "default_organization_requires_webapp_host"
       );
       expect(create).not.toHaveBeenCalled();
     });
@@ -667,7 +666,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.update(seeded.id, { slug: "other" }, ACTOR_ID),
         ErrorCode.Conflict,
-        "Organization slug is already taken"
+        "organization_slug_taken"
       );
     });
 
@@ -678,7 +677,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.update(seeded.id, { domain: "Other.com" }, ACTOR_ID),
         ErrorCode.Conflict,
-        "Organization domain is already taken"
+        "organization_domain_taken"
       );
     });
 
@@ -712,7 +711,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.update(seeded.id, { domain: "elsewhere.com" }, ACTOR_ID),
         ErrorCode.PreconditionFailed,
-        "The default organization's domain cannot be changed"
+        "organization_default_domain_locked"
       );
       expect((await repository.findById(seeded.id))?.domain).toBe(DEFAULT_DOMAIN);
     });
@@ -823,7 +822,7 @@ describe("OrganizationService", () => {
         await expectRejection(
           service.update(organizationId, { name: "Renamed", ownerUserId: NEW_OWNER_ID }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
-          "The owner needs a username before joining an organization"
+          "organization_owner_needs_username"
         );
         expect((await repository.findById(organizationId))?.name).toBe("Acme");
       });
@@ -877,7 +876,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.delete(seeded.id, ACTOR_ID),
         ErrorCode.PreconditionFailed,
-        "The default organization cannot be deleted"
+        "organization_default_cannot_be_deleted"
       );
       expect(repository.all()).toHaveLength(1);
     });
@@ -891,7 +890,7 @@ describe("OrganizationService", () => {
       await expectRejection(
         service.delete(seeded.id, ACTOR_ID),
         ErrorCode.PreconditionFailed,
-        "Move the organization's members and teams out before deleting it"
+        "organization_delete_not_empty"
       );
       expect(repository.all()).toHaveLength(1);
     });

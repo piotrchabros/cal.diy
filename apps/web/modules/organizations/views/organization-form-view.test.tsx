@@ -45,8 +45,15 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn<(path: string) => void>(),
 }));
 
+// Service error keys get a distinct translation so the tests prove the views pass them through t()
+const ERROR_TRANSLATIONS: Record<string, string> = {
+  organization_not_found: "Organization not found",
+  organization_domain_taken: "Organization domain is already taken",
+  organization_owner_needs_username: "The owner needs a username",
+};
+
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
-  useLocale: () => ({ t: (key: string) => key }),
+  useLocale: () => ({ t: (key: string) => ERROR_TRANSLATIONS[key] ?? key }),
 }));
 
 vi.mock("@calcom/trpc/react", () => ({
@@ -362,17 +369,17 @@ describe("OrganizationFormView", () => {
     });
 
     it("shows the error message when the organization fails to load", () => {
-      renderEdit({ data: undefined, isPending: false, error: { message: "Organization not found" } });
+      renderEdit({ data: undefined, isPending: false, error: { message: "organization_not_found" } });
 
       expect(screen.getByText("Organization not found")).toBeInTheDocument();
     });
 
-    it("toasts the server message when the update fails", () => {
+    it("toasts the translated server message when the update fails", () => {
       renderEdit({ data: buildOrg(), isPending: false, error: null });
 
-      getOptions(mocks.updateUseMutation).onError?.({ message: "Domain is already taken" });
+      getOptions(mocks.updateUseMutation).onError?.({ message: "organization_domain_taken" });
 
-      expect(mocks.showToast).toHaveBeenCalledWith("Domain is already taken", "error");
+      expect(mocks.showToast).toHaveBeenCalledWith("Organization domain is already taken", "error");
       expect(mocks.push).not.toHaveBeenCalled();
     });
 
@@ -397,15 +404,15 @@ describe("OrganizationFormView", () => {
       expect(screen.getByRole("button", { name: "organization_add_owner" })).toBeDisabled();
     });
 
-    it("maps owner_in_another_organization when adding an owner fails", () => {
+    it("toasts the translated server message when adding an owner fails", () => {
       renderEdit({ data: buildOrg(), isPending: false, error: null });
 
       const { onError } = getOptions(mocks.updateUseMutation, 1);
       onError?.({ message: "owner_in_another_organization", data: { code: "CONFLICT" } });
-      onError?.({ message: "User has no username" });
+      onError?.({ message: "organization_owner_needs_username" });
 
       expect(mocks.showToast).toHaveBeenNthCalledWith(1, "owner_in_another_organization", "error");
-      expect(mocks.showToast).toHaveBeenNthCalledWith(2, "User has no username", "error");
+      expect(mocks.showToast).toHaveBeenNthCalledWith(2, "The owner needs a username", "error");
     });
   });
 });

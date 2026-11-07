@@ -206,9 +206,7 @@ describe("selfHostedHandler – organizations", () => {
 
   it("returns 409 when the default org membership conflicts with the flag off", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    mockAddMember.mockRejectedValue(
-      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-    );
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
 
     const response = await callHandler(signupBody);
 
@@ -313,9 +311,7 @@ describe("selfHostedHandler – organizations", () => {
   });
 
   it("returns 409 when the org membership conflicts", async () => {
-    mockAddMember.mockRejectedValue(
-      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-    );
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
 
     const response = await callHandler(signupBody);
 
@@ -326,9 +322,7 @@ describe("selfHostedHandler – organizations", () => {
   });
 
   it("still returns 409 and logs when removing the user after a membership conflict fails", async () => {
-    mockAddMember.mockRejectedValue(
-      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-    );
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
     prismaMock.user.deleteMany.mockRejectedValue(new Error("db down"));
 
     const response = await callHandler(signupBody);

@@ -258,7 +258,7 @@ function EditOrganizationFormInner({ organization }: { organization: Organizatio
       router.push(ORGANIZATIONS_PATH);
     },
     onError: (err) => {
-      showToast(err.message, "error");
+      showToast(t(err.message), "error");
     },
   });
 
@@ -316,10 +316,7 @@ function AddOwnerSection({ organizationId }: { organizationId: number }) {
       ]);
     },
     onError: (err) => {
-      showToast(
-        err.message === "owner_in_another_organization" ? t("owner_in_another_organization") : err.message,
-        "error"
-      );
+      showToast(t(err.message), "error");
     },
   });
 
@@ -344,7 +341,7 @@ function EditOrganizationForm({ organizationId }: { organizationId: number }) {
   const { data, isPending, error } = trpc.viewer.admin.organizations.get.useQuery({ id: organizationId });
 
   if (isPending) return <p>{t("loading")}</p>;
-  if (error) return <p>{error.message}</p>;
+  if (error) return <p>{t(error.message)}</p>;
 
   return (
     <>

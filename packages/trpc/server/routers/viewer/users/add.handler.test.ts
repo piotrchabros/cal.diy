@@ -112,9 +112,7 @@ describe("addUserHandler", () => {
     });
 
     it("deletes the created user when joining the organization fails", async () => {
-      mocks.addMember.mockRejectedValue(
-        ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-      );
+      mocks.addMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
 
       await expect(runAdd()).rejects.toMatchObject({ code: "CONFLICT" });
       expect(mocks.userDelete).toHaveBeenCalledWith({ where: { id: 42 }, select: { id: true } });
@@ -187,24 +185,20 @@ describe("addUserHandler", () => {
     });
 
     it("converts membership errors to tRPC errors", async () => {
-      mocks.addMember.mockRejectedValue(
-        ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-      );
+      mocks.addMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
 
       await expect(runAdd()).rejects.toMatchObject({ code: "CONFLICT" });
     });
 
     it("deletes the created user when joining the organization fails", async () => {
-      mocks.addMember.mockRejectedValue(
-        ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
-      );
+      mocks.addMember.mockRejectedValue(ErrorWithCode.Factory.Conflict("username_taken_in_organization"));
 
       const error = await runAdd().catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(TRPCError);
       expect(error).toMatchObject({
         code: "CONFLICT",
-        message: "Username is already taken in this organization",
+        message: "username_taken_in_organization",
       });
       expect(mocks.userDelete).toHaveBeenCalledWith({ where: { id: 42 }, select: { id: true } });
     });

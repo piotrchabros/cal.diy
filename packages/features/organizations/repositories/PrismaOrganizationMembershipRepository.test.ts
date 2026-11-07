@@ -472,7 +472,7 @@ describe("PrismaOrganizationMembershipRepository", () => {
         repository.updateUsername({ userId: 7, organizationId: 1, username: "alice" })
       ).rejects.toMatchObject({
         code: ErrorCode.Conflict,
-        message: "Username is already taken in this organization",
+        message: "username_taken_in_organization",
       });
     });
 
@@ -519,7 +519,7 @@ describe("PrismaOrganizationMembershipRepository", () => {
         repository.updateUsernameAndUpsertProfile({ userId: 7, organizationId: 1, username: "alice" })
       ).rejects.toMatchObject({
         code: ErrorCode.Conflict,
-        message: "Username is already taken in this organization",
+        message: "username_taken_in_organization",
       });
     });
 

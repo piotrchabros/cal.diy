@@ -21,7 +21,7 @@ const OTHER_ORG_ID = 20;
 const DEFAULT_ORG_ID = 30;
 const DEFAULT_DOMAIN = "cal.example.com";
 
-const FORBIDDEN_CHANGE = "Only organization owners and admins can change roles";
+const FORBIDDEN_CHANGE = "organization_only_managers_can_change_roles";
 type Invitee = {
   id: number;
   email: string;
@@ -44,7 +44,7 @@ function buildUserRepository() {
   };
 }
 
-const FORBIDDEN_OWNER = "Only owners can grant or remove the owner role";
+const FORBIDDEN_OWNER = "organization_only_owners_can_manage_owner_role";
 
 async function expectRejection(promise: Promise<unknown>, code: ErrorCode, message: string) {
   const error = await promise.then(
@@ -111,7 +111,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER" }),
         ErrorCode.Conflict,
-        "User belongs to another organization"
+        "user_belongs_to_another_organization"
       );
     });
 
@@ -121,7 +121,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER" }),
         ErrorCode.PreconditionFailed,
-        "User needs a username before joining an organization"
+        "organization_user_needs_username"
       );
     });
 
@@ -132,7 +132,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER" }),
         ErrorCode.Conflict,
-        "Username is already taken in this organization"
+        "username_taken_in_organization"
       );
       expect(disableByFrom).not.toHaveBeenCalled();
     });
@@ -176,7 +176,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.addMember({ organizationId: 999, userId: 1, role: "MEMBER" }),
         ErrorCode.NotFound,
-        "Organization not found"
+        "organization_not_found"
       );
     });
 
@@ -184,7 +184,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.addMember({ organizationId: ORG_ID, userId: 999, role: "MEMBER" }),
         ErrorCode.NotFound,
-        "User not found"
+        "user_not_found"
       );
     });
 
@@ -256,7 +256,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         setRole(OWNER_ID, OWNER_ID, "ADMIN"),
         ErrorCode.PreconditionFailed,
-        "An organization must keep at least one owner"
+        "organization_must_keep_one_owner"
       );
       expect(await service.getRole(OWNER_ID, ORG_ID)).toBe("OWNER");
     });
@@ -279,7 +279,11 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a missing target member", async () => {
-      await expectRejection(setRole(OWNER_ID, 999, "ADMIN"), ErrorCode.NotFound, "Member not found");
+      await expectRejection(
+        setRole(OWNER_ID, 999, "ADMIN"),
+        ErrorCode.NotFound,
+        "organization_member_not_found"
+      );
     });
 
     it("logs the role change with ids only", async () => {
@@ -436,7 +440,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.listMembers({ organizationId: ORG_ID, actorUserId: 2 }),
         ErrorCode.NotFound,
-        "Organization not found"
+        "organization_not_found"
       );
     });
 
@@ -446,7 +450,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.listMembers({ organizationId: ORG_ID, actorUserId: 2 }),
         ErrorCode.NotFound,
-        "Organization not found"
+        "organization_not_found"
       );
     });
   });
@@ -511,7 +515,7 @@ describe("OrganizationMembershipService", () => {
         await expectRejection(
           service.listTeams({ organizationId: ORG_ID, actorUserId }),
           ErrorCode.NotFound,
-          "Organization not found"
+          "organization_not_found"
         );
       }
     });
@@ -618,7 +622,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         removeMember(MEMBER_ID, ADMIN_ID),
         ErrorCode.Forbidden,
-        "Only organization owners and admins can manage members"
+        "organization_only_managers_can_manage_members"
       );
       expect(moveUser).not.toHaveBeenCalled();
     });
@@ -627,7 +631,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         removeMember(ADMIN_ID, OWNER_ID),
         ErrorCode.Forbidden,
-        "Only owners can remove an owner"
+        "organization_only_owners_can_remove_owner"
       );
       expect(moveUser).not.toHaveBeenCalled();
     });
@@ -636,7 +640,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         removeMember(OWNER_ID, OWNER_ID),
         ErrorCode.PreconditionFailed,
-        "An organization must keep at least one owner"
+        "organization_must_keep_one_owner"
       );
       expect(moveUser).not.toHaveBeenCalled();
     });
@@ -673,7 +677,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         removeMember(ADMIN_ID, MEMBER_ID, DEFAULT_ORG_ID),
         ErrorCode.PreconditionFailed,
-        "Members cannot be removed from the default organization"
+        "organization_cannot_remove_from_default"
       );
       expect(moveUser).not.toHaveBeenCalled();
     });
@@ -692,13 +696,13 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         removeMember(ADMIN_ID, MEMBER_ID),
         ErrorCode.PreconditionFailed,
-        "Default organization not found"
+        "default_organization_not_found"
       );
       expect(moveUser).not.toHaveBeenCalled();
     });
 
     it("rejects an unknown member", async () => {
-      await expectRejection(removeMember(ADMIN_ID, 999), ErrorCode.NotFound, "Member not found");
+      await expectRejection(removeMember(ADMIN_ID, 999), ErrorCode.NotFound, "organization_member_not_found");
       expect(moveUser).not.toHaveBeenCalled();
     });
   });
@@ -771,7 +775,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         invite(MEMBER_ID),
         ErrorCode.Forbidden,
-        "Only organization owners and admins can manage members"
+        "organization_only_managers_can_manage_members"
       );
     });
 
@@ -787,11 +791,15 @@ describe("OrganizationMembershipService", () => {
     it("rejects a missing organization", async () => {
       vi.spyOn(organizationRepository, "findById").mockResolvedValue(null);
 
-      await expectRejection(invite(ADMIN_ID), ErrorCode.NotFound, "Organization not found");
+      await expectRejection(invite(ADMIN_ID), ErrorCode.NotFound, "organization_not_found");
     });
 
     it.each(["   ", "not-an-email"])("rejects the invalid email %j", async (email) => {
-      await expectRejection(invite(ADMIN_ID, "MEMBER", email), ErrorCode.BadRequest, "Invalid invite email");
+      await expectRejection(
+        invite(ADMIN_ID, "MEMBER", email),
+        ErrorCode.BadRequest,
+        "organization_invalid_invite_email"
+      );
       expect(userRepository.findInviteeByEmail).not.toHaveBeenCalled();
     });
 
@@ -969,11 +977,7 @@ describe("OrganizationMembershipService", () => {
     it("rejects a user without a username", async () => {
       membershipRepository.seedUser({ id: USER_ID, username: null });
 
-      await expectRejection(
-        grant(),
-        ErrorCode.PreconditionFailed,
-        "The owner needs a username before joining an organization"
-      );
+      await expectRejection(grant(), ErrorCode.PreconditionFailed, "organization_owner_needs_username");
       expect(membershipRepository.memberships).toEqual([]);
     });
 
@@ -985,7 +989,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a missing user", async () => {
-      await expectRejection(grant(), ErrorCode.NotFound, "Owner user not found");
+      await expectRejection(grant(), ErrorCode.NotFound, "organization_owner_not_found");
     });
   });
 
@@ -1081,7 +1085,7 @@ describe("OrganizationMembershipService", () => {
       await expectRejection(
         service.changeUsername({ userId: USER_ID, username: "robert" }),
         ErrorCode.NotFound,
-        "User not found"
+        "user_not_found"
       );
     });
   });
