@@ -249,7 +249,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
 
       const conflictResponse = await respondConflictAs409(async () => {
         await createOrUpdateMemberships({ user, team });
-        // addMember needs a username; for a premium username awaiting payment the payment callback sets it later (T500)
+        // addMember needs a username; a premium username awaiting payment joins through the payment callback (apps/web/pages/api/integrations/stripepayment/paymentCallback.ts) once paid
         if (fallbackHostOrgId !== null && username !== null) {
           await getOrganizationMembershipService().addMember({
             organizationId: fallbackHostOrgId,
@@ -307,7 +307,7 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
       }
       throw error;
     }
-    // addMember needs a username; for a premium username awaiting payment the payment callback sets it later (T500)
+    // addMember needs a username; a premium username awaiting payment joins through the payment callback (apps/web/pages/api/integrations/stripepayment/paymentCallback.ts) once paid
     if (username !== null) {
       const conflictResponse = await respondConflictAs409(
         async () => {

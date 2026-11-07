@@ -1,12 +1,10 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
 import sendVerificationRequest from "@calcom/features/auth/lib/sendVerificationRequest";
 import { HttpError } from "@calcom/lib/http-error";
-import { VerificationTokenService } from "../../lib/VerificationTokenService";
 import { prisma } from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getCustomerAndCheckoutSession } from "../../lib/getCustomerAndCheckoutSession";
+import { VerificationTokenService } from "../../lib/VerificationTokenService";
 
 // Mock dependencies
 vi.mock("@calcom/prisma", () => ({
@@ -81,6 +79,7 @@ describe("paymentCallback", () => {
       email: "test@example.com",
       locale: "en",
       metadata: {},
+      organizationId: 5,
     } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
     mockPrisma.user.update.mockResolvedValue({
@@ -171,6 +170,7 @@ describe("paymentCallback", () => {
           email: "different@example.com",
           locale: "en",
           metadata: { stripeCustomerId: "cus_123" },
+          organizationId: 5,
         } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
       const { default: handler } = await import("../paymentCallback");
@@ -199,7 +199,7 @@ describe("paymentCallback", () => {
 
       await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
 
-      expect(callOrder).toEqual(["update-user", "create-token"]);
+      expect(callOrder).toEqual(["update-user", "update-user", "create-token"]);
     });
 
     it("should redirect with correct parameters after successful payment", async () => {
@@ -265,6 +265,79 @@ describe("paymentCallback", () => {
         identifier: "test@example.com", // Should use user.email
         expires: expect.any(Date),
       });
+    });
+  });
+
+  describe("premium username assignment", () => {
+    it("default handler writes the username, then the isPremium metadata", async () => {
+      const { default: handler } = await import("../paymentCallback");
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 1 },
+        data: { username: "premium-user" },
+        select: { id: true },
+      });
+      expect(mockPrisma.user.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 1 },
+        data: { metadata: { isPremium: true } },
+        select: { id: true },
+      });
+    });
+
+    it("injected assigner receives the organization and the username is not written through prisma", async () => {
+      const assignUsername = vi.fn().mockResolvedValue(undefined);
+      const { createPaymentCallbackHandler } = await import("../paymentCallback");
+      const handler = createPaymentCallbackHandler(assignUsername);
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      expect(assignUsername).toHaveBeenCalledWith({ userId: 1, organizationId: 5, username: "premium-user" });
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { metadata: { isPremium: true } },
+        select: { id: true },
+      });
+    });
+
+    it("a refused username gives a 400 and does not mark the user premium", async () => {
+      const assignUsername = vi.fn().mockRejectedValue(new Error("username taken"));
+      const { createPaymentCallbackHandler } = await import("../paymentCallback");
+      const handler = createPaymentCallbackHandler(assignUsername);
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      // defaultResponder turns the thrown HttpError into the response status
+      expect(mockRes.status).toHaveBeenCalledWith(400);
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("premium username could still not be reserved"),
+        })
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockVerificationTokenServiceCreate).not.toHaveBeenCalled();
+    });
+
+    it("an unpaid checkout does not assign the username", async () => {
+      mockGetCustomerAndCheckoutSession.mockResolvedValue({
+        stripeCustomer: {
+          id: "cus_123",
+          email: "test@example.com",
+          metadata: { username: "premium-user" },
+        },
+        checkoutSession: { payment_status: "unpaid" },
+      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+      const assignUsername = vi.fn().mockResolvedValue(undefined);
+      const { createPaymentCallbackHandler } = await import("../paymentCallback");
+      const handler = createPaymentCallbackHandler(assignUsername);
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      expect(assignUsername).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });
