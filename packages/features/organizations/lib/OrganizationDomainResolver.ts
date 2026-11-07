@@ -27,10 +27,10 @@ export class OrganizationDomainResolver {
   constructor(private readonly deps: IOrganizationDomainResolverDeps) {}
 
   async resolve(host: string | null | undefined): Promise<RequestOrganizationDto | null> {
-    const { defaultDomain } = this.deps.organizationsConfig;
-
     if (!isOrganizationsEnabled() || isLoopbackHost(host)) {
+      const { defaultDomain } = this.deps.organizationsConfig;
       if (defaultDomain === null) return null;
+      // Per-request lookups (health checks hit loopback constantly) keep caching misses.
       return this.cached(`default:${defaultDomain}`, () =>
         this.deps.organizationRepository.findDefault(defaultDomain)
       );
@@ -41,12 +41,25 @@ export class OrganizationDomainResolver {
     return this.cached(`domain:${domain}`, () => this.deps.organizationRepository.findByDomain(domain));
   }
 
+  async resolveDefault(): Promise<RequestOrganizationDto | null> {
+    const { defaultDomain } = this.deps.organizationsConfig;
+    if (defaultDomain === null) return null;
+    // A missing default org is not cached: it may be created moments later (data migration or
+    // first-run setup), and user creation must pick it up right away.
+    return this.cached(
+      `default:${defaultDomain}`,
+      () => this.deps.organizationRepository.findDefault(defaultDomain),
+      { cacheMisses: false }
+    );
+  }
+
   private async cached(
     key: string,
-    load: () => Promise<OrganizationRecord | null>
+    load: () => Promise<OrganizationRecord | null>,
+    { cacheMisses = true }: { cacheMisses?: boolean } = {}
   ): Promise<RequestOrganizationDto | null> {
     const entry = this.cache.get(key);
-    if (entry && entry.expiresAt > Date.now()) return entry.value;
+    if (entry && entry.expiresAt > Date.now() && (entry.value || cacheMisses)) return entry.value;
 
     const pending = this.inFlight.get(key);
     if (pending) return pending;
@@ -55,7 +68,7 @@ export class OrganizationDomainResolver {
       .then((record) => {
         const value = record ? this.toDto(record) : null;
         // Misses are cached too, otherwise every request for an unknown host would hit the database.
-        this.store(key, value);
+        if (value || cacheMisses) this.store(key, value);
         return value;
       })
       .finally(() => {

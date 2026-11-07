@@ -13,6 +13,7 @@ import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/s
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { ErrorCode } from "@calcom/lib/errorCodes";
@@ -82,12 +83,16 @@ export default async function handler(body: Record<string, string>, requestHeade
         return NextResponse.json({ message: "Organization not found" }, { status: 404 });
       }
       hostOrgId = hostOrg.id;
+    } else {
+      // Every user needs an org; null only until the default org has been created by its migration
+      hostOrgId = await findDefaultOrganizationId();
     }
     const userValidation = await validateAndGetCorrectedUsernameAndEmail({
       username,
       email: userEmail,
       isSignup: true,
-      ...(hostOrgId !== null && { usernameOrganizationId: hostOrgId }),
+      // With the flag off usernames stay globally unique, so validation must not narrow to the default org
+      ...(orgsEnabled && hostOrgId !== null && { usernameOrganizationId: hostOrgId }),
     });
     if (!userValidation.isValid) {
       logger.error("User validation failed", { userValidation });
@@ -132,10 +137,12 @@ export default async function handler(body: Record<string, string>, requestHeade
 
       const teamOrganizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
       // A team outside any org has no org namespace of its own, so its invitees join the host org
-      const fallbackHostOrgId =
-        orgsEnabled && teamOrganizationId === null
-          ? ((await getOrgFromRequest(requestHeaders))?.id ?? null)
-          : null;
+      let fallbackHostOrgId: number | null = null;
+      if (teamOrganizationId === null && orgsEnabled) {
+        fallbackHostOrgId = (await getOrgFromRequest(requestHeaders))?.id ?? null;
+      } else if (teamOrganizationId === null) {
+        fallbackHostOrgId = await findDefaultOrganizationId();
+      }
       const organizationId = teamOrganizationId ?? fallbackHostOrgId;
 
       const existingUserByUsername = await userRepository.findByUsernameAndOrganizationId({
@@ -168,24 +175,17 @@ export default async function handler(body: Record<string, string>, requestHeade
         throw error;
       }
 
-      if (orgsEnabled) {
-        const conflictResponse = await respondConflictAs409(async () => {
-          await createOrUpdateMemberships({ user, team });
-          if (fallbackHostOrgId !== null) {
-            await getOrganizationMembershipService().addMember({
-              organizationId: fallbackHostOrgId,
-              userId: user.id,
-              role: "MEMBER",
-            });
-          }
-        });
-        if (conflictResponse) return conflictResponse;
-      } else {
-        await createOrUpdateMemberships({
-          user,
-          team,
-        });
-      }
+      const conflictResponse = await respondConflictAs409(async () => {
+        await createOrUpdateMemberships({ user, team });
+        if (fallbackHostOrgId !== null) {
+          await getOrganizationMembershipService().addMember({
+            organizationId: fallbackHostOrgId,
+            userId: user.id,
+            role: "MEMBER",
+          });
+        }
+      });
+      if (conflictResponse) return conflictResponse;
 
       // Accept any child team invites for orgs.
       if (team.parent) {
@@ -203,7 +203,7 @@ export default async function handler(body: Record<string, string>, requestHeade
       },
     });
   } else {
-    if (hostOrgId === null) {
+    if (!orgsEnabled) {
       const isUsernameAvailable = !(await isUsernameReservedDueToMigration(correctedUsername));
       if (!isUsernameAvailable) {
         return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
