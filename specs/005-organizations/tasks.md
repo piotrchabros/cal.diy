@@ -344,7 +344,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 26**
 
-- [ ] T067 [US5] Implement `OrganizationMoveService` in `packages/features/organizations/services/OrganizationMoveService.ts`:
+- [X] T067 [US5] Implement `OrganizationMoveService` in `packages/features/organizations/services/OrganizationMoveService.ts`:
   - `moveUser({ userId, toOrganizationId, newUsername? })` removes the user's memberships of old-org teams, updates `User.organizationId`, the `Profile` and the org `Membership`, writes `TempOrgRedirect { from: oldUsername, fromOrgId: oldOrgId, type: User, toUrl: https://<new domain>/<username>, enabled: true }`, and returns CONFLICT when the username is taken in the target org.
   - `previewMoveTeam` and `moveTeam({ outsideMembers: "move" | "remove", newSlug? })` set `parentId` and write the `Team` redirect.
   - Disable redirects (`enabled = false`) when the old org reuses the `from` username or slug. Hook this into `addMember` and team create/rename.
@@ -394,6 +394,8 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T181 [US4] Decide whether removing an org member (FR-011 move to the default org) should write a `TempOrgRedirect` for their old public URL like FR-005 moves do (FR-018 only covers instance-admin moves); today it writes none. Implement in `PrismaOrganizationMembershipRepository.moveToOrganization` / T067 if yes. Add tests
 - [ ] T182 [US4] Profile-less org invitees (created by `viewer.organization.inviteMember` / T031 with `username = null`) have `ctx.user.organizationId = null` (it comes from the session profile, `packages/features/auth/lib/userFromSessionUtils.ts`), so they get NOT_FOUND on `/settings/organization/*` and the org invite landing sends them to "/". Resolve together with the T034 username question, then point org invites (`apps/web/app/(use-page-wrapper)/auth/team-invite/page.tsx`, `apps/web/modules/auth/team-invite-view.tsx`) at `/settings/organization/members`
 - [ ] T183 [P] `packages/features/teams/services/TeamProfileService.ts` imports schemas from `@calcom/trpc/server/routers/viewer/teams/teamProfile.schema` (features must not import trpc). Move `ZTeamProfileMetadataSchema`, `TEAM_LOGO_DATA_URL_PATTERN` and the input types into `packages/features/teams/` and re-export from the trpc schema file
+- [ ] T200 [US4] Make `OrganizationMembershipService.removeMember` (FR-011) delegate to `OrganizationMoveService.moveUser` with the default organization as target (covers T180's `newUsername` and, if decided, T181's redirect), and drop `PrismaOrganizationMembershipRepository.moveToOrganization`: it deletes and recreates the `Profile`, so event types lose their `profileId` and the session `upId` breaks, and it leaves `Host` rows on the old organization's team events. Add tests
+- [ ] T201 [US5] Disable move redirects (US5-6) on the remaining username-reuse paths: a user renaming themselves (`packages/trpc/server/routers/viewer/me/updateProfile.handler.ts`) or an admin renaming them (`packages/trpc/server/routers/viewer/users/_router.ts`) to a username freed by a move in their organization. Call `TempOrgRedirectRepository.disableByFrom({ fromOrgId, from: username, types: ["User"] })`. Add tests
 
 ## Dependencies and execution order
 

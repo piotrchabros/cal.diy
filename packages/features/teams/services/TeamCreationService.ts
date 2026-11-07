@@ -120,6 +120,18 @@ export class TeamCreationService {
       },
     });
 
+    // A slug freed by a team move may still redirect to the moved team; the new team wins
+    if (input.organizationId != null) {
+      const { getTempOrgRedirectRepository } = await import(
+        "@calcom/features/organizations/di/TempOrgRedirectRepository.container"
+      );
+      await getTempOrgRedirectRepository().disableByFrom({
+        fromOrgId: input.organizationId,
+        from: slug,
+        types: ["Team", "TeamEventType"],
+      });
+    }
+
     return team;
   }
 }

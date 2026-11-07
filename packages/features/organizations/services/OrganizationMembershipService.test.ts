@@ -60,10 +60,12 @@ describe("OrganizationMembershipService", () => {
   let service: OrganizationMembershipService;
   let userRepository: ReturnType<typeof buildUserRepository>;
   let sendInvite: Mock;
+  let disableByFrom: Mock;
 
   beforeEach(() => {
     userRepository = buildUserRepository();
     sendInvite = vi.fn().mockResolvedValue(undefined);
+    disableByFrom = vi.fn().mockResolvedValue(0);
     organizationRepository = new InMemoryOrganizationRepository();
     membershipRepository = new InMemoryOrganizationMembershipRepository();
     organizationRepository.seed({ id: ORG_ID, name: "Acme", slug: "acme", domain: "acme.com" });
@@ -76,6 +78,7 @@ describe("OrganizationMembershipService", () => {
       organizationsConfig: { defaultDomain: DEFAULT_DOMAIN },
       userRepository,
       teamInviteService: { sendInvite },
+      tempOrgRedirectRepository: { disableByFrom },
     });
   });
 
@@ -93,6 +96,7 @@ describe("OrganizationMembershipService", () => {
       expect(membershipRepository.memberships).toEqual([
         { userId: 1, teamId: ORG_ID, role: "ADMIN", accepted: true },
       ]);
+      expect(disableByFrom).toHaveBeenCalledWith({ fromOrgId: ORG_ID, from: "alice", types: ["User"] });
     });
 
     it("rejects a user who belongs to another organization", async () => {
@@ -124,6 +128,7 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.Conflict,
         "Username is already taken in this organization"
       );
+      expect(disableByFrom).not.toHaveBeenCalled();
     });
 
     it("rejects a missing organization", async () => {
@@ -591,6 +596,7 @@ describe("OrganizationMembershipService", () => {
         organizationsConfig: { defaultDomain: null },
         userRepository,
         teamInviteService: { sendInvite },
+        tempOrgRedirectRepository: { disableByFrom },
       });
 
       await expectRejection(

@@ -59,6 +59,7 @@ describe("OrganizationService", () => {
           setOrganizationId: vi.fn(),
         },
         teamInviteService: { sendInvite: vi.fn() },
+        tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
       }),
     });
   }

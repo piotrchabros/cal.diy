@@ -34,13 +34,15 @@ describe("TeamProfileService", () => {
   let service: TeamProfileService;
   let uploadTeamLogo: ReturnType<typeof vi.fn>;
   let getOrganizationRole: ReturnType<typeof vi.fn>;
+  let disableTeamRedirects: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     db = buildPrismaMock();
     uploadTeamLogo = vi.fn().mockResolvedValue("/api/avatar/new-logo.png");
     getOrganizationRole = vi.fn().mockResolvedValue(null);
-    service = new TeamProfileService(asPrisma(db), uploadTeamLogo, getOrganizationRole);
+    disableTeamRedirects = vi.fn().mockResolvedValue(undefined);
+    service = new TeamProfileService(asPrisma(db), uploadTeamLogo, getOrganizationRole, disableTeamRedirects);
   });
 
   afterEach(() => {
@@ -142,6 +144,26 @@ describe("TeamProfileService", () => {
       expect(data.slug).toBe("bluebee");
       expect(profile.location).toBe("London, UK");
       expect(profile.showMap).toBe(true);
+      expect(disableTeamRedirects).not.toHaveBeenCalled();
+    });
+
+    it("disables the target org's redirects for a changed slug inside an organization", async () => {
+      db.membership.findUnique.mockResolvedValue(ownerMembership);
+      db.team.findUnique.mockResolvedValue(orgTeam);
+      db.team.findFirst.mockResolvedValue(null);
+      db.team.update.mockResolvedValue({ ...orgTeam, slug: "honey" });
+      await service.updateTeamProfile({ teamId: 10, userId: 7, input: { ...input, slug: "honey" } });
+      expect(disableTeamRedirects).toHaveBeenCalledWith({ organizationId: 100, slug: "honey" });
+    });
+
+    it("leaves redirects alone when the slug is unchanged or the team has no organization", async () => {
+      db.membership.findUnique.mockResolvedValue(ownerMembership);
+      db.team.findFirst.mockResolvedValue(null);
+      db.team.findUnique.mockResolvedValueOnce(orgTeam).mockResolvedValueOnce(baseTeam);
+      db.team.update.mockResolvedValue(baseTeam);
+      await service.updateTeamProfile({ teamId: 10, userId: 7, input });
+      await service.updateTeamProfile({ teamId: 10, userId: 7, input: { ...input, slug: "honey" } });
+      expect(disableTeamRedirects).not.toHaveBeenCalled();
     });
   });
 

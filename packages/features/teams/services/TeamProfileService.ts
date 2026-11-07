@@ -111,11 +111,25 @@ const defaultGetOrganizationRole: GetOrganizationRole = async (userId, organizat
   return getOrganizationMembershipService().getRole(userId, organizationId);
 };
 
+export type DisableTeamRedirects = (params: { organizationId: number; slug: string }) => Promise<void>;
+
+const defaultDisableTeamRedirects: DisableTeamRedirects = async ({ organizationId, slug }) => {
+  const { getTempOrgRedirectRepository } = await import(
+    "@calcom/features/organizations/di/TempOrgRedirectRepository.container"
+  );
+  await getTempOrgRedirectRepository().disableByFrom({
+    fromOrgId: organizationId,
+    from: slug,
+    types: ["Team", "TeamEventType"],
+  });
+};
+
 export class TeamProfileService {
   constructor(
     private prisma: PrismaLike,
     private uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo,
-    private getOrganizationRole: GetOrganizationRole = defaultGetOrganizationRole
+    private getOrganizationRole: GetOrganizationRole = defaultGetOrganizationRole,
+    private disableTeamRedirects: DisableTeamRedirects = defaultDisableTeamRedirects
   ) {}
 
   private async resolveAccess(userId: number, teamId: number): Promise<TeamAccess> {
@@ -228,6 +242,11 @@ export class TeamProfileService {
       },
       select: teamProfileSelect,
     });
+
+    // A slug freed by a team move may still redirect to the moved team; the renamed team wins
+    if (team.parentId !== null && slug !== team.slug) {
+      await this.disableTeamRedirects({ organizationId: team.parentId, slug });
+    }
 
     const updatedMeta = parseProfileMetadata(updated.metadata);
     return {

@@ -2,8 +2,14 @@ import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TeamCreationService } from "./TeamCreationService";
+
+const { disableByFrom } = vi.hoisted(() => ({ disableByFrom: vi.fn().mockResolvedValue(0) }));
+
+vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
+  getTempOrgRedirectRepository: () => ({ disableByFrom }),
+}));
 
 describe("TeamCreationService", () => {
   describe("normalizeSlug", () => {
@@ -62,6 +68,10 @@ describe("TeamCreationService", () => {
   });
 
   describe("createTeam", () => {
+    beforeEach(() => {
+      disableByFrom.mockClear();
+    });
+
     it("creates a team and adds the creator as an accepted owner", async () => {
       const user = await prismock.user.create({
         data: { email: "founder@example.com", username: "founder" },
@@ -138,6 +148,11 @@ describe("TeamCreationService", () => {
 
       const stored = await prismock.team.findUnique({ where: { id: team.id } });
       expect(stored?.parentId).toBe(org.id);
+      expect(disableByFrom).toHaveBeenCalledWith({
+        fromOrgId: org.id,
+        from: "sales",
+        types: ["Team", "TeamEventType"],
+      });
     });
 
     it("allows the same slug in a different organization", async () => {
@@ -206,6 +221,7 @@ describe("TeamCreationService", () => {
 
       const stored = await prismock.team.findUnique({ where: { id: team.id } });
       expect(stored?.parentId).toBeNull();
+      expect(disableByFrom).not.toHaveBeenCalled();
     });
   });
 });
