@@ -4,6 +4,7 @@ import { getBooking } from "@calcom/features/bookings/lib/payment/getBooking";
 import { AttendeeRepository } from "@calcom/features/bookings/repositories/AttendeeRepository";
 import { PrismaBookingPaymentRepository } from "@calcom/features/bookings/repositories/PrismaBookingPaymentRepository";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
 import { z } from "zod";
@@ -83,6 +84,8 @@ export async function sendAwaitingPaymentEmail(payload: string): Promise<void> {
             name: primaryAttendee.name ?? null,
             email: primaryAttendee.email ?? null,
             date: booking.startTime.toISOString(),
+            // With the flag off bookerUrl is WEBAPP_URL, which would change the historical WEBSITE_URL link
+            baseUrl: isOrganizationsEnabled() ? evt.bookerUrl : undefined,
           }),
           paymentOption: payment.paymentOption || "ON_BOOKING",
           amount: payment.amount,
