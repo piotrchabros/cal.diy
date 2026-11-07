@@ -1,3 +1,5 @@
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TRPCContextInner } from "../../../createContext";
 import { createCallerFactory } from "../../../trpc";
@@ -8,10 +10,8 @@ const mocks = vi.hoisted(() => ({
   disableByFrom: vi.fn(),
   repointUserRedirectsForRename: vi.fn(),
   findUnique: vi.fn(),
-  $transaction: vi.fn(),
-  txUserUpdate: vi.fn(),
-  txProfileUpdate: vi.fn(),
-  txProfileUpdateMany: vi.fn(),
+  userUpdate: vi.fn(),
+  changeUsername: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -34,13 +34,12 @@ vi.mock("@calcom/features/organizations/lib/repointUserRedirectsForRename", () =
   repointUserRedirectsForRename: mocks.repointUserRedirectsForRename,
 }));
 
-const tx = {
-  user: { update: mocks.txUserUpdate },
-  profile: { update: mocks.txProfileUpdate, updateMany: mocks.txProfileUpdateMany },
-};
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ changeUsername: mocks.changeUsername }),
+}));
 
 const ctx = {
-  prisma: { user: { findUnique: mocks.findUnique }, $transaction: mocks.$transaction },
+  prisma: { user: { findUnique: mocks.findUnique, update: mocks.userUpdate } },
   insightsDb: {},
   locale: "en",
   traceContext: { traceId: "trace_test", spanId: "span_test", operation: "test" },
@@ -60,12 +59,12 @@ describe("admin users router update", () => {
       session: { upId: "usr-1", expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } },
     });
     mocks.findUnique.mockResolvedValue(requestedUser);
-    mocks.txUserUpdate.mockResolvedValue({ id: 11 });
-    mocks.txProfileUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.$transaction.mockImplementation(async (fn: (client: typeof tx) => Promise<unknown>) => {
-      const result = await fn(tx);
-      mocks.calls.push("transaction");
-      return result;
+    mocks.changeUsername.mockImplementation(async () => {
+      mocks.calls.push("changeUsername");
+    });
+    mocks.userUpdate.mockImplementation(async () => {
+      mocks.calls.push("userUpdate");
+      return { id: 11 };
     });
     mocks.repointUserRedirectsForRename.mockImplementation(async () => {
       mocks.calls.push("repoint");
@@ -80,11 +79,11 @@ describe("admin users router update", () => {
     vi.unstubAllEnvs();
   });
 
-  it("disables User redirects from the new username after the transaction", async () => {
+  it("disables User redirects from the new username after the update", async () => {
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
     expect(mocks.disableByFrom).toHaveBeenCalledWith({ fromOrgId: 5, from: "new-name", types: ["User"] });
-    expect(mocks.calls).toEqual(["transaction", "repoint", "disableByFrom"]);
+    expect(mocks.calls).toEqual(["changeUsername", "userUpdate", "repoint", "disableByFrom"]);
   });
 
   it("repoints move redirects in the user's organization from the old to the new username", async () => {
@@ -97,15 +96,62 @@ describe("admin users router update", () => {
     });
   });
 
-  it("renames a legacy moved-to profile without rewriting redirects inside the transaction", async () => {
+  it("renames the username through OrganizationMembershipService and updates the other fields without it", async () => {
+    await createCaller(ctx).update({ userId: 11, username: "new-name", name: "Renamed" });
+
+    expect(mocks.changeUsername).toHaveBeenCalledWith({ userId: 11, username: "new-name" });
+    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { name: "Renamed" } });
+  });
+
+  it("routes a legacy moved-to user through changeUsername instead of renaming the profile directly", async () => {
     mocks.findUnique.mockResolvedValue({ ...requestedUser, movedToProfileId: 77 });
-    mocks.txProfileUpdate.mockResolvedValue({ id: 77, organizationId: 5 });
 
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
-    expect(mocks.txProfileUpdate).toHaveBeenCalledWith({ where: { id: 77 }, data: { username: "new-name" } });
-    expect(mocks.txProfileUpdateMany).not.toHaveBeenCalled();
-    expect(mocks.calls).toEqual(["transaction", "repoint", "disableByFrom"]);
+    expect(mocks.changeUsername).toHaveBeenCalledWith({ userId: 11, username: "new-name" });
+    expect(mocks.calls).toEqual(["changeUsername", "userUpdate", "repoint", "disableByFrom"]);
+  });
+
+  it("calls changeUsername for an unchanged username so a missing org profile is created", async () => {
+    await createCaller(ctx).update({ userId: 11, username: "old-name" });
+
+    expect(mocks.changeUsername).toHaveBeenCalledWith({ userId: 11, username: "old-name" });
+  });
+
+  it("does not call changeUsername without a username", async () => {
+    await createCaller(ctx).update({ userId: 11, name: "Renamed" });
+
+    expect(mocks.changeUsername).not.toHaveBeenCalled();
+    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { name: "Renamed" } });
+  });
+
+  it("clears the username directly when it is set to null", async () => {
+    await createCaller(ctx).update({ userId: 11, username: null });
+
+    expect(mocks.changeUsername).not.toHaveBeenCalled();
+    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { username: null } });
+  });
+
+  it("maps a username conflict to a CONFLICT error and skips the other changes", async () => {
+    mocks.changeUsername.mockRejectedValue(
+      new ErrorWithCode(ErrorCode.Conflict, "Username is already taken in this organization")
+    );
+
+    await expect(
+      createCaller(ctx).update({ userId: 11, username: "taken", name: "Renamed" })
+    ).rejects.toMatchObject({ code: "CONFLICT", message: "Username is already taken in this organization" });
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
+    expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
+  });
+
+  it("rethrows other changeUsername errors unchanged", async () => {
+    const failure = new Error("database down");
+    mocks.changeUsername.mockRejectedValue(failure);
+
+    await expect(createCaller(ctx).update({ userId: 11, username: "new-name" })).rejects.toMatchObject({
+      cause: failure,
+    });
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
   });
 
   it("does not disable redirects when ORGANIZATIONS_ENABLED is off", async () => {
@@ -130,7 +176,7 @@ describe("admin users router update", () => {
   ])("does not disable redirects with $name", async ({ input }) => {
     await createCaller(ctx).update(input);
 
-    expect(mocks.$transaction).toHaveBeenCalled();
+    expect(mocks.userUpdate).toHaveBeenCalled();
     expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
     expect(mocks.disableByFrom).not.toHaveBeenCalled();
   });

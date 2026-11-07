@@ -1,9 +1,7 @@
-import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
-import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { Injectable } from "@nestjs/common";
 import { v4 as uuidv4 } from "uuid";
-
-import type { Prisma } from "@calcom/prisma/client";
+import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
+import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 
 @Injectable()
 export class ProfilesRepository {
@@ -33,18 +31,6 @@ export class ProfilesRepository {
         userId,
         username: userOrgUsername,
       },
-    });
-  }
-
-  async updateProfile(orgId: number, userId: number, body: Prisma.ProfileUpdateInput) {
-    return this.dbWrite.prisma.profile.update({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId: orgId,
-        },
-      },
-      data: body,
     });
   }
 }

@@ -1,6 +1,7 @@
 import { CreationSource } from "@calcom/platform-libraries";
 import type { Prisma, Profile, Team, User } from "@calcom/prisma/client";
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { v4 as uuidv4 } from "uuid";
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { CreateManagedUserInput } from "@/modules/users/inputs/create-managed-user.input";
@@ -256,13 +257,23 @@ export class UsersRepository {
     });
   }
 
-  async updateUsername(userId: number, newUsername: string) {
-    return this.dbWrite.prisma.user.update({
-      where: { id: userId },
-      data: {
-        username: newUsername,
-      },
-    });
+  // users.username and the org Profile.username are written together so a conflict or a missing profile cannot
+  // leave them out of sync (data-model.md); managed users are accepted org members, so the profile is created
+  // when missing like OrganizationMembershipService.changeUsername does
+  async updateUsernameAndUpsertOrgProfile(userId: number, organizationId: number, username: string) {
+    await this.dbWrite.prisma.$transaction([
+      this.dbWrite.prisma.user.update({
+        where: { id: userId },
+        data: { username },
+        select: { id: true },
+      }),
+      this.dbWrite.prisma.profile.upsert({
+        where: { userId_organizationId: { userId, organizationId } },
+        create: { uid: uuidv4(), userId, organizationId, username },
+        update: { username },
+        select: { id: true },
+      }),
+    ]);
   }
 
   async delete(userId: number): Promise<User> {
