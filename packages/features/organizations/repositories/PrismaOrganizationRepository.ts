@@ -129,6 +129,8 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
             customDomain: domain,
             isOrganizationConfigured: true,
             isOrganizationVerified: true,
+            // The schema default is false, which would make org booking pages noindex once the organizations flag is on.
+            allowSEOIndexing: true,
             // Upstream auto-join paths match signup emails against orgAutoAcceptEmail, so leaving it
             // empty keeps strangers from silently joining an organization.
             orgAutoAcceptEmail: "",
@@ -158,6 +160,7 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
                   orgAutoAcceptEmail: "",
                   isOrganizationConfigured: true,
                   isOrganizationVerified: true,
+                  allowSEOIndexing: true,
                 },
                 update: { customDomain: domain },
               },

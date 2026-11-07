@@ -198,6 +198,7 @@ describe("PrismaOrganizationRepository", () => {
             customDomain: "cal.acme.com",
             isOrganizationConfigured: true,
             isOrganizationVerified: true,
+            allowSEOIndexing: true,
             orgAutoAcceptEmail: "",
           },
         },
@@ -225,11 +226,13 @@ describe("PrismaOrganizationRepository", () => {
               orgAutoAcceptEmail: "",
               isOrganizationConfigured: true,
               isOrganizationVerified: true,
+              allowSEOIndexing: true,
             },
             update: { customDomain: "cal2.acme.com" },
           },
         },
       });
+      expect(args.data.organizationSettings.upsert.update).not.toHaveProperty("allowSEOIndexing");
     });
 
     it("does not touch the settings without a domain", async () => {
