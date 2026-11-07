@@ -129,6 +129,44 @@ describe("OrganizationDomainResolver", () => {
     expect(findDefault).not.toHaveBeenCalled();
   });
 
+  describe("resolveDefault", () => {
+    it("returns the default org and caches the hit", async () => {
+      const { resolver, findDefault } = setup();
+
+      await expect(resolver.resolveDefault()).resolves.toEqual(defaultOrg);
+      await expect(resolver.resolveDefault()).resolves.toEqual(defaultOrg);
+      expect(findDefault).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not cache a missing default org", async () => {
+      const { resolver, organizationRepository, findDefault } = setup();
+      await organizationRepository.delete(1);
+
+      await expect(resolver.resolveDefault()).resolves.toBeNull();
+      await expect(resolver.resolveDefault()).resolves.toBeNull();
+      expect(findDefault).toHaveBeenCalledTimes(2);
+    });
+
+    it("ignores a miss cached by resolve() so a newly created default org is found", async () => {
+      const { resolver, organizationRepository, findDefault } = setup();
+      await organizationRepository.delete(1);
+
+      await expect(resolver.resolve("localhost")).resolves.toBeNull();
+      await expect(resolver.resolve("localhost")).resolves.toBeNull();
+      expect(findDefault).toHaveBeenCalledTimes(1);
+
+      await expect(resolver.resolveDefault()).resolves.toBeNull();
+      expect(findDefault).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns null without a lookup when there is no default domain", async () => {
+      const { resolver, findDefault } = setup(null);
+
+      await expect(resolver.resolveDefault()).resolves.toBeNull();
+      expect(findDefault).not.toHaveBeenCalled();
+    });
+  });
+
   it("evicts the oldest entry once the cache is full", async () => {
     const { resolver, findByDomain } = setup();
 

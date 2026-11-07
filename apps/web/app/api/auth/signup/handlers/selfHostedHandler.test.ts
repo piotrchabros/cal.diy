@@ -16,6 +16,7 @@ const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
 const mockIsOrganizationsEnabled: Mock = vi.fn().mockReturnValue(false);
 const mockGetOrgFromRequest: Mock = vi.fn();
 const mockAddMember: Mock = vi.fn();
+const mockFindDefaultOrganizationId: Mock = vi.fn().mockResolvedValue(null);
 
 vi.mock("next/server", async () => {
   const { createNextServerMock } = await import(
@@ -53,6 +54,9 @@ vi.mock("@calcom/lib/organizations/isOrganizationsEnabled", () => ({
 }));
 vi.mock("@calcom/features/organizations/lib/getOrgFromRequest", () => ({
   getOrgFromRequest: (...args: unknown[]) => mockGetOrgFromRequest(...args),
+}));
+vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
+  findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
 }));
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
   getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
@@ -143,6 +147,7 @@ describe("selfHostedHandler – team invite materialization", () => {
 
 describe("selfHostedHandler – organizations", () => {
   const hostOrg = { id: 7, slug: "acme", name: "Acme" };
+  const defaultOrgId = 1;
   const signupBody = {
     email: "new@example.com",
     password: "ValidPassword123!",
@@ -155,6 +160,7 @@ describe("selfHostedHandler – organizations", () => {
     resetPrismaMock();
     mockIsOrganizationsEnabled.mockReturnValue(true);
     mockGetOrgFromRequest.mockResolvedValue(hostOrg);
+    mockFindDefaultOrganizationId.mockResolvedValue(defaultOrgId);
     mockAddMember.mockResolvedValue({ userId: 42, organizationId: hostOrg.id, role: "MEMBER" });
     mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
     mockFindTokenByToken.mockResolvedValue(createMockFoundToken());
@@ -175,21 +181,99 @@ describe("selfHostedHandler – organizations", () => {
     return args.create.organizationId;
   }
 
-  it("keeps the legacy global signup when the flag is off", async () => {
+  it("joins the default org with global username validation when the flag is off", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
 
     const response = await callHandler(signupBody);
 
     expect(response.status).toBe(201);
-    expect(lastCreatedOrganizationId()).toBeNull();
+    expect(lastCreatedOrganizationId()).toBe(defaultOrgId);
     expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
-    expect(mockAddMember).not.toHaveBeenCalled();
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: defaultOrgId, userId: 42, role: "MEMBER" });
     expect(validateAndGetCorrectedUsernameAndEmail).toHaveBeenCalledWith({
       username: "newuser",
       email: "new@example.com",
       isSignup: true,
     });
     expect(isUsernameReservedDueToMigration).toHaveBeenCalled();
+  });
+
+  it("returns 409 when the default org membership conflicts with the flag off", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    mockAddMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+    );
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS });
+  });
+
+  it("rejects a migration-reserved username with the flag off when the default org exists", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    vi.mocked(isUsernameReservedDueToMigration).mockResolvedValueOnce(true);
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(409);
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy global signup when the flag is off and no default org exists yet", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    mockFindDefaultOrganizationId.mockResolvedValue(null);
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(201);
+    expect(lastCreatedOrganizationId()).toBeNull();
+    expect(mockAddMember).not.toHaveBeenCalled();
+    expect(isUsernameReservedDueToMigration).toHaveBeenCalled();
+  });
+
+  it("joins the default org when the inviting team has no org and the flag is off", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: null }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBe(defaultOrgId);
+    expect(createOrUpdateMemberships).toHaveBeenCalled();
+    expect(mockGetOrgFromRequest).not.toHaveBeenCalled();
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: defaultOrgId, userId: 42, role: "MEMBER" });
+  });
+
+  it("keeps a team invite outside any org when the flag is off and no default org exists yet", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    mockFindDefaultOrganizationId.mockResolvedValue(null);
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: null }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBeNull();
+    expect(createOrUpdateMemberships).toHaveBeenCalled();
+    expect(mockAddMember).not.toHaveBeenCalled();
+  });
+
+  it("does not add a default org membership for a sub-team invite with the flag off", async () => {
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: { id: 11 } as never }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(201);
+    expect(lastUpsertedOrganizationId()).toBe(11);
+    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockAddMember).not.toHaveBeenCalled();
   });
 
   it("joins the host org as MEMBER without a token", async () => {
@@ -202,6 +286,7 @@ describe("selfHostedHandler – organizations", () => {
       expect.objectContaining({ usernameOrganizationId: hostOrg.id })
     );
     expect(isUsernameReservedDueToMigration).not.toHaveBeenCalled();
+    expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the request has no organization", async () => {
