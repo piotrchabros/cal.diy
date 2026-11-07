@@ -105,6 +105,7 @@ describe("getHandler - identity provider email lookup", () => {
     requiresBookerEmailVerification: false,
     role: "USER",
     organization: null,
+    organizationId: null as number | null,
     teams: [],
   };
 
@@ -228,5 +229,17 @@ describe("getHandler - identity provider email lookup", () => {
     const result = await getHandler({ ctx, input: {} });
 
     expect(result.identityProviderEmail).toBe("");
+  });
+
+  it("falls back to ctx.user.organizationId when the profile has no organization", async () => {
+    const ctx = createCtx({ organizationId: 5 });
+    mockEnrichUserWithTheProfile.mockImplementation(({ user }) => ({
+      ...user,
+      profile: { organizationId: null },
+    }));
+
+    const result = await getHandler({ ctx, input: {} });
+
+    expect(result.organizationId).toBe(5);
   });
 });

@@ -4,6 +4,7 @@ import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
 import { teamMetadataSchema, userMetadata } from "@calcom/prisma/zod-utils";
@@ -78,7 +79,9 @@ async function getUserFromSession(ctx: SessionContext, session: Maybe<Session>) 
     avatar: `${WEBAPP_URL}/${user.username}/avatar.png${organization.id ? `?orgId=${organization.id}` : ""}`,
     // TODO: OrgNewSchema - later -  We could consolidate the props in user.profile?.organization as organization is a profile thing now.
     organization,
-    organizationId: organization.id,
+    // Org members without an org Profile still belong to their organization via users.organizationId
+    organizationId:
+      organization.id ?? (isOrganizationsEnabled() ? (userFromDb.organizationId ?? null) : null),
     id,
     uuid,
     email,

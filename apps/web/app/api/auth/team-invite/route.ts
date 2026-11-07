@@ -12,12 +12,13 @@ import { z } from "zod";
 const completeTeamInviteSchema = z.object({
   csrfToken: z.string(),
   token: z.string().min(1),
-  password: z.string().min(1),
+  password: z.string().min(1).optional(),
+  username: z.string().trim().min(1).max(255).optional(),
 });
 
 async function handler(req: NextRequest) {
   const body = await parseRequestData(req);
-  const { csrfToken: submittedToken, token, password } = completeTeamInviteSchema.parse(body);
+  const { csrfToken: submittedToken, token, password, username } = completeTeamInviteSchema.parse(body);
   const cookieStore = await cookies();
 
   const cookieToken = cookieStore.get("calcom.csrf_token")?.value;
@@ -32,7 +33,7 @@ async function handler(req: NextRequest) {
     identifier: `api:team-invite:${piiHasher.hash(getIP(req))}`,
   });
 
-  const result = await new TeamMembersService().completeInviteSignup({ token, password });
+  const result = await new TeamMembersService().completeInviteSignup({ token, password, username });
 
   return NextResponse.json(result, { status: 201 });
 }
