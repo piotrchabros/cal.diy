@@ -1,3 +1,4 @@
+import type { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import type {
   TDisbandTeamInput,
   TTeamProfileMetadata,
@@ -7,6 +8,7 @@ import {
   TEAM_LOGO_DATA_URL_PATTERN,
   ZTeamProfileMetadataSchema,
 } from "@calcom/features/teams/lib/teamProfileSchema";
+import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
@@ -14,10 +16,16 @@ import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganization
 import { uploadLogo } from "@calcom/lib/server/avatar";
 import { isBase64Image, resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
 import slugify from "@calcom/lib/slugify";
-import type { EventType, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
+import type { EventType, Prisma, Team } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 
-type PrismaLike = Pick<PrismaClient, "membership" | "team">;
+export interface ITeamProfileServiceRepositories {
+  teamRepo: Pick<
+    TeamRepository,
+    "findProfileById" | "findIdBySlug" | "updateProfile" | "findPublicBySlugIncludeEventTypes" | "deleteById"
+  >;
+  membershipRepo: Pick<MembershipRepository, "findRoleAndAcceptedByUserIdAndTeamId">;
+}
 
 export type TeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | "bio" | "metadata"> & {
   role: MembershipRole;
@@ -35,45 +43,8 @@ export type PublicTeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | 
   eventTypes: PublicTeamEventType[];
 };
 
-const publicTeamProfileSelect = {
-  id: true,
-  name: true,
-  slug: true,
-  logoUrl: true,
-  bio: true,
-  metadata: true,
-  isPrivate: true,
-  hideBookATeamMember: true,
-  eventTypes: {
-    where: { hidden: false },
-    select: {
-      id: true,
-      title: true,
-      slug: true,
-      description: true,
-      length: true,
-    },
-    orderBy: [{ position: "desc" }, { id: "asc" }],
-  },
-} satisfies Prisma.TeamSelect;
-
-const teamProfileSelect = {
-  id: true,
-  name: true,
-  slug: true,
-  logoUrl: true,
-  bio: true,
-  metadata: true,
-  parentId: true,
-} satisfies Prisma.TeamSelect;
-
-const teamAccessSelect = {
-  ...teamProfileSelect,
-  isOrganization: true,
-} satisfies Prisma.TeamSelect;
-
 type TeamAccess = {
-  team: Prisma.TeamGetPayload<{ select: typeof teamAccessSelect }>;
+  team: NonNullable<Awaited<ReturnType<TeamRepository["findProfileById"]>>>;
   membershipRole: MembershipRole | null;
   isOrganizationAdmin: boolean;
 };
@@ -126,25 +97,22 @@ const defaultDisableTeamRedirects: DisableTeamRedirects = async ({ organizationI
 
 export class TeamProfileService {
   constructor(
-    private prisma: PrismaLike,
+    private repositories: ITeamProfileServiceRepositories,
     private uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo,
     private getOrganizationRole: GetOrganizationRole = defaultGetOrganizationRole,
     private disableTeamRedirects: DisableTeamRedirects = defaultDisableTeamRedirects
   ) {}
 
   private async resolveAccess(userId: number, teamId: number): Promise<TeamAccess> {
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      select: teamAccessSelect,
-    });
+    const team = await this.repositories.teamRepo.findProfileById({ teamId });
     // Organization rows are not teams; treating them as one would let team admins edit or delete the org.
     if (!team || team.isOrganization) {
       throw new ErrorWithCode(ErrorCode.NotFound, `Team profile not found: team ${teamId} does not exist`);
     }
 
-    const membership = await this.prisma.membership.findUnique({
-      where: { userId_teamId: { userId, teamId } },
-      select: { accepted: true, role: true },
+    const membership = await this.repositories.membershipRepo.findRoleAndAcceptedByUserIdAndTeamId({
+      userId,
+      teamId,
     });
     const membershipRole = membership?.accepted ? membership.role : null;
 
@@ -201,13 +169,10 @@ export class TeamProfileService {
     }
 
     const slug = slugify(input.slug);
-    const slugTaken = await this.prisma.team.findFirst({
-      where: {
-        slug,
-        parentId: team.parentId,
-        NOT: { id: teamId },
-      },
-      select: { id: true },
+    const slugTaken = await this.repositories.teamRepo.findIdBySlug({
+      slug,
+      parentId: team.parentId,
+      excludeTeamId: teamId,
     });
     if (slugTaken) {
       throw new ErrorWithCode(
@@ -231,8 +196,8 @@ export class TeamProfileService {
         ? await this.uploadTeamLogo({ teamId, logo: input.logoUrl })
         : (input.logoUrl ?? null);
 
-    const updated = await this.prisma.team.update({
-      where: { id: teamId },
+    const updated = await this.repositories.teamRepo.updateProfile({
+      teamId,
       data: {
         name: input.name,
         slug,
@@ -240,7 +205,6 @@ export class TeamProfileService {
         logoUrl,
         metadata: metadata as Prisma.InputJsonValue,
       },
-      select: teamProfileSelect,
     });
 
     // A slug freed by a team move may still redirect to the moved team; the renamed team wins
@@ -272,10 +236,9 @@ export class TeamProfileService {
   }): Promise<PublicTeamProfile | null> {
     const normalizedSlug = slugify(slug);
     if (!normalizedSlug) return null;
-    const team = await this.prisma.team.findFirst({
-      // Omitted rather than null when organizations are off: `parentId: null` would add an IS NULL filter.
-      where: { slug: normalizedSlug, isPrivate: false, ...(parentId !== undefined ? { parentId } : {}) },
-      select: publicTeamProfileSelect,
+    const team = await this.repositories.teamRepo.findPublicBySlugIncludeEventTypes({
+      slug: normalizedSlug,
+      parentId,
     });
     if (!team) return null;
     const profileMeta = parseProfileMetadata(team.metadata);
@@ -300,7 +263,7 @@ export class TeamProfileService {
         `Unable to disband team ${teamId}: user ${userId} is not the team owner`
       );
     }
-    await this.prisma.team.delete({ where: { id: teamId } });
+    await this.repositories.teamRepo.deleteById({ teamId });
     return { id: teamId };
   }
 }

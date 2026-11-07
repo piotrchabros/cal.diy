@@ -1,8 +1,7 @@
 import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
+import { getTeamProfileService } from "@calcom/features/teams/di/TeamProfileService.container";
 import { getTeamPublicMembersService } from "@calcom/features/teams/di/TeamPublicMembersService.container";
-import { TeamProfileService } from "@calcom/features/teams/services/TeamProfileService";
 import slugify from "@calcom/lib/slugify";
-import { prisma } from "@calcom/prisma";
 import { RedirectType } from "@calcom/prisma/enums";
 import { TeamPublicView } from "@calcom/web/modules/teams/views/team-public-view";
 import { handleOrgRedirect } from "@lib/handleOrgRedirect";
@@ -26,8 +25,7 @@ const getHost = cache(async () => getHostOrganization(await headers()));
 const getPublicTeam = cache(async (slug: string, parentId: number | undefined) => {
   const decoded = safeDecodeSlug(slug);
   if (!decoded) return null;
-  const service = new TeamProfileService(prisma);
-  return service.getPublicTeamBySlug({ slug: decoded, parentId });
+  return getTeamProfileService().getPublicTeamBySlug({ slug: decoded, parentId });
 });
 
 const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> => {

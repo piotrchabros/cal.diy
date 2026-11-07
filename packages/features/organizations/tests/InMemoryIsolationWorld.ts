@@ -2,15 +2,12 @@ import type { EventTypeHostServiceDeps } from "@calcom/features/host/services/Ev
 import type { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import type { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
 import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
-import type { TeamProfileService } from "@calcom/features/teams/services/TeamProfileService";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { InMemoryNotetakerMembershipLookup } from "../../notetaker/tests/InMemoryNotetakerMembershipLookup";
 import { createInMemoryNotetakerRepositories } from "../../notetaker/tests/InMemoryNotetakerRepositories";
 
 type InviteToken = { id: number; teamId: number; email: string; token: string; expires: Date };
-
-type TeamProfilePrisma = ConstructorParameters<typeof TeamProfileService>[0];
 
 type MemberFilter = { teamId: number; search?: string | null; roles?: MembershipRole[]; accepted?: boolean };
 
@@ -91,6 +88,16 @@ export class InMemoryIsolationWorld {
     const adapter = {
       findUniqueByUserIdAndTeamId: async ({ userId, teamId }: { userId: number; teamId: number }) =>
         this.membership(userId, teamId),
+      findRoleAndAcceptedByUserIdAndTeamId: async ({
+        userId,
+        teamId,
+      }: {
+        userId: number;
+        teamId: number;
+      }) => {
+        const membership = this.membership(userId, teamId);
+        return membership ? { role: membership.role, accepted: membership.accepted } : null;
+      },
       hasMembership: async ({ userId, teamId }: { userId: number; teamId: number }) =>
         !!this.membership(userId, teamId)?.accepted,
       findTeamMembers: async (args: MemberFilter & { skip: number; take: number }) =>
@@ -131,6 +138,10 @@ export class InMemoryIsolationWorld {
 
   teamRepository() {
     const adapter = {
+      findProfileById: async ({ teamId }: { teamId: number }) => {
+        const team = this.teams.find((t) => t.id === teamId);
+        return team ? { ...team, logoUrl: null, bio: null, metadata: {} } : null;
+      },
       findBasicById: async ({ teamId }: { teamId: number }) => {
         const team = this.teams.find((t) => t.id === teamId);
         return team ? { ...team, logoUrl: null } : null;
@@ -220,22 +231,6 @@ export class InMemoryIsolationWorld {
         return { userId, organizationId, role };
       },
     };
-  }
-
-  teamProfilePrisma(): TeamProfilePrisma {
-    const adapter = {
-      membership: {
-        findUnique: async ({ where }: { where: { userId_teamId: { userId: number; teamId: number } } }) =>
-          this.membership(where.userId_teamId.userId, where.userId_teamId.teamId),
-      },
-      team: {
-        findUnique: async ({ where }: { where: { id: number } }) => {
-          const team = this.teams.find((t) => t.id === where.id);
-          return team ? { ...team, logoUrl: null, bio: null, metadata: {} } : null;
-        },
-      },
-    };
-    return adapter as unknown as TeamProfilePrisma;
   }
 
   // The notetaker fakes keep their own state, so they are filled from this store rather

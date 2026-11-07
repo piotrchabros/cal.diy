@@ -1,16 +1,24 @@
 import type { PrismaClient } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MembershipRepository } from "../../membership/repositories/MembershipRepository";
+import { TeamRepository } from "../repositories/TeamRepository";
 import { TeamProfileService } from "./TeamProfileService";
-
-type PrismaMock = Pick<PrismaClient, "membership" | "team">;
 
 const buildPrismaMock = () => ({
   membership: { findUnique: vi.fn() },
   team: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
 });
 
-const asPrisma = (mock: ReturnType<typeof buildPrismaMock>): PrismaMock => mock as unknown as PrismaMock;
+// The real repositories over a Prisma mock, so the assertions on query shapes below keep pinning
+// what the service sent to Prisma before its queries moved into the repositories.
+const repositoriesOver = (mock: ReturnType<typeof buildPrismaMock>) => {
+  const prismaClient = mock as unknown as PrismaClient;
+  return {
+    teamRepo: new TeamRepository(prismaClient),
+    membershipRepo: new MembershipRepository(prismaClient),
+  };
+};
 
 const ownerMembership = { id: 1, teamId: 10, userId: 7, accepted: true, role: MembershipRole.OWNER };
 const adminMembership = { ...ownerMembership, role: MembershipRole.ADMIN };
@@ -42,7 +50,12 @@ describe("TeamProfileService", () => {
     uploadTeamLogo = vi.fn().mockResolvedValue("/api/avatar/new-logo.png");
     getOrganizationRole = vi.fn().mockResolvedValue(null);
     disableTeamRedirects = vi.fn().mockResolvedValue(undefined);
-    service = new TeamProfileService(asPrisma(db), uploadTeamLogo, getOrganizationRole, disableTeamRedirects);
+    service = new TeamProfileService(
+      repositoriesOver(db),
+      uploadTeamLogo,
+      getOrganizationRole,
+      disableTeamRedirects
+    );
   });
 
   afterEach(() => {
@@ -304,7 +317,7 @@ describe("TeamProfileService", () => {
       db.team.findUnique.mockResolvedValue(baseTeam);
       db.team.delete.mockResolvedValue({ id: 10 });
       await expect(service.disbandTeam({ teamId: 10, userId: 7 })).resolves.toEqual({ id: 10 });
-      expect(db.team.delete).toHaveBeenCalledWith({ where: { id: 10 } });
+      expect(db.team.delete).toHaveBeenCalledWith({ where: { id: 10 }, select: { id: true } });
     });
   });
 

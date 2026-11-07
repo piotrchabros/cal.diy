@@ -1,5 +1,4 @@
 import { getHostOrganization } from "@calcom/features/organizations/lib/getHostOrganization";
-import { TeamProfileService } from "@calcom/features/teams/services/TeamProfileService";
 import { handleOrgRedirect } from "@lib/handleOrgRedirect";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Page, { generateMetadata } from "./page";
@@ -18,7 +17,9 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 vi.mock("@calcom/features/organizations/lib/getHostOrganization", () => ({ getHostOrganization: vi.fn() }));
-vi.mock("@calcom/features/teams/services/TeamProfileService", () => ({ TeamProfileService: vi.fn() }));
+vi.mock("@calcom/features/teams/di/TeamProfileService.container", () => ({
+  getTeamProfileService: () => ({ getPublicTeamBySlug }),
+}));
 vi.mock("@calcom/features/teams/di/TeamPublicMembersService.container", () => ({
   getTeamPublicMembersService: () => ({ listByTeamId: vi.fn(async () => []) }),
 }));
@@ -37,7 +38,7 @@ const resolvedHost = {
 } as HostOrganization;
 
 const team = { id: 3, name: "BlueBee", slug: "bluebee", bio: null, hideBookATeamMember: true };
-const getPublicTeamBySlug = vi.fn();
+const { getPublicTeamBySlug } = vi.hoisted(() => ({ getPublicTeamBySlug: vi.fn() }));
 
 const renderPage = (slug: string, query: Record<string, string> = {}) =>
   Page({ params: Promise.resolve({ slug }), searchParams: Promise.resolve(query) });
@@ -45,9 +46,6 @@ const renderPage = (slug: string, query: Record<string, string> = {}) =>
 describe("team/[slug] page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(TeamProfileService).mockImplementation(function () {
-      return { getPublicTeamBySlug } as unknown as TeamProfileService;
-    });
     getPublicTeamBySlug.mockResolvedValue(team);
     vi.mocked(handleOrgRedirect).mockResolvedValue(null);
     vi.mocked(getHostOrganization).mockResolvedValue({ status: "disabled" });
