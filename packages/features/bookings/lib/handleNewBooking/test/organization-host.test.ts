@@ -244,47 +244,55 @@ describe("handleNewBooking organization host check", () => {
     timeout
   );
 
+  async function bookAcmeDynamicGroup(
+    bookingMeta: Omit<Parameters<ReturnType<typeof getNewBookingHandler>>[0], "bookingData">
+  ) {
+    const handleNewBooking = getNewBookingHandler();
+    const org = await createOrganization({ name: "Acme", slug: "acme" });
+    mockResolveBookingHostOrganization.mockResolvedValue({
+      orgSlug: org.slug,
+      hostOrganization: { ...hostOrganization, id: org.id, slug: org.slug },
+    });
+    const whereClauseSpy = vi.spyOn(UserRepository.prototype, "_getWhereClauseForFindingUsersByUsername");
+
+    const groupUsers = [201, 202].map((id) =>
+      getOrganizer({
+        name: `group-user-${id}`,
+        username: `group-user-${id}`,
+        email: `group-user-${id}@example.com`,
+        id,
+        organizationId: org.id,
+        schedules: [TestData.schedules.IstWorkHours],
+      })
+    );
+    await createBookingScenario(getScenarioData({ eventTypes: [], users: groupUsers }, { id: org.id }));
+
+    const booker = getBooker({ email: "booker@example.com", name: "Booker" });
+    const createdBooking = await handleNewBooking({
+      bookingData: getMockRequestDataForDynamicGroupBooking({
+        data: {
+          start: `${getDate({ dateIncrement: 1 }).dateString}T05:00:00.000Z`,
+          end: `${getDate({ dateIncrement: 1 }).dateString}T05:30:00.000Z`,
+          eventTypeId: 0,
+          eventTypeSlug: "group-user-201+group-user-202",
+          user: "group-user-201+group-user-202",
+          responses: {
+            email: booker.email,
+            name: booker.name,
+            location: { optionValue: "", value: "New York" },
+          },
+        },
+      }),
+      ...bookingMeta,
+    });
+
+    return { createdBooking, whereClauseSpy };
+  }
+
   test(
     "looks up dynamic group users in the organization resolved from the host",
     async () => {
-      const handleNewBooking = getNewBookingHandler();
-      const org = await createOrganization({ name: "Acme", slug: "acme" });
-      mockResolveBookingHostOrganization.mockResolvedValue({
-        orgSlug: org.slug,
-        hostOrganization: { ...hostOrganization, id: org.id, slug: org.slug },
-      });
-      const whereClauseSpy = vi.spyOn(UserRepository.prototype, "_getWhereClauseForFindingUsersByUsername");
-
-      const groupUsers = [201, 202].map((id) =>
-        getOrganizer({
-          name: `group-user-${id}`,
-          username: `group-user-${id}`,
-          email: `group-user-${id}@example.com`,
-          id,
-          organizationId: org.id,
-          schedules: [TestData.schedules.IstWorkHours],
-        })
-      );
-      await createBookingScenario(getScenarioData({ eventTypes: [], users: groupUsers }, { id: org.id }));
-
-      const booker = getBooker({ email: "booker@example.com", name: "Booker" });
-      const createdBooking = await handleNewBooking({
-        bookingData: getMockRequestDataForDynamicGroupBooking({
-          data: {
-            start: `${getDate({ dateIncrement: 1 }).dateString}T05:00:00.000Z`,
-            end: `${getDate({ dateIncrement: 1 }).dateString}T05:30:00.000Z`,
-            eventTypeId: 0,
-            eventTypeSlug: "group-user-201+group-user-202",
-            user: "group-user-201+group-user-202",
-            responses: {
-              email: booker.email,
-              name: booker.name,
-              location: { optionValue: "", value: "New York" },
-            },
-          },
-        }),
-        hostname: "acme.example.com",
-      });
+      const { createdBooking, whereClauseSpy } = await bookAcmeDynamicGroup({ hostname: "acme.example.com" });
 
       expect(createdBooking.uid).toBeTruthy();
       expect(mockResolveBookingHostOrganization).toHaveBeenCalledWith({
@@ -293,6 +301,44 @@ describe("handleNewBooking organization host check", () => {
         isPlatform: false,
       });
       expect(whereClauseSpy).toHaveBeenCalledWith(expect.objectContaining({ orgSlug: "acme" }));
+    },
+    timeout
+  );
+
+  test(
+    "looks up dynamic group users in the forced organization when the host check is skipped (API v2)",
+    async () => {
+      const { createdBooking, whereClauseSpy } = await bookAcmeDynamicGroup({
+        hostname: "localhost:5555",
+        forcedSlug: "acme",
+        skipHostOrganizationCheck: true,
+      });
+
+      expect(createdBooking.uid).toBeTruthy();
+      expect(mockResolveBookingHostOrganization).toHaveBeenCalledWith({
+        hostname: "",
+        forcedSlug: "acme",
+        isPlatform: false,
+      });
+      expect(whereClauseSpy).toHaveBeenCalledWith(expect.objectContaining({ orgSlug: "acme" }));
+    },
+    timeout
+  );
+
+  test(
+    "keeps resolving dynamic group users from the host when the host check is skipped without a forced organization",
+    async () => {
+      const { createdBooking } = await bookAcmeDynamicGroup({
+        hostname: "localhost:5555",
+        skipHostOrganizationCheck: true,
+      });
+
+      expect(createdBooking.uid).toBeTruthy();
+      expect(mockResolveBookingHostOrganization).toHaveBeenCalledWith({
+        hostname: "localhost:5555",
+        forcedSlug: undefined,
+        isPlatform: false,
+      });
     },
     timeout
   );
