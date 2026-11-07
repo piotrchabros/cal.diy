@@ -1,11 +1,12 @@
 import type { OrganizationDto } from "@calcom/lib/dto/OrganizationDto";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OrganizationFormView from "./organization-form-view";
 
 type MutationOptions = {
   onSuccess?: () => Promise<void> | void;
-  onError?: (error: { message: string }) => void;
+  onError?: (error: { message: string; data?: { code: string } }) => void;
 };
 type Mutation = { mutate: (input: unknown) => void; isPending: boolean };
 type GetQuery = { data: OrganizationDto | undefined; isPending: boolean; error: { message: string } | null };
@@ -73,6 +74,19 @@ vi.mock("@calcom/trpc/react", () => ({
 }));
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
+
+vi.mock("@calcom/ui/components/dialog", () => ({
+  Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div>{children}</div> : null,
+  ConfirmationDialogContent: ({ children, onConfirm }: { children: ReactNode; onConfirm: () => void }) => (
+    <div role="dialog">
+      {children}
+      <button type="button" onClick={onConfirm}>
+        confirm
+      </button>
+    </div>
+  ),
+}));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }));
 
@@ -171,17 +185,49 @@ describe("OrganizationFormView", () => {
       expect(mocks.createMutate).not.toHaveBeenCalled();
     });
 
-    it("toasts the server message when creation fails", () => {
+    it("toasts the translated server message when creation fails", () => {
       setupMocks();
       render(<OrganizationFormView />);
 
       const { onError } = getOptions(mocks.createUseMutation);
-      onError?.({ message: "User already owns another organization" });
-      onError?.({ message: "Slug is already taken" });
+      onError?.({ message: "organization_slug_taken" });
+      onError?.({ message: "owner_in_another_organization", data: { code: "CONFLICT" } });
 
-      expect(mocks.showToast).toHaveBeenNthCalledWith(1, "User already owns another organization", "error");
-      expect(mocks.showToast).toHaveBeenNthCalledWith(2, "Slug is already taken", "error");
+      expect(mocks.showToast).toHaveBeenNthCalledWith(1, "organization_slug_taken", "error");
+      expect(mocks.showToast).toHaveBeenNthCalledWith(2, "owner_in_another_organization", "error");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(mocks.push).not.toHaveBeenCalled();
+    });
+
+    it("asks to move an owner from another organization and resubmits with confirmMoveOwner", async () => {
+      setupMocks();
+      render(<OrganizationFormView />);
+
+      fillBasicFields();
+      pickOwner();
+      fireEvent.click(screen.getByText("create"));
+      await waitFor(() => expect(mocks.createMutate).toHaveBeenCalledTimes(1));
+
+      act(() =>
+        getOptions(mocks.createUseMutation).onError?.({
+          message: "owner_in_another_organization",
+          data: { code: "PRECONDITION_FAILED" },
+        })
+      );
+
+      expect(screen.getByRole("dialog")).toHaveTextContent("owner_in_another_organization_confirm_move");
+      expect(mocks.showToast).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "confirm" }));
+
+      expect(mocks.createMutate).toHaveBeenLastCalledWith({
+        name: "Acme",
+        slug: "acme",
+        domain: "acme.com",
+        owner: { userId: 7 },
+        confirmMoveOwner: true,
+      });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("does not render the teams section", () => {

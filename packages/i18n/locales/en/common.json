@@ -5177,5 +5177,7 @@
   "user_needs_username": "This user needs a username before they can be moved",
   "last_owner_cannot_move": "This user is the last owner of their organization. Make someone else an owner first.",
   "owner_in_another_organization": "This person already belongs to another organization",
+  "owner_in_another_organization_confirm_move": "This person already belongs to another organization. Creating this organization will move them into it. Continue?",
+  "move_owner": "Move owner",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

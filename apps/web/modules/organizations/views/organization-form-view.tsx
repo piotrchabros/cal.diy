@@ -6,6 +6,7 @@ import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
+import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
 import { Form, Label, Select, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { keepPreviousData } from "@tanstack/react-query";
@@ -27,6 +28,14 @@ type OrganizationFormValues = {
   slug: string;
   domain: string;
   owner: OwnerOption | null;
+};
+
+type CreateInput = {
+  name: string;
+  slug: string;
+  domain: string;
+  owner: { userId: number };
+  confirmMoveOwner?: boolean;
 };
 
 type UpdateInput = { id: number; name?: string; slug?: string; domain?: string };
@@ -113,6 +122,8 @@ function CreateOrganizationForm() {
   const form = useForm<OrganizationFormValues>({
     defaultValues: { name: "", slug: "", domain: "", owner: null },
   });
+  const [lastInput, setLastInput] = useState<CreateInput | null>(null);
+  const [confirmMoveOpen, setConfirmMoveOpen] = useState(false);
 
   const mutation = trpc.viewer.admin.organizations.create.useMutation({
     onSuccess: async () => {
@@ -121,38 +132,59 @@ function CreateOrganizationForm() {
       router.push(ORGANIZATIONS_PATH);
     },
     onError: (err) => {
-      showToast(err.message, "error");
+      if (err.data?.code === "PRECONDITION_FAILED" && err.message === "owner_in_another_organization") {
+        setConfirmMoveOpen(true);
+        return;
+      }
+      showToast(t(err.message), "error");
     },
   });
 
   const handleSubmit = (values: OrganizationFormValues) => {
     if (!values.owner) return;
-    mutation.mutate({
+    const input: CreateInput = {
       name: values.name,
       slug: values.slug,
       domain: values.domain,
       owner: { userId: values.owner.value },
-    });
+    };
+    setLastInput(input);
+    mutation.mutate(input);
   };
 
   return (
-    <Form form={form} className="stack-y-4" handleSubmit={handleSubmit}>
-      <OrganizationBasicFields form={form} domainDisabled={false} />
-      <Controller
-        name="owner"
-        control={form.control}
-        rules={{ required: t("organization_owner_required") }}
-        render={({ field: { value, onChange }, fieldState: { error } }) => (
-          <div>
-            <OwnerSelect value={value} onChange={onChange} />
-            {error?.message && <p className="mt-1 text-error text-sm">{error.message}</p>}
-          </div>
-        )}
-      />
-      <Button type="submit" loading={mutation.isPending}>
-        {t("create")}
-      </Button>
-    </Form>
+    <>
+      <Form form={form} className="stack-y-4" handleSubmit={handleSubmit}>
+        <OrganizationBasicFields form={form} domainDisabled={false} />
+        <Controller
+          name="owner"
+          control={form.control}
+          rules={{ required: t("organization_owner_required") }}
+          render={({ field: { value, onChange }, fieldState: { error } }) => (
+            <div>
+              <OwnerSelect value={value} onChange={onChange} />
+              {error?.message && <p className="mt-1 text-error text-sm">{error.message}</p>}
+            </div>
+          )}
+        />
+        <Button type="submit" loading={mutation.isPending}>
+          {t("create")}
+        </Button>
+      </Form>
+      <Dialog open={confirmMoveOpen} onOpenChange={setConfirmMoveOpen}>
+        <ConfirmationDialogContent
+          variety="warning"
+          title={t("owner_in_another_organization")}
+          confirmBtnText={t("move_owner")}
+          isPending={mutation.isPending}
+          onConfirm={() => {
+            if (lastInput) mutation.mutate({ ...lastInput, confirmMoveOwner: true });
+            setConfirmMoveOpen(false);
+          }}>
+          {t("owner_in_another_organization_confirm_move")}
+        </ConfirmationDialogContent>
+      </Dialog>
+    </>
   );
 }
 

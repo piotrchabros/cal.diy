@@ -354,7 +354,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 27**
 
-- [ ] T069 [US5] Add a "Move to organization" action in the admin user edit view `apps/web/modules/users/views/users-edit-view.tsx` (target org select, plus a username prompt on CONFLICT) and a team move dialog in `apps/web/modules/organizations/views/organization-form-view.tsx` or the admin teams list (preview of outside members, move/remove choice, new slug). Add i18n strings and tests
+- [X] T069 [US5] Add a "Move to organization" action in the admin user edit view `apps/web/modules/users/views/users-edit-view.tsx` (target org select, plus a username prompt on CONFLICT) and a team move dialog in `apps/web/modules/organizations/views/organization-form-view.tsx` or the admin teams list (preview of outside members, move/remove choice, new slug). Add i18n strings and tests
 
 ---
 
