@@ -4,6 +4,7 @@ import { EXTERNAL_CALENDAR_EVENTS_DI_TOKENS } from "@calcom/features/external-ca
 import { FEATURE_OPT_IN_DI_TOKENS } from "@calcom/features/feature-opt-in/di/tokens";
 import { FLAGS_DI_TOKENS } from "@calcom/features/flags/di/tokens";
 import { HASHED_LINK_DI_TOKENS } from "@calcom/features/hashedLink/di/tokens";
+import { MEMBERSHIP_DI_TOKENS } from "@calcom/features/membership/di/tokens";
 import { NOTETAKER_DI_TOKENS } from "@calcom/features/notetaker/di/tokens";
 import { OAUTH_DI_TOKENS } from "@calcom/features/oauth/di/tokens";
 import { ORGANIZATIONS_DI_TOKENS } from "@calcom/features/organizations/di/tokens";
@@ -83,4 +84,5 @@ export const DI_TOKENS = {
   ...ORGANIZATIONS_DI_TOKENS,
   ...EXTERNAL_CALENDAR_EVENTS_DI_TOKENS,
   ...TEAMS_DI_TOKENS,
+  ...MEMBERSHIP_DI_TOKENS,
 };
