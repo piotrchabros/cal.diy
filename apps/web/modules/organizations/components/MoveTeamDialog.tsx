@@ -13,7 +13,13 @@ import { OrganizationSelect } from "./OrganizationSelect";
 
 type OutsideMembers = "move" | "remove";
 
-type FormValues = { toOrganizationId: number | null; outsideMembers: OutsideMembers; newSlug: string };
+type FormValues = {
+  toOrganizationId: number | null;
+  outsideMembers: OutsideMembers;
+  newSlug: string;
+  // Keyed `u${userId}` because react-hook-form reads numeric path segments as array indexes
+  newUsernames: Record<string, string>;
+};
 
 export type MoveTeamDialogTeam = { teamId: number; name: string; slug: string | null };
 
@@ -31,9 +37,15 @@ export function MoveTeamDialog({
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const form = useForm<FormValues>({
-    defaultValues: { toOrganizationId: null, outsideMembers: "move", newSlug: team.slug ?? "" },
+    defaultValues: {
+      toOrganizationId: null,
+      outsideMembers: "move",
+      newSlug: team.slug ?? "",
+      newUsernames: {},
+    },
   });
   const toOrganizationId = form.watch("toOrganizationId");
+  const outsideChoice = form.watch("outsideMembers");
 
   const preview = trpc.viewer.admin.organizations.previewMoveTeam.useQuery(
     // The placeholder id is never sent: the query stays disabled until an organization is picked
@@ -58,14 +70,26 @@ export function MoveTeamDialog({
 
   const outsideMembers = toOrganizationId !== null ? (preview.data?.membersOutsideTarget ?? []) : [];
   const slugTaken = toOrganizationId !== null && preview.data?.slugTaken === true;
+  const askForNewUsernames =
+    outsideChoice === "move" && outsideMembers.some((member) => member.usernameTaken);
 
   const handleSubmit = (values: FormValues) => {
     if (values.toOrganizationId === null || !preview.data) return;
+    const newUsernames =
+      values.outsideMembers === "move"
+        ? outsideMembers
+            .filter((member) => member.usernameTaken)
+            .map((member) => ({
+              userId: member.userId,
+              username: values.newUsernames[`u${member.userId}`]?.trim() ?? "",
+            }))
+        : [];
     moveTeam.mutate({
       teamId: team.teamId,
       toOrganizationId: values.toOrganizationId,
       outsideMembers: values.outsideMembers,
       ...(slugTaken && { newSlug: values.newSlug.trim() }),
+      ...(newUsernames.length > 0 && { newUsernames }),
     });
   };
 
@@ -88,11 +112,23 @@ export function MoveTeamDialog({
             {outsideMembers.length > 0 && (
               <div className="stack-y-2">
                 <p className="text-default text-sm">{t("move_team_outside_members_description")}</p>
-                <ul className="text-default text-sm" data-testid="move-team-outside-members">
+                {askForNewUsernames && (
+                  <p className="text-default text-sm">{t("move_team_member_usernames_taken_description")}</p>
+                )}
+                <ul className="text-default stack-y-2 text-sm" data-testid="move-team-outside-members">
                   {outsideMembers.map((member) => (
-                    <li key={member.userId} className="flex items-center gap-2">
+                    <li key={member.userId} className="flex flex-wrap items-center gap-2">
                       <span>{member.name ? `${member.name} (${member.email})` : member.email}</span>
                       {member.usernameTaken && <Badge variant="orange">{t("username_taken_badge")}</Badge>}
+                      {member.usernameTaken && outsideChoice === "move" && (
+                        <div className="w-full">
+                          <TextField
+                            required
+                            label={t("move_team_member_new_username", { name: member.name ?? member.email })}
+                            {...form.register(`newUsernames.u${member.userId}`)}
+                          />
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

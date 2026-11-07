@@ -48,6 +48,10 @@ export const ZMoveTeamInput = z.object({
   toOrganizationId: id,
   newSlug: z.string().trim().min(1).max(50).optional(),
   outsideMembers: z.enum(["move", "remove"]),
+  newUsernames: z
+    .array(z.object({ userId: id, username: z.string().trim().min(1).max(255) }))
+    .max(500)
+    .optional(),
 });
 
 export const ZListOrganizationTeamsInput = z.object({

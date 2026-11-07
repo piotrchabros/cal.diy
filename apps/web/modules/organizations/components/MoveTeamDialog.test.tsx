@@ -136,6 +136,44 @@ describe("MoveTeamDialog", () => {
     );
   });
 
+  it("asks for a new username only for taken members while moving them", () => {
+    renderAndSelectAcme({
+      membersOutsideTarget: [
+        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true },
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false },
+      ],
+      slugTaken: false,
+    });
+    expect(screen.getAllByLabelText("move_team_member_new_username")).toHaveLength(1);
+    expect(screen.getByText("move_team_member_usernames_taken_description")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("move_team_outside_members_remove"));
+    expect(screen.queryByLabelText("move_team_member_new_username")).not.toBeInTheDocument();
+    expect(screen.queryByText("move_team_member_usernames_taken_description")).not.toBeInTheDocument();
+  });
+
+  it("submits the trimmed new usernames when moving members with taken usernames", async () => {
+    renderAndSelectAcme({
+      membersOutsideTarget: [
+        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true },
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false },
+      ],
+      slugTaken: false,
+    });
+    fireEvent.change(screen.getByLabelText("move_team_member_new_username"), {
+      target: { value: "  bob-acme  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "move" }));
+    await waitFor(() =>
+      expect(mocks.mutate).toHaveBeenCalledWith({
+        teamId: 5,
+        toOrganizationId: 2,
+        outsideMembers: "move",
+        newUsernames: [{ userId: 8, username: "bob-acme" }],
+      })
+    );
+  });
+
   it("asks for a new slug when it is taken and submits it", async () => {
     renderAndSelectAcme({ membersOutsideTarget: [], slugTaken: true });
     const slugField = screen.getByLabelText("new_team_slug");
