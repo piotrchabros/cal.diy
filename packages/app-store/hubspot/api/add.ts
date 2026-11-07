@@ -1,8 +1,8 @@
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import * as hubspot from "@hubspot/api-client";
 import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 const scopes = ["crm.objects.contacts.read", "crm.objects.contacts.write", "crm.objects.owners.read"];
 
@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (typeof appKeys.client_id === "string") clientId = appKeys.client_id;
   if (!clientId) return res.status(400).json({ message: "HubSpot client id missing." });
 
-  const redirectUri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/hubspot/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "hubspot");
   const url = hubspotClient.oauth.getAuthorizationUrl(
     clientId,
     redirectUri,

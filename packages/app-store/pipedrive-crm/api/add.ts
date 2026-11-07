@@ -1,12 +1,10 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
 import { createDefaultInstallation } from "@calcom/app-store/_utils/installation";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { HttpError } from "@calcom/lib/http-error";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -32,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     teamId: Number(teamId),
   });
 
-  const redirectUri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/pipedrive-crm/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "pipedrive-crm");
   const state = encodeOAuthState(req);
   const scopes = "deals:read,deals:write,persons:read,persons:write,activities:read,activities:write";
 

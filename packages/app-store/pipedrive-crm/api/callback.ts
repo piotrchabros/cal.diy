@@ -1,11 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 import { getPipedriveAppKeys } from "../lib/getPipedriveAppKeys";
 
@@ -34,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { client_id, client_secret } = await getPipedriveAppKeys();
 
-  const redirectUri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/pipedrive-crm/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "pipedrive-crm");
   const authHeader = `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`;
 
   const tokenResponse = await fetch("https://oauth.pipedrive.com/oauth/token", {
@@ -63,7 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: appConfig.slug, type: appConfig.type }, pipedriveToken, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ??
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
       getInstalledAppPath({ variant: appConfig.variant, slug: appConfig.slug })
   );
 }

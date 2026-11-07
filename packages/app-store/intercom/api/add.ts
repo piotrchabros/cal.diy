@@ -1,10 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { stringify } from "node:querystring";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
@@ -17,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const params = {
       client_id: clientId,
-      redirect_uri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/intercom/callback`,
+      redirect_uri: getOAuthRedirectUri(req, "intercom"),
       state,
       response_type: "code",
     };
