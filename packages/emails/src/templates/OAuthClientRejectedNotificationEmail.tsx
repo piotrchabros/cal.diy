@@ -1,7 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import { BaseEmailHtml, CallToAction } from "../components";
 
 type OAuthClientRejectedNotification = {
@@ -10,6 +8,7 @@ type OAuthClientRejectedNotification = {
   clientName: string;
   clientId: string;
   rejectionReason: string;
+  baseUrl?: string | null;
 };
 
 export const OAuthClientRejectedNotificationEmail = ({
@@ -18,14 +17,16 @@ export const OAuthClientRejectedNotificationEmail = ({
   clientId,
   rejectionReason,
   language,
+  baseUrl,
 }: OAuthClientRejectedNotification) => {
   return (
     <BaseEmailHtml
+      logoHref={baseUrl}
       subject={language("oauth_client_rejected_email_subject", { clientName, appName: APP_NAME })}
       callToAction={
         <CallToAction
           label={language("oauth_client_rejected_email_cta")}
-          href={`${WEBAPP_URL}/settings/developer/oauth`}
+          href={`${baseUrl ?? WEBAPP_URL}/settings/developer/oauth`}
           endIconName="white-arrow-right"
         />
       }>

@@ -1,7 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -11,6 +9,7 @@ export type OAuthClientApprovedNotification = {
   userName: string | null;
   clientName: string;
   clientId: string;
+  baseUrl?: string;
 };
 
 export default class OAuthClientApprovedEmail extends BaseEmail {
@@ -32,6 +31,7 @@ export default class OAuthClientApprovedEmail extends BaseEmail {
         clientName: this.input.clientName,
         clientId: this.input.clientId,
         language: this.input.t,
+        baseUrl: this.input.baseUrl,
       }),
       text: this.getTextBody(),
     };
