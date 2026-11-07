@@ -277,6 +277,19 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     else this.pushMembership({ userId, teamId: toOrganizationId, role: "MEMBER", accepted: true });
   }
 
+  async createPendingMembership(params: {
+    organizationId: number;
+    userId: number;
+    role: OrganizationRoleDto;
+  }): Promise<void> {
+    this.pushMembership({
+      userId: params.userId,
+      teamId: params.organizationId,
+      role: params.role,
+      accepted: false,
+    });
+  }
+
   private pushMembership(membership: StoredMembership): void {
     this.membershipIds.set(membership, this.nextMembershipId++);
     this.memberships.push(membership);

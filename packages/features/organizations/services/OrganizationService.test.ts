@@ -53,6 +53,12 @@ describe("OrganizationService", () => {
         organizationMembershipRepository: membershipRepo,
         organizationRepository: repository,
         organizationsConfig: config,
+        userRepository: {
+          findInviteeByEmail: vi.fn(),
+          createInvitedWithPendingTeamMembership: vi.fn(),
+          setOrganizationId: vi.fn(),
+        },
+        teamInviteService: { sendInvite: vi.fn() },
       }),
     });
   }

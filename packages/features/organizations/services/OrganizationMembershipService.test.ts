@@ -1,6 +1,7 @@
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrganizationMembershipRepository";
 import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRepository";
@@ -18,6 +19,28 @@ const DEFAULT_ORG_ID = 30;
 const DEFAULT_DOMAIN = "cal.example.com";
 
 const FORBIDDEN_CHANGE = "Only organization owners and admins can change roles";
+type Invitee = {
+  id: number;
+  email: string;
+  name: string | null;
+  locale: string | null;
+  organizationId: number | null;
+  username: string | null;
+  hasPassword: boolean;
+};
+
+function buildUserRepository() {
+  return {
+    findInviteeByEmail: vi.fn<(p: { email: string }) => Promise<Invitee | null>>().mockResolvedValue(null),
+    createInvitedWithPendingTeamMembership: vi.fn().mockResolvedValue({
+      id: 77,
+      email: "new@acme.com",
+      locale: "pl",
+    }),
+    setOrganizationId: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 const FORBIDDEN_OWNER = "Only owners can grant or remove the owner role";
 
 async function expectRejection(promise: Promise<unknown>, code: ErrorCode, message: string) {
@@ -35,8 +58,12 @@ describe("OrganizationMembershipService", () => {
   let organizationRepository: InMemoryOrganizationRepository;
   let membershipRepository: InMemoryOrganizationMembershipRepository;
   let service: OrganizationMembershipService;
+  let userRepository: ReturnType<typeof buildUserRepository>;
+  let sendInvite: Mock;
 
   beforeEach(() => {
+    userRepository = buildUserRepository();
+    sendInvite = vi.fn().mockResolvedValue(undefined);
     organizationRepository = new InMemoryOrganizationRepository();
     membershipRepository = new InMemoryOrganizationMembershipRepository();
     organizationRepository.seed({ id: ORG_ID, name: "Acme", slug: "acme", domain: "acme.com" });
@@ -47,6 +74,8 @@ describe("OrganizationMembershipService", () => {
       organizationMembershipRepository: membershipRepository,
       organizationRepository,
       organizationsConfig: { defaultDomain: DEFAULT_DOMAIN },
+      userRepository,
+      teamInviteService: { sendInvite },
     });
   });
 
@@ -560,6 +589,8 @@ describe("OrganizationMembershipService", () => {
         organizationMembershipRepository: membershipRepository,
         organizationRepository,
         organizationsConfig: { defaultDomain: null },
+        userRepository,
+        teamInviteService: { sendInvite },
       });
 
       await expectRejection(
@@ -603,6 +634,163 @@ describe("OrganizationMembershipService", () => {
         username: null,
       });
       expect(membershipRepository.memberships.some((m) => m.userId === MEMBER_ID)).toBe(false);
+    });
+  });
+
+  describe("inviteMember", () => {
+    const OWNER_ID = 1;
+    const ADMIN_ID = 2;
+    const MEMBER_ID = 3;
+
+    beforeEach(() => {
+      membershipRepository.seedMembership({ userId: OWNER_ID, teamId: ORG_ID, role: "OWNER" });
+      membershipRepository.seedMembership({ userId: ADMIN_ID, teamId: ORG_ID, role: "ADMIN" });
+      membershipRepository.seedMembership({ userId: MEMBER_ID, teamId: ORG_ID, role: "MEMBER" });
+    });
+
+    function invite(actorUserId: number, role: OrganizationRoleDto = "MEMBER", email = " New@Acme.com ") {
+      return service.inviteMember({ organizationId: ORG_ID, actorUserId, actorName: "Ada", email, role });
+    }
+
+    function seedInvitee(overrides: Partial<Invitee> = {}): Invitee {
+      const invitee: Invitee = {
+        id: 5,
+        email: "new@acme.com",
+        name: "Bob",
+        locale: "de",
+        organizationId: null,
+        username: "bob",
+        hasPassword: true,
+        ...overrides,
+      };
+      membershipRepository.seedUser(invitee);
+      userRepository.findInviteeByEmail.mockResolvedValue(invitee);
+      return invitee;
+    }
+
+    function expectInviteSent(locale: string, isExistingUser: boolean) {
+      expect(sendInvite).toHaveBeenCalledWith({
+        teamId: ORG_ID,
+        teamName: "Acme",
+        email: "new@acme.com",
+        inviterName: "Ada",
+        locale,
+        isExistingUser,
+        isOrganization: true,
+      });
+    }
+
+    it("creates a pending user for an unknown email and sends the org invite", async () => {
+      await expect(invite(ADMIN_ID, "ADMIN")).resolves.toEqual({ invited: true });
+
+      expect(userRepository.findInviteeByEmail).toHaveBeenCalledWith({ email: "new@acme.com" });
+      expect(userRepository.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith({
+        email: "new@acme.com",
+        teamId: ORG_ID,
+        role: "ADMIN",
+        organizationId: ORG_ID,
+      });
+      expectInviteSent("pl", false);
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.member.invite", {
+        action: "organization.member.invite",
+        actorUserId: ADMIN_ID,
+        organizationId: ORG_ID,
+        targetUserId: 77,
+        role: "ADMIN",
+      });
+      expect(JSON.stringify(mockLogInfo.mock.calls)).not.toContain("acme.com");
+    });
+
+    it("rejects plain members", async () => {
+      await expectRejection(
+        invite(MEMBER_ID),
+        ErrorCode.Forbidden,
+        "Only organization owners and admins can manage members"
+      );
+    });
+
+    it("forbids an admin from inviting an owner", async () => {
+      await expectRejection(invite(ADMIN_ID, "OWNER"), ErrorCode.Forbidden, FORBIDDEN_OWNER);
+      expect(sendInvite).not.toHaveBeenCalled();
+    });
+
+    it("lets an owner invite an owner", async () => {
+      await expect(invite(OWNER_ID, "OWNER")).resolves.toEqual({ invited: true });
+    });
+
+    it("rejects a missing organization", async () => {
+      vi.spyOn(organizationRepository, "findById").mockResolvedValue(null);
+
+      await expectRejection(invite(ADMIN_ID), ErrorCode.NotFound, "Organization not found");
+    });
+
+    it.each(["   ", "not-an-email"])("rejects the invalid email %j", async (email) => {
+      await expectRejection(invite(ADMIN_ID, "MEMBER", email), ErrorCode.BadRequest, "Invalid invite email");
+      expect(userRepository.findInviteeByEmail).not.toHaveBeenCalled();
+    });
+
+    it("rejects a user from another organization", async () => {
+      seedInvitee({ organizationId: OTHER_ORG_ID });
+
+      await expectRejection(invite(ADMIN_ID), ErrorCode.Conflict, "user_belongs_to_another_organization");
+      expect(sendInvite).not.toHaveBeenCalled();
+    });
+
+    it("rejects an existing member", async () => {
+      seedInvitee({ organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: 5, teamId: ORG_ID, role: "MEMBER" });
+
+      await expectRejection(invite(ADMIN_ID), ErrorCode.Conflict, "user_is_already_a_member");
+    });
+
+    it("resends the invite for a pending membership without changing it", async () => {
+      seedInvitee({ hasPassword: false, locale: null });
+      membershipRepository.seedMembership({ userId: 5, teamId: ORG_ID, role: "ADMIN", accepted: false });
+      const createPendingMembership = vi.spyOn(membershipRepository, "createPendingMembership");
+
+      await invite(ADMIN_ID);
+
+      expect(createPendingMembership).not.toHaveBeenCalled();
+      expect(await membershipRepository.findMembership({ organizationId: ORG_ID, userId: 5 })).toEqual({
+        role: "ADMIN",
+        accepted: false,
+      });
+      expectInviteSent("en", false);
+    });
+
+    it("adds a user with a username straight away and notifies them", async () => {
+      seedInvitee();
+
+      await invite(ADMIN_ID, "ADMIN");
+
+      expect(await service.getRole(5, ORG_ID)).toBe("ADMIN");
+      expect(membershipRepository.profiles).toContainEqual({
+        userId: 5,
+        organizationId: ORG_ID,
+        username: "bob",
+      });
+      expectInviteSent("de", true);
+    });
+
+    it("creates a pending membership and attaches a username-less user to the org", async () => {
+      seedInvitee({ username: null });
+
+      await invite(ADMIN_ID);
+
+      expect(await membershipRepository.findMembership({ organizationId: ORG_ID, userId: 5 })).toEqual({
+        role: "MEMBER",
+        accepted: false,
+      });
+      expect(userRepository.setOrganizationId).toHaveBeenCalledWith({ id: 5, organizationId: ORG_ID });
+      expectInviteSent("de", true);
+    });
+
+    it("does not repoint a username-less user already in the org", async () => {
+      seedInvitee({ username: null, organizationId: ORG_ID });
+
+      await invite(ADMIN_ID);
+
+      expect(userRepository.setOrganizationId).not.toHaveBeenCalled();
     });
   });
 });

@@ -286,4 +286,19 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
       });
     });
   }
+
+  async createPendingMembership({
+    organizationId,
+    userId,
+    role,
+  }: {
+    organizationId: number;
+    userId: number;
+    role: OrganizationRoleDto;
+  }): Promise<void> {
+    await this.prismaClient.membership.create({
+      data: { userId, teamId: organizationId, role: toMembershipRole[role], accepted: false },
+      select: { id: true },
+    });
+  }
 }
