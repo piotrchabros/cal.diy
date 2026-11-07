@@ -3,6 +3,7 @@ import type { EventTypeAppsList } from "@calcom/app-store/utils";
 import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-utils";
 import type { Fields } from "@calcom/features/bookings/lib/getBookingFields";
 import { fieldTypesConfigMap } from "@calcom/features/form-builder/fieldTypes";
+import tasker from "@calcom/features/tasker";
 import { convertToSmallestCurrencyUnit } from "@calcom/lib/currencyConversions";
 import type { AppCategories, EventType, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { CalendarEvent } from "@calcom/types/Calendar";
@@ -197,7 +198,7 @@ const handlePayment = async ({
     throw new Error("Payment data is null");
   }
   try {
-    await paymentInstance.afterPayment(evt, booking, paymentData, selectedEventType?.metadata);
+    await paymentInstance.afterPayment(evt, booking, paymentData, selectedEventType?.metadata, { tasker });
   } catch (e) {
     console.error(e);
   }

@@ -11,6 +11,17 @@ interface PaymentService {
   new (credentials: { key: Prisma.JsonValue }): IAbstractPaymentService;
 }
 
+// Payment apps live in app-store and cannot import @calcom/features/tasker, so the caller injects it.
+export interface AfterPaymentDeps {
+  tasker: {
+    create(
+      type: "sendAwaitingPaymentEmail",
+      payload: { bookingId: number; paymentId: number; attendeeSeatId: string | null },
+      options: { scheduledAt: Date; referenceUid: string }
+    ): Promise<unknown>;
+  };
+}
+
 export interface IAbstractPaymentService {
   /* This method is for creating charges at the time of booking */
   create(
@@ -56,7 +67,8 @@ export interface IAbstractPaymentService {
       uid: string;
     },
     paymentData: Payment,
-    eventTypeMetadata?: EventTypeMetadata
+    eventTypeMetadata: EventTypeMetadata | undefined,
+    deps: AfterPaymentDeps
   ): Promise<void>;
   deletePayment(paymentId: Payment["id"]): Promise<boolean>;
   isSetupAlready(): boolean;

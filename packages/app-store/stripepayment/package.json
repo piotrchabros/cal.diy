@@ -13,7 +13,6 @@
     "@calcom/app-store": "workspace:*",
     "@calcom/dayjs": "workspace:*",
     "@calcom/emails": "workspace:*",
-    "@calcom/features": "workspace:*",
     "@calcom/lib": "workspace:*",
     "@calcom/prisma": "workspace:*",
     "@calcom/types": "workspace:*",

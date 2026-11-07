@@ -1,10 +1,5 @@
-import Stripe from "stripe";
-import { v4 as uuidv4 } from "uuid";
-import z from "zod";
-
+import process from "node:process";
 import dayjs from "@calcom/dayjs";
-import { BookingRepository } from "@calcom/features/bookings/repositories/BookingRepository";
-import tasker from "@calcom/features/tasker";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
@@ -14,10 +9,13 @@ import prisma from "@calcom/prisma";
 import type { Booking, Payment, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-import type { IAbstractPaymentService } from "@calcom/types/PaymentService";
-
+import type { AfterPaymentDeps, IAbstractPaymentService } from "@calcom/types/PaymentService";
+import Stripe from "stripe";
+import { v4 as uuidv4 } from "uuid";
+import z from "zod";
 import { paymentOptionEnum } from "../zod";
 import { retrieveOrCreateStripeCustomerByEmail } from "./customer";
+import { PrismaBookingRepository } from "./repositories/PrismaBookingRepository";
 import type { StripePaymentData, StripeSetupIntentData } from "./server";
 
 const log = logger.getSubLogger({ prefix: ["payment-service:stripe"] });
@@ -230,7 +228,7 @@ class StripePaymentService implements IAbstractPaymentService {
         throw new Error("Stripe credentials not found");
       }
 
-      const bookingRepository = new BookingRepository(prisma);
+      const bookingRepository = new PrismaBookingRepository(prisma);
       const booking = await bookingRepository.findByIdIncludeUserAndAttendees(bookingId);
 
       if (!booking) {
@@ -383,14 +381,15 @@ class StripePaymentService implements IAbstractPaymentService {
       uid: string;
     },
     paymentData: Payment,
-    _eventTypeMetadata?: EventTypeMetadata
+    _eventTypeMetadata: EventTypeMetadata | undefined,
+    deps: AfterPaymentDeps
   ): Promise<void> {
     const delayMinutes = Number(process.env.AWAITING_PAYMENT_EMAIL_DELAY_MINUTES) || 15;
     const scheduledEmailAt = dayjs().add(delayMinutes, "minutes").toDate();
 
     // we give the user 15 minutes to complete the payment
     // if the payment is still not processed after 15 minutes, we send an awaiting payment email
-    await tasker.create(
+    await deps.tasker.create(
       "sendAwaitingPaymentEmail",
       {
         bookingId: booking.id,
