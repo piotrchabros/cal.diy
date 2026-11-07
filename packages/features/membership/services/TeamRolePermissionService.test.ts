@@ -79,7 +79,19 @@ describe("TeamRolePermissionService", () => {
         userId: 2,
         teamRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
         parentRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+        includeOrganizations: true,
       });
+    });
+
+    it("leaves organizations out while organizations are off", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      findTeamIdsByAcceptedRole.mockResolvedValue([]);
+
+      await service.getTeamIdsWithPermission({ userId: 2, fallbackRoles: [MembershipRole.ADMIN] });
+
+      expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+        expect.objectContaining({ includeOrganizations: false, parentRoles: [] })
+      );
     });
   });
 });

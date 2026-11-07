@@ -127,15 +127,18 @@ export class MembershipRepository {
     teamRoles,
     parentRoles,
     teamId,
+    includeOrganizations = true,
   }: {
     userId: number;
     teamRoles: readonly MembershipRole[];
     parentRoles: readonly MembershipRole[];
     teamId?: number;
+    includeOrganizations?: boolean;
   }): Promise<number[]> {
     const teams = await this.prismaClient.team.findMany({
       where: {
         ...(teamId !== undefined ? { id: teamId } : {}),
+        ...(includeOrganizations ? {} : { isOrganization: false }),
         OR: [
           { members: { some: { userId, accepted: true, role: { in: [...teamRoles] } } } },
           { parent: { members: { some: { userId, accepted: true, role: { in: [...parentRoles] } } } } },

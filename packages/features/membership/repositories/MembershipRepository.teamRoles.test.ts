@@ -44,5 +44,20 @@ describe("MembershipRepository.findTeamIdsByAcceptedRole", () => {
 
     expect(result).toEqual([1, 2]);
     expect(findMany.mock.calls[0][0].where).not.toHaveProperty("id");
+    expect(findMany.mock.calls[0][0].where).not.toHaveProperty("isOrganization");
+  });
+
+  it("leaves organizations out when asked", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const repo = new MembershipRepository({ team: { findMany } } as unknown as PrismaClient);
+
+    await repo.findTeamIdsByAcceptedRole({
+      userId: 5,
+      teamRoles: [MembershipRole.ADMIN],
+      parentRoles: [],
+      includeOrganizations: false,
+    });
+
+    expect(findMany.mock.calls[0][0].where.isOrganization).toBe(false);
   });
 });

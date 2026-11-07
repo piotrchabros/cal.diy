@@ -1,6 +1,7 @@
 import getAllUserBookings from "@calcom/features/bookings/lib/getAllUserBookings";
 import type { DB } from "@calcom/kysely";
 import type { PrismaClient } from "@calcom/prisma";
+import { MembershipRole } from "@calcom/prisma/enums";
 import type { Kysely } from "kysely";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getBookings, getHandler } from "./get.handler";
@@ -94,7 +95,7 @@ describe("getHandler", () => {
   });
 });
 
-describe("getBookings - stub PermissionCheckService behavior", () => {
+describe("getBookings - team role checks", () => {
   const mockUser = {
     id: 1,
     email: "user@example.com",
@@ -104,6 +105,9 @@ describe("getBookings - stub PermissionCheckService behavior", () => {
   const mockPrisma = {
     membership: {
       findMany: vi.fn(),
+    },
+    team: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     user: {
       findMany: vi.fn(),
@@ -153,13 +157,110 @@ describe("getBookings - stub PermissionCheckService behavior", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.team.findMany = vi.fn().mockResolvedValue([]);
     mockKysely = createMockKysely();
+  });
+
+  const listBookings = (filters: Parameters<typeof getBookings>[0]["filters"] = {}) =>
+    getBookings({
+      user: mockUser,
+      prisma: mockPrisma,
+      kysely: mockKysely as unknown as Kysely<DB>,
+      bookingListingByStatus: ["upcoming"],
+      filters,
+      take: 10,
+      skip: 0,
+    });
+
+  it("looks up teams where the user is an accepted admin/owner instead of a stub", async () => {
+    mockPrisma.booking.groupBy = vi.fn().mockResolvedValue([]);
+
+    await listBookings();
+
+    expect(mockPrisma.team.findMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          {
+            members: {
+              some: {
+                userId: mockUser.id,
+                accepted: true,
+                role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
+              },
+            },
+          },
+        ]),
+      }),
+      select: { id: true },
+    });
+  });
+
+  it("adds team booking queries limited to accepted members for an accepted team admin", async () => {
+    mockPrisma.team.findMany = vi.fn().mockResolvedValue([{ id: 10 }]);
+    mockPrisma.booking.groupBy = vi.fn().mockResolvedValue([]);
+
+    await listBookings();
+
+    const subqueryWhere = vi.fn();
+    const subqueryBuilder: Record<string, unknown> = {};
+    for (const method of ["selectFrom", "select", "innerJoin"])
+      subqueryBuilder[method] = () => subqueryBuilder;
+    subqueryBuilder.where = (...args: unknown[]) => {
+      subqueryWhere(...args);
+      return subqueryBuilder;
+    };
+    const subqueries = mockKysely._mockQueryBuilder.where.mock.calls
+      .map((call) => call[2])
+      .filter((arg): arg is (eb: unknown) => unknown => typeof arg === "function");
+    for (const subquery of subqueries) subquery(subqueryBuilder);
+
+    expect(subqueries).toHaveLength(4);
+    expect(subqueryWhere).toHaveBeenCalledWith("EventType.teamId", "in", [10]);
+    expect(subqueryWhere).toHaveBeenCalledWith("Membership.teamId", "in", [10]);
+    expect(subqueryWhere.mock.calls.filter((call) => call[0] === "Membership.accepted")).toEqual([
+      ["Membership.accepted", "=", true],
+      ["Membership.accepted", "=", true],
+      ["Membership.accepted", "=", true],
+    ]);
+  });
+
+  it("adds no team booking queries for a user without an accepted admin/owner role", async () => {
+    mockPrisma.booking.groupBy = vi.fn().mockResolvedValue([]);
+
+    await listBookings();
+
+    const subqueries = mockKysely._mockQueryBuilder.where.mock.calls.filter(
+      (call) => typeof call[2] === "function"
+    );
+    expect(subqueries).toHaveLength(0);
+  });
+
+  it("lets a team admin filter by an accepted member of their team", async () => {
+    mockPrisma.team.findMany = vi.fn().mockResolvedValue([{ id: 10 }]);
+    mockPrisma.user.findMany = vi.fn().mockResolvedValue([{ id: 4, email: "member@example.com" }]);
+    mockPrisma.eventType.findMany = vi.fn().mockResolvedValue([]);
+    mockPrisma.booking.groupBy = vi.fn().mockResolvedValue([]);
+
+    await expect(listBookings({ userIds: [4] })).resolves.not.toThrow();
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+      where: { teams: { some: { teamId: { in: [10] }, accepted: true } } },
+      select: { id: true },
+    });
+  });
+
+  it("refuses filtering by another user's id without an accepted admin/owner role", async () => {
+    mockPrisma.user.findMany = vi.fn().mockResolvedValue([{ id: 4, email: "member@example.com" }]);
+    mockPrisma.eventType.findMany = vi.fn().mockResolvedValue([]);
+
+    await expect(listBookings({ userIds: [4] })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("should allow access when filtering by own userId", async () => {
     mockPrisma.user.findMany = vi.fn((args: { where?: { id?: { in?: number[] } } }) => {
       if (args?.where?.id?.in?.includes(1)) {
-        return Promise.resolve([{ id: 1, email: "user@example.com" }]) as ReturnType<typeof mockPrisma.user.findMany>;
+        return Promise.resolve([{ id: 1, email: "user@example.com" }]) as ReturnType<
+          typeof mockPrisma.user.findMany
+        >;
       }
       return Promise.resolve([]) as ReturnType<typeof mockPrisma.user.findMany>;
     });
@@ -219,7 +320,9 @@ describe("getBookings - stub PermissionCheckService behavior", () => {
       skip: 0,
     });
 
-    expect((mockKysely as unknown as { executeQuery: ReturnType<typeof vi.fn> }).executeQuery).toHaveBeenCalled();
+    expect(
+      (mockKysely as unknown as { executeQuery: ReturnType<typeof vi.fn> }).executeQuery
+    ).toHaveBeenCalled();
   });
 
   it("should NOT fetch user IDs when no userIds filter is provided", async () => {
