@@ -859,4 +859,152 @@ describe("OrganizationMembershipService", () => {
       expect(userRepository.setOrganizationId).not.toHaveBeenCalled();
     });
   });
+
+  describe("inviteOwner", () => {
+    it("invites an unknown email as OWNER without any actor membership", async () => {
+      await expect(
+        service.inviteOwner({
+          organizationId: ORG_ID,
+          email: " New@Acme.com ",
+          inviterName: "Instance Admin",
+        })
+      ).resolves.toEqual({ invited: true });
+
+      expect(userRepository.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith({
+        email: "new@acme.com",
+        teamId: ORG_ID,
+        role: "OWNER",
+        organizationId: ORG_ID,
+      });
+      expect(sendInvite).toHaveBeenCalledWith({
+        teamId: ORG_ID,
+        teamName: "Acme",
+        email: "new@acme.com",
+        inviterName: "Instance Admin",
+        locale: "pl",
+        isExistingUser: false,
+        isOrganization: true,
+      });
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.member.invite", {
+        action: "organization.member.invite",
+        actorUserId: null,
+        organizationId: ORG_ID,
+        targetUserId: 77,
+        role: "OWNER",
+      });
+    });
+  });
+
+  describe("grantOwner", () => {
+    const USER_ID = 5;
+
+    function grant() {
+      return service.grantOwner({ organizationId: ORG_ID, userId: USER_ID });
+    }
+
+    it("promotes an accepted member to OWNER", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "MEMBER" });
+
+      await expect(grant()).resolves.toEqual({ userId: USER_ID, role: "OWNER" });
+
+      expect(await service.getRole(USER_ID, ORG_ID)).toBe("OWNER");
+      expect(membershipRepository.updateRoleCalls).toBe(1);
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.owner.grant", {
+        action: "organization.owner.grant",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      });
+    });
+
+    it("leaves an existing owner untouched", async () => {
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "OWNER" });
+
+      await expect(grant()).resolves.toEqual({ userId: USER_ID, role: "OWNER" });
+
+      expect(membershipRepository.updateRoleCalls).toBe(0);
+    });
+
+    it("keeps the other owners' roles", async () => {
+      membershipRepository.seedMembership({ userId: 1, teamId: ORG_ID, role: "OWNER" });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "ADMIN" });
+
+      await grant();
+
+      expect(await membershipRepository.countOwners(ORG_ID)).toBe(2);
+    });
+
+    it("adds an outsider with a username as OWNER", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob" });
+
+      await expect(grant()).resolves.toEqual({ userId: USER_ID, role: "OWNER" });
+
+      expect(membershipRepository.memberships).toEqual([
+        { userId: USER_ID, teamId: ORG_ID, role: "OWNER", accepted: true },
+      ]);
+      expect(membershipRepository.profiles).toEqual([
+        { userId: USER_ID, organizationId: ORG_ID, username: "bob" },
+      ]);
+      expect(membershipRepository.updateRoleCalls).toBe(0);
+    });
+
+    it("accepts a pending MEMBER invite and raises it to OWNER", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
+      membershipRepository.seedMembership({
+        userId: USER_ID,
+        teamId: ORG_ID,
+        role: "MEMBER",
+        accepted: false,
+      });
+
+      await expect(grant()).resolves.toEqual({ userId: USER_ID, role: "OWNER" });
+
+      expect(await membershipRepository.findMembership({ organizationId: ORG_ID, userId: USER_ID })).toEqual({
+        role: "OWNER",
+        accepted: true,
+      });
+      expect(membershipRepository.updateRoleCalls).toBe(1);
+    });
+
+    it("rejects a user without a username", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: null });
+
+      await expectRejection(
+        grant(),
+        ErrorCode.PreconditionFailed,
+        "The owner needs a username before joining an organization"
+      );
+      expect(membershipRepository.memberships).toEqual([]);
+    });
+
+    it("rejects a user from another organization", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: OTHER_ORG_ID });
+
+      await expectRejection(grant(), ErrorCode.PreconditionFailed, "owner_in_another_organization");
+      expect(membershipRepository.memberships).toEqual([]);
+    });
+
+    it("rejects a missing user", async () => {
+      await expectRejection(grant(), ErrorCode.NotFound, "Owner user not found");
+    });
+  });
+
+  describe("findMembershipCandidateByEmail", () => {
+    it("trims and lowercases the email before the lookup", async () => {
+      const findUserByEmail = vi.spyOn(membershipRepository, "findUserByEmail");
+      membershipRepository.seedUser({ id: 1, username: "alice", email: "alice@acme.com" });
+
+      expect(await service.findMembershipCandidateByEmail("  Alice@ACME.com ")).toEqual({
+        id: 1,
+        username: "alice",
+        email: "alice@acme.com",
+        organizationId: null,
+      });
+      expect(findUserByEmail).toHaveBeenCalledWith("alice@acme.com");
+    });
+
+    it("returns null for an unknown email", async () => {
+      expect(await service.findMembershipCandidateByEmail("nobody@acme.com")).toBeNull();
+    });
+  });
 });

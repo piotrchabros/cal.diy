@@ -1,0 +1,25 @@
+import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
+import { _generateMetadata, getTranslate } from "app/_utils";
+import AdminTeamsListingView from "~/teams/views/admin-teams-listing-view";
+import { requireOrganizationsAdmin } from "../organizations/_lib/requireOrganizationsAdmin";
+
+export const generateMetadata = async () =>
+  await _generateMetadata(
+    (t) => t("teams"),
+    (t) => t("admin_teams_description"),
+    undefined,
+    undefined,
+    "/settings/admin/teams"
+  );
+
+const Page = async () => {
+  await requireOrganizationsAdmin();
+  const t = await getTranslate();
+  return (
+    <SettingsHeader title={t("teams")} description={t("admin_teams_description")}>
+      <AdminTeamsListingView />
+    </SettingsHeader>
+  );
+};
+
+export default Page;

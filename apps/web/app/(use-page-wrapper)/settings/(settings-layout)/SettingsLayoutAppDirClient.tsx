@@ -26,6 +26,7 @@ import { useSession } from "next-auth/react";
 import type { ComponentProps } from "react";
 import React, { useEffect, useMemo, useState } from "react";
 import Shell from "~/shell/Shell";
+import { withOrganizationAdminTabs } from "./organizationAdminTabs";
 import { getOwnOrganizationTab } from "./ownOrganizationTab";
 
 const getTabs = (
@@ -364,14 +365,7 @@ const useTabs = ({
         );
         return { ...tab, children: filtered };
       } else if (tab.href === "/settings/admin" && permissions?.canManageOrganizations) {
-        const children = [...(tab.children ?? [])];
-        const usersIndex = children.findIndex((child) => child.name === "users");
-        children.splice(usersIndex === -1 ? children.length : usersIndex + 1, 0, {
-          name: "organizations",
-          href: "/settings/admin/organizations",
-          trackingMetadata: { section: "admin", page: "organizations" },
-        });
-        return { ...tab, children };
+        return { ...tab, children: withOrganizationAdminTabs(tab.children) };
       } else if (tab.href === "/settings/developer") {
         const filtered = tab?.children?.filter(
           (childTab) => permissions?.canUpdateOrganization || childTab.name !== "api_docs"
