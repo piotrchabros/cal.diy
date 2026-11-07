@@ -1231,6 +1231,29 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
               creationSource: CreationSource.WEBAPP,
             },
           });
+          // Autolinked users already got their membership through `teams.create` above
+          if (isOrganizationsEnabled() && !orgId && organizationId !== null) {
+            try {
+              const { getOrganizationMembershipService } = await import(
+                "@calcom/features/organizations/di/OrganizationMembershipService.container"
+              );
+              await getOrganizationMembershipService().addMember({
+                organizationId,
+                userId: newUser.id,
+                role: "MEMBER",
+              });
+            } catch (err) {
+              log.error("Error adding the new OAuth user to its organization", {
+                userId: newUser.id,
+                organizationId,
+                error: safeStringify(err),
+              });
+              // Without a Profile and Membership the user would still pass the organization domain
+              // check on the next sign-in, so drop it; any partial Profile or Membership cascades.
+              await prisma.user.delete({ where: { id: newUser.id }, select: { id: true } });
+              return `/auth/error?error=user-creation-error`;
+            }
+          }
           const linkAccountNewUserData = AdapterAccountPresenter.fromCalAccount(
             account,
             newUser.id,
