@@ -2,7 +2,7 @@
 
 import process from "node:process";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
-import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { useOrgBaseUrl, useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { HOSTED_CAL_FEATURES, WEBSITE_URL } from "@calcom/lib/constants";
 import { emailRegex } from "@calcom/lib/emailSchema";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
@@ -114,6 +114,7 @@ export default function Login({
   const { t } = useLocale();
   const router = useRouter();
   const orgBaseUrl = useOrgBaseUrl();
+  const signupBase = useOrgBaseUrlOr(WEBSITE_URL);
   const formSchema = z
     .object({
       email: z
@@ -394,8 +395,8 @@ export default function Login({
               <Link
                 href={
                   callbackUrl
-                    ? `${WEBSITE_URL}/signup?redirect=${encodeURIComponent(callbackUrl)}`
-                    : `${WEBSITE_URL}/signup`
+                    ? `${signupBase}/signup?redirect=${encodeURIComponent(callbackUrl)}`
+                    : `${signupBase}/signup`
                 }
                 className="text-sm font-medium text-emphasis hover:underline">
                 {t("create_account")}
