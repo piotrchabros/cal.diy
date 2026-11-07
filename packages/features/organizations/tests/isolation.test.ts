@@ -48,7 +48,10 @@ function buildServices(world: InMemoryIsolationWorld) {
     vi.fn(async () => undefined),
     () => world.organizationMembershipService()
   );
-  const teamProfile = new TeamProfileService(world.teamProfilePrisma());
+  const organizationMembership = world.organizationMembershipService();
+  const teamProfile = new TeamProfileService(world.teamProfilePrisma(), undefined, (userId, organizationId) =>
+    organizationMembership.getRole(userId, organizationId)
+  );
   const eventTypeHosts = new EventTypeHostService({} as never, world.eventTypeHostDeps());
   return { teamMembers, teamProfile, eventTypeHosts };
 }
