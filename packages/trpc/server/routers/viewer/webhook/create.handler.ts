@@ -1,4 +1,6 @@
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { updateTriggerForExistingBookings } from "@calcom/features/webhooks/lib/scheduleTrigger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
 import { prisma } from "@calcom/prisma";
 import type { Prisma, Webhook } from "@calcom/prisma/client";
@@ -34,6 +36,17 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
   };
   if (input.platform && user.role !== "ADMIN") {
     throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+
+  // FR-008: another organization's team must look nonexistent, not merely forbidden.
+  if (input.teamId && isOrganizationsEnabled()) {
+    const isMember = await new MembershipRepository().hasMembership({
+      userId: user.id,
+      teamId: input.teamId,
+    });
+    if (!isMember) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+    }
   }
 
   if (input.includeMemberMeetings) {

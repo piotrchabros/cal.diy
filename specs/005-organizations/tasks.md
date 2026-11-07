@@ -189,7 +189,7 @@ description: "Task list for Organizations (spec 005)"
 **PR 21**
 
 - [X] T036 [US2] Add the assertion "every host's user is in the event type's team org" to `packages/features/host/services/EventTypeHostService.ts` for host assignment, and refuse otherwise. Add tests
-- [ ] T037 [P] [US2] Add the cross-org isolation test suite `packages/features/organizations/tests/isolation.test.ts`. Use in-memory fakes with two orgs, each with users and a team, and assert NOT_FOUND or exclusion for:
+- [X] T037 [P] [US2] Add the cross-org isolation test suite `packages/features/organizations/tests/isolation.test.ts`. Use in-memory fakes with two orgs, each with users and a team, and assert NOT_FOUND or exclusion for:
   - `teams.get` / `listMembers` / `inviteMember`
   - `eventTypes.searchTeamMembers` / `getHostsForAssignment`
   - `availability.listTeam`
@@ -376,7 +376,7 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T101 [US6] With the flag on, `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` indexes a booking page only when `OrganizationSettings.allowSEOIndexing` is true, and that column defaults to `false`. Make the T061 switch-over migration set `allowSEOIndexing = true` for BlueBee (and default it for organizations created by `OrganizationService.create`), so public pages don't become `noindex` at go-live
 - [ ] T102 [US5] Move redirects are now 308s (`apps/web/lib/handleOrgRedirect.ts`, `apps/web/app/WithAppDirSsr.tsx`, `apps/web/app/WithEmbedSSR.tsx`) and browsers cache them, so disabling a redirect when the old org reuses the username (US5-6) does not reach visitors who already followed it. Document this in `contracts/infra-owner-checklist.md` or send a bounded `Cache-Control` on those redirects
 - [ ] T150 [US2] With the flag on, make the shared tRPC procedures `createEventPbacProcedure` and `eventOwnerProcedure` (`packages/trpc/server/routers/viewer/eventTypes/util.ts`) and the notetaker `assertActorIsMember` (`packages/features/notetaker/services/NotetakerSharingSettingsService.ts`) refuse callers outside the team's organization with NOT_FOUND instead of FORBIDDEN (FR-008). Add tests
-- [ ] T151 Close the cross-team hole in webhook create without the flag: `packages/trpc/server/routers/viewer/webhook/create.handler.ts` accepts any `input.teamId` (the membership check runs only for `includeMemberMeetings`). Require team admin/owner membership unconditionally, and confirm whether team webhooks currently fail at runtime from mixing the `teamId` scalar with a `user` connect. Add tests
+- [ ] T151 Close the cross-team hole in webhook create without the flag (with the flag on, T037 added an accepted-membership check that answers NOT_FOUND): `packages/trpc/server/routers/viewer/webhook/create.handler.ts` accepts any `input.teamId` (the membership check runs only for `includeMemberMeetings`). Require team admin/owner membership unconditionally, and confirm whether team webhooks currently fail at runtime from mixing the `teamId` scalar with a `user` connect. Add tests
 
 ---
 

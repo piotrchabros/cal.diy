@@ -1,8 +1,5 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { vi } from "vitest";
-
 import prisma from "@calcom/prisma";
-
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { outOfOfficeCreateOrUpdate } from "./outOfOfficeCreateOrUpdate.handler";
 
 vi.mock("@calcom/prisma", () => {
@@ -11,6 +8,9 @@ vi.mock("@calcom/prisma", () => {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
       upsert: vi.fn(),
+    },
+    user: {
+      findUnique: vi.fn(),
     },
   };
   return {
@@ -144,5 +144,44 @@ describe("outOfOfficeCreateOrUpdate", () => {
         toUserId: 4,
       },
     });
+  });
+
+  it("refuses NOT_FOUND when forwarding to a user who shares no accepted team (e.g. another organization)", async () => {
+    const otherOrgUserId = 99;
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    const input = {
+      dateRange: {
+        startDate: new Date("2024-11-23T00:00:00.000Z"),
+        endDate: new Date("2024-11-24T00:00:00.000Z"),
+      },
+      startDateOffset: 0,
+      endDateOffset: 0,
+      reasonId: 1,
+      notes: "",
+      toTeamUserId: otherOrgUserId,
+    };
+
+    await expect(outOfOfficeCreateOrUpdate({ ctx: { user: mockUser }, input })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "user_not_found",
+    });
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: otherOrgUserId,
+        teams: {
+          some: {
+            team: {
+              members: {
+                some: { userId: mockUser.id, accepted: true },
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    expect(prisma.outOfOfficeEntry.findFirst).not.toHaveBeenCalled();
+    expect(prisma.outOfOfficeEntry.upsert).not.toHaveBeenCalled();
   });
 });
