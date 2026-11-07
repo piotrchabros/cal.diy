@@ -1,4 +1,5 @@
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
 import { PrismaNotetakerActivityRepository } from "./PrismaNotetakerActivityRepository";
@@ -28,6 +29,7 @@ function requireId(id: number | undefined, label: string): number {
 async function createUser(suffix: string): Promise<number> {
   const user = await prisma.user.create({
     data: {
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
       email: `notetaker-activity-it-${runId}-${suffix}@example.com`,
       username: `notetaker-activity-it-${runId}-${suffix}`,
     },

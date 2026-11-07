@@ -1,4 +1,5 @@
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildAdHocBookingMetadata } from "../lib/adHocMeeting";
 import { isQuickstartIsolatedDatabase, QUICKSTART_SKIP_MESSAGE } from "../tests/quickstartHarness";
@@ -145,6 +146,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
   beforeAll(async () => {
     const user = await prisma.user.create({
       data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
         email: `notetaker-choice-it-${runId}@example.com`,
         username: `notetaker-choice-it-${runId}`,
       },
@@ -652,7 +654,12 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
       const verifiedSecondary = `notetaker-choice-it-sec-verified-${runId}@example.com`;
       const unverifiedSecondary = `notetaker-choice-it-sec-unverified-${runId}@example.com`;
       const user = await prisma.user.create({
-        data: { email: primaryEmail, username: primaryEmail, emailVerified: null },
+        data: {
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
+          email: primaryEmail,
+          username: primaryEmail,
+          emailVerified: null,
+        },
         select: { id: true },
       });
       verifiedEmailsUserId = user.id;
@@ -853,6 +860,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
   beforeAll(async () => {
     const organizer = await prisma.user.create({
       data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
         email: `${prefix}${runId}-organizer@example.com`,
         username: `${prefix}${runId}-organizer`,
         name: ORGANIZER_NAME,
@@ -862,6 +870,7 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SHARING_SUITE, () => {
     organizerId = organizer.id;
     const otherOrganizer = await prisma.user.create({
       data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
         email: `${prefix}${runId}-other@example.com`,
         username: `${prefix}${runId}-other`,
       },
@@ -1424,12 +1433,17 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(AD_HOC_SUITE, () => {
 
   beforeAll(async () => {
     const owner = await prisma.user.create({
-      data: { email: `notetaker-adhoc-it-${runId}@example.com`, username: `notetaker-adhoc-it-${runId}` },
+      data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
+        email: `notetaker-adhoc-it-${runId}@example.com`,
+        username: `notetaker-adhoc-it-${runId}`,
+      },
       select: { id: true },
     });
     ownerId = owner.id;
     const other = await prisma.user.create({
       data: {
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
         email: `notetaker-adhoc-it-other-${runId}@example.com`,
         username: `notetaker-adhoc-it-other-${runId}`,
       },
