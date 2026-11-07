@@ -57,6 +57,7 @@ const INPUT_FIELDS = [
   "bookingStartTime",
   "bookingTitle",
   "locale",
+  "logoHref",
   "outcomeReason",
   "resultsUrl",
   "sessionStatus",
@@ -73,6 +74,7 @@ const NOTICE_INPUT_FIELDS: string[] = [
   "hostName",
   "isPending",
   "locale",
+  "logoHref",
   "t",
   "timeZone",
   "to",
@@ -82,6 +84,7 @@ const ADMIT_INPUT_FIELDS: string[] = [
   "bookingStartTime",
   "bookingTitle",
   "locale",
+  "logoHref",
   "notetakerUrl",
   "t",
   "timeZone",
@@ -93,6 +96,7 @@ const FAILED_INPUT_FIELDS: string[] = [
   "bookingTitle",
   "canEnableAgain",
   "locale",
+  "logoHref",
   "notetakerUrl",
   "outcomeReason",
   "t",
@@ -104,6 +108,7 @@ const TURNED_OFF_INPUT_FIELDS: string[] = [
   "bookingStartTime",
   "bookingTitle",
   "locale",
+  "logoHref",
   "notetakerUrl",
   "t",
   "timeZone",
@@ -114,6 +119,7 @@ const SHARED_INPUT_FIELDS: string[] = [
   "bookingStartTime",
   "bookingTitle",
   "locale",
+  "logoHref",
   "notetakerUrl",
   "sharedByName",
   "t",
@@ -135,6 +141,9 @@ const OUTCOME_REASONS: NotetakerOutcomeReasonDto[] = [
 ];
 
 const NOTETAKER_URL = `${WEBAPP_URL}/booking/${BOOKING_UID}/notetaker`;
+const ORGANIZATION_ID = 7;
+const ORG_URL = "https://acme.cal.example";
+const ORG_NOTETAKER_URL = `${ORG_URL}/booking/${BOOKING_UID}/notetaker`;
 const BOOKING_END: Date = new Date("2026-10-12T10:30:00.000Z");
 const NOW: Date = new Date("2026-10-10T08:00:00.000Z");
 const ANN = "ann@example.com";
@@ -234,6 +243,10 @@ describe("NotetakerNotificationService", () => {
   const calendarMeetingRepository = {
     listActiveParticipantUserIds: vi.fn(async (_params: { bookingId: number }) => calendarParticipantIds),
   };
+  const organizationUrlService = {
+    getBaseUrl: vi.fn(async (_params: { organizationId: number | null | undefined }) => WEBAPP_URL),
+    getBaseUrlForUser: vi.fn(async (_params: { userId: number | null | undefined }) => WEBAPP_URL),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -249,6 +262,8 @@ describe("NotetakerNotificationService", () => {
     repositories = createInMemoryNotetakerRepositories();
     userLookup = new FakeUserLookup();
     calendarParticipantIds = [];
+    organizationUrlService.getBaseUrl.mockImplementation(async () => WEBAPP_URL);
+    organizationUrlService.getBaseUrlForUser.mockImplementation(async () => WEBAPP_URL);
     service = new NotetakerNotificationService({
       bookingNotetakerRepository: repositories.bookingNotetakerRepository,
       activityRepository: repositories.activityRepository,
@@ -257,6 +272,7 @@ describe("NotetakerNotificationService", () => {
       summaryRepository: repositories.summaryRepository,
       userRepository: userLookup,
       calendarMeetingRepository,
+      organizationUrlService,
       logger,
     });
     repositories.store.addBooking(buildBooking());
@@ -935,13 +951,15 @@ describe("NotetakerNotificationService", () => {
         expect(noticeMock.mock.calls[0][0].to.name).toBeNull();
       });
 
-      it("carries no link", async () => {
+      it("carries no link besides the logo's", async () => {
         setAttendees([buildAttendee(ANN)]);
 
         await sendNotice();
 
+        const { logoHref, ...input } = noticeMock.mock.calls[0][0];
+        expect(logoHref).toBe(WEBAPP_URL);
         // JSON.stringify drops the translator function, which is not part of the data under test.
-        const sent = JSON.stringify(noticeMock.mock.calls);
+        const sent = JSON.stringify(input);
         for (const fragment of ["http", BOOKING_UID, "/notetaker", WEBAPP_URL]) {
           expect(sent).not.toContain(fragment);
         }
@@ -2448,6 +2466,118 @@ describe("NotetakerNotificationService", () => {
             expect(loggedText()).not.toContain(secret);
           });
         });
+      });
+    });
+  });
+
+  describe("organization base URL", () => {
+    function setAttendees(attendees: NotetakerAttendeeRecord[]): void {
+      repositories.store.setAttendees(BOOKING_ID, attendees);
+    }
+
+    describe("for a booking of an organization team", () => {
+      beforeEach(() => {
+        repositories.store.addBooking(buildBooking({ organizationId: ORGANIZATION_ID }));
+        organizationUrlService.getBaseUrl.mockImplementation(async () => ORG_URL);
+      });
+
+      it("links the results email and its logo to the organization", async () => {
+        await seedHosts(ORGANIZER_ID);
+        const sessionId = await seedReadySession();
+
+        await send(sessionId);
+
+        expect(organizationUrlService.getBaseUrl).toHaveBeenCalledWith({ organizationId: ORGANIZATION_ID });
+        expect(organizationUrlService.getBaseUrlForUser).not.toHaveBeenCalled();
+        const input = sendMock.mock.calls[0][0];
+        expect(input.resultsUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+      });
+
+      it("links the admit prompt email, its logo and the web push to the organization", async () => {
+        await seedHosts(ORGANIZER_ID);
+        setSubscription(ORGANIZER_ID, storedSubscription("1"));
+        const sessionId = await seedSession({ status: "WAITING_TO_BE_ADMITTED" });
+
+        await sendAdmit(sessionId);
+
+        const input = admitMock.mock.calls[0][0];
+        expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+        expect(pushMock.mock.calls[0][0].url).toBe(ORG_NOTETAKER_URL);
+      });
+
+      it("links the failed email and its logo to the organization", async () => {
+        await seedHosts(ORGANIZER_ID);
+        const sessionId = await seedSession({ status: "FAILED", outcomeReason: "NOT_ADMITTED" });
+
+        await sendFailedNotice(sessionId);
+
+        const input = failedMock.mock.calls[0][0];
+        expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+      });
+
+      it("links the turned-off email and its logo to the organization", async () => {
+        await seedHosts(ORGANIZER_ID);
+        await seedChoice({ enabled: false });
+
+        await service.send({ kind: "TURNED_OFF", bookingId: BOOKING_ID, sessionId: null });
+
+        const input = turnedOffMock.mock.calls[0][0];
+        expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+      });
+
+      it("links the attendee notice logo to the organization", async () => {
+        await seedChoice();
+        setAttendees([{ email: ANN, name: "Ann", locale: "en", timeZone: "UTC" }]);
+
+        await service.send({ kind: "ATTENDEE_NOTICE", bookingId: BOOKING_ID, sessionId: null });
+
+        expect(noticeMock.mock.calls[0][0].logoHref).toBe(ORG_URL);
+      });
+
+      it("links the shared email and its logo to the organization", async () => {
+        await seedReadySession();
+        await repositories.bookingNotetakerRepository.createSharingGrant({
+          bookingId: BOOKING_ID,
+          grantedByUserId: null,
+        });
+        setAttendees([{ email: ANN, name: "Ann", locale: "en", timeZone: "UTC" }]);
+
+        await service.send({ kind: "SHARED_WITH_ATTENDEES", bookingId: BOOKING_ID, sessionId: null });
+
+        const input = sharedMock.mock.calls[0][0];
+        expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+      });
+    });
+
+    describe("for a booking outside an organization team", () => {
+      it("uses the organizer's organization", async () => {
+        organizationUrlService.getBaseUrlForUser.mockImplementation(async () => ORG_URL);
+        await seedHosts(ORGANIZER_ID);
+        const sessionId = await seedReadySession();
+
+        await send(sessionId);
+
+        expect(organizationUrlService.getBaseUrlForUser).toHaveBeenCalledWith({ userId: ORGANIZER_ID });
+        expect(organizationUrlService.getBaseUrl).not.toHaveBeenCalled();
+        const input = sendMock.mock.calls[0][0];
+        expect(input.resultsUrl).toBe(ORG_NOTETAKER_URL);
+        expect(input.logoHref).toBe(ORG_URL);
+      });
+
+      it("falls back to the app URL when the organizer has no organization", async () => {
+        await seedHosts(ORGANIZER_ID);
+        const sessionId = await seedReadySession();
+
+        await send(sessionId);
+
+        const input = sendMock.mock.calls[0][0];
+        expect(input.resultsUrl).toBe(NOTETAKER_URL);
+        expect(input.logoHref).toBe(WEBAPP_URL);
       });
     });
   });

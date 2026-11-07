@@ -8,8 +8,8 @@ import {
 } from "@calcom/emails/notetaker-email-service";
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import { sendNotification as sendWebPush } from "@calcom/features/notifications/sendNotification";
+import type { OrganizationUrlService } from "@calcom/features/organizations/services/OrganizationUrlService";
 import { getTranslation } from "@calcom/i18n/server";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { z } from "zod";
@@ -58,6 +58,7 @@ export interface INotetakerNotificationServiceDeps {
   summaryRepository: INotetakerSummaryRepository;
   userRepository: INotetakerUserLookup;
   calendarMeetingRepository: Pick<INotetakerCalendarMeetingRepository, "listActiveParticipantUserIds">;
+  organizationUrlService: Pick<OrganizationUrlService, "getBaseUrl" | "getBaseUrlForUser">;
   logger: ISimpleLogger;
 }
 
@@ -145,7 +146,8 @@ export class NotetakerNotificationService {
       return;
     }
 
-    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    const baseUrl = await this.getBookingBaseUrl(booking);
+    const notetakerUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     const translators = new Map<number, NotetakerTranslator>();
     let failureCount = 0;
     for (let i = 0; i < recipients.length; i++) {
@@ -163,6 +165,7 @@ export class NotetakerNotificationService {
           bookingTitle: booking.title,
           bookingStartTime: booking.startTime,
           notetakerUrl,
+          logoHref: baseUrl,
         });
       } catch (error) {
         failureCount++;
@@ -287,7 +290,8 @@ export class NotetakerNotificationService {
       return;
     }
 
-    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    const baseUrl = await this.getBookingBaseUrl(booking);
+    const notetakerUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     let failureCount = 0;
     for (let i = 0; i < recipients.length; i++) {
       const user = recipients[i];
@@ -304,6 +308,7 @@ export class NotetakerNotificationService {
           notetakerUrl,
           outcomeReason,
           canEnableAgain,
+          logoHref: baseUrl,
         });
       } catch (error) {
         failureCount++;
@@ -347,7 +352,8 @@ export class NotetakerNotificationService {
       return;
     }
 
-    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    const baseUrl = await this.getBookingBaseUrl(booking);
+    const notetakerUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     let failureCount = 0;
     for (let i = 0; i < recipients.length; i++) {
       const user = recipients[i];
@@ -362,6 +368,7 @@ export class NotetakerNotificationService {
           bookingTitle: booking.title,
           bookingStartTime: booking.startTime,
           notetakerUrl,
+          logoHref: baseUrl,
         });
       } catch (error) {
         failureCount++;
@@ -417,6 +424,8 @@ export class NotetakerNotificationService {
       return;
     }
 
+    const baseUrl = await this.getBookingBaseUrl(booking);
+    const resultsUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     // Every recipient is attempted before failing, so one bad address does not cost the others their email.
     let failureCount = 0;
     for (let i = 0; i < recipients.length; i++) {
@@ -431,11 +440,12 @@ export class NotetakerNotificationService {
           to: { email: user.email, name: user.name },
           bookingTitle: booking.title,
           bookingStartTime: booking.startTime,
-          resultsUrl: `${WEBAPP_URL}/booking/${booking.uid}/notetaker`,
+          resultsUrl,
           sessionStatus,
           outcomeReason: session.outcomeReason,
           transcriptCompleteness: transcript.completeness,
           summaryStatus,
+          logoHref: baseUrl,
         });
       } catch (error) {
         failureCount++;
@@ -489,6 +499,7 @@ export class NotetakerNotificationService {
 
     const hostName = getNotetakerHostName(booking.organizer);
     const isPending = booking.status !== "ACCEPTED";
+    const baseUrl = await this.getBookingBaseUrl(booking);
 
     // Sent whatever the event type's email settings are, because it is a transparency notice.
     const sentEmails: string[] = [];
@@ -507,6 +518,7 @@ export class NotetakerNotificationService {
           bookingStartTime: booking.startTime,
           hostName,
           isPending,
+          logoHref: baseUrl,
         });
         sentEmails.push(attendee.email);
       } catch (error) {
@@ -577,7 +589,8 @@ export class NotetakerNotificationService {
       }
     }
 
-    const notetakerUrl = `${WEBAPP_URL}/booking/${booking.uid}/notetaker`;
+    const baseUrl = await this.getBookingBaseUrl(booking);
+    const notetakerUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     let failureCount = 0;
     for (let i = 0; i < attendees.length; i++) {
       const attendee = attendees[i];
@@ -593,6 +606,7 @@ export class NotetakerNotificationService {
           bookingStartTime: booking.startTime,
           sharedByName,
           notetakerUrl,
+          logoHref: baseUrl,
         });
       } catch (error) {
         failureCount++;
@@ -608,6 +622,15 @@ export class NotetakerNotificationService {
         `NotetakerNotificationService: SHARED_WITH_ATTENDEES for booking ${bookingId} failed for ${failureCount} of ${attendees.length} recipients`
       );
     }
+  }
+
+  // A personal event type has no organization of its own, so the organizer's organization stands in.
+  private async getBookingBaseUrl(booking: NotetakerBookingContext): Promise<string> {
+    const { organizationUrlService } = this.deps;
+    if (booking.organizationId !== null) {
+      return organizationUrlService.getBaseUrl({ organizationId: booking.organizationId });
+    }
+    return organizationUrlService.getBaseUrlForUser({ userId: booking.userId });
   }
 
   private async resolveNoticeRecipients(
