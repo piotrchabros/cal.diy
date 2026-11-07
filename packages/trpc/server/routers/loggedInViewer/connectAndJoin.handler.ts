@@ -5,6 +5,7 @@ import {
   type EventTypeBrandingData,
   getEventTypeService,
 } from "@calcom/features/eventtypes/di/EventTypeService.container";
+import { getBookingOrganizationBaseUrl } from "@calcom/features/organizations/lib/getBookingOrganizationBaseUrl";
 import { getTranslation } from "@calcom/i18n/server";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
 import logger from "@calcom/lib/logger";
@@ -231,6 +232,10 @@ export const Handler = async ({ ctx, input }: Options) => {
     videoCallData,
     customReplyToEmail: eventType?.customReplyToEmail,
     organizationId: user?.organizationId ?? null,
+    bookerUrl: await getBookingOrganizationBaseUrl({
+      teamId: updatedBooking.eventType?.teamId ?? null,
+      organizerUserId: user.id,
+    }),
     team: updatedBooking.eventType?.team
       ? {
           name: updatedBooking.eventType.team.name,

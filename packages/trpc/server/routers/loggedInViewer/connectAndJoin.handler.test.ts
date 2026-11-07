@@ -1,10 +1,9 @@
 import { prisma } from "@calcom/prisma/__mocks__/prisma";
-
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
+import { sendScheduledEmailsAndSMS } from "@calcom/emails/email-manager";
+import { getBookingOrganizationBaseUrl } from "@calcom/features/organizations/lib/getBookingOrganizationBaseUrl";
 import { BookingStatus } from "@calcom/prisma/enums";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Handler } from "./connectAndJoin.handler";
 
 vi.mock("@calcom/prisma", () => ({
@@ -31,6 +30,10 @@ vi.mock("@calcom/features/eventtypes/di/EventTypeService.container", () => ({
 
 vi.mock("@calcom/features/bookings/lib/getCalEventResponses", () => ({
   getCalEventResponses: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock("@calcom/features/organizations/lib/getBookingOrganizationBaseUrl", () => ({
+  getBookingOrganizationBaseUrl: vi.fn().mockResolvedValue("https://acme.example.com"),
 }));
 
 const MOCK_ORG_ID = 100;
@@ -140,5 +143,23 @@ describe("connectAndJoin.handler", () => {
     });
 
     expect(result.meetingUrl).toBe("https://daily.co/mock-meeting");
+  });
+
+  it("passes the organization base URL as bookerUrl to the scheduled emails", async () => {
+    mockPrismaForSuccessfulJoin();
+
+    await Handler({
+      ctx: { user: createMockUser() },
+      input: { token: MOCK_TOKEN },
+    });
+
+    expect(getBookingOrganizationBaseUrl).toHaveBeenCalledWith({ teamId: 1, organizerUserId: 1 });
+    expect(sendScheduledEmailsAndSMS).toHaveBeenCalledWith(
+      expect.objectContaining({ bookerUrl: "https://acme.example.com" }),
+      undefined,
+      false,
+      false,
+      null
+    );
   });
 });

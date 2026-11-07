@@ -1,9 +1,10 @@
 import { PaymentServiceMap } from "@calcom/app-store/payment.services.generated";
 import { sendNoShowFeeChargedEmail } from "@calcom/emails/billing-email-service";
 import { CredentialRepository } from "@calcom/features/credentials/repositories/CredentialRepository";
+import { getBookingOrganizationBaseUrl } from "@calcom/features/organizations/lib/getBookingOrganizationBaseUrl";
+import { getTranslation } from "@calcom/i18n/server";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import { getTranslation } from "@calcom/i18n/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleNoShowFee } from "./handleNoShowFee";
 
@@ -34,6 +35,9 @@ vi.mock("@calcom/features/credentials/repositories/CredentialRepository", () => 
   },
 }));
 
+vi.mock("@calcom/features/organizations/lib/getBookingOrganizationBaseUrl", () => ({
+  getBookingOrganizationBaseUrl: vi.fn(),
+}));
 
 vi.mock("@calcom/prisma", () => ({
   default: {},
@@ -45,6 +49,7 @@ describe("handleNoShowFee", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.mocked(getBookingOrganizationBaseUrl).mockResolvedValue("http://localhost:3000");
     mockPaymentService = {
       chargeCard: vi.fn(),
     };
@@ -132,6 +137,34 @@ describe("handleNoShowFee", () => {
       expect(result).toEqual({ success: true, paymentId: "pay_123" });
       expect(mockPaymentService.chargeCard).toHaveBeenCalledWith(mockPayment, mockBooking.id);
       expect(sendNoShowFeeChargedEmail).toHaveBeenCalled();
+    });
+
+    it("should pass the organization base URL as bookerUrl to the no-show fee email", async () => {
+      const teamBooking = {
+        ...mockBooking,
+        eventType: {
+          ...mockBooking.eventType,
+          teamId: 7,
+        },
+      };
+
+      mockPaymentService.chargeCard.mockResolvedValue({ success: true, paymentId: "pay_123" });
+      vi.mocked(CredentialRepository.findPaymentCredentialByAppIdAndUserIdOrTeamId).mockResolvedValue(
+        mockCredential
+      );
+      vi.mocked(getBookingOrganizationBaseUrl).mockResolvedValue("https://acme.example.com");
+
+      await handleNoShowFee({
+        booking: teamBooking,
+        payment: mockPayment,
+      });
+
+      expect(getBookingOrganizationBaseUrl).toHaveBeenCalledWith({ teamId: 7, organizerUserId: 1 });
+      expect(sendNoShowFeeChargedEmail).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ bookerUrl: "https://acme.example.com" }),
+        expect.anything()
+      );
     });
 
     it("should successfully process no-show fee for team event", async () => {
