@@ -1,14 +1,13 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
-
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import logger from "@calcom/lib/logger";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import { LARK_HOST } from "../common";
 import { getAppAccessToken } from "../lib/AppAccessToken";
 import type { LarkAuthCredentials } from "../types/LarkCalendar";
@@ -117,7 +116,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
     }
 
     res.redirect(
-      getSafeRedirectUrl(state?.returnTo) ??
+      getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
         getInstalledAppPath({ variant: "calendar", slug: "lark-calendar" })
     );
   } catch (error) {

@@ -1,10 +1,8 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!req.session?.user?.id) {
@@ -20,7 +18,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const params = new URLSearchParams({
     client_id,
-    redirect_uri: `${WEBAPP_URL}/api/integrations/closecom/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "closecom"),
     response_type: "code",
     state,
   });

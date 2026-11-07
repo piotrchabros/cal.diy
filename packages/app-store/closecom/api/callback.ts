@@ -1,26 +1,26 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import { HttpError } from "@calcom/lib/http-error";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = req.query;
 
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
 
   const redirectAfterSuccess =
-    getSafeRedirectUrl(state?.returnTo) ??
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
     getInstalledAppPath({ variant: appConfig.variant, slug: appConfig.slug });
-  const redirectAfterSuccessOrError = getSafeRedirectUrl(state?.onErrorReturnTo) ?? redirectAfterSuccess;
+  const redirectAfterSuccessOrError =
+    getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ?? redirectAfterSuccess;
   if (!code || typeof code !== "string") {
     if (state?.onErrorReturnTo || state?.returnTo) {
       res.redirect(redirectAfterSuccessOrError);
@@ -51,7 +51,7 @@ async function getHandler(req: NextApiRequest, res: NextApiResponse) {
         client_secret,
         grant_type: "authorization_code",
         code: code as string,
-        redirect_uri: `${WEBAPP_URL}/api/integrations/closecom/callback`,
+        redirect_uri: getOAuthRedirectUri(req, "closecom"),
       }),
     });
 

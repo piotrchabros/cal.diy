@@ -1,13 +1,11 @@
-import type { NextApiRequest } from "next";
 import { stringify } from "node:querystring";
-import { z } from "zod";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
-
+import type { NextApiRequest } from "next";
+import { z } from "zod";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import { FEISHU_HOST } from "../common";
 
 const feishuKeysSchema = z.object({
@@ -23,7 +21,7 @@ async function getHandler(req: NextApiRequest) {
 
   const params = {
     app_id,
-    redirect_uri: `${WEBAPP_URL}/api/integrations/feishucalendar/callback`,
+    redirect_uri: getOAuthRedirectUri(req, "feishucalendar"),
     state,
   };
 

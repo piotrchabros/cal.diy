@@ -1,18 +1,16 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { code } = req.query;
   const { client_id, client_secret, user_agent } = await getAppKeysFromSlug("basecamp3");
 
-  const redirectUri = `${WEBAPP_URL}/api/integrations/basecamp3/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "basecamp3");
 
   const params = new URLSearchParams({
     type: "web_server",
