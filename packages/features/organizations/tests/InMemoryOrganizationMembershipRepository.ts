@@ -37,14 +37,14 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     username?: string | null;
     name?: string | null;
     email?: string;
-    organizationId?: number | null;
+    organizationId: number;
   }): StoredUser {
     const user: StoredUser = {
       id: params.id,
       name: params.name ?? null,
       username: params.username === undefined ? `user${params.id}` : params.username,
       email: params.email ?? `user${params.id}@example.com`,
-      organizationId: params.organizationId ?? null,
+      organizationId: params.organizationId,
     };
     this.users = this.users.filter((existing) => existing.id !== params.id);
     this.users.push(user);
@@ -268,17 +268,10 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     });
   }
 
-  async updateUsername(params: {
-    userId: number;
-    organizationId: number | null;
-    username: string;
-  }): Promise<void> {
+  async updateUsername(params: { userId: number; organizationId: number; username: string }): Promise<void> {
     const user = this.findStoredUser(params.userId);
-    if (params.organizationId !== null) {
-      await this.assertUsernameAvailable(params.organizationId, params.username, params.userId);
-    }
+    await this.assertUsernameAvailable(params.organizationId, params.username, params.userId);
     user.username = params.username;
-    if (params.organizationId === null) return;
     const profile = this.findProfile(params.organizationId, params.userId);
     if (profile) profile.username = params.username;
   }

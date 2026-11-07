@@ -4,7 +4,7 @@ export type MoveUserRecord = {
   id: number;
   username: string | null;
   email: string;
-  organizationId: number | null;
+  organizationId: number;
 };
 
 export type MoveTeamMemberRecord = {
@@ -12,7 +12,7 @@ export type MoveTeamMemberRecord = {
   name: string | null;
   email: string;
   username: string | null;
-  organizationId: number | null;
+  organizationId: number;
   accepted: boolean;
 };
 

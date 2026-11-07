@@ -85,7 +85,7 @@ export class OrganizationMoveService {
     }
 
     const fromOrganizationId = user.organizationId;
-    if (fromOrganizationId !== null) await this.assertNotLastOwner(fromOrganizationId, userId);
+    await this.assertNotLastOwner(fromOrganizationId, userId);
 
     if (username !== null) {
       const taken = await this.deps.organizationMoveRepository.findTakenUsernames({
@@ -211,7 +211,7 @@ export class OrganizationMoveService {
     }
 
     for (const mover of movers) {
-      if (mover.organizationId !== null) await this.assertNotLastOwner(mover.organizationId, mover.userId);
+      await this.assertNotLastOwner(mover.organizationId, mover.userId);
     }
 
     const teamRedirect =

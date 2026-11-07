@@ -269,7 +269,7 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     username,
   }: {
     userId: number;
-    organizationId: number | null;
+    organizationId: number;
     username: string;
   }): Promise<void> {
     const userUpdate = this.prismaClient.user.update({
@@ -278,10 +278,6 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
       select: { id: true },
     });
     try {
-      if (organizationId === null) {
-        await this.prismaClient.$transaction([userUpdate]);
-        return;
-      }
       await this.prismaClient.$transaction([
         userUpdate,
         this.prismaClient.profile.updateMany({ where: { userId, organizationId }, data: { username } }),
