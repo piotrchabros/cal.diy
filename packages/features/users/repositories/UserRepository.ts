@@ -1550,6 +1550,21 @@ export class UserRepository {
     });
   }
 
+  // Usernames repeat across organizations, so a username lookup must always carry its organization.
+  async findForAvailabilityCheck(where: { id: number } | { username: string; organizationId: number }) {
+    const user = await this.prismaClient.user.findFirst({
+      where,
+      select: {
+        ...availabilityUserSelect,
+        selectedCalendars: true,
+        credentials: {
+          select: credentialForCalendarServiceSelect,
+        },
+      },
+    });
+    return user ? withSelectedCalendars(user) : null;
+  }
+
   async findByEmailWithInvitedTo({ email }: { email: string }) {
     return this.prismaClient.user.findUnique({
       where: {
