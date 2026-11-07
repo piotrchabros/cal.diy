@@ -56,6 +56,7 @@ export type MoveTeamInput = {
   toOrganizationId: number;
   newSlug?: string;
   outsideMembers: "move" | "remove";
+  newUsernames?: { userId: number; username: string }[];
 };
 
 export class OrganizationMoveService {
@@ -164,6 +165,9 @@ export class OrganizationMoveService {
 
   async moveTeam(input: MoveTeamInput, actorUserId: number): Promise<MoveTeamResultDto> {
     const { teamId, toOrganizationId } = input;
+    const newUsernameByUserId = new Map(
+      (input.newUsernames ?? []).map((o) => [o.userId, this.parseUsername(o.username)])
+    );
     const team = await this.loadTeamForMove(teamId, toOrganizationId);
     if (team.parentId === toOrganizationId) {
       throw ErrorWithCode.Factory.BadRequest(MOVE_ERRORS.teamAlreadyInOrganization);
@@ -185,15 +189,18 @@ export class OrganizationMoveService {
     // Pending invitees have not joined anything yet, so they are dropped rather than pulled into the target org
     const isMover = (m: MoveTeamMemberRecord) => input.outsideMembers === "move" && m.accepted;
     const movers = outside.filter(isMover).map((m) => {
-      if (m.username === null) throw ErrorWithCode.Factory.PreconditionFailed(MOVE_ERRORS.usernameRequired);
-      return { ...m, username: m.username };
+      const targetUsername = newUsernameByUserId.get(m.userId) ?? m.username;
+      if (targetUsername === null) {
+        throw ErrorWithCode.Factory.PreconditionFailed(MOVE_ERRORS.usernameRequired);
+      }
+      return { ...m, targetUsername };
     });
     const moverIds = movers.map((m) => m.userId);
     const removeMembers = outside
       .filter((m) => !isMover(m))
       .map((m) => ({ userId: m.userId, email: m.email }));
 
-    const usernames = movers.map((m) => m.username);
+    const usernames = movers.map((m) => m.targetUsername);
     const taken = await this.deps.organizationMoveRepository.findTakenUsernames({
       organizationId: toOrganizationId,
       usernames,
@@ -223,14 +230,14 @@ export class OrganizationMoveService {
         email: mover.email,
         fromOrganizationId: mover.organizationId,
         toOrganizationId,
-        username: mover.username,
+        username: mover.targetUsername,
         role: "MEMBER",
         keepTeamIds: [teamId],
         redirect: await this.buildRedirect({
           fromOrganizationId: mover.organizationId,
           toOrganizationId,
           from: mover.username,
-          to: mover.username,
+          to: mover.targetUsername,
         }),
       }))
     );

@@ -5184,6 +5184,8 @@
   "move_team_outside_members_move": "Move them into the selected organization",
   "move_team_outside_members_remove": "Remove them from the team",
   "move_team_slug_taken_description": "This team URL is already taken in the selected organization. Choose a new one.",
+  "move_team_member_new_username": "New username for {{name}}",
+  "move_team_member_usernames_taken_description": "Some usernames are already taken in the selected organization. Choose a new username for each of these members, or remove them from the team.",
   "new_team_slug": "New team URL",
   "username_taken_in_target_organization": "This username is already taken in the selected organization",
   "team_slug_taken_in_target_organization": "This team URL is already taken in the selected organization",
