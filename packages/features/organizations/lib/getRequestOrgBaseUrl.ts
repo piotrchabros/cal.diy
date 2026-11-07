@@ -1,7 +1,7 @@
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { getOrgFromRequest } from "./getOrgFromRequest";
-import { DEFAULT_ORG_BASE_URL_CONTEXT, type OrgBaseUrlContextValue } from "./OrgBaseUrlContext";
+import { DEFAULT_ORG_BASE_URL_CONTEXT, type OrgBaseUrlContextValue } from "./orgBaseUrlDefaults";
 
 const log = logger.getSubLogger({ prefix: ["getRequestOrgBaseUrl"] });
 
