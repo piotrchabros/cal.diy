@@ -29,8 +29,12 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn<(message: string, variant: string) => void>(),
 }));
 
+const ERROR_TRANSLATIONS: Record<string, string> = {
+  organization_delete_not_empty: "Move the organization's members and teams out first",
+};
+
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
-  useLocale: () => ({ t: (key: string) => key }),
+  useLocale: () => ({ t: (key: string) => ERROR_TRANSLATIONS[key] ?? key }),
 }));
 
 vi.mock("@calcom/trpc/react", () => ({
@@ -218,13 +222,16 @@ describe("OrganizationsListingView", () => {
     expect(mocks.mutate).toHaveBeenCalledWith({ id: 2 });
   });
 
-  it("toasts the server message as an error when deletion fails", () => {
+  it("toasts the translated server message as an error when deletion fails", () => {
     renderView(buildQuery([ACME_ORG]));
 
-    getMutationOptions().onError?.({ message: "Organization has members" });
+    getMutationOptions().onError?.({ message: "organization_delete_not_empty" });
 
     expect(mocks.showToast).toHaveBeenCalledTimes(1);
-    expect(mocks.showToast).toHaveBeenCalledWith("Organization has members", "error");
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      "Move the organization's members and teams out first",
+      "error"
+    );
     expect(mocks.invalidate).not.toHaveBeenCalled();
   });
 

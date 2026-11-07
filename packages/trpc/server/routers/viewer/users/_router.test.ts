@@ -134,12 +134,12 @@ describe("admin users router update", () => {
 
   it("maps a username conflict to a CONFLICT error and skips the other changes", async () => {
     mocks.changeUsername.mockRejectedValue(
-      new ErrorWithCode(ErrorCode.Conflict, "Username is already taken in this organization")
+      new ErrorWithCode(ErrorCode.Conflict, "username_taken_in_organization")
     );
 
     await expect(
       createCaller(ctx).update({ userId: 11, username: "taken", name: "Renamed" })
-    ).rejects.toMatchObject({ code: "CONFLICT", message: "Username is already taken in this organization" });
+    ).rejects.toMatchObject({ code: "CONFLICT", message: "username_taken_in_organization" });
     expect(mocks.userUpdate).not.toHaveBeenCalled();
     expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
   });

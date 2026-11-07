@@ -44,7 +44,7 @@ export default function OrganizationsListingView() {
       utils.viewer.admin.organizations.list.invalidate();
     },
     onError: (err) => {
-      showToast(err.message, "error");
+      showToast(t(err.message), "error");
     },
     onSettled: () => {
       setOrgToDelete(null);
