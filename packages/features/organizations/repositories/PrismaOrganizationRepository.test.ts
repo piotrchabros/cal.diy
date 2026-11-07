@@ -370,4 +370,27 @@ describe("PrismaOrganizationRepository", () => {
       expect(await repository.findTeamParentById(5)).toBeNull();
     });
   });
+
+  describe("findIdByVerifiedAutoAcceptEmailDomain", () => {
+    it("returns the id of the verified organization auto-accepting the domain", async () => {
+      const { repository, team } = buildRepository();
+      team.findFirst.mockResolvedValue({ id: 55 });
+
+      expect(await repository.findIdByVerifiedAutoAcceptEmailDomain("acme.com")).toBe(55);
+      expect(team.findFirst).toHaveBeenCalledWith({
+        where: {
+          ...organizationWhere,
+          organizationSettings: { isOrganizationVerified: true, orgAutoAcceptEmail: "acme.com" },
+        },
+        select: { id: true },
+      });
+    });
+
+    it("returns null when no organization matches", async () => {
+      const { repository, team } = buildRepository();
+      team.findFirst.mockResolvedValue(null);
+
+      expect(await repository.findIdByVerifiedAutoAcceptEmailDomain("acme.com")).toBeNull();
+    });
+  });
 });

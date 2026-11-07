@@ -221,4 +221,15 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
       select: { id: true, parentId: true, isOrganization: true },
     });
   }
+
+  async findIdByVerifiedAutoAcceptEmailDomain(domain: string): Promise<number | null> {
+    const row = await this.prismaClient.team.findFirst({
+      where: {
+        ...organizationWhere,
+        organizationSettings: { isOrganizationVerified: true, orgAutoAcceptEmail: domain },
+      },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
 }

@@ -28,6 +28,13 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 
 const mockRequireDefaultOrganizationId = vi.fn();
 const mockAddMember = vi.fn();
+const mockFindIdByVerifiedAutoAcceptEmailDomain = vi.fn();
+
+vi.mock("@calcom/features/organizations/di/OrganizationRepository.container", () => ({
+  getOrganizationRepository: () => ({
+    findIdByVerifiedAutoAcceptEmailDomain: mockFindIdByVerifiedAutoAcceptEmailDomain,
+  }),
+}));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
   getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
@@ -56,7 +63,6 @@ vi.mock("./isSessionInRequestOrganization", () => ({
 const mockPrismaUserFindFirst = vi.fn();
 const mockPrismaUserCreate = vi.fn();
 const mockPrismaUserDelete = vi.fn();
-const mockPrismaTeamFindFirst = vi.fn();
 const mockPrismaMembershipFindUnique = vi.fn();
 
 vi.mock("@calcom/prisma", () => {
@@ -67,7 +73,6 @@ vi.mock("@calcom/prisma", () => {
       delete: (...args: unknown[]) => mockPrismaUserDelete(...args),
       update: vi.fn(),
     },
-    team: { findFirst: (...args: unknown[]) => mockPrismaTeamFindFirst(...args) },
     membership: { findUnique: (...args: unknown[]) => mockPrismaMembershipFindUnique(...args) },
   };
   return { prisma: client, default: client };
@@ -580,7 +585,7 @@ describe("next-auth options with organizations", () => {
     beforeEach(() => {
       mockGetIdentityProvider.mockReturnValue("GOOGLE");
       mockPrismaUserFindFirst.mockResolvedValue(null);
-      mockPrismaTeamFindFirst.mockResolvedValue(null);
+      mockFindIdByVerifiedAutoAcceptEmailDomain.mockResolvedValue(null);
       mockPrismaUserCreate.mockResolvedValue({ id: 100, email: "new@acme.com", twoFactorEnabled: false });
     });
 
@@ -637,12 +642,14 @@ describe("next-auth options with organizations", () => {
         vi.unstubAllEnvs();
         vi.resetModules();
       });
-      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockFindIdByVerifiedAutoAcceptEmailDomain.mockResolvedValue(55);
       mockRequireDefaultOrganizationId.mockResolvedValue(1);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await signIn(googleSignUpParams);
 
+      expect(mockFindIdByVerifiedAutoAcceptEmailDomain).toHaveBeenCalledWith("acme.com");
       expect(createdUserData()).toMatchObject({
         verified: true,
         organization: { connect: { id: 55 } },
@@ -650,6 +657,43 @@ describe("next-auth options with organizations", () => {
       expect(createdUserData()).not.toHaveProperty("teams");
       expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 55, userId: 100, role: "MEMBER" });
       expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
+    });
+
+    it("skips the autolink lookup and joins the default organization with the flag off", async () => {
+      vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
+      vi.resetModules();
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      });
+      mockFindIdByVerifiedAutoAcceptEmailDomain.mockResolvedValue(55);
+      mockRequireDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(mockFindIdByVerifiedAutoAcceptEmailDomain).not.toHaveBeenCalled();
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 1 } } });
+      expect(createdUserData()).not.toHaveProperty("verified");
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 1, userId: 100, role: "MEMBER" });
+    });
+
+    it("falls back to the request organization when no organization auto-accepts the domain", async () => {
+      vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
+      vi.resetModules();
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      });
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(mockFindIdByVerifiedAutoAcceptEmailDomain).toHaveBeenCalledWith("acme.com");
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 7 } } });
+      expect(createdUserData()).not.toHaveProperty("verified");
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 7, userId: 100, role: "MEMBER" });
     });
 
     it("adds the autolinked membership through addMember with the flag on", async () => {
@@ -660,7 +704,7 @@ describe("next-auth options with organizations", () => {
         vi.resetModules();
       });
       mockIsOrganizationsEnabled.mockReturnValue(true);
-      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      mockFindIdByVerifiedAutoAcceptEmailDomain.mockResolvedValue(55);
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
@@ -681,7 +725,8 @@ describe("next-auth options with organizations", () => {
         vi.unstubAllEnvs();
         vi.resetModules();
       });
-      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockFindIdByVerifiedAutoAcceptEmailDomain.mockResolvedValue(55);
       mockAddMember.mockRejectedValue(new Error("username taken"));
       const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
 
