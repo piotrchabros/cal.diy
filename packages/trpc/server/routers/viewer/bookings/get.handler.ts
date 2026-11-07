@@ -1,6 +1,8 @@
 import dayjs from "@calcom/dayjs";
 import getAllUserBookings from "@calcom/features/bookings/lib/getAllUserBookings";
 import { isTextFilterValue } from "@calcom/features/data-table/lib/utils";
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import type { DB } from "@calcom/kysely";
 import kysely from "@calcom/kysely";
 import { parseEventTypeColor } from "@calcom/lib/isEventTypeColor";
@@ -17,13 +19,6 @@ import type { Kysely, SelectQueryBuilder } from "kysely";
 import { jsonArrayFrom, jsonObjectFrom } from "kysely/helpers/postgres";
 import type { TrpcSessionUser } from "../../../types";
 import type { TGetInputSchema } from "./get.schema";
-
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
-}
 
 type GetOptions = {
   ctx: {
@@ -114,14 +109,13 @@ export async function getBookings({
   take: number;
   skip: number;
 }) {
-  const permissionCheckService = new PermissionCheckService();
+  const permissionCheckService = new TeamRolePermissionService(new MembershipRepository(prisma));
   const fallbackRoles: MembershipRole[] = [MembershipRole.ADMIN, MembershipRole.OWNER];
 
   const teamIdsWithBookingPermission = await permissionCheckService.getTeamIdsWithPermission({
     userId: user.id,
     permission: "booking.read",
     fallbackRoles,
-    orgId: user.orgId ?? undefined,
   });
 
   // Only fetch user IDs from teams if we need to validate userIds filter
@@ -267,6 +261,7 @@ export async function getBookings({
               .select("users.email")
               .innerJoin("Membership", "Membership.userId", "users.id")
               .where("Membership.teamId", "in", teamIdsWithBookingPermission)
+              .where("Membership.accepted", "=", true)
           ),
         tables: ["Booking", "Attendee"],
       });
@@ -291,6 +286,7 @@ export async function getBookings({
               .select("users.email")
               .innerJoin("Membership", "Membership.userId", "users.id")
               .where("Membership.teamId", "in", teamIdsWithBookingPermission)
+              .where("Membership.accepted", "=", true)
           ),
         tables: ["Booking", "Attendee", "BookingSeat"],
       });
@@ -335,6 +331,7 @@ export async function getBookings({
               .selectFrom("Membership")
               .select("Membership.userId")
               .where("Membership.teamId", "in", teamIdsWithBookingPermission)
+              .where("Membership.accepted", "=", true)
           ),
         tables: ["Booking"],
       });
@@ -989,6 +986,7 @@ async function getUserIdsFromTeamIds(prisma: PrismaClient, teamIds: number[]): P
           teamId: {
             in: teamIds,
           },
+          accepted: true,
         },
       },
     },

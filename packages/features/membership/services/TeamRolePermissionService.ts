@@ -42,6 +42,9 @@ export class TeamRolePermissionService {
       userId,
       teamRoles: fallbackRoles,
       parentRoles: parentOrganizationRoles(),
+      // With organizations off the BlueBee organization every user belongs to must not count as a team,
+      // or its admins would reach every user through it.
+      includeOrganizations: isOrganizationsEnabled(),
     });
   }
 }
