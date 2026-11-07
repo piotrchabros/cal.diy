@@ -64,12 +64,6 @@ export interface IOrganizationMembershipRepository {
     cursor?: number;
     limit: number;
   }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }>;
-  moveToOrganization(p: {
-    userId: number;
-    fromOrganizationId: number;
-    toOrganizationId: number;
-    username: string | null;
-  }): Promise<void>;
   createPendingMembership(p: {
     organizationId: number;
     userId: number;

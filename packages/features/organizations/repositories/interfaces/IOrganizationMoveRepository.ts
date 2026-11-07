@@ -35,7 +35,7 @@ export type ApplyUserMove = {
   email: string;
   fromOrganizationId: number | null;
   toOrganizationId: number;
-  username: string;
+  username: string | null;
   role: OrganizationRoleDto;
   keepTeamIds: number[];
   redirect: MoveRedirectWrite | null;

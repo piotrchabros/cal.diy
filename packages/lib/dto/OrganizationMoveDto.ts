@@ -3,7 +3,7 @@ import { z } from "zod";
 export const MoveUserResultDtoSchema = z.object({
   userId: z.number(),
   organizationId: z.number(),
-  username: z.string(),
+  username: z.string().nullable(),
 });
 
 export const MoveTeamPreviewDtoSchema = z.object({

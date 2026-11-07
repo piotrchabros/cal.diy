@@ -6,6 +6,7 @@ import type {
   OrganizationRoleDto,
   OrganizationTeamListDto,
 } from "@calcom/lib/dto/OrganizationDto";
+import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
 import type {
@@ -15,6 +16,7 @@ import type {
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
 import type { ITempOrgRedirectRepository } from "../repositories/interfaces/ITempOrgRedirectRepository";
+import { MOVE_ERRORS, type OrganizationMoveService } from "./OrganizationMoveService";
 import type { OrganizationsConfig } from "./OrganizationService";
 
 const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] });
@@ -34,6 +36,7 @@ export interface IOrganizationMembershipServiceDeps {
   >;
   teamInviteService: Pick<TeamInviteService, "sendInvite">;
   tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom">;
+  organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
 }
 
 export class OrganizationMembershipService {
@@ -118,11 +121,13 @@ export class OrganizationMembershipService {
     return updated;
   }
 
-  // Removing a member never deletes the user: they fall back to the default organization (FR-011)
+  // Removing a member never deletes the user: they are moved to the default organization (FR-011). As a
+  // move it also leaves a redirect on the old domain like FR-018 moves (T181) until the username is reused
   async removeMember(params: {
     organizationId: number;
     actorUserId: number;
     userId: number;
+    newUsername?: string;
   }): Promise<{ userId: number }> {
     const { organizationId, actorUserId, userId } = params;
     const repository = this.deps.organizationMembershipRepository;
@@ -150,23 +155,28 @@ export class OrganizationMembershipService {
 
     const user = await repository.findUserById(userId);
     if (!user) throw ErrorWithCode.Factory.NotFound("Member not found");
-    if (
-      user.username !== null &&
-      (await repository.isUsernameTaken({
-        organizationId: defaultOrganization.id,
-        username: user.username,
-        excludeUserId: userId,
-      }))
-    ) {
-      throw ErrorWithCode.Factory.Conflict("username_taken_in_default_organization");
+    // moveUser moves the user out of user.organizationId, not this org; a user already in the default
+    // org would also get their default profile recreated
+    if (user.organizationId !== organizationId) {
+      throw ErrorWithCode.Factory.PreconditionFailed("member_not_in_organization");
     }
 
-    await repository.moveToOrganization({
-      userId,
-      fromOrganizationId: organizationId,
-      toOrganizationId: defaultOrganization.id,
-      username: user.username,
-    });
+    try {
+      await this.deps.organizationMoveService.moveUser(
+        { userId, toOrganizationId: defaultOrganization.id, newUsername: params.newUsername },
+        actorUserId,
+        { allowMissingUsername: true }
+      );
+    } catch (error) {
+      if (
+        error instanceof ErrorWithCode &&
+        error.code === ErrorCode.Conflict &&
+        error.message === MOVE_ERRORS.usernameTaken
+      ) {
+        throw ErrorWithCode.Factory.Conflict("username_taken_in_default_organization");
+      }
+      throw error;
+    }
 
     log.info("organization.member.remove", {
       action: "organization.member.remove",
