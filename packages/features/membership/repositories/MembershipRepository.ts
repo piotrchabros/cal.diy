@@ -979,7 +979,8 @@ export class MembershipRepository {
           username: { not: null },
           locked: false,
           isPlatformManaged: false,
-          ...outsideOrganizationsFilter({ organizationId: null }),
+          // Every user belongs to an organization, so "users outside any organization" matches nobody.
+          ...outsideOrganizationsFilter({ id: { in: [] as number[] } }),
         },
       },
       select: {
