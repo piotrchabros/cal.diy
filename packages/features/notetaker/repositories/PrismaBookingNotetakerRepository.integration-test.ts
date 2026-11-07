@@ -1418,12 +1418,15 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(AD_HOC_SUITE, () => {
     options: { userId?: number; sharingTeamId?: number | null; endTime?: Date } = {}
   ) {
     adHocCounter += 1;
+    // A distinct start per booking: an ACCEPTED booking's idempotency key hashes organizer, start and end, so
+    // one user's bookings with identical times collide (the service uses the current time to the millisecond)
+    const startTime = new Date(NOW.getTime() - adHocCounter * 1000);
     const created = await repository.createAdHocBooking({
       uid: `notetaker-adhoc-it-${runId}-${adHocCounter}`,
       userId: options.userId ?? required(ownerId, "owner"),
       title: "Ad-hoc meeting",
-      startTime: NOW,
-      endTime: options.endTime ?? new Date(NOW.getTime() + HOUR),
+      startTime,
+      endTime: options.endTime ?? new Date(startTime.getTime() + HOUR),
       location: MEET,
       metadata: buildAdHocBookingMetadata({ sharingTeamId: options.sharingTeamId ?? null }),
     });
