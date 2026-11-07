@@ -149,6 +149,7 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
               removeMember.mutate({ userId: member.userId, newUsername: trimmedUsername });
             }}>
             <TextField
+              name="newUsername"
               required
               label={t("new_username")}
               value={newUsername}

@@ -89,6 +89,7 @@ export function OrganizationTeamsSection({ organizationId }: { organizationId: n
     <section className="mt-8 flex flex-col gap-3" data-testid="organization-teams-section">
       <h2 className="font-semibold text-emphasis">{t("organization_teams")}</h2>
       <TextField
+        name="teamSearch"
         label={t("search")}
         placeholder={t("search")}
         value={searchTerm}

@@ -140,6 +140,7 @@ export default function OrganizationsListingView() {
   return (
     <div className="flex flex-col gap-3">
       <TextField
+        name="organizationSearch"
         label={t("search")}
         placeholder={t("organizations_search_placeholder")}
         value={searchTerm}
