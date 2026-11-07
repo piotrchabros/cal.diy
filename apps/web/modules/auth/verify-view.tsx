@@ -1,6 +1,6 @@
 "use client";
 
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
@@ -14,12 +14,17 @@ import { signIn } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 import z from "zod";
 
-async function sendVerificationLogin(email: string, username: string, t: (key: string) => string) {
+export async function sendVerificationLogin(
+  email: string,
+  username: string,
+  t: (key: string) => string,
+  baseUrl: string
+) {
   await signIn("email", {
     email: email.toLowerCase(),
     username: username.toLowerCase(),
     redirect: false,
-    callbackUrl: WEBAPP_URL || "https://app.cal.com",
+    callbackUrl: baseUrl || "https://app.cal.com",
   })
     .then(() => {
       showToast(t("verification_email_sent"), "success");
@@ -38,15 +43,16 @@ function useSendFirstVerificationLogin({
 }) {
   const sent = useRef(false);
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   useEffect(() => {
     if (!email || !username || sent.current) {
       return;
     }
     (async () => {
-      await sendVerificationLogin(email, username, t);
+      await sendVerificationLogin(email, username, t, orgBaseUrl);
       sent.current = true;
     })();
-  }, [email, username, t]);
+  }, [email, username, t, orgBaseUrl]);
 }
 
 const querySchema = z.object({
@@ -118,6 +124,7 @@ export default function Verify({ EMAIL_FROM }: { EMAIL_FROM?: string }) {
   const routerQuery = useRouterQuery();
   const { email, username, paymentStatus } = querySchema.parse(routerQuery);
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const [secondsLeft, setSecondsLeft] = useState(30);
 
   // Derive payment failed status from payment status
@@ -215,7 +222,7 @@ export default function Verify({ EMAIL_FROM }: { EMAIL_FROM?: string }) {
               const _searchParams = new URLSearchParams(searchParams?.toString());
               _searchParams.set("t", `${Date.now()}`);
               router.replace(`${pathname}?${_searchParams.toString()}`);
-              return await sendVerificationLogin(email, username, t);
+              return await sendVerificationLogin(email, username, t, orgBaseUrl);
             }}>
             {secondsLeft > 0 ? t("resend_in_seconds", { seconds: secondsLeft }) : t("resend")}
           </button>

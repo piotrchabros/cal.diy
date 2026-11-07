@@ -1,7 +1,7 @@
 "use client";
 
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
@@ -16,7 +16,6 @@ type TeamInvite = {
   teamId: number;
   teamName: string;
   email: string;
-  isOrganization: boolean;
 };
 
 type FormValues = {
@@ -40,6 +39,7 @@ function InvalidInvite() {
 function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string }) {
   const { t } = useLocale();
   const router = useRouter();
+  const orgBaseUrl = useOrgBaseUrl();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshToken, forceRefresh] = useReducer((x) => x + 1, 0);
   const formMethods = useForm<FormValues>({
@@ -73,9 +73,7 @@ function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string 
       return;
     }
 
-    const callbackUrl = invite.isOrganization
-      ? `${WEBAPP_URL}/`
-      : `${WEBAPP_URL}/settings/my-teams/${invite.teamId}/members`;
+    const callbackUrl = `${orgBaseUrl}/settings/my-teams/${invite.teamId}/members`;
     const signInResult = await signIn<"credentials">("credentials", {
       email: invite.email,
       password: values.password,

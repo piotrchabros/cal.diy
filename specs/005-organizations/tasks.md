@@ -253,12 +253,12 @@ description: "Task list for Organizations (spec 005)"
 
 **PRs 16.1–16.7: client link sweep** (replace `WEBAPP_URL` / `WEBSITE_URL` / `NEXT_PUBLIC_WEBAPP_URL` in user-facing links with `useOrgBaseUrl()`, or `window.location.origin` where the current host is by definition right; keep build-time constants for assets and SEO defaults)
 
-- [ ] T050 [P] [US3] PR 16.1, auth:
+- [X] T050 [P] [US3] PR 16.1, auth:
   - `apps/web/modules/auth/{logout-view,team-invite-view,verify-view}.tsx`
   - `apps/web/modules/auth/hooks/useRedirectToLoginIfUnauthenticated.tsx`
   - `apps/web/modules/signup-view.tsx`
   - `apps/web/components/setup/AdminUser.tsx`
-- [ ] T051 [P] [US3] PR 16.2, booking pages:
+- [X] T051 [P] [US3] PR 16.2, booking pages:
   - `apps/web/modules/bookings/components/{BookerWebWrapper,event-meta/AvailableEventLocations,event-meta/Members}.tsx`
   - `packages/features/bookings/components/Header.tsx`
   - `apps/web/app/(booking-page-wrapper)/{[user]/page,[user]/[type]/page,booking/[uid]/page,team/[slug]/[type]/page}.tsx`

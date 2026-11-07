@@ -1,4 +1,4 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { buildLegacyCtx, decodeParams } from "@lib/buildLegacyCtx";
 import { getServerSideProps } from "@server/lib/[user]/getServerSideProps";
 import type { PageProps } from "app/_types";
@@ -22,9 +22,11 @@ const ServerPage = async ({ params, searchParams }: PageProps): Promise<JSX.Elem
 };
 
 export const generateMetadata = async ({ params, searchParams }: PageProps): Promise<Metadata> => {
+  const requestHeaders = await headers();
   const props = await getData(
-    buildLegacyCtx(await headers(), await cookies(), await params, await searchParams)
+    buildLegacyCtx(requestHeaders, await cookies(), await params, await searchParams)
   );
+  const { baseUrl } = await getRequestOrgBaseUrl(requestHeaders);
 
   const { profile, markdownStrippedBio, isOrgSEOIndexable } = props;
   const isOrg = !!profile?.organization;
@@ -41,7 +43,7 @@ export const generateMetadata = async ({ params, searchParams }: PageProps): Pro
     () => profile.name,
     () => markdownStrippedBio,
     false,
-    WEBAPP_URL,
+    baseUrl,
     `/${decodeParams(await params).user}`
   );
 
