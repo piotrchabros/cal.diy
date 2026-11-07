@@ -1,9 +1,9 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { createContext, useContext } from "react";
+import { DEFAULT_ORG_BASE_URL_CONTEXT, type OrgBaseUrlContextValue } from "./orgBaseUrlDefaults";
 
-export type OrgBaseUrlContextValue = { baseUrl: string; orgSlug: string | null };
-
-export const DEFAULT_ORG_BASE_URL_CONTEXT: OrgBaseUrlContextValue = { baseUrl: WEBAPP_URL, orgSlug: null };
+// Server code (the root layout) imports the defaults from orgBaseUrlDefaults: importing this module
+// there pulls createContext into a Server Component, which Next.js refuses to compile.
+export { DEFAULT_ORG_BASE_URL_CONTEXT, type OrgBaseUrlContextValue };
 
 export const OrgBaseUrlContext = createContext<OrgBaseUrlContextValue>(DEFAULT_ORG_BASE_URL_CONTEXT);
 
