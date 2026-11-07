@@ -1,13 +1,20 @@
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { BookingRepository } from "../repositories/BookingRepository";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type BookingForAccessCheck = NonNullable<Awaited<ReturnType<BookingRepository["findByUidIncludeEventType"]>>>;
@@ -108,8 +115,9 @@ export class BookingAccessService {
 
     if (!bookingOwner) return false;
 
-    // Case 4: Check if user is admin of booking organizer's organization
-    if (bookingOwner.organizationId) {
+    // Case 4: Check if user is admin of booking organizer's organization.
+    // While organizations are off every user still belongs to BlueBee, so its admins must not see personal bookings.
+    if (isOrganizationsEnabled() && bookingOwner.organizationId) {
       const orgId = bookingOwner.organizationId;
 
       const hasAccess = await this.permissionCheckService.checkPermission({

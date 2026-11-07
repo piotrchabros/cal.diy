@@ -1,6 +1,7 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import type { PrismaClient } from "@calcom/prisma";
 import { CreationSource, MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -475,5 +476,79 @@ describe("_getWhereClauseForFindingUsersByUsername", () => {
 
     // Users who sit inside an organization must still match by username while the flag is off.
     expect(where).toEqual({ username: { in: ["a"] } });
+  });
+});
+
+describe("booking access lookups", () => {
+  const findMany = vi.fn();
+  const findUnique = vi.fn();
+  const fakePrismaClient = { team: { findMany }, user: { findUnique } } as unknown as PrismaClient;
+  const adminMembership = {
+    members: { some: { userId: 1, role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] } } },
+  };
+
+  beforeEach(() => {
+    findMany.mockReset().mockResolvedValue([]);
+    findUnique.mockReset().mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("isAdminOfTeamOrParentOrg accepts admins of the parent organization when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    findMany.mockResolvedValue([{ id: 5 }]);
+
+    const isAdmin = await new UserRepository(fakePrismaClient).isAdminOfTeamOrParentOrg({
+      userId: 1,
+      teamId: 5,
+    });
+
+    expect(isAdmin).toBe(true);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { id: 5, OR: [adminMembership, { parent: adminMembership }] },
+      select: { id: true },
+    });
+  });
+
+  test("isAdminOfTeamOrParentOrg ignores the BlueBee parent when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    const isAdmin = await new UserRepository(fakePrismaClient).isAdminOfTeamOrParentOrg({
+      userId: 1,
+      teamId: 5,
+    });
+
+    expect(isAdmin).toBe(false);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { id: 5, OR: [adminMembership] },
+      select: { id: true },
+    });
+  });
+
+  test("getUserOrganizationAndTeams counts every accepted membership when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    await new UserRepository(fakePrismaClient).getUserOrganizationAndTeams({ userId: 7 });
+
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 7 },
+      select: { organizationId: true, teams: { where: { accepted: true }, select: { teamId: true } } },
+    });
+  });
+
+  test("getUserOrganizationAndTeams skips the BlueBee membership when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    await new UserRepository(fakePrismaClient).getUserOrganizationAndTeams({ userId: 7 });
+
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 7 },
+      select: {
+        organizationId: true,
+        teams: { where: { accepted: true, team: { isOrganization: false } }, select: { teamId: true } },
+      },
+    });
   });
 });

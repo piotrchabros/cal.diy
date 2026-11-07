@@ -3,6 +3,7 @@ import { getTranslation } from "@calcom/i18n/server";
 import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
 import { buildNonDelegationCredentials } from "@calcom/lib/delegationCredential";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { withSelectedCalendars } from "@calcom/lib/server/withSelectedCalendars";
@@ -1111,12 +1112,9 @@ export class UserRepository {
     const teams = await this.prismaClient.team.findMany({
       where: {
         id: teamId,
-        OR: [
-          membershipQuery,
-          {
-            parent: { ...membershipQuery },
-          },
-        ],
+        // Every team sits under BlueBee after the switch-over, so with organizations off its admins
+        // would otherwise administer all teams (spec 005)
+        OR: [membershipQuery, ...(isOrganizationsEnabled() ? [{ parent: { ...membershipQuery } }] : [])],
       },
       select: {
         id: true,
@@ -1147,7 +1145,8 @@ export class UserRepository {
       select: {
         organizationId: true,
         teams: {
-          where: { accepted: true },
+          // The BlueBee membership every user holds after the switch-over must not count as a team while organizations are off
+          where: { accepted: true, ...(isOrganizationsEnabled() ? {} : { team: { isOrganization: false } }) },
           select: { teamId: true },
         },
       },

@@ -1,7 +1,7 @@
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingRepository } from "../repositories/BookingRepository";
 import { BookingAccessService } from "./BookingAccessService";
 
@@ -53,6 +53,10 @@ describe("BookingAccessService", () => {
     service = new BookingAccessService(mockPrismaClient);
 
     (service as any).permissionCheckService = mockPermissionCheckService;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("doesUserIdHaveAccessToBooking", () => {
@@ -223,6 +227,10 @@ describe("BookingAccessService", () => {
     });
 
     describe("Case 4: Org Admin Access (Personal Bookings)", () => {
+      beforeEach(() => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      });
+
       it("should return true when user has booking.readOrgBookings permission", async () => {
         const mockBooking = {
           userId: 456,
@@ -275,6 +283,37 @@ describe("BookingAccessService", () => {
         });
 
         expect(result).toBe(false);
+      });
+    });
+
+    describe("Case 4 with organizations disabled", () => {
+      beforeEach(() => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      });
+
+      it("should not grant access through the booking owner's BlueBee organization", async () => {
+        const mockBooking = {
+          userId: 456,
+          eventType: null,
+          attendees: [],
+        };
+
+        const mockBookingOwner = {
+          organizationId: 200,
+          teams: [],
+        };
+
+        mockBookingRepo.findByUidIncludeEventType.mockResolvedValue(mockBooking);
+        mockUserRepo.getUserOrganizationAndTeams.mockResolvedValue(mockBookingOwner);
+        mockPermissionCheckService.checkPermission.mockResolvedValue(true);
+
+        const result = await service.doesUserIdHaveAccessToBooking({
+          userId: 123,
+          bookingUid: "test-booking-uid",
+        });
+
+        expect(result).toBe(false);
+        expect(mockPermissionCheckService.checkPermission).not.toHaveBeenCalled();
       });
     });
 
