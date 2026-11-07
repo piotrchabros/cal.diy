@@ -1,4 +1,5 @@
 import dayjs from "@calcom/dayjs";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import prisma from "@calcom/prisma";
 import type { User } from "@calcom/prisma/client";
@@ -30,7 +31,8 @@ const createPasswordReset = async (email: string): Promise<string> => {
     },
   });
 
-  return `${process.env.NEXT_PUBLIC_WEBAPP_URL}/auth/forgot-password/${createdResetPasswordRequest.id}`;
+  const baseUrl = await getOrganizationUrlService().getBaseUrlForEmail({ email });
+  return `${baseUrl}/auth/forgot-password/${createdResetPasswordRequest.id}`;
 };
 
 const guardAgainstTooManyPasswordResets = async (email: string) => {

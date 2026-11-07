@@ -108,6 +108,33 @@ describe("OrganizationUrlService", () => {
     });
   });
 
+  describe("getBaseUrlForEmail", () => {
+    it("resolves the organization of the user with that email, ignoring case", async () => {
+      const { service } = setup();
+
+      await expect(service.getBaseUrlForEmail({ email: "USER100@example.com" })).resolves.toBe(ORG_URL);
+    });
+
+    it.each([
+      ["an unknown email", "nobody@example.com"],
+      ["a user without an organization", "user101@example.com"],
+      ["an empty email", ""],
+      ["a null email", null],
+    ])("returns WEBAPP_URL for %s", async (_label, email) => {
+      const { service } = setup();
+
+      await expect(service.getBaseUrlForEmail({ email })).resolves.toBe(WEBAPP_URL);
+    });
+
+    it("does not query when the flag is off", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      const { service, findDomainById } = setup();
+
+      await expect(service.getBaseUrlForEmail({ email: "user100@example.com" })).resolves.toBe(WEBAPP_URL);
+      expect(findDomainById).not.toHaveBeenCalled();
+    });
+  });
+
   describe("getBaseUrlForTeam", () => {
     it("resolves a sub-team through its parent organization", async () => {
       const { service, findDomainById } = setup();

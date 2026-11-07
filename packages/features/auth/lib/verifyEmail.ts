@@ -6,12 +6,12 @@ import {
   sendEmailVerificationLink,
 } from "@calcom/emails/auth-email-service";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { sentrySpan } from "@calcom/features/watchlist/lib/telemetry";
 import { checkIfEmailIsBlockedInWatchlistController } from "@calcom/features/watchlist/operations/check-if-email-in-watchlist.controller";
-import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import logger from "@calcom/lib/logger";
 import { getTranslation } from "@calcom/i18n/server";
+import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
+import logger from "@calcom/lib/logger";
 import { hashEmail } from "@calcom/lib/server/PiiHasher";
 import { prisma } from "@calcom/prisma";
 import { totp } from "otplib";
@@ -78,7 +78,7 @@ export const sendEmailVerification = async ({
 
   await sendEmailVerificationLink({
     language: translation,
-    verificationEmailLink: `${WEBAPP_URL}/api/auth/verify-email?${params.toString()}`,
+    verificationEmailLink: `${await getOrganizationUrlService().getBaseUrlForEmail({ email })}/api/auth/verify-email?${params.toString()}`,
     user: {
       email,
       name: username,
@@ -173,7 +173,7 @@ export const sendChangeOfEmailVerification = async ({ user, language }: ChangeOf
 
   await sendChangeOfEmailVerificationLink({
     language: translation,
-    verificationEmailLink: `${WEBAPP_URL}/auth/verify-email-change?${params.toString()}`,
+    verificationEmailLink: `${await getOrganizationUrlService().getBaseUrlForEmail({ email: user.emailFrom })}/auth/verify-email-change?${params.toString()}`,
     user: {
       emailFrom: user.emailFrom,
       emailTo: user.emailTo,

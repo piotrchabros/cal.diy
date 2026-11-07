@@ -236,7 +236,7 @@ description: "Task list for Organizations (spec 005)"
   - `packages/emails/templates/organizer-request-email.ts`
 
   Pass the base URL in through the email's props from the caller. Update the email tests
-- [ ] T048 [US3] PR 14, auth and SMS:
+- [X] T048 [US3] PR 14, auth and SMS:
   - `packages/features/auth/lib/{passwordResetRequest,verifyEmail}.ts`
   - `packages/trpc/server/routers/viewer/admin/sendPasswordReset.handler.ts`
   - `packages/sms/attendee/*.ts` (7 files): use `CalendarEvent.bookerUrl` or the organizer's base URL
