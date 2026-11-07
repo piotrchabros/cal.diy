@@ -1047,6 +1047,7 @@ export class UserRepository {
     return user;
   }
   async getUserAdminTeams({ userId }: { userId: number }) {
+    const adminRoles = [MembershipRole.ADMIN, MembershipRole.OWNER];
     return await this.prismaClient.user.findUnique({
       where: {
         id: userId,
@@ -1057,28 +1058,22 @@ export class UserRepository {
         name: true,
         username: true,
         teams: {
-          where: {
-            accepted: true,
-            OR: [
-              {
-                role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
-              },
-              {
-                team: {
-                  parent: {
-                    members: {
-                      some: {
-                        id: userId,
-                        role: {
-                          in: [MembershipRole.ADMIN, MembershipRole.OWNER],
-                        },
+          where: isOrganizationsEnabled()
+            ? {
+                accepted: true,
+                OR: [
+                  { role: { in: adminRoles } },
+                  {
+                    team: {
+                      parent: {
+                        members: { some: { userId, accepted: true, role: { in: adminRoles } } },
                       },
                     },
                   },
-                },
-              },
-            ],
-          },
+                ],
+              }
+            : // Every instance admin owns BlueBee after the switch-over (spec 005, T322)
+              { accepted: true, role: { in: adminRoles }, team: { isOrganization: false } },
           select: {
             team: {
               select: {
