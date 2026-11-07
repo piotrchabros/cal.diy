@@ -120,8 +120,8 @@ describe("MoveTeamDialog", () => {
   it("lists outside members, flags taken usernames and submits the remove choice", async () => {
     renderAndSelectAcme({
       membersOutsideTarget: [
-        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true },
-        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false },
+        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true, usernameMissing: false },
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false, usernameMissing: false },
       ],
       slugTaken: false,
     });
@@ -139,8 +139,8 @@ describe("MoveTeamDialog", () => {
   it("asks for a new username only for taken members while moving them", () => {
     renderAndSelectAcme({
       membersOutsideTarget: [
-        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true },
-        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false },
+        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true, usernameMissing: false },
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false, usernameMissing: false },
       ],
       slugTaken: false,
     });
@@ -155,8 +155,8 @@ describe("MoveTeamDialog", () => {
   it("submits the trimmed new usernames when moving members with taken usernames", async () => {
     renderAndSelectAcme({
       membersOutsideTarget: [
-        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true },
-        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false },
+        { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true, usernameMissing: false },
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false, usernameMissing: false },
       ],
       slugTaken: false,
     });
@@ -170,6 +170,53 @@ describe("MoveTeamDialog", () => {
         toOrganizationId: 2,
         outsideMembers: "move",
         newUsernames: [{ userId: 8, username: "bob-acme" }],
+      })
+    );
+  });
+
+  const MISSING_AND_TAKEN_PREVIEW: MoveTeamPreviewDto = {
+    membersOutsideTarget: [
+      { userId: 8, name: "Bob", email: "bob@example.com", usernameTaken: true, usernameMissing: false },
+      { userId: 9, name: null, email: "eve@example.com", usernameTaken: false, usernameMissing: true },
+    ],
+    slugTaken: false,
+  };
+
+  it("flags members without a username and asks for one only while moving them", () => {
+    renderAndSelectAcme({
+      membersOutsideTarget: [
+        { userId: 9, name: null, email: "eve@example.com", usernameTaken: false, usernameMissing: true },
+      ],
+      slugTaken: false,
+    });
+    expect(screen.getByText("username_missing_badge")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("move_team_member_new_username")).toHaveLength(1);
+    expect(screen.getByText("move_team_member_usernames_missing_description")).toBeInTheDocument();
+    expect(screen.queryByText("move_team_member_usernames_taken_description")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("move_team_outside_members_remove"));
+    expect(screen.queryByLabelText("move_team_member_new_username")).not.toBeInTheDocument();
+    expect(screen.queryByText("move_team_member_usernames_missing_description")).not.toBeInTheDocument();
+  });
+
+  it("submits trimmed new usernames for both missing and taken members", async () => {
+    renderAndSelectAcme(MISSING_AND_TAKEN_PREVIEW);
+    expect(screen.getByText("move_team_member_usernames_taken_description")).toBeInTheDocument();
+    expect(screen.getByText("move_team_member_usernames_missing_description")).toBeInTheDocument();
+
+    const [bobField, eveField] = screen.getAllByLabelText("move_team_member_new_username");
+    fireEvent.change(bobField, { target: { value: "  bob-acme  " } });
+    fireEvent.change(eveField, { target: { value: " eve " } });
+    fireEvent.click(screen.getByRole("button", { name: "move" }));
+    await waitFor(() =>
+      expect(mocks.mutate).toHaveBeenCalledWith({
+        teamId: 5,
+        toOrganizationId: 2,
+        outsideMembers: "move",
+        newUsernames: [
+          { userId: 8, username: "bob-acme" },
+          { userId: 9, username: "eve" },
+        ],
       })
     );
   });

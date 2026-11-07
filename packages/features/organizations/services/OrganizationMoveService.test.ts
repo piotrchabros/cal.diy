@@ -393,9 +393,15 @@ describe("OrganizationMoveService", () => {
 
       expect(preview).toEqual({
         membersOutsideTarget: [
-          { userId: USER_ID, name: "alice", email: "alice@example.com", usernameTaken: false },
-          { userId: 2, name: "bob", email: "bob@example.com", usernameTaken: true },
-          { userId: 6, name: null, email: "6@example.com", usernameTaken: false },
+          {
+            userId: USER_ID,
+            name: "alice",
+            email: "alice@example.com",
+            usernameTaken: false,
+            usernameMissing: false,
+          },
+          { userId: 2, name: "bob", email: "bob@example.com", usernameTaken: true, usernameMissing: false },
+          { userId: 6, name: null, email: "6@example.com", usernameTaken: false, usernameMissing: true },
         ],
         slugTaken: true,
       });
@@ -573,6 +579,16 @@ describe("OrganizationMoveService", () => {
 
         expect(moveRepository.applyMove.mock.calls[0][0].users).toEqual([
           expect.objectContaining({ userId: USER_ID, username: "alice", redirect: null }),
+        ]);
+      });
+
+      it("moves a member flagged as missing a username in the preview under the given one", async () => {
+        seedTeam({ members: [member(6, null, null)] });
+
+        await moveWith([{ userId: 6, username: "eve" }]);
+
+        expect(moveRepository.applyMove.mock.calls[0][0].users).toEqual([
+          expect.objectContaining({ userId: 6, fromOrganizationId: null, username: "eve" }),
         ]);
       });
 
