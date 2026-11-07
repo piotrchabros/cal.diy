@@ -989,6 +989,103 @@ describe("OrganizationMembershipService", () => {
     });
   });
 
+  describe("changeUsername", () => {
+    const USER_ID = 5;
+    const usernameOf = (userId: number) =>
+      membershipRepository.users.find((user) => user.id === userId)?.username;
+
+    it("renames an org-less user without creating a profile", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob" });
+
+      await service.changeUsername({ userId: USER_ID, username: "robert" });
+
+      expect(usernameOf(USER_ID)).toBe("robert");
+      expect(membershipRepository.profiles).toEqual([]);
+    });
+
+    it("renames both the user and the org profile of an accepted member", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "MEMBER" });
+      membershipRepository.seedProfile({ userId: USER_ID, organizationId: ORG_ID, username: "bob" });
+
+      await service.changeUsername({ userId: USER_ID, username: "robert" });
+
+      expect(usernameOf(USER_ID)).toBe("robert");
+      expect(membershipRepository.profiles).toEqual([
+        { userId: USER_ID, organizationId: ORG_ID, username: "robert" },
+      ]);
+    });
+
+    it("creates the org profile for an accepted member who had none", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: null, organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "MEMBER" });
+
+      await service.changeUsername({ userId: USER_ID, username: "robert" });
+
+      expect(usernameOf(USER_ID)).toBe("robert");
+      expect(membershipRepository.profiles).toEqual([
+        { userId: USER_ID, organizationId: ORG_ID, username: "robert" },
+      ]);
+    });
+
+    it("renames a pending invitee without creating a profile", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: null, organizationId: ORG_ID });
+      membershipRepository.seedMembership({
+        userId: USER_ID,
+        teamId: ORG_ID,
+        role: "MEMBER",
+        accepted: false,
+      });
+
+      await service.changeUsername({ userId: USER_ID, username: "robert" });
+
+      expect(usernameOf(USER_ID)).toBe("robert");
+      expect(membershipRepository.profiles).toEqual([]);
+    });
+
+    it("rejects a username taken in the organization and writes nothing", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "MEMBER" });
+      membershipRepository.seedProfile({ userId: USER_ID, organizationId: ORG_ID, username: "bob" });
+      membershipRepository.seedProfile({ userId: 6, organizationId: ORG_ID, username: "robert" });
+
+      await expectRejection(
+        service.changeUsername({ userId: USER_ID, username: "robert" }),
+        ErrorCode.Conflict,
+        USERNAME_TAKEN_IN_ORGANIZATION
+      );
+      expect(usernameOf(USER_ID)).toBe("bob");
+      expect(membershipRepository.profiles).toEqual([
+        { userId: USER_ID, organizationId: ORG_ID, username: "bob" },
+        { userId: 6, organizationId: ORG_ID, username: "robert" },
+      ]);
+    });
+
+    it("allows a username that is only taken in another organization", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: USER_ID, teamId: ORG_ID, role: "MEMBER" });
+      membershipRepository.seedProfile({ userId: USER_ID, organizationId: ORG_ID, username: "bob" });
+      membershipRepository.seedProfile({ userId: 6, organizationId: OTHER_ORG_ID, username: "robert" });
+
+      await service.changeUsername({ userId: USER_ID, username: "robert" });
+
+      expect(usernameOf(USER_ID)).toBe("robert");
+      expect(membershipRepository.profiles).toContainEqual({
+        userId: USER_ID,
+        organizationId: ORG_ID,
+        username: "robert",
+      });
+    });
+
+    it("rejects an unknown user", async () => {
+      await expectRejection(
+        service.changeUsername({ userId: USER_ID, username: "robert" }),
+        ErrorCode.NotFound,
+        "User not found"
+      );
+    });
+  });
+
   describe("findMembershipCandidateByEmail", () => {
     it("trims and lowercases the email before the lookup", async () => {
       const findUserByEmail = vi.spyOn(membershipRepository, "findUserByEmail");
