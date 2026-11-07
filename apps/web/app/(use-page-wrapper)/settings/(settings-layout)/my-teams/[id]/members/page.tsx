@@ -1,14 +1,15 @@
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import { getTeamRepository } from "@calcom/features/teams/di/TeamRepository.container";
+import { getMembershipRepository } from "@calcom/features/users/di/MembershipRepository.container";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import prisma from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
+import MembersView from "@calcom/web/modules/settings/teams/members-view";
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import type { PageProps } from "app/_types";
 import { _generateMetadata } from "app/_utils";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import MembersView from "~/settings/teams/members-view";
 
 export const generateMetadata = async ({ params }: { params: Promise<{ id: string }> }) =>
   await _generateMetadata(
@@ -31,25 +32,14 @@ const Page = async ({ params: _params }: PageProps) => {
     notFound();
   }
 
-  const team = await prisma.team.findUnique({
-    where: { id: teamId },
-    select: { id: true, parentId: true, isOrganization: true },
-  });
+  const team = await getTeamRepository().findBasicById({ teamId });
   if (!team || team.isOrganization) {
     notFound();
   }
 
-  const membership = await prisma.membership.findUnique({
-    where: {
-      userId_teamId: {
-        userId: session.user.id,
-        teamId,
-      },
-    },
-    select: {
-      role: true,
-      accepted: true,
-    },
+  const membership = await getMembershipRepository().findRoleAndAcceptedByUserIdAndTeamId({
+    userId: session.user.id,
+    teamId,
   });
 
   let isOrganizationAdmin = false;

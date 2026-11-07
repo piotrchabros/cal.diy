@@ -368,7 +368,7 @@ export class MembershipRepository {
     });
   }
 
-  async findRoleByUserIdAndTeamId({ userId, teamId }: { userId: number; teamId: number }) {
+  async findRoleAndAcceptedByUserIdAndTeamId({ userId, teamId }: { userId: number; teamId: number }) {
     return await this.prismaClient.membership.findUnique({
       where: {
         userId_teamId: {
@@ -378,6 +378,7 @@ export class MembershipRepository {
       },
       select: {
         role: true,
+        accepted: true,
       },
     });
   }
