@@ -1,13 +1,11 @@
+import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import jsforce from "@jsforce/jsforce-node";
 import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
-import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
-
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import appConfig from "../config.json";
 import { getSalesforceTokenLifetime } from "../lib/getSalesforceTokenLifetime";
 
@@ -36,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     oauth2: {
       clientId: consumerKey,
       clientSecret: consumerSecret,
-      redirectUri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/salesforce/callback`,
+      redirectUri: getOAuthRedirectUri(req, "salesforce"),
     },
   });
 
@@ -56,6 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   );
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "other", slug: "salesforce" })
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
+      getInstalledAppPath({ variant: "other", slug: "salesforce" })
   );
 }

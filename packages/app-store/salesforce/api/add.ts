@@ -1,10 +1,8 @@
 import jsforce from "@jsforce/jsforce-node";
 import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
-
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import { encodeOAuthState } from "../../_utils/oauth/encodeOAuthState";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") return res.status(405).json({ message: "Method not allowed" });
@@ -17,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const salesforceClient = new jsforce.Connection({
     oauth2: {
       clientId: consumerKey,
-      redirectUri: `${WEBAPP_URL_FOR_OAUTH}/api/integrations/salesforce/callback`,
+      redirectUri: getOAuthRedirectUri(req, "salesforce"),
     },
   });
 

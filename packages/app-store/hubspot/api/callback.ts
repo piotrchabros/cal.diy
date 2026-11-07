@@ -1,4 +1,3 @@
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import * as hubspot from "@hubspot/api-client";
 import type { TokenResponseIF } from "@hubspot/api-client/lib/codegen/oauth/models/TokenResponseIF";
@@ -7,6 +6,7 @@ import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import metadata from "../_metadata";
 
 const hubspotClient = new hubspot.Client();
@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const hubspotToken: HubspotToken = await hubspotClient.oauth.tokensApi.createToken(
     "authorization_code",
     code,
-    `${WEBAPP_URL_FOR_OAUTH}/api/integrations/hubspot/callback`,
+    getOAuthRedirectUri(req, "hubspot"),
     clientId,
     clientSecret
   );
@@ -50,6 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: metadata.slug, type: metadata.type }, hubspotToken, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "other", slug: "hubspot" })
+    getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
+      getInstalledAppPath({ variant: "other", slug: "hubspot" })
   );
 }
