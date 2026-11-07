@@ -61,3 +61,18 @@ describe("MembershipRepository.findTeamIdsByAcceptedRole", () => {
     expect(findMany.mock.calls[0][0].where.isOrganization).toBe(false);
   });
 });
+
+describe("MembershipRepository.findRoleAndAcceptedByUserIdAndTeamId", () => {
+  it("selects only the role and whether the membership was accepted", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ role: MembershipRole.ADMIN, accepted: false });
+    const repo = new MembershipRepository({ membership: { findUnique } } as unknown as PrismaClient);
+
+    const result = await repo.findRoleAndAcceptedByUserIdAndTeamId({ userId: 5, teamId: 9 });
+
+    expect(result).toEqual({ role: MembershipRole.ADMIN, accepted: false });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { userId_teamId: { userId: 5, teamId: 9 } },
+      select: { role: true, accepted: true },
+    });
+  });
+});
