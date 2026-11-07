@@ -16,6 +16,17 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
   getOrganizationUrlService: () => ({ getBaseUrl }),
 }));
 
+vi.mock("@calcom/features/users/repositories/UserRepository", () => ({
+  UserRepository: class {
+    async enrichUsersWithTheirProfiles<T>(users: T[]) {
+      return users.map((user) => ({ ...user, profile: buildProfile(null) }));
+    }
+    async enrichUserWithItsProfile<T>({ user }: { user: T }) {
+      return { ...user, profile: buildProfile(null) };
+    }
+  },
+}));
+
 type GetUsersFromEventInput = Parameters<typeof getUsersFromEvent>[0];
 
 const prisma = {} as unknown as PrismaClient;
@@ -189,5 +200,69 @@ describe("getPublicEvent organization filters without an org slug", () => {
     const where = await getFirstWhere(true);
 
     expect(where).toEqual({ slug: "30min", team: { slug: "alice" } });
+  });
+});
+
+describe("getPublicEvent entity of a team under the organization", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function getTeamEvent() {
+    const team = {
+      parentId: 1,
+      metadata: {},
+      brandColor: null,
+      darkBrandColor: null,
+      slug: "sales",
+      name: "Sales",
+      logoUrl: null,
+      theme: null,
+      hideTeamProfileLink: false,
+      isPrivate: false,
+      parent: {
+        slug: "bluebee",
+        name: "BlueBee",
+        bannerUrl: null,
+        logoUrl: null,
+        organizationSettings: null,
+      },
+    };
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 1,
+      slug: "30min",
+      length: 30,
+      teamId: 2,
+      team,
+      owner: null,
+      hosts: [buildHost("alice", null)],
+      metadata: {},
+      description: null,
+      customInputs: [],
+      locations: [],
+      bookingFields: [],
+      recurringEvent: null,
+      schedule: null,
+      isInstantEvent: false,
+      instantMeetingSchedule: null,
+      parent: null,
+    });
+    const fakePrisma = { eventType: { findFirst } } as unknown as PrismaClient;
+
+    const event = await getPublicEvent("sales", "30min", true, null, fakePrisma, false);
+
+    return event?.entity;
+  }
+
+  it("names the entity after the organization when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    expect(await getTeamEvent()).toMatchObject({ name: "BlueBee", teamSlug: "sales" });
+  });
+
+  it("names the entity after the team when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    expect(await getTeamEvent()).toMatchObject({ name: "Sales", teamSlug: "sales" });
   });
 });

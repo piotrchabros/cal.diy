@@ -10,6 +10,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import logger from "@calcom/lib/logger";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -117,10 +118,10 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
 
   const memberships = profileMemberships.map((membership) => ({
     ...membership,
-    team: {
+    team: withoutOrganizationParent({
       ...membership.team,
       metadata: teamMetadataSchema.parse(membership.team.metadata),
-    },
+    }),
   }));
 
   log.debug(

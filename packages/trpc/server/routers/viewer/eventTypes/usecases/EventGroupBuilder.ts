@@ -1,16 +1,16 @@
 import type { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import type { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
-
 import type { TeamAccessUseCase } from "../teamAccessUseCase";
 import {
-  shouldListUserEvents,
-  shouldIncludeTeamMembership,
   createTeamSlug,
   type FilterContext,
+  shouldIncludeTeamMembership,
+  shouldListUserEvents,
 } from "../utils/filterUtils";
 import { buildTeamPermissionsMap, getEffectiveRole, type TeamPermissions } from "../utils/permissionUtils";
-import { createUserEventGroup, createTeamEventGroup, type EventTypeGroup } from "../utils/transformUtils";
+import { createTeamEventGroup, createUserEventGroup, type EventTypeGroup } from "../utils/transformUtils";
 
 export interface EventGroupBuilderDependencies {
   membershipRepository: typeof MembershipRepository;
@@ -61,10 +61,10 @@ export class EventGroupBuilder {
 
     const memberships = accessibleMemberships.map((membership) => ({
       ...membership,
-      team: {
+      team: withoutOrganizationParent({
         ...membership.team,
         metadata: teamMetadataSchema.parse(membership.team.metadata),
-      },
+      }),
     }));
 
     // This ensures org roles are considered when calculating effective permissions
@@ -102,10 +102,7 @@ export class EventGroupBuilder {
             throw new Error(`Permissions not found for team ${membership.team.id}`);
           }
 
-          const teamSlug = createTeamSlug(
-            membership.team.slug,
-            !!membership.team.parentId
-          );
+          const teamSlug = createTeamSlug(membership.team.slug, !!membership.team.parentId);
 
           return createTeamEventGroup(membership, effectiveRole, teamSlug, permissions);
         })
