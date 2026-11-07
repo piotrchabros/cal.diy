@@ -190,8 +190,8 @@ describe("cross-organization isolation", () => {
 
       await expectErrorCode(
         notetaker.listCandidates({ eventTypeId: EVENT_TYPE_A, userId: BOB }),
-        ErrorCode.Forbidden,
-        "NOT_ALLOWED"
+        ErrorCode.NotFound,
+        "Team not found"
       );
 
       const result = await notetaker.listCandidates({ eventTypeId: EVENT_TYPE_A, userId: ALICE });
