@@ -66,14 +66,44 @@ describe("WebhookRepository team-owned webhook visibility", () => {
   });
 
   describe("getFilteredWebhooksForUser", () => {
-    it("hides team-owned webhooks and their secret from a plain member", async () => {
+    it("hides every team webhook and its secret from a plain member, matching listWebhooks", async () => {
       prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(MembershipRole.MEMBER));
 
       const { webhookGroups } = await repository.getFilteredWebhooksForUser({ userId: 7 });
       const ids = webhookGroups.flatMap((group) => group.webhooks.map((webhook) => webhook.id));
 
-      expect(ids).toEqual(["wh-team-user"]);
+      expect(ids).toEqual([]);
       expect(JSON.stringify(webhookGroups)).not.toContain("team-secret");
+      expect(JSON.stringify(webhookGroups)).not.toContain("user-secret");
+    });
+
+    it("keeps the team profile for a plain member so the team still appears without webhooks", async () => {
+      prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(MembershipRole.MEMBER));
+
+      const { webhookGroups, profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+
+      expect(webhookGroups.find((group) => group.teamId === 3)).toBeUndefined();
+      expect(profiles.find((profile) => profile.teamId === 3)).toMatchObject({ slug: "team" });
+    });
+
+    it("still shows the viewer's own personal webhooks to a plain member", async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...viewerWithRole(MembershipRole.MEMBER),
+        webhooks: [{ ...baseWebhook, id: "wh-own", teamId: null, userId: 7, secret: "own-secret" }],
+      });
+
+      const { webhookGroups } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+      const ids = webhookGroups.flatMap((group) => group.webhooks.map((webhook) => webhook.id));
+
+      expect(ids).toEqual(["wh-own"]);
+    });
+
+    it("only reads accepted memberships", async () => {
+      prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(MembershipRole.ADMIN));
+
+      await repository.getFilteredWebhooksForUser({ userId: 7 });
+
+      expect(prismaMock.user.findUnique.mock.calls[0][0].select.teams.where).toEqual({ accepted: true });
     });
 
     it.each([
@@ -91,11 +121,9 @@ describe("WebhookRepository team-owned webhook visibility", () => {
     it("does not let a plain member modify or delete team webhooks", async () => {
       prismaMock.user.findUnique.mockResolvedValue(viewerWithRole(MembershipRole.MEMBER));
 
-      const { webhookGroups, profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
-      const teamGroup = webhookGroups.find((group) => group.teamId === 3);
+      const { profiles } = await repository.getFilteredWebhooksForUser({ userId: 7 });
       const teamProfile = profiles.find((profile) => profile.teamId === 3);
 
-      expect(teamGroup?.metadata).toEqual({ canModify: false, canDelete: false });
       expect(teamProfile).toMatchObject({ canModify: false, canDelete: false });
     });
 
