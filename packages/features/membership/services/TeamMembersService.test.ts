@@ -9,7 +9,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 
 // The real resolver lazily loads the Prisma-backed DI container; tests must never reach it.
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
-  findDefaultOrganizationId: vi.fn(async () => null),
+  findDefaultOrganizationId: vi.fn(async () => 1),
 }));
 
 vi.mock("@calcom/lib/auth/hashPassword", () => ({
@@ -286,7 +286,7 @@ describe("TeamMembersService", () => {
         email: "new@example.com",
         teamId: 7,
         role: MembershipRole.ADMIN,
-        organizationId: null,
+        organizationId: 1,
       });
       expect(membershipRepo.createTeamMembership).not.toHaveBeenCalled();
       expect(teamRepo.createTeamInviteToken).toHaveBeenCalledWith(
@@ -360,11 +360,11 @@ describe("TeamMembersService", () => {
     const setup = ({
       teamResult = orgTeam,
       invitee,
-      defaultOrganizationId = null,
+      defaultOrganizationId = 1,
     }: {
       teamResult?: typeof team;
       invitee: { id: number; organizationId: number | null; username: string | null } | null;
-      defaultOrganizationId?: number | null;
+      defaultOrganizationId?: number;
     }) => {
       const membershipRepo = makeMembershipRepo({
         findUniqueByUserIdAndTeamId: vi
@@ -424,7 +424,7 @@ describe("TeamMembersService", () => {
 
       await expect(invite()).resolves.toEqual({ status: "invited-new", email: "ada@example.com" });
       expect(userRepo.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: null })
+        expect.objectContaining({ organizationId: 1 })
       );
       expect(orgMembership.addMember).not.toHaveBeenCalled();
     });
@@ -565,15 +565,13 @@ describe("TeamMembersService", () => {
       expect(orgMembership.addMember).not.toHaveBeenCalled();
     });
 
-    it("leaves a brand-new invitee without an organization while no default organization exists", async () => {
+    it("creates no invitee when no default organization exists", async () => {
       const { invite, userRepo, resolveDefaultOrganizationId } = setup({ invitee: null });
+      const failure = ErrorWithCode.Factory.PreconditionFailed("No default organization");
+      resolveDefaultOrganizationId.mockRejectedValueOnce(failure);
 
-      await invite();
-
-      expect(resolveDefaultOrganizationId).toHaveBeenCalledTimes(1);
-      expect(userRepo.createInvitedWithPendingTeamMembership).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: null })
-      );
+      await expect(invite()).rejects.toBe(failure);
+      expect(userRepo.createInvitedWithPendingTeamMembership).not.toHaveBeenCalled();
     });
   });
 
