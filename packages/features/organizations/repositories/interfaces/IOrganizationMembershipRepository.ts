@@ -40,6 +40,10 @@ export interface IOrganizationMembershipRepository {
     input: AddMemberInput
   ): Promise<{ userId: number; organizationId: number; role: OrganizationRoleDto }>;
   findRole(p: { organizationId: number; userId: number }): Promise<OrganizationRoleDto | null>;
+  findMembership(p: {
+    organizationId: number;
+    userId: number;
+  }): Promise<{ role: OrganizationRoleDto; accepted: boolean } | null>;
   countOwners(organizationId: number): Promise<number>;
   updateRole(p: {
     organizationId: number;
@@ -60,4 +64,10 @@ export interface IOrganizationMembershipRepository {
     cursor?: number;
     limit: number;
   }): Promise<{ items: OrganizationTeamRecord[]; nextCursor?: number }>;
+  moveToOrganization(p: {
+    userId: number;
+    fromOrganizationId: number;
+    toOrganizationId: number;
+    username: string | null;
+  }): Promise<void>;
 }
