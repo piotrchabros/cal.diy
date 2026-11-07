@@ -24,6 +24,24 @@ export type TeamVisibilitySource = {
   parent: { members: { userId: number }[] } | null;
 };
 
+export type TeamRoleSource = {
+  members: { userId: number; accepted: boolean; role: MembershipRole }[];
+  parent: { members: { userId: number }[] } | null;
+};
+
+export function hasTeamEventRole(
+  team: TeamRoleSource,
+  userId: number,
+  allowedRoles: readonly MembershipRole[]
+): boolean {
+  const hasTeamRole = team.members.some(
+    (member) => member.userId === userId && member.accepted && allowedRoles.includes(member.role)
+  );
+  if (hasTeamRole) return true;
+  // Admins and owners of the parent organization manage every team event in it.
+  return team.parent?.members.some((member) => member.userId === userId) ?? false;
+}
+
 export function assertTeamEventVisible(team: TeamVisibilitySource, userId: number): void {
   if (!isOrganizationsEnabled()) return;
   if (team.members.some((member) => member.userId === userId && member.accepted)) return;

@@ -1,6 +1,6 @@
 import { MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assertTeamEventVisible, teamVisibilitySelect } from "./teamEventVisibility";
+import { assertTeamEventVisible, hasTeamEventRole, teamVisibilitySelect } from "./teamEventVisibility";
 
 const nonMemberTeam = { members: [{ userId: 2, accepted: true }], parent: null };
 
@@ -67,5 +67,55 @@ describe("teamVisibilitySelect", () => {
         },
       },
     });
+  });
+});
+
+describe("hasTeamEventRole", () => {
+  const allRoles = [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER];
+  const adminRoles = [MembershipRole.ADMIN, MembershipRole.OWNER];
+  const teamWith = (accepted: boolean, role: MembershipRole) => ({
+    members: [{ userId: 1, accepted, role }],
+    parent: null,
+  });
+  const nonMember = { members: [{ userId: 2, accepted: true, role: MembershipRole.OWNER }] };
+
+  it("allows an accepted member when MEMBER is an allowed role", () => {
+    expect(hasTeamEventRole(teamWith(true, MembershipRole.MEMBER), 1, allRoles)).toBe(true);
+  });
+
+  it("rejects an accepted member when only admin roles are allowed", () => {
+    expect(hasTeamEventRole(teamWith(true, MembershipRole.MEMBER), 1, adminRoles)).toBe(false);
+  });
+
+  it("allows an accepted admin", () => {
+    expect(hasTeamEventRole(teamWith(true, MembershipRole.ADMIN), 1, adminRoles)).toBe(true);
+  });
+
+  it("allows an accepted owner", () => {
+    expect(hasTeamEventRole(teamWith(true, MembershipRole.OWNER), 1, adminRoles)).toBe(true);
+  });
+
+  it("rejects a pending admin", () => {
+    expect(hasTeamEventRole(teamWith(false, MembershipRole.ADMIN), 1, adminRoles)).toBe(false);
+  });
+
+  it("rejects a non-member", () => {
+    expect(hasTeamEventRole({ ...nonMember, parent: { members: [] } }, 1, allRoles)).toBe(false);
+  });
+
+  it("allows an admin of the parent organization who is not a team member", () => {
+    expect(hasTeamEventRole({ ...nonMember, parent: { members: [{ userId: 1 }] } }, 1, adminRoles)).toBe(
+      true
+    );
+  });
+
+  it("rejects when the parent organization membership belongs to another user", () => {
+    expect(hasTeamEventRole({ ...nonMember, parent: { members: [{ userId: 3 }] } }, 1, adminRoles)).toBe(
+      false
+    );
+  });
+
+  it("rejects a non-member of a team without a parent", () => {
+    expect(hasTeamEventRole({ ...nonMember, parent: null }, 1, allRoles)).toBe(false);
   });
 });
