@@ -57,18 +57,20 @@ Expected: all pass. Coverage of the new and changed code is at least 80%.
 
 ## 5. Production rollout (owner)
 
-Production stays unchanged until step 6: every behaviour change is behind `ORGANIZATIONS_ENABLED`, and the migrations are applied by the owner, never by the deploy script.
+Production behaviour stays unchanged until step 5: every behaviour change is behind `ORGANIZATIONS_ENABLED`, and the migrations are applied by the owner, never by the deploy script.
+
+**From now on, every deploy of `develop` must be preceded by `yarn workspace @calcom/prisma db-deploy`** (after a database backup). The T062 stack is merged (owner decision 2026-11-07: #371, #372, #373): new users always get the default organization and the schema has `User.organizationId` NOT NULL. `db-deploy` applies T061 (BlueBee switch-over) and then T062 (`20261107000200_user_organization_required`), which aborts, leaving the database untouched, if any user is still without an organization.
 
 1. **Merge** all PRs into `develop`. The flag is off, so behaviour is unchanged. Make sure the deployed release contains the T221 change (flag-off user and team lookups ignore the organization, PR #297) before step 3.
 2. **Inventory**: run the step 0 query on production and note the OAuth apps in use.
-3. **Migrations, in order** (`yarn workspace @calcom/prisma db-deploy`, after a database backup):
-   1. PR 1 (`customDomain` on organizations).
+3. **Migrations, then deploy** (`yarn workspace @calcom/prisma db-deploy`, after a database backup, then `/root/caldiy-deploy.sh`). `db-deploy` applies, in order:
+   1. PR 1 (`customDomain` on organizations), if still pending.
    2. T061 / PR 22, the BlueBee switch-over (`20261107000100_organizations_bluebee_switchover`). It is repeat-safe; compare the printed counts with the number of users and teams. Public booking pages keep working because of T221 (spot-check a few `cal.bluebee.marketing/<username>` links, SC-004).
-   3. Deploy (`/root/caldiy-deploy.sh`). T062 / PR 23 is **not** applied yet.
+   3. T062 / PR 23 (`20261107000200_user_organization_required`, `organizationId NOT NULL`, FK `ON DELETE RESTRICT`).
+   Every later deploy of `develop` repeats this: `db-deploy` first (a no-op when nothing is pending), then the deploy.
 4. **Infrastructure**: do every row of [contracts/infra-owner-checklist.md](./contracts/infra-owner-checklist.md): DNS, Caddy, `ALLOWED_HOSTNAMES`, OAuth callbacks per domain (including Alby if used), forwarded headers and closed Node ports.
 5. **Env**: in `/root/cal.diy/.env` set `ORGANIZATIONS_ENABLED=1` and `AUTH_TRUST_HOST=true` together (never one without the other), keep `NEXTAUTH_COOKIE_DOMAIN` empty, then deploy.
 6. **Verify on production**: S1 (existing users sign in and their pages work), S9 (unknown host 404), S10 (`/api/version` 200), and S13's rollback path in mind: turning the flag off means removing both `ORGANIZATIONS_ENABLED` and `AUTH_TRUST_HOST` and redeploying.
 7. **Populate**: create BespokeSoft and JellyMatch with their domains (S2), then move their people and teams (S4). After the first move, do the 308 `curl -sI` check from the checklist's "Move redirects" section.
-8. **Finish**: after a week without issues, apply T062 / PR 23 (`organizationId NOT NULL`); its migration is written to abort if any user still has no organization.
 
-Rollback before step 8: unset both env variables and redeploy. The T061 data stays in place and is harmless with the flag off (T221).
+Rollback: unset both env variables and redeploy. The T061 data and the T062 constraint stay in place and are harmless with the flag off (T221); do not roll the migrations back, since the code on `develop` requires them.
