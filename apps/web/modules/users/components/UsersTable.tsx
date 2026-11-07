@@ -1,6 +1,6 @@
 "use client";
 
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useDebounce } from "@calcom/lib/hooks/useDebounce";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
@@ -29,6 +29,7 @@ export function UsersTable({ organizationsEnabled }: { organizationsEnabled: boo
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [organizationId, setOrganizationId] = useState<number | null>(null);
   const router = useRouter();
+  const orgBaseUrl = useOrgBaseUrl();
 
   const listInput = {
     limit: FETCH_LIMIT,
@@ -173,7 +174,7 @@ export function UsersTable({ organizationsEnabled }: { organizationsEnabled: boo
                     <Avatar
                       size="md"
                       alt={`Avatar of ${user.username || "Nameless"}`}
-                      imageSrc={`${WEBAPP_URL}/${user.username}/avatar.png`}
+                      imageSrc={`${orgBaseUrl}/${user.username}/avatar.png`}
                     />
                     <div className="text-subtle ml-4 font-medium">
                       <div className="flex gap-3">

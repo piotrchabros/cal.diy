@@ -1,7 +1,7 @@
 "use client";
 
 import { useBookerUrl } from "@calcom/features/bookings/hooks/useBookerUrl";
-import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { Avatar, AvatarImage } from "@coss/ui/components/avatar";
@@ -83,13 +83,13 @@ const WebhooksList = ({ webhooksByViewer }: { webhooksByViewer: WebhooksByViewer
                           <WebhookListItem
                             key={webhook.id}
                             webhook={webhook}
-                            editHref={`${WEBAPP_URL}/settings/developer/webhooks/${webhook.id}`}
+                            editHref={`${bookerUrl}/settings/developer/webhooks/${webhook.id}`}
                             permissions={{
                               canEditWebhook: group?.metadata?.canModify ?? false,
                               canDeleteWebhook: group?.metadata?.canDelete ?? false,
                             }}
                             onEditWebhookAction={() =>
-                              router.push(`${WEBAPP_URL}/settings/developer/webhooks/${webhook.id}`)
+                              router.push(`${bookerUrl}/settings/developer/webhooks/${webhook.id}`)
                             }
                           />
                         ))}

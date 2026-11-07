@@ -1,4 +1,5 @@
-import { ENABLE_PROFILE_SWITCHER, IS_VISUAL_REGRESSION_TESTING, WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { ENABLE_PROFILE_SWITCHER, IS_VISUAL_REGRESSION_TESTING } from "@calcom/lib/constants";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { useIsStandalone } from "@calcom/lib/hooks/useIsStandalone";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
@@ -44,7 +45,8 @@ export function SideBarContainer({ bannersHeight }: SideBarContainerProps) {
 export function SideBar({ bannersHeight, user }: SideBarProps) {
   const { t, isLocaleReady } = useLocale();
 
-  const publicPageUrl = `${WEBAPP_URL}/${user?.orgAwareUsername}`;
+  const orgBaseUrl = useOrgBaseUrl();
+  const publicPageUrl = `${orgBaseUrl}/${user?.orgAwareUsername}`;
 
   const bottomNavItems = useBottomNavItems({
     publicPageUrl,

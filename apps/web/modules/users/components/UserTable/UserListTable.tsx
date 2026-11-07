@@ -2,7 +2,7 @@
 
 import { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 import { ColumnFilterType, convertFacetedValuesToMap, type FacetedValue } from "@calcom/features/data-table";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { downloadAsCsv } from "@calcom/lib/csvUtils";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
@@ -182,7 +182,7 @@ function UserListTableContent({
     fullDomain?: string;
     canAdminImpersonate?: boolean;
   } | null;
-  const domain = WEBAPP_URL;
+  const domain = useOrgBaseUrl();
   const { t } = useLocale();
 
   const { data: session } = useSession();
