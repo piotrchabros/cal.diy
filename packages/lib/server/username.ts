@@ -86,10 +86,16 @@ const processResult = (
   }
 };
 
+export type UsernameHandlerOptions = {
+  resolveOrganizationId?: (body: Record<string, string>) => Promise<number | null>;
+};
+
 const usernameHandler =
-  (handler: CustomNextApiHandler) => async (body: Record<string, string>, query: Record<string, string>) => {
+  (handler: CustomNextApiHandler, options: UsernameHandlerOptions = {}) =>
+  async (body: Record<string, string>, query: Record<string, string>) => {
     const username = slugify(body.username);
-    const check = await usernameCheckForSignup({ username, email: body.email });
+    const organizationId = (await options.resolveOrganizationId?.(body)) ?? null;
+    const check = await usernameCheckForSignup({ username, email: body.email, organizationId });
 
     let result: Parameters<typeof processResult>[0] = "ok";
     if (check.premium) result = "is_premium";
@@ -216,9 +222,11 @@ export const isUsernameReservedDueToMigration = async (username: string) =>
 const usernameCheckForSignup = async ({
   username: usernameRaw,
   email,
+  organizationId = null,
 }: {
   username: string;
   email: string;
+  organizationId?: number | null;
 }) => {
   const response = {
     available: true,
@@ -227,6 +235,53 @@ const usernameCheckForSignup = async ({
   };
 
   const username = slugify(usernameRaw);
+
+  if (organizationId !== null) {
+    // Usernames are unique per organization, so only someone else in the target organization blocks the name;
+    // the signing-up email may already hold it (e.g. a pending invite). The global migration reservation
+    // doesn't apply inside an organization namespace, same as in `usernameCheck`.
+    const takenByAnotherUser = await prisma.user.findFirst({
+      where: { username, organizationId, NOT: { email: email.toLowerCase() } },
+      select: { id: true },
+    });
+    response.available = !takenByAnotherUser;
+    response.premium = await isPremiumUserName(username);
+  } else {
+    Object.assign(response, await checkUsernameInGlobalNamespaceForSignup({ username, email }));
+  }
+
+  // get list of similar usernames in the db (scoped to organization if signing up into one)
+  const users = await prisma.user.findMany({
+    where: {
+      username: {
+        contains: username,
+      },
+      ...(organizationId !== null && { organizationId }),
+    },
+    select: {
+      username: true,
+    },
+  });
+
+  // We only need suggestedUsername if the username is not available
+  if (!response.available) {
+    response.suggestedUsername = await generateUsernameSuggestion(
+      users.map((user) => user.username).filter(notEmpty),
+      username
+    );
+  }
+
+  return response;
+};
+
+const checkUsernameInGlobalNamespaceForSignup = async ({
+  username,
+  email,
+}: {
+  username: string;
+  email: string;
+}) => {
+  const response = { available: true, premium: false };
 
   const user = await prisma.user.findUnique({
     where: {
@@ -264,26 +319,6 @@ const usernameCheckForSignup = async ({
   } else {
     response.premium = await isPremiumUserName(username);
     response.available = !(await isUsernameReservedDueToMigration(username));
-  }
-
-  // get list of similar usernames in the db
-  const users = await prisma.user.findMany({
-    where: {
-      username: {
-        contains: username,
-      },
-    },
-    select: {
-      username: true,
-    },
-  });
-
-  // We only need suggestedUsername if the username is not available
-  if (!response.available) {
-    response.suggestedUsername = await generateUsernameSuggestion(
-      users.map((user) => user.username).filter(notEmpty),
-      username
-    );
   }
 
   return response;

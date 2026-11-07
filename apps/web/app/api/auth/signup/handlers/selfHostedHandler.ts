@@ -16,8 +16,6 @@ import { getOrganizationMembershipService } from "@calcom/features/organizations
 import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
-import { ErrorCode } from "@calcom/lib/errorCodes";
-import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
@@ -28,22 +26,7 @@ import { prisma } from "@calcom/prisma";
 import { CreationSource, IdentityProvider } from "@calcom/prisma/enums";
 import { signupSchema } from "@calcom/prisma/zod-utils";
 import { NextResponse } from "next/server";
-
-async function respondConflictAs409(
-  writeMembership: () => Promise<void>,
-  onFailure?: () => Promise<void>
-): Promise<NextResponse | null> {
-  try {
-    await writeMembership();
-    return null;
-  } catch (error) {
-    await onFailure?.();
-    if (error instanceof ErrorWithCode && error.code === ErrorCode.Conflict) {
-      return NextResponse.json({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS }, { status: 409 });
-    }
-    throw error;
-  }
-}
+import { respondConflictAs409 } from "./respondConflictAs409";
 
 // Users join the org of the domain they signed up on; with organizations off that is always the default org
 async function resolveHostOrganizationId(
