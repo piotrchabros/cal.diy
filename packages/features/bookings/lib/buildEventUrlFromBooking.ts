@@ -1,4 +1,4 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 
@@ -37,7 +37,7 @@ export async function buildEventUrlFromBooking(booking: {
   const eventTeam = eventType.team;
   const bookingOrganizationId = getOrganizationIdOfBooking({ eventType, profileEnrichedBookingUser });
 
-  const bookerUrl = WEBAPP_URL;
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({ organizationId: bookingOrganizationId });
   if (dynamicGroupSlugRef) {
     return `${bookerUrl}/${dynamicGroupSlugRef}/${eventSlug}`;
   }

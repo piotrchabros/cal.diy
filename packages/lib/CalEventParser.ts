@@ -1,8 +1,5 @@
-import type { TFunction } from "i18next";
-import short from "short-uuid";
-
 import getLabelValueMapFromResponses from "@calcom/lib/bookings/getLabelValueMapFromResponses";
-import { Prisma } from "@calcom/prisma/client";
+import type { Prisma } from "@calcom/prisma/client";
 import type {
   AdditionalInformation,
   AppsStatus,
@@ -12,7 +9,8 @@ import type {
   TeamMember,
   VideoCallData,
 } from "@calcom/types/Calendar";
-
+import type { TFunction } from "i18next";
+import short from "short-uuid";
 import { WEBAPP_URL } from "./constants";
 import isSmsCalEmail from "./isSmsCalEmail";
 import {
@@ -620,8 +618,8 @@ export const isDailyVideoCall = (videoCallData?: VideoCallData): boolean => {
   return videoCallData?.type === "daily_video";
 };
 
-export const getPublicVideoCallUrl = (uid?: string | null): string => {
-  return `${WEBAPP_URL}/video/${getUid(uid)}`;
+export const getPublicVideoCallUrl = (uid?: string | null, bookerUrl?: string | null): string => {
+  return `${bookerUrl ?? WEBAPP_URL}/video/${getUid(uid)}`;
 };
 
 export const getVideoCallUrlFromCalEvent = (calEvent: {
@@ -629,10 +627,11 @@ export const getVideoCallUrlFromCalEvent = (calEvent: {
   additionalInformation?: AdditionalInformation;
   location?: string | null;
   uid?: string | null;
+  bookerUrl?: string | null;
 }): string => {
   if (calEvent.videoCallData) {
     if (calEvent.videoCallData.type === "daily_video") {
-      return getPublicVideoCallUrl(calEvent.uid);
+      return getPublicVideoCallUrl(calEvent.uid, calEvent.bookerUrl);
     }
     return calEvent.videoCallData.url ?? "";
   }
