@@ -1,6 +1,7 @@
 import { LookupTarget, ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { withSelectedCalendars } from "@calcom/features/users/repositories/UserRepository";
 import logger from "@calcom/lib/logger";
+import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { eventTypeSelect } from "@calcom/lib/server/eventTypeSelect";
 import { availabilityUserSelect, type PrismaTransaction, prisma } from "@calcom/prisma";
@@ -951,7 +952,7 @@ export class MembershipRepository {
           username: { not: null },
           locked: false,
           isPlatformManaged: false,
-          organizationId: null,
+          ...outsideOrganizationsFilter({ organizationId: null }),
         },
       },
       select: {

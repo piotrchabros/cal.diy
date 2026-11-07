@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@calcom/prisma";
 import type { UserProfile } from "@calcom/types/UserProfile";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getUsersFromEvent } from "./getPublicEvent";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getPublicEvent, getUsersFromEvent } from "./getPublicEvent";
 
 vi.mock("@calcom/prisma", () => ({
   PrismaClient: vi.fn(),
@@ -133,5 +133,61 @@ describe("getUsersFromEvent", () => {
 
     expect(users).toBeNull();
     expect(getBaseUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("getPublicEvent organization filters without an org slug", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function getFirstWhere(isTeamEvent: boolean) {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const fakePrisma = { eventType: { findFirst } } as unknown as PrismaClient;
+
+    const event = await getPublicEvent("alice", "30min", isTeamEvent, null, fakePrisma, false);
+
+    expect(event).toBeNull();
+    return findFirst.mock.calls[0][0].where;
+  }
+
+  it("requires the user to have no profiles when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    const where = await getFirstWhere(false);
+
+    expect(where).toEqual({
+      slug: "30min",
+      users: { some: { username: "alice", profiles: { none: {} } } },
+      team: null,
+    });
+  });
+
+  it("ignores user profiles when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    const where = await getFirstWhere(false);
+
+    expect(where).toEqual({
+      slug: "30min",
+      users: { some: { username: "alice" } },
+      team: null,
+    });
+  });
+
+  it("requires the team to have no parent when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    const where = await getFirstWhere(true);
+
+    expect(where).toEqual({ slug: "30min", team: { slug: "alice", parent: null } });
+  });
+
+  it("ignores the team parent when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    const where = await getFirstWhere(true);
+
+    expect(where).toEqual({ slug: "30min", team: { slug: "alice" } });
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isOrganizationsEnabled } from "./isOrganizationsEnabled";
 import { isLoopbackHost, normalizeHost } from "./normalizeHost";
+import { outsideOrganizationsFilter } from "./outsideOrganizationsFilter";
 
 describe("isOrganizationsEnabled", () => {
   afterEach(() => {
@@ -27,6 +28,27 @@ describe("isOrganizationsEnabled", () => {
     expect(isOrganizationsEnabled()).toBe(false);
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     expect(isOrganizationsEnabled()).toBe(true);
+  });
+});
+
+describe("outsideOrganizationsFilter", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(["1", "true"])("returns the filter when ORGANIZATIONS_ENABLED is %s", (value) => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", value);
+    expect(outsideOrganizationsFilter({ organizationId: null })).toEqual({ organizationId: null });
+  });
+
+  it("returns an empty filter when ORGANIZATIONS_ENABLED is unset", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", undefined);
+    expect(outsideOrganizationsFilter({ organizationId: null })).toEqual({});
+  });
+
+  it("returns an empty filter when ORGANIZATIONS_ENABLED is 0", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+    expect(outsideOrganizationsFilter({ organizationId: null })).toEqual({});
   });
 });
 

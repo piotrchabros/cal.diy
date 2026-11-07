@@ -6,6 +6,7 @@ import { withSelectedCalendars } from "@calcom/features/users/repositories/UserR
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
+import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { eventTypeSelect } from "@calcom/lib/server/eventTypeSelect";
 import type { PrismaClient } from "@calcom/prisma";
@@ -1164,7 +1165,7 @@ export class EventTypeRepository implements IEventTypesRepository {
         slug,
         team: {
           slug: teamSlug,
-          parentId: null,
+          ...outsideOrganizationsFilter({ parentId: null }),
         },
       },
       select: {
