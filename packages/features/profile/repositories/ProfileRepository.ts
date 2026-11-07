@@ -1,6 +1,7 @@
 import { getOrgUsernameFromEmail } from "@calcom/features/auth/signup/utils/getOrgUsernameFromEmail";
 import { DATABASE_CHUNK_SIZE } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
 import type { Prisma, PrismaClient, User as PrismaUser, Team } from "@calcom/prisma/client";
@@ -511,6 +512,11 @@ export class ProfileRepository implements IProfileRepository {
       const targetUserId = lookupTarget.id;
 
       if (targetUserId !== userId) {
+        // Every user sits in an organization after the switch-over (spec 005, T262), so org-admin
+        // access would grant powers that did not exist before it while organizations are disabled
+        if (!isOrganizationsEnabled()) {
+          return null;
+        }
         // Check if requesting user is an org admin/owner and can access target user's profile
         const canAccessAsAdmin = await ProfileRepository.checkOrgAdminAccessToUser({
           requestingUserId: userId,
@@ -597,6 +603,18 @@ export class ProfileRepository implements IProfileRepository {
 
     if (!rawProfile) {
       return null;
+    }
+
+    // While organizations are disabled the switch-over profiles must not surface (spec 005, T262),
+    // so the owner gets the personal profile they had before it
+    if (!isOrganizationsEnabled()) {
+      if (rawProfile.userId !== userId) {
+        return null;
+      }
+      return {
+        ...ProfileRepository.buildPersonalProfileFromUser({ user: rawProfile.user }),
+        ...ProfileRepository.getInheritedDataFromUser({ user: rawProfile.user }),
+      };
     }
 
     // Authorization check: verify user has access to this profile
@@ -832,6 +850,10 @@ export class ProfileRepository implements IProfileRepository {
   }
 
   static async findManyForUsers(userIds: number[]) {
+    // Profiles created by the switch-over must be invisible while organizations are disabled (spec 005, T262)
+    if (!isOrganizationsEnabled()) {
+      return [];
+    }
     const profiles = await prisma.profile.findMany({
       where: {
         userId: {
@@ -865,6 +887,10 @@ export class ProfileRepository implements IProfileRepository {
   }
 
   static async findManyForUser(user: { id: number }) {
+    // Profiles created by the switch-over must be invisible while organizations are disabled (spec 005, T262)
+    if (!isOrganizationsEnabled()) {
+      return [];
+    }
     const profiles = (
       await prisma.profile.findMany({
         where: {
@@ -902,6 +928,10 @@ export class ProfileRepository implements IProfileRepository {
   }
 
   static async findFirstForUserId({ userId }: { userId: number }) {
+    // Profiles created by the switch-over must be invisible while organizations are disabled (spec 005, T262)
+    if (!isOrganizationsEnabled()) {
+      return null;
+    }
     return prisma.profile.findFirst({
       where: {
         userId: userId,
@@ -918,6 +948,10 @@ export class ProfileRepository implements IProfileRepository {
    * all org IDs and check if user is blocked in ANY of them.
    */
   static async findFirstOrganizationIdForUser({ userId }: { userId: number }): Promise<number | null> {
+    // Profiles created by the switch-over must be invisible while organizations are disabled (spec 005, T262)
+    if (!isOrganizationsEnabled()) {
+      return null;
+    }
     const profile = await prisma.profile.findFirst({
       where: { userId },
       select: { organizationId: true },
