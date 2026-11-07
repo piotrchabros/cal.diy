@@ -231,6 +231,41 @@ describe("getUserEventGroups", () => {
         expect.objectContaining({ userId: 1, teamRoles: [MembershipRole.OWNER, MembershipRole.ADMIN] })
       );
     });
+    it("lets a system admin create event types in every listed team, matching heavy/create.handler", async () => {
+      const { ProfileRepository } = await import("@calcom/features/profile/repositories/ProfileRepository");
+      const adminTeam = teamMembership(100, MembershipRole.ADMIN);
+      const memberTeam = teamMembership(200, MembershipRole.MEMBER);
+
+      vi.mocked(ProfileRepository.findByUpIdWithAuth).mockResolvedValue(mockProfile);
+      mockFindAllByUpIdIncludeTeam.mockResolvedValue([adminTeam, memberTeam]);
+      mockFilterTeamsByEventTypeReadPermission.mockResolvedValue([adminTeam, memberTeam]);
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([100]);
+
+      const result = await getUserEventGroups({
+        ctx: { ...mockCtx, user: { ...mockCtx.user, role: "ADMIN" } as typeof mockCtx.user },
+        input: null,
+      });
+
+      expect(result.teamPermissions[100]).toEqual({ canCreateEventType: true });
+      expect(result.teamPermissions[200]).toEqual({ canCreateEventType: true });
+    });
+
+    it("does not treat a non-ADMIN system role as a bypass", async () => {
+      const { ProfileRepository } = await import("@calcom/features/profile/repositories/ProfileRepository");
+      const memberTeam = teamMembership(200, MembershipRole.MEMBER);
+
+      vi.mocked(ProfileRepository.findByUpIdWithAuth).mockResolvedValue(mockProfile);
+      mockFindAllByUpIdIncludeTeam.mockResolvedValue([memberTeam]);
+      mockFilterTeamsByEventTypeReadPermission.mockResolvedValue([memberTeam]);
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([]);
+
+      const result = await getUserEventGroups({
+        ctx: { ...mockCtx, user: { ...mockCtx.user, role: "USER" } as typeof mockCtx.user },
+        input: null,
+      });
+
+      expect(result.teamPermissions[200]).toEqual({ canCreateEventType: false });
+    });
   });
 
   describe("Organization handling", () => {
