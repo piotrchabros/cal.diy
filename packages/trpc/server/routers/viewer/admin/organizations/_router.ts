@@ -1,4 +1,13 @@
-import { OrganizationDtoSchema, OrganizationListResultDtoSchema } from "@calcom/lib/dto/OrganizationDto";
+import {
+  OrganizationDtoSchema,
+  OrganizationListResultDtoSchema,
+  OrganizationTeamListDtoSchema,
+} from "@calcom/lib/dto/OrganizationDto";
+import {
+  MoveTeamPreviewDtoSchema,
+  MoveTeamResultDtoSchema,
+  MoveUserResultDtoSchema,
+} from "@calcom/lib/dto/OrganizationMoveDto";
 import { organizationsFeatureMiddleware } from "../../../../middlewares/organizationsFeatureMiddleware";
 import { authedAdminProcedure } from "../../../../procedures/authedProcedure";
 import { router } from "../../../../trpc";
@@ -8,6 +17,10 @@ import {
   ZDeleteOrganizationOutput,
   ZGetOrganizationInput,
   ZListOrganizationsInput,
+  ZListOrganizationTeamsInput,
+  ZMoveTeamInput,
+  ZMoveUserInput,
+  ZPreviewMoveTeamInput,
   ZUpdateOrganizationInput,
 } from "./organizations.schema";
 
@@ -18,6 +31,13 @@ const loadService = async () => {
     "@calcom/features/organizations/di/OrganizationService.container"
   );
   return getOrganizationService();
+};
+
+const loadMoveService = async () => {
+  const { getOrganizationMoveService } = await import(
+    "@calcom/features/organizations/di/OrganizationMoveService.container"
+  );
+  return getOrganizationMoveService();
 };
 
 export const organizationsRouter = router({
@@ -56,5 +76,33 @@ export const organizationsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const service = await loadService();
       return service.delete(input.id, ctx.user.id);
+    }),
+  moveUser: organizationsProcedure
+    .input(ZMoveUserInput)
+    .output(MoveUserResultDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadMoveService();
+      return service.moveUser(input, ctx.user.id);
+    }),
+  previewMoveTeam: organizationsProcedure
+    .input(ZPreviewMoveTeamInput)
+    .output(MoveTeamPreviewDtoSchema)
+    .query(async ({ input }) => {
+      const service = await loadMoveService();
+      return service.previewMoveTeam(input);
+    }),
+  moveTeam: organizationsProcedure
+    .input(ZMoveTeamInput)
+    .output(MoveTeamResultDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadMoveService();
+      return service.moveTeam(input, ctx.user.id);
+    }),
+  listTeams: organizationsProcedure
+    .input(ZListOrganizationTeamsInput)
+    .output(OrganizationTeamListDtoSchema)
+    .query(async ({ ctx, input }) => {
+      const service = await loadMoveService();
+      return service.listTeams({ ...input, actorUserId: ctx.user.id });
     }),
 });

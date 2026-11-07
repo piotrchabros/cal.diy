@@ -13,6 +13,7 @@ import type {
   OrganizationRecord,
 } from "../repositories/interfaces/IOrganizationRepository";
 import type { OrganizationMembershipService } from "./OrganizationMembershipService";
+import type { OrganizationMoveService } from "./OrganizationMoveService";
 
 const log = logger.getSubLogger({ prefix: ["[OrganizationService]"] });
 
@@ -31,6 +32,7 @@ export interface IOrganizationServiceDeps {
   organizationRepository: IOrganizationRepository;
   organizationsConfig: OrganizationsConfig;
   organizationMembershipService: OrganizationMembershipService;
+  organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
 }
 
 export type OrganizationOwnerInput = { userId: number };
@@ -104,16 +106,23 @@ export class OrganizationService {
 
     await this.assertSlugAvailable(slug, null);
     await this.assertDomainAvailable(domain, null);
-    await this.assertOwnerEligible(ownerUserId, input.confirmMoveOwner ?? false);
+    const ownerMode = await this.assertOwnerEligible(ownerUserId, input.confirmMoveOwner ?? false);
 
     const record = await this.deps.organizationRepository.create({ name, slug, domain });
 
     try {
-      await this.deps.organizationMembershipService.addMember({
-        organizationId: record.id,
-        userId: ownerUserId,
-        role: "OWNER",
-      });
+      if (ownerMode === "move") {
+        await this.deps.organizationMoveService.moveUser(
+          { userId: ownerUserId, toOrganizationId: record.id, role: "OWNER" },
+          actorUserId
+        );
+      } else {
+        await this.deps.organizationMembershipService.addMember({
+          organizationId: record.id,
+          userId: ownerUserId,
+          role: "OWNER",
+        });
+      }
     } catch (error) {
       // Keep an organization from existing without an owner when a race slips past the pre-check
       try {
@@ -195,27 +204,20 @@ export class OrganizationService {
     return deleted;
   }
 
-  private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<void> {
+  private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<"add" | "move"> {
     const candidate = await this.deps.organizationMembershipService.findMembershipCandidate(userId);
     if (!candidate) throw ErrorWithCode.Factory.NotFound("Owner user not found");
-
-    if (candidate.organizationId !== null) {
-      if (!confirmMoveOwner) {
-        throw ErrorWithCode.Factory.PreconditionFailed(
-          "The owner belongs to another organization; confirm to move them"
-        );
-      }
-      // Moving users between organizations arrives with the move service
-      throw ErrorWithCode.Factory.PreconditionFailed(
-        "Moving an owner from another organization is not available yet"
-      );
-    }
 
     if (candidate.username === null) {
       throw ErrorWithCode.Factory.PreconditionFailed(
         "The owner needs a username before joining an organization"
       );
     }
+
+    if (candidate.organizationId === null) return "add";
+    // Stable code-like message so the admin UI can recognise it and ask for confirmation
+    if (!confirmMoveOwner) throw ErrorWithCode.Factory.PreconditionFailed("owner_in_another_organization");
+    return "move";
   }
 
   private async findByIdOrThrow(id: number): Promise<OrganizationRecord> {
