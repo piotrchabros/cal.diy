@@ -13,7 +13,8 @@ import { useBookingForm } from "@calcom/features/bookings/Booker/hooks/useBookin
 import { useInitializeBookerStore } from "@calcom/features/bookings/Booker/store";
 import { useBrandColors } from "@calcom/features/bookings/Booker/utils/use-brand-colors";
 import type { getPublicEvent } from "@calcom/features/eventtypes/lib/getPublicEvent";
-import { DEFAULT_DARK_BRAND_COLOR, DEFAULT_LIGHT_BRAND_COLOR, WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { DEFAULT_DARK_BRAND_COLOR, DEFAULT_LIGHT_BRAND_COLOR } from "@calcom/lib/constants";
 import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
 import { localStorage } from "@calcom/lib/webstorage";
 import { useEvent, useScheduleForEvent } from "@calcom/web/modules/schedules/hooks/useEvent";
@@ -34,6 +35,7 @@ export type BookerWebWrapperAtomProps = BookerProps & {
 
 const BookerWebWrapperComponent = (props: BookerWebWrapperAtomProps): JSX.Element => {
   const router = useRouter();
+  const orgBaseUrl = useOrgBaseUrl();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const clientFetchedEvent = useEvent({
@@ -207,7 +209,7 @@ const BookerWebWrapperComponent = (props: BookerWebWrapperAtomProps): JSX.Elemen
         router.push("/apps/categories/calendar");
       }}
       onClickOverlayContinue={() => {
-        const newUrl = new URL(`${WEBAPP_URL}/login`);
+        const newUrl = new URL(`${orgBaseUrl}/login`);
         newUrl.searchParams.set("callbackUrl", window.location.pathname);
         newUrl.searchParams.set("overlayCalendar", "true");
         router.push(newUrl.toString());

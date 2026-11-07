@@ -1,5 +1,5 @@
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { loadTranslations } from "@calcom/i18n/server";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { buildLegacyCtx, decodeParams } from "@lib/buildLegacyCtx";
 import { getServerSideProps } from "@server/lib/team/[slug]/[type]/getServerSideProps";
 import type { PageProps } from "app/_types";
@@ -33,8 +33,10 @@ const ServerPage = async ({ params, searchParams }: PageProps): Promise<JSX.Elem
 };
 
 export const generateMetadata = async ({ params, searchParams }: PageProps): Promise<Metadata> => {
-  const legacyCtx = buildLegacyCtx(await headers(), await cookies(), await params, await searchParams);
+  const requestHeaders = await headers();
+  const legacyCtx = buildLegacyCtx(requestHeaders, await cookies(), await params, await searchParams);
   const props = await getData(legacyCtx);
+  const { baseUrl } = await getRequestOrgBaseUrl(requestHeaders);
 
   const { booking, isSEOIndexable = true, eventData, isBrandingHidden } = props;
   const rescheduleUid = booking?.uid;
@@ -55,7 +57,7 @@ export const generateMetadata = async ({ params, searchParams }: PageProps): Pro
     (t) => `${rescheduleUid && !!booking ? t("reschedule") : ""} ${title} | ${profileName}`,
     (t) => `${rescheduleUid ? t("reschedule") : ""} ${title}`,
     isBrandingHidden,
-    WEBAPP_URL,
+    baseUrl,
     `/team/${decodedParams.slug}/${decodedParams.type}`
   );
 
