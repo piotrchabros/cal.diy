@@ -1,7 +1,7 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LookupTarget, ProfileRepository } from "./ProfileRepository";
 
 vi.mock("@calcom/lib/logger", () => ({
@@ -29,6 +29,7 @@ describe("ProfileRepository.findByUpIdWithAuth - IDOR Security Fix", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     await prismock.reset();
@@ -128,6 +129,10 @@ describe("ProfileRepository.findByUpIdWithAuth - IDOR Security Fix", () => {
         accepted: true,
       },
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("UUID-based profile identifiers (new secure format)", () => {
@@ -488,5 +493,108 @@ describe("ProfileRepository.findManyByOrgSlugOrRequestedSlug", () => {
       })
     );
     findManySpy.mockRestore();
+  });
+});
+
+describe("ProfileRepository with organizations disabled", () => {
+  let owner: { id: number; username: string | null };
+  let admin: { id: number };
+  let org: { id: number };
+  let ownerProfile: { id: number; uid: string };
+
+  beforeEach(async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    await prismock.reset();
+
+    owner = await prismock.user.create({
+      data: { email: "owner@example.com", username: "owner", name: "Owner" },
+    });
+    admin = await prismock.user.create({
+      data: { email: "admin@example.com", username: "admin", name: "Admin" },
+    });
+    org = await prismock.team.create({
+      data: { name: "BlueBee", slug: "bluebee", isOrganization: true, metadata: {} },
+    });
+    ownerProfile = await prismock.profile.create({
+      data: {
+        uid: ProfileRepository.generateProfileUid(),
+        userId: owner.id,
+        organizationId: org.id,
+        username: "owner-bluebee",
+      },
+    });
+    await prismock.membership.createMany({
+      data: [
+        { userId: owner.id, teamId: org.id, role: MembershipRole.MEMBER, accepted: true },
+        { userId: admin.id, teamId: org.id, role: MembershipRole.OWNER, accepted: true },
+      ],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("findManyForUser returns no organization profiles", async () => {
+    expect(await ProfileRepository.findManyForUser({ id: owner.id })).toEqual([]);
+  });
+
+  it("findManyForUsers returns no organization profiles", async () => {
+    expect(await ProfileRepository.findManyForUsers([owner.id, admin.id])).toEqual([]);
+  });
+
+  it("findAllProfilesForUserIncludingMovedUser falls back to the personal profile", async () => {
+    const profiles = await ProfileRepository.findAllProfilesForUserIncludingMovedUser(owner);
+
+    expect(profiles).toEqual([ProfileRepository.buildPersonalProfileFromUser({ user: owner })]);
+  });
+
+  it("findFirstForUserId returns null", async () => {
+    expect(await ProfileRepository.findFirstForUserId({ userId: owner.id })).toBeNull();
+  });
+
+  it("findFirstOrganizationIdForUser returns null", async () => {
+    expect(await ProfileRepository.findFirstOrganizationIdForUser({ userId: owner.id })).toBeNull();
+  });
+
+  it("findByUpIdWithAuth gives the owner their personal profile for an organization profile upId", async () => {
+    const result = await ProfileRepository.findByUpIdWithAuth(`prof-${ownerProfile.uid}`, owner.id);
+
+    expect(result).toEqual({
+      id: null,
+      upId: `usr-${owner.id}`,
+      username: "owner",
+      organizationId: null,
+      organization: null,
+      name: "Owner",
+      avatarUrl: null,
+      bufferTime: 0,
+    });
+  });
+
+  it("findByUpIdWithAuth denies another organization member access to the profile", async () => {
+    expect(await ProfileRepository.findByUpIdWithAuth(`prof-${ownerProfile.uid}`, admin.id)).toBeNull();
+    expect(await ProfileRepository.findByUpIdWithAuth(String(ownerProfile.id), admin.id)).toBeNull();
+  });
+
+  it("findByUpIdWithAuth denies organization admins access to another user's personal profile", async () => {
+    expect(await ProfileRepository.findByUpIdWithAuth(`usr-${owner.id}`, admin.id)).toBeNull();
+  });
+
+  it("findByUpIdWithAuth still returns the user's own personal profile", async () => {
+    const result = await ProfileRepository.findByUpIdWithAuth(`usr-${owner.id}`, owner.id);
+
+    expect(result?.upId).toBe(`usr-${owner.id}`);
+    expect(result?.organizationId).toBeNull();
+  });
+
+  it("organization admins can access member personal profiles once organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    const result = await ProfileRepository.findByUpIdWithAuth(`usr-${owner.id}`, admin.id);
+
+    expect(result?.upId).toBe(`usr-${owner.id}`);
   });
 });
