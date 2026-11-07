@@ -11,6 +11,8 @@ import { SkeletonText } from "@calcom/ui/components/skeleton";
 import { Table } from "@calcom/ui/components/table";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { OrgInviteMemberDialog } from "../components/org-invite-member-dialog";
+import { OrgMemberActions } from "../components/org-member-actions";
 
 const { Body, Cell, ColumnTitle, Header } = Table;
 
@@ -29,9 +31,10 @@ export type OrgMembersViewProps = {
   viewerUserId: number;
 };
 
-// The viewer props are part of the contract now so the page does not change when invite/role/remove actions land for admins and owners.
-export default function OrgMembersView(_props: OrgMembersViewProps) {
+export default function OrgMembersView({ viewerRole, viewerUserId }: OrgMembersViewProps) {
   const { t } = useLocale();
+  const canManage = viewerRole !== "MEMBER";
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
@@ -66,6 +69,11 @@ export default function OrgMembersView(_props: OrgMembersViewProps) {
           )}
         </div>
       </Cell>
+      {canManage && (
+        <Cell>
+          <OrgMemberActions member={member} viewerRole={viewerRole} viewerUserId={viewerUserId} />
+        </Cell>
+      )}
     </tr>
   );
 
@@ -95,6 +103,7 @@ export default function OrgMembersView(_props: OrgMembersViewProps) {
             <ColumnTitle>{t("email")}</ColumnTitle>
             <ColumnTitle>{t("username")}</ColumnTitle>
             <ColumnTitle>{t("role")}</ColumnTitle>
+            {canManage && <ColumnTitle>{t("actions")}</ColumnTitle>}
           </Header>
           <Body>{members.map(renderRow)}</Body>
         </Table>
@@ -111,6 +120,12 @@ export default function OrgMembersView(_props: OrgMembersViewProps) {
 
   return (
     <div className="flex flex-col gap-3">
+      {canManage && (
+        <div className="flex justify-end">
+          <Button onClick={() => setInviteOpen(true)}>{t("invite_organization_member")}</Button>
+          <OrgInviteMemberDialog viewerRole={viewerRole} open={inviteOpen} onOpenChange={setInviteOpen} />
+        </div>
+      )}
       <TextField
         label={t("search")}
         placeholder={t("search")}
