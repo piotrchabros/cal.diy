@@ -20,6 +20,7 @@ const DEFAULT_DOMAIN = "cal.example.com";
 const ACTOR_ID = 100;
 const OWNER_ID = 1;
 const OWNER = { userId: OWNER_ID };
+const INVITED_ID = 500;
 
 const SLUG_INVALID =
   "Organization slug must be 2-63 lowercase letters, digits or hyphens and cannot start or end with a hyphen";
@@ -43,6 +44,9 @@ describe("OrganizationService", () => {
   let membershipRepo: InMemoryOrganizationMembershipRepository;
   let service: OrganizationService;
   let moveUser: ReturnType<typeof vi.fn>;
+  let findInviteeByEmail: ReturnType<typeof vi.fn>;
+  let createInvitedWithPendingTeamMembership: ReturnType<typeof vi.fn>;
+  let sendInvite: ReturnType<typeof vi.fn>;
 
   function buildService(
     config: OrganizationsConfig = { defaultDomain: DEFAULT_DOMAIN }
@@ -55,11 +59,11 @@ describe("OrganizationService", () => {
         organizationRepository: repository,
         organizationsConfig: config,
         userRepository: {
-          findInviteeByEmail: vi.fn(),
-          createInvitedWithPendingTeamMembership: vi.fn(),
+          findInviteeByEmail,
+          createInvitedWithPendingTeamMembership,
           setOrganizationId: vi.fn(),
         },
-        teamInviteService: { sendInvite: vi.fn() },
+        teamInviteService: { sendInvite },
         tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
         organizationMoveService: { moveUser },
       }),
@@ -78,6 +82,9 @@ describe("OrganizationService", () => {
     membershipRepo = new InMemoryOrganizationMembershipRepository();
     membershipRepo.seedUser({ id: OWNER_ID, username: "owner" });
     moveUser = vi.fn().mockResolvedValue({ userId: OWNER_ID, organizationId: 0, username: "owner" });
+    findInviteeByEmail = vi.fn().mockResolvedValue(null);
+    createInvitedWithPendingTeamMembership = vi.fn().mockResolvedValue({ id: INVITED_ID, locale: null });
+    sendInvite = vi.fn().mockResolvedValue(undefined);
     service = buildService();
   });
 
@@ -227,6 +234,97 @@ describe("OrganizationService", () => {
           expect.any(String),
           expect.objectContaining({ organizationId: expect.any(Number), ownerUserId: OWNER_ID })
         );
+      });
+    });
+
+    describe("owner by email", () => {
+      const input = { name: "Acme", slug: "acme", domain: "acme.com" };
+      const INVITE_EMAIL = "new.owner@acme.com";
+
+      it("adds an existing user matched case-insensitively as OWNER", async () => {
+        membershipRepo.seedUser({ id: OWNER_ID, username: "owner", email: "owner@acme.com" });
+
+        const created = await service.create({ ...input, owner: { email: "  Owner@ACME.com " } }, ACTOR_ID);
+
+        expect(membershipRepo.memberships).toEqual([
+          { userId: OWNER_ID, teamId: created.id, role: "OWNER", accepted: true },
+        ]);
+        expect(createInvitedWithPendingTeamMembership).not.toHaveBeenCalled();
+        expect(mockLogInfo).toHaveBeenCalledWith(
+          "organization.create",
+          expect.objectContaining({ ownerUserId: OWNER_ID })
+        );
+      });
+
+      it("invites an unknown email as a pending OWNER and logs no email", async () => {
+        const created = await service.create(
+          { ...input, owner: { email: " New.Owner@Acme.com " } },
+          ACTOR_ID,
+          "Admin Ann"
+        );
+
+        expect(repository.all()).toHaveLength(1);
+        expect(createInvitedWithPendingTeamMembership).toHaveBeenCalledWith({
+          email: INVITE_EMAIL,
+          teamId: created.id,
+          role: "OWNER",
+          organizationId: created.id,
+        });
+        expect(sendInvite).toHaveBeenCalledWith(
+          expect.objectContaining({
+            teamId: created.id,
+            email: INVITE_EMAIL,
+            inviterName: "Admin Ann",
+            isOrganization: true,
+          })
+        );
+        expect(mockLogInfo).toHaveBeenCalledWith("organization.create", {
+          action: "organization.create",
+          actorUserId: ACTOR_ID,
+          organizationId: created.id,
+          invitedOwner: true,
+        });
+        expect(JSON.stringify(mockLogInfo.mock.calls)).not.toContain(INVITE_EMAIL);
+      });
+
+      it.each([
+        ["null", null],
+        ["blank", "   "],
+      ])("names the organization as inviter when the actor name is %s", async (_label, actorName) => {
+        await service.create({ ...input, owner: { email: INVITE_EMAIL } }, ACTOR_ID, actorName);
+
+        expect(sendInvite).toHaveBeenCalledWith(expect.objectContaining({ inviterName: "Acme" }));
+      });
+
+      it("deletes the organization and rethrows when the invite fails", async () => {
+        const failure = new Error("smtp down");
+        sendInvite.mockRejectedValue(failure);
+
+        await expect(service.create({ ...input, owner: { email: INVITE_EMAIL } }, ACTOR_ID)).rejects.toBe(
+          failure
+        );
+        expect(repository.all()).toEqual([]);
+        expect(mockLogInfo).not.toHaveBeenCalledWith("organization.create", expect.anything());
+      });
+
+      it("rejects an existing user without a username and creates nothing", async () => {
+        membershipRepo.seedUser({ id: OWNER_ID, username: null, email: "owner@acme.com" });
+
+        await expectRejection(
+          service.create({ ...input, owner: { email: "owner@acme.com" } }, ACTOR_ID),
+          ErrorCode.PreconditionFailed,
+          "The owner needs a username before joining an organization"
+        );
+        expect(repository.all()).toHaveLength(0);
+      });
+
+      it("rejects an email without an @ and creates nothing", async () => {
+        await expectRejection(
+          service.create({ ...input, owner: { email: "not-an-email" } }, ACTOR_ID),
+          ErrorCode.BadRequest,
+          "Owner email must be a valid email address"
+        );
+        expect(repository.all()).toHaveLength(0);
       });
     });
 
@@ -641,6 +739,107 @@ describe("OrganizationService", () => {
       const updated = await service.update(seeded.id, { domain: DEFAULT_DOMAIN }, ACTOR_ID);
 
       expect(updated.isDefault).toBe(true);
+    });
+
+    describe("ownerUserId", () => {
+      const NEW_OWNER_ID = 2;
+      const EXISTING_OWNER_ID = 3;
+      let organizationId: number;
+
+      beforeEach(() => {
+        organizationId = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" }).id;
+        membershipRepo.seedUser({ id: EXISTING_OWNER_ID, username: "boss", organizationId });
+        membershipRepo.seedMembership({ userId: EXISTING_OWNER_ID, teamId: organizationId, role: "OWNER" });
+        // The fake keeps owners as static data, so derive them from memberships the way the real query does
+        const findById = repository.findById.bind(repository);
+        vi.spyOn(repository, "findById").mockImplementation(async (id) => {
+          const record = await findById(id);
+          if (!record) return null;
+          const owners = membershipRepo.memberships
+            .filter((m) => m.teamId === id && m.role === "OWNER" && m.accepted)
+            .map((m) => {
+              const user = membershipRepo.users.find((u) => u.id === m.userId);
+              return { userId: m.userId, name: user?.name ?? null, email: user?.email ?? "" };
+            });
+          return { ...record, owners };
+        });
+      });
+
+      function roleOf(userId: number) {
+        return membershipRepo.memberships.find((m) => m.userId === userId && m.teamId === organizationId);
+      }
+
+      it("promotes an accepted member, keeps other owners and returns the fresh owner list", async () => {
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new", organizationId });
+        membershipRepo.seedMembership({ userId: NEW_OWNER_ID, teamId: organizationId, role: "MEMBER" });
+
+        const updated = await service.update(organizationId, { ownerUserId: NEW_OWNER_ID }, ACTOR_ID);
+
+        expect(roleOf(NEW_OWNER_ID)).toMatchObject({ role: "OWNER", accepted: true });
+        expect(roleOf(EXISTING_OWNER_ID)).toMatchObject({ role: "OWNER", accepted: true });
+        expect(updated.owners.map((owner) => owner.userId)).toEqual([EXISTING_OWNER_ID, NEW_OWNER_ID]);
+        expect(mockLogInfo).toHaveBeenCalledWith("organization.update", {
+          action: "organization.update",
+          actorUserId: ACTOR_ID,
+          organizationId,
+          changed: ["owner"],
+          ownerUserId: NEW_OWNER_ID,
+        });
+      });
+
+      it("accepts a user who is already an owner", async () => {
+        const updated = await service.update(organizationId, { ownerUserId: EXISTING_OWNER_ID }, ACTOR_ID);
+
+        expect(roleOf(EXISTING_OWNER_ID)).toMatchObject({ role: "OWNER" });
+        expect(updated.owners.map((owner) => owner.userId)).toEqual([EXISTING_OWNER_ID]);
+      });
+
+      it("adds an outsider with a username as OWNER", async () => {
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new" });
+
+        await service.update(organizationId, { ownerUserId: NEW_OWNER_ID }, ACTOR_ID);
+
+        expect(roleOf(NEW_OWNER_ID)).toMatchObject({ role: "OWNER", accepted: true });
+        expect(membershipRepo.users.find((u) => u.id === NEW_OWNER_ID)?.organizationId).toBe(organizationId);
+      });
+
+      it("turns a pending member into an accepted OWNER", async () => {
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new", organizationId });
+        membershipRepo.seedMembership({
+          userId: NEW_OWNER_ID,
+          teamId: organizationId,
+          role: "MEMBER",
+          accepted: false,
+        });
+
+        await service.update(organizationId, { ownerUserId: NEW_OWNER_ID }, ACTOR_ID);
+
+        expect(roleOf(NEW_OWNER_ID)).toMatchObject({ role: "OWNER", accepted: true });
+      });
+
+      it("rejects a user without a username and leaves the other fields unchanged", async () => {
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: null });
+
+        await expectRejection(
+          service.update(organizationId, { name: "Renamed", ownerUserId: NEW_OWNER_ID }, ACTOR_ID),
+          ErrorCode.PreconditionFailed,
+          "The owner needs a username before joining an organization"
+        );
+        expect((await repository.findById(organizationId))?.name).toBe("Acme");
+      });
+
+      it("rejects a user from another organization without moving them", async () => {
+        const other = repository.seed({ name: "Globex", slug: "globex", domain: "globex.com" });
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new", organizationId: other.id });
+
+        await expectRejection(
+          service.update(organizationId, { ownerUserId: NEW_OWNER_ID }, ACTOR_ID),
+          ErrorCode.PreconditionFailed,
+          "owner_in_another_organization"
+        );
+        expect(moveUser).not.toHaveBeenCalled();
+        expect(roleOf(NEW_OWNER_ID)).toBeUndefined();
+      });
     });
 
     it("throws NotFound when the organization disappears before the write", async () => {

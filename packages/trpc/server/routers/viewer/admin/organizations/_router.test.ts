@@ -76,7 +76,7 @@ const validCreateInput = {
 };
 
 const sessionFor = (role: "ADMIN" | "USER") => ({
-  user: { id: 7, role },
+  user: { id: 7, name: "Admin", role },
   session: { upId: "usr-7", expires: "2099-01-01T00:00:00.000Z", user: { id: 7 } },
 });
 
@@ -172,9 +172,18 @@ describe("admin organizations router", () => {
       expect(mocks.delete).not.toHaveBeenCalled();
     });
 
+    it("rejects update with ownerUserId 0", async () => {
+      await expect(createCaller(ctx).update({ id: 5, ownerUserId: 0 })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.update).not.toHaveBeenCalled();
+    });
+
     it.each([
       ["an empty owner", { ...validCreateInput, owner: {} }],
       ["an owner with extra keys", { ...validCreateInput, owner: { userId: 1, email: "x" } }],
+      ["an owner with both userId and email", { ...validCreateInput, owner: { userId: 1, email: "a@b.co" } }],
+      ["an invalid owner email", { ...validCreateInput, owner: { email: "bad" } }],
       ["a missing domain", { name: "Acme", slug: "acme", owner: { userId: 9 } }],
       ["a name over 100 characters", { ...validCreateInput, name: "a".repeat(101) }],
     ])("rejects create with %s", async (_label, input) => {
@@ -274,18 +283,34 @@ describe("admin organizations router", () => {
       expect(mocks.get).toHaveBeenCalledWith(5);
     });
 
-    it("creates with the input and the acting admin id", async () => {
+    it("creates with the input and the acting admin id and name", async () => {
       const input = { ...validCreateInput, confirmMoveOwner: true };
 
       await createCaller(ctx).create(input);
 
-      expect(mocks.create).toHaveBeenCalledWith(input, 7);
+      expect(mocks.create).toHaveBeenCalledWith(input, 7, "Admin");
+    });
+
+    it("trims and lowercases an owner email before it reaches the service", async () => {
+      await createCaller(ctx).create({ ...validCreateInput, owner: { email: " Jane@Acme.COM " } });
+
+      expect(mocks.create).toHaveBeenCalledWith(
+        { ...validCreateInput, owner: { email: "jane@acme.com" } },
+        7,
+        "Admin"
+      );
     });
 
     it("updates with the id, the remaining fields and the acting admin id", async () => {
       await createCaller(ctx).update({ id: 5, name: "Acme 2", domain: "acme2.example.com" });
 
       expect(mocks.update).toHaveBeenCalledWith(5, { name: "Acme 2", domain: "acme2.example.com" }, 7);
+    });
+
+    it("forwards ownerUserId on update", async () => {
+      await createCaller(ctx).update({ id: 5, ownerUserId: 9 });
+
+      expect(mocks.update).toHaveBeenCalledWith(5, { ownerUserId: 9 }, 7);
     });
 
     it("deletes with the id and the acting admin id", async () => {
