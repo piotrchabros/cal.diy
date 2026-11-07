@@ -1,6 +1,7 @@
 import { teamMetadataSchema } from "@calcom/platform-libraries";
 import type { Membership, Prisma } from "@calcom/prisma/client";
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { outsideOrganizationsFilter } from "@/lib/organizations-enabled";
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 
@@ -119,7 +120,7 @@ export class TeamsRepository {
       where: {
         slug,
         isOrganization: false,
-        parentId: null,
+        ...outsideOrganizationsFilter({ parentId: null }),
       },
     });
   }

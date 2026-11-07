@@ -1,8 +1,8 @@
+import { MembershipRole } from "@calcom/platform-libraries";
+import { Injectable } from "@nestjs/common";
+import { topLevelTeamFilter } from "@/lib/organizations-enabled";
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
-import { Injectable } from "@nestjs/common";
-
-import { MembershipRole } from "@calcom/platform-libraries";
 
 @Injectable()
 export class MembershipsRepository {
@@ -102,9 +102,7 @@ export class MembershipsRepository {
         role: {
           in: ["OWNER", "ADMIN"],
         },
-        team: {
-          parentId: null,
-        },
+        team: topLevelTeamFilter(),
       },
       select: {
         teamId: true,
@@ -149,9 +147,7 @@ export class MembershipsRepository {
         teamId: {
           in: orgIds,
         },
-        team: {
-          parentId: null,
-        },
+        team: topLevelTeamFilter(),
       },
     });
   }
