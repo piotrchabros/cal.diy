@@ -4,6 +4,38 @@ import { prisma } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 
+const teamProfileSelect = {
+  id: true,
+  name: true,
+  slug: true,
+  logoUrl: true,
+  bio: true,
+  metadata: true,
+  parentId: true,
+} satisfies Prisma.TeamSelect;
+
+const publicTeamProfileSelect = {
+  id: true,
+  name: true,
+  slug: true,
+  logoUrl: true,
+  bio: true,
+  metadata: true,
+  isPrivate: true,
+  hideBookATeamMember: true,
+  eventTypes: {
+    where: { hidden: false },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      description: true,
+      length: true,
+    },
+    orderBy: [{ position: "desc" }, { id: "asc" }],
+  },
+} satisfies Prisma.TeamSelect;
+
 export class TeamRepository {
   constructor(private readonly prismaClient: PrismaClient = prisma) {}
 
@@ -21,6 +53,45 @@ export class TeamRepository {
         parentId: true,
       },
     });
+  }
+
+  async findProfileById({ teamId }: { teamId: number }) {
+    return await this.prismaClient.team.findUnique({
+      where: { id: teamId },
+      select: { ...teamProfileSelect, isOrganization: true },
+    });
+  }
+
+  async updateProfile({
+    teamId,
+    data,
+  }: {
+    teamId: number;
+    data: {
+      name: string;
+      slug: string;
+      bio: string | null;
+      logoUrl: string | null;
+      metadata: Prisma.InputJsonValue;
+    };
+  }) {
+    return await this.prismaClient.team.update({
+      where: { id: teamId },
+      data,
+      select: teamProfileSelect,
+    });
+  }
+
+  // Omit `parentId` rather than pass null when organizations are off: null adds an IS NULL filter.
+  async findPublicBySlugIncludeEventTypes({ slug, parentId }: { slug: string; parentId?: number }) {
+    return await this.prismaClient.team.findFirst({
+      where: { slug, isPrivate: false, ...(parentId !== undefined ? { parentId } : {}) },
+      select: publicTeamProfileSelect,
+    });
+  }
+
+  async deleteById({ teamId }: { teamId: number }) {
+    return await this.prismaClient.team.delete({ where: { id: teamId }, select: { id: true } });
   }
 
   // `parentId: undefined` searches every team; `null` only teams outside any organization.

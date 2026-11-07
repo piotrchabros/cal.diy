@@ -169,3 +169,66 @@ describe("TeamRepository.createWithOwner", () => {
     });
   });
 });
+
+describe("TeamRepository team profile queries", () => {
+  function buildProfileRepository() {
+    const team = {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({ id: 3 }),
+      delete: vi.fn().mockResolvedValue({ id: 3 }),
+    };
+    return { repository: new TeamRepository({ team } as unknown as PrismaClient), team };
+  }
+
+  it("findProfileById selects the profile fields and whether the row is an organization", async () => {
+    const { repository, team } = buildProfileRepository();
+
+    await repository.findProfileById({ teamId: 3 });
+
+    expect(team.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logoUrl: true,
+        bio: true,
+        metadata: true,
+        parentId: true,
+        isOrganization: true,
+      },
+    });
+  });
+
+  it("updateProfile writes the given fields and returns the profile fields", async () => {
+    const { repository, team } = buildProfileRepository();
+    const data = { name: "Sales", slug: "sales", bio: null, logoUrl: null, metadata: { showMap: true } };
+
+    await repository.updateProfile({ teamId: 3, data });
+
+    expect(team.update).toHaveBeenCalledWith({
+      where: { id: 3 },
+      data,
+      select: { id: true, name: true, slug: true, logoUrl: true, bio: true, metadata: true, parentId: true },
+    });
+  });
+
+  it("findPublicBySlugIncludeEventTypes filters by parent only when one is given", async () => {
+    const { repository, team } = buildProfileRepository();
+
+    await repository.findPublicBySlugIncludeEventTypes({ slug: "sales" });
+    await repository.findPublicBySlugIncludeEventTypes({ slug: "sales", parentId: 4 });
+
+    expect(team.findFirst.mock.calls[0][0].where).toEqual({ slug: "sales", isPrivate: false });
+    expect(team.findFirst.mock.calls[1][0].where).toEqual({ slug: "sales", isPrivate: false, parentId: 4 });
+    expect(team.findFirst.mock.calls[0][0].select.eventTypes.where).toEqual({ hidden: false });
+  });
+
+  it("deleteById deletes one team and returns only its id", async () => {
+    const { repository, team } = buildProfileRepository();
+
+    await expect(repository.deleteById({ teamId: 3 })).resolves.toEqual({ id: 3 });
+    expect(team.delete).toHaveBeenCalledWith({ where: { id: 3 }, select: { id: true } });
+  });
+});
