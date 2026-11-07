@@ -1,3 +1,4 @@
+import { getTeamCreationService } from "@calcom/features/teams/di/TeamCreationService.container";
 import { TeamCreationService } from "@calcom/features/teams/services/TeamCreationService";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import type { TrpcSessionUser } from "../../../types";
@@ -13,6 +14,6 @@ type IsSlugAvailableHandlerOptions = {
 export const isSlugAvailableHandler = async ({ ctx, input }: IsSlugAvailableHandlerOptions) => {
   const organizationId = isOrganizationsEnabled() ? (ctx.user.organizationId ?? null) : null;
   const normalizedSlug = TeamCreationService.normalizeSlug(input.slug);
-  const available = await TeamCreationService.isSlugAvailable(input.slug, organizationId);
+  const available = await getTeamCreationService().isSlugAvailable(input.slug, organizationId);
   return { available, slug: normalizedSlug };
 };

@@ -2,6 +2,7 @@ import type { TeamWithOrganizationDto } from "@calcom/lib/dto/TeamWithOrganizati
 import type { PrismaClient } from "@calcom/prisma";
 import { prisma } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
+import { MembershipRole } from "@calcom/prisma/enums";
 
 export class TeamRepository {
   constructor(private readonly prismaClient: PrismaClient = prisma) {}
@@ -18,6 +19,56 @@ export class TeamRepository {
         logoUrl: true,
         isOrganization: true,
         parentId: true,
+      },
+    });
+  }
+
+  // `parentId: undefined` searches every team; `null` only teams outside any organization.
+  async findIdBySlug({
+    slug,
+    parentId,
+    excludeTeamId,
+  }: {
+    slug: string;
+    parentId?: number | null;
+    excludeTeamId?: number;
+  }) {
+    return await this.prismaClient.team.findFirst({
+      where: {
+        slug,
+        ...(parentId !== undefined && { parentId }),
+        ...(excludeTeamId !== undefined && { NOT: { id: excludeTeamId } }),
+      },
+      select: { id: true },
+    });
+  }
+
+  async createWithOwner({
+    name,
+    slug,
+    bio,
+    logoUrl,
+    parentId,
+    ownerUserId,
+  }: {
+    name: string;
+    slug: string;
+    bio: string | null;
+    logoUrl: string | null;
+    parentId: number | null;
+    ownerUserId: number;
+  }) {
+    return await this.prismaClient.team.create({
+      select: { id: true, name: true, slug: true, bio: true, logoUrl: true },
+      data: {
+        name,
+        slug,
+        bio,
+        logoUrl,
+        ...(parentId != null && { parentId }),
+        members: {
+          create: { userId: ownerUserId, role: MembershipRole.OWNER, accepted: true },
+        },
       },
     });
   }

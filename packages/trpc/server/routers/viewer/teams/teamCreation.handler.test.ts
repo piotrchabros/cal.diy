@@ -11,10 +11,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@calcom/features/teams/services/TeamCreationService", () => ({
   TeamCreationService: {
-    createTeam: mocks.createTeam,
-    isSlugAvailable: mocks.isSlugAvailable,
     normalizeSlug: (slug: string) => slug.toLowerCase(),
   },
+}));
+
+vi.mock("@calcom/features/teams/di/TeamCreationService.container", () => ({
+  getTeamCreationService: () => ({
+    createTeam: mocks.createTeam,
+    isSlugAvailable: mocks.isSlugAvailable,
+  }),
 }));
 
 const createInput = { name: "Sales", slug: "sales" };

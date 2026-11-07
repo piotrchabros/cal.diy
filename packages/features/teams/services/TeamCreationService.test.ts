@@ -1,15 +1,20 @@
 import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TeamRepository } from "../repositories/TeamRepository";
 import { TeamCreationService } from "./TeamCreationService";
 
-const { disableByFrom } = vi.hoisted(() => ({ disableByFrom: vi.fn().mockResolvedValue(0) }));
+const disableByFrom = vi.fn().mockResolvedValue(0);
 
-vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
-  getTempOrgRedirectRepository: () => ({ disableByFrom }),
-}));
+// The real repository over prismock, so these tests pin the behaviour the Prisma queries had
+// before they moved out of the service.
+const service = new TeamCreationService({
+  teamRepo: new TeamRepository(prismock as unknown as PrismaClient),
+  tempOrgRedirectRepo: { disableByFrom },
+});
 
 describe("TeamCreationService", () => {
   describe("normalizeSlug", () => {
@@ -24,7 +29,7 @@ describe("TeamCreationService", () => {
 
   describe("isSlugAvailable", () => {
     it("returns true when no team uses the slug", async () => {
-      await expect(TeamCreationService.isSlugAvailable("brand-new-team")).resolves.toBe(true);
+      await expect(service.isSlugAvailable("brand-new-team")).resolves.toBe(true);
     });
 
     it("returns false when a team already uses the slug", async () => {
@@ -32,11 +37,11 @@ describe("TeamCreationService", () => {
         data: { name: "Taken", slug: "taken-slug" },
       });
 
-      await expect(TeamCreationService.isSlugAvailable("taken-slug")).resolves.toBe(false);
+      await expect(service.isSlugAvailable("taken-slug")).resolves.toBe(false);
     });
 
     it("returns false for an empty slug", async () => {
-      await expect(TeamCreationService.isSlugAvailable("")).resolves.toBe(false);
+      await expect(service.isSlugAvailable("")).resolves.toBe(false);
     });
 
     it("scopes availability to the given organization", async () => {
@@ -50,8 +55,8 @@ describe("TeamCreationService", () => {
         data: { name: "Sales", slug: "sales", parentId: org.id },
       });
 
-      await expect(TeamCreationService.isSlugAvailable("sales", org.id)).resolves.toBe(false);
-      await expect(TeamCreationService.isSlugAvailable("sales", otherOrg.id)).resolves.toBe(true);
+      await expect(service.isSlugAvailable("sales", org.id)).resolves.toBe(false);
+      await expect(service.isSlugAvailable("sales", otherOrg.id)).resolves.toBe(true);
     });
 
     it("checks slugs globally when no organization is given", async () => {
@@ -62,8 +67,8 @@ describe("TeamCreationService", () => {
         data: { name: "Sales", slug: "sales", parentId: org.id },
       });
 
-      await expect(TeamCreationService.isSlugAvailable("sales")).resolves.toBe(false);
-      await expect(TeamCreationService.isSlugAvailable("sales", null)).resolves.toBe(false);
+      await expect(service.isSlugAvailable("sales")).resolves.toBe(false);
+      await expect(service.isSlugAvailable("sales", null)).resolves.toBe(false);
     });
   });
 
@@ -77,7 +82,7 @@ describe("TeamCreationService", () => {
         data: { email: "founder@example.com", username: "founder" },
       });
 
-      const team = await TeamCreationService.createTeam({
+      const team = await service.createTeam({
         userId: user.id,
         name: "Acme Inc.",
         slug: "acme",
@@ -107,7 +112,7 @@ describe("TeamCreationService", () => {
       });
 
       await expect(
-        TeamCreationService.createTeam({ userId: user.id, name: "Second", slug: "dupe" })
+        service.createTeam({ userId: user.id, name: "Second", slug: "dupe" })
       ).rejects.toBeInstanceOf(ErrorWithCode);
     });
 
@@ -117,7 +122,7 @@ describe("TeamCreationService", () => {
       });
 
       await expect(
-        TeamCreationService.createTeam({ userId: user.id, name: "  ", slug: "valid-slug" })
+        service.createTeam({ userId: user.id, name: "  ", slug: "valid-slug" })
       ).rejects.toBeInstanceOf(ErrorWithCode);
     });
 
@@ -126,9 +131,9 @@ describe("TeamCreationService", () => {
         data: { email: "badslug@example.com", username: "badslug" },
       });
 
-      await expect(
-        TeamCreationService.createTeam({ userId: user.id, name: "Bad", slug: "---" })
-      ).rejects.toBeInstanceOf(ErrorWithCode);
+      await expect(service.createTeam({ userId: user.id, name: "Bad", slug: "---" })).rejects.toBeInstanceOf(
+        ErrorWithCode
+      );
     });
 
     it("creates the team inside the given organization", async () => {
@@ -139,7 +144,7 @@ describe("TeamCreationService", () => {
         data: { name: "Org", slug: "org", isOrganization: true },
       });
 
-      const team = await TeamCreationService.createTeam({
+      const team = await service.createTeam({
         userId: user.id,
         name: "Sales",
         slug: "sales",
@@ -165,14 +170,14 @@ describe("TeamCreationService", () => {
       const otherOrg = await prismock.team.create({
         data: { name: "Other Org", slug: "other-org", isOrganization: true },
       });
-      await TeamCreationService.createTeam({
+      await service.createTeam({
         userId: user.id,
         name: "Sales",
         slug: "sales",
         organizationId: org.id,
       });
 
-      const team = await TeamCreationService.createTeam({
+      const team = await service.createTeam({
         userId: user.id,
         name: "Sales",
         slug: "sales",
@@ -190,14 +195,14 @@ describe("TeamCreationService", () => {
       const org = await prismock.team.create({
         data: { name: "Org", slug: "org", isOrganization: true },
       });
-      await TeamCreationService.createTeam({
+      await service.createTeam({
         userId: user.id,
         name: "Sales",
         slug: "sales",
         organizationId: org.id,
       });
 
-      const result = TeamCreationService.createTeam({
+      const result = service.createTeam({
         userId: user.id,
         name: "Sales Again",
         slug: "sales",
@@ -213,7 +218,7 @@ describe("TeamCreationService", () => {
         data: { email: "no-org@example.com", username: "no-org" },
       });
 
-      const team = await TeamCreationService.createTeam({
+      const team = await service.createTeam({
         userId: user.id,
         name: "Solo",
         slug: "solo",
