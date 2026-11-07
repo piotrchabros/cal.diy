@@ -646,12 +646,13 @@ describe("next-auth options with organizations", () => {
       expect(createdUserData()).toMatchObject({
         verified: true,
         organization: { connect: { id: 55 } },
-        teams: { create: { role: "MEMBER", accepted: true, team: { connect: { id: 55 } } } },
       });
+      expect(createdUserData()).not.toHaveProperty("teams");
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 55, userId: 100, role: "MEMBER" });
       expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
     });
 
-    it("does not add another membership for an autolinked user with the flag on", async () => {
+    it("adds the autolinked membership through addMember with the flag on", async () => {
       vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
       vi.resetModules();
       onTestFinished(() => {
@@ -665,8 +666,29 @@ describe("next-auth options with organizations", () => {
       await expect(signIn(googleSignUpParams)).resolves.toBe(true);
 
       expect(createdUserData()).toMatchObject({ organization: { connect: { id: 55 } } });
-      expect(mockAddMember).not.toHaveBeenCalled();
+      expect(mockAddMember).toHaveBeenCalledTimes(1);
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 55, userId: 100, role: "MEMBER" });
       expect(mockLinkAccount).toHaveBeenCalledTimes(1);
+      expect(mockAddMember.mock.invocationCallOrder[0]).toBeLessThan(
+        mockLinkAccount.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("deletes the new autolinked user when adding its organization membership fails", async () => {
+      vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
+      vi.resetModules();
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      });
+      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      mockAddMember.mockRejectedValue(new Error("username taken"));
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
+
+      expect(mockPrismaUserDelete).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 100 } }));
+      expect(mockLinkAccount).not.toHaveBeenCalled();
     });
 
     it("adds the default organization membership with the flag off", async () => {
