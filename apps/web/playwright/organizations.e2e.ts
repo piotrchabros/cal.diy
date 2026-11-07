@@ -213,10 +213,9 @@ test.describe("Organizations (quickstart S2, S4, S5, S6)", () => {
     const oldLink = await page.request.get(`${BLUEBEE}/${janUsername}`, { maxRedirects: 0 });
     expect([301, 308]).toContain(oldLink.status());
     expect(oldLink.headers().location).toBe(`${BESPOKE}/${janUsername}`);
-    // The team page streams (it has a loading.tsx), so its redirect happens client-side after a 200
-    // rather than as an HTTP 308 (follow-up T350); assert where a visitor actually ends up.
-    await page.goto(`${BLUEBEE}/team/${salesSlug}`);
-    await expect(page).toHaveURL(`${BESPOKE}/team/${salesSlug}`);
+    const oldTeamLink = await page.request.get(`${BLUEBEE}/team/${salesSlug}`, { maxRedirects: 0 });
+    expect([301, 308]).toContain(oldTeamLink.status());
+    expect(oldTeamLink.headers().location).toBe(`${BESPOKE}/team/${salesSlug}`);
 
     const booking = await prisma.booking.findUnique({
       where: { uid: janBookingUid },

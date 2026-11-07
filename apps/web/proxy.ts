@@ -1,9 +1,12 @@
 import process from "node:process";
+import type { ParsedUrlQuery } from "node:querystring";
 import { setOrgHeaders, stripOrgHeaders } from "@calcom/features/organizations/lib/orgRequestHeaders";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import type { RequestOrganizationDto } from "@calcom/lib/dto/OrganizationDto";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { isLoopbackHost, normalizeHost } from "@calcom/lib/organizations/normalizeHost";
+import slugify from "@calcom/lib/slugify";
+import { RedirectType } from "@calcom/prisma/enums";
 import { getCspHeader, getCspNonce } from "@lib/csp";
 import { get } from "@vercel/edge-config";
 import type { NextRequest } from "next/server";
@@ -122,6 +125,61 @@ const applyOrgHeaders = (headers: Headers, org: RequestOrganizationDto | null): 
   if (org) setOrgHeaders(headers, org);
 };
 
+const TEAM_PAGE_PATH = /^\/team\/([^/]+)(?:\/([^/]+))?\/?$/;
+
+const safeDecode = (segment: string): string | null => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+};
+
+const toParsedUrlQuery = (searchParams: URLSearchParams): ParsedUrlQuery => {
+  const query: ParsedUrlQuery = {};
+  for (const [key, value] of Array.from(searchParams.entries())) {
+    const existing = query[key];
+    if (existing === undefined) query[key] = value;
+    else query[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+  }
+  return query;
+};
+
+// The team pages stream (team/[slug]/loading.tsx), so their own permanentRedirect() only fires after a
+// 200 has been sent and the move happens client-side; answering here gives old links a real 308.
+const getMovedTeamRedirect = async (req: NextRequest, hostOrgId: number): Promise<string | null> => {
+  if (req.method !== "GET" && req.method !== "HEAD") return null;
+  const match = TEAM_PAGE_PATH.exec(req.nextUrl.pathname);
+  if (!match) return null;
+  const [, rawSlug, rawType] = match;
+  if (rawType === "embed") return null;
+
+  const decodedSlug = safeDecode(rawSlug);
+  const eventTypeSlug = rawType === undefined ? null : safeDecode(rawType);
+  if (!decodedSlug || (rawType !== undefined && !eventTypeSlug)) return null;
+  const teamSlug = slugify(decodedSlug);
+  if (!teamSlug) return null;
+
+  try {
+    // Loaded lazily, like the org resolver, so that with organizations disabled no Prisma is pulled in.
+    const { handleOrgRedirect } = await import("@lib/handleOrgRedirect");
+    const redirect = await handleOrgRedirect({
+      slugs: [teamSlug],
+      redirectType: eventTypeSlug ? RedirectType.TeamEventType : RedirectType.Team,
+      eventTypeSlug,
+      query: toParsedUrlQuery(req.nextUrl.searchParams),
+      hostOrgId,
+    });
+    return redirect?.redirect.destination ?? null;
+  } catch (error) {
+    // The page repeats this lookup, so a failure here only costs the HTTP-level redirect.
+    console.error("proxy: team redirect lookup failed", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    return null;
+  }
+};
+
 const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
   const url = req.nextUrl;
   const resolution = await resolveRequestOrganization(req.headers.get("host") ?? url.host);
@@ -134,6 +192,12 @@ const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
       status: 503,
       headers: { "content-type": "text/plain" },
     });
+  }
+
+  // Mirrors getHostOrganization: without a host org (or one lacking a slug) the team page 404s instead.
+  if (isOrganizationsEnabled() && resolution.org?.slug) {
+    const destination = await getMovedTeamRedirect(req, resolution.org.id);
+    if (destination) return NextResponse.redirect(new URL(destination, url), 308);
   }
 
   if (!isLegacyProxyRoute(url.pathname)) {
