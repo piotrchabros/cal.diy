@@ -2,12 +2,50 @@ import process from "node:process";
 import dayjs from "@calcom/dayjs";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
+import { normalizeHost } from "@calcom/lib/organizations/normalizeHost";
 import prisma from "@calcom/prisma";
 import type { Prisma, UserPermissionRole } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 import type { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import { uuid } from "short-uuid";
 import type z from "zod";
+
+async function findOrCreateDefaultOrganization(): Promise<number> {
+  const customDomain = normalizeHost(new URL(process.env.NEXT_PUBLIC_WEBAPP_URL ?? "").host) ?? "localhost";
+
+  const existing = await prisma.team.findFirst({
+    where: { isOrganization: true, organizationSettings: { customDomain } },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.team.create({
+    data: {
+      name: "Default",
+      slug: "default",
+      isOrganization: true,
+      organizationSettings: {
+        create: {
+          customDomain,
+          isOrganizationConfigured: true,
+          isOrganizationVerified: true,
+          orgAutoAcceptEmail: "",
+        },
+      },
+    },
+    select: { id: true },
+  });
+  console.log(`🏢 Created default organization for '${customDomain}' with id ${created.id}`);
+  return created.id;
+}
+
+// Memoized because users are seeded concurrently and every one of them needs the same default organization
+let defaultOrganizationId: Promise<number> | undefined;
+
+export function ensureDefaultOrganization(): Promise<number> {
+  defaultOrganizationId ??= findOrCreateDefaultOrganization();
+  return defaultOrganizationId;
+}
 
 export async function createUserAndEventType({
   user,
@@ -58,10 +96,11 @@ export async function createUserAndEventType({
         : undefined,
   };
 
+  const organizationId = await ensureDefaultOrganization();
   const theUser = await prisma.user.upsert({
     where: { email_username: { email: user.email, username: user.username } },
     update: userData,
-    create: userData,
+    create: { ...userData, organization: { connect: { id: organizationId } } },
   });
 
   await prisma.userPassword.upsert({

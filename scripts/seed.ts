@@ -17,7 +17,7 @@ import type z from "zod";
 import type { teamMetadataSchema } from "../packages/prisma/zod-utils";
 import mainAppStore from "./seed-app-store";
 import mainHugeEventTypesSeed from "./seed-huge-event-types";
-import { createOAuthClientForUser, createUserAndEventType } from "./seed-utils";
+import { createOAuthClientForUser, createUserAndEventType, ensureDefaultOrganization } from "./seed-utils";
 
 function hashAPIKey(apiKey: string): string {
   return createHash("sha256").update(apiKey).digest("hex");
@@ -251,6 +251,7 @@ async function createOrganizationAndAddMembersAndTeams({
     orgMembersInDb.push(...batchResults.filter((r): r is NonNullable<typeof r> => r !== null));
   }
 
+  const defaultOrganizationId = await ensureDefaultOrganization();
   await Promise.all(
     usersOutsideOrg.map(async (user) => {
       await prisma.user.upsert({
@@ -261,6 +262,7 @@ async function createOrganizationAndAddMembersAndTeams({
           name: user.name,
           email: user.email,
           emailVerified: new Date(),
+          organization: { connect: { id: defaultOrganizationId } },
           password: {
             create: {
               hash: await hashPassword(user.username),
@@ -290,6 +292,12 @@ async function createOrganizationAndAddMembersAndTeams({
     select: {
       id: true,
     },
+  });
+
+  // Members were created in the default organization before this one existed
+  await prisma.user.updateMany({
+    where: { id: { in: orgMembersInDb.map((member) => member.id) } },
+    data: { organizationId: orgInDb.id },
   });
 
   // Step 2: Create org profiles in batches to avoid large transactions
@@ -407,6 +415,7 @@ async function createOrganizationAndAddMembersAndTeams({
               },
             },
             emailVerified: new Date(),
+            organization: { connect: { id: defaultOrganizationId } },
           },
         })
       );
