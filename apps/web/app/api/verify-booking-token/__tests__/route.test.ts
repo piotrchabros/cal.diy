@@ -1,9 +1,14 @@
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import { confirmHandler } from "@calcom/trpc/server/routers/viewer/bookings/confirm.handler";
 import type { NextRequest } from "next/server";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockConfirmHandler = confirmHandler as unknown as Mock<typeof confirmHandler>;
+const mockGetRequestOrgBaseUrl = getRequestOrgBaseUrl as unknown as Mock<typeof getRequestOrgBaseUrl>;
+
+const ORG_URL = "https://acme.cal.local:3000";
 
 vi.mock("app/api/defaultResponderForAppDir", () => ({
   defaultResponderForAppDir:
@@ -58,6 +63,10 @@ vi.mock("@calcom/prisma", () => ({
 
 vi.mock("@calcom/trpc/server/routers/viewer/bookings/confirm.handler", () => ({
   confirmHandler: vi.fn(),
+}));
+
+vi.mock("@calcom/features/organizations/lib/getRequestOrgBaseUrl", () => ({
+  getRequestOrgBaseUrl: vi.fn(),
 }));
 
 vi.mock("@calcom/lib/tracing/factory", () => ({
@@ -178,6 +187,7 @@ const createMockRequest = (
 describe("verify-booking-token route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetRequestOrgBaseUrl.mockResolvedValue({ baseUrl: WEBAPP_URL, orgSlug: null });
     // Reset mock body and DB
     setMockRequestBody({});
     Object.keys(DB.bookings).forEach((key) => delete DB.bookings[key]);
@@ -447,6 +457,73 @@ describe("verify-booking-token route", () => {
           }),
         })
       );
+    });
+  });
+
+  describe("organization base URL", () => {
+    beforeEach(() => {
+      mockGetRequestOrgBaseUrl.mockResolvedValue({ baseUrl: ORG_URL, orgSlug: "acme" });
+      createMockBooking({ id: 1, uid: "booking-uid", oneTimePassword: "valid-token" });
+      createMockUser({
+        id: 42,
+        uuid: "user-uuid",
+        email: "test@example.com",
+        username: "testuser",
+        role: "USER",
+        destinationCalendar: null,
+      });
+    });
+
+    it("redirects a GET rejection to the request organization's base URL", async () => {
+      const req = createMockRequest(
+        "https://acme.cal.local:3000/api/verify-booking-token?action=reject&token=valid-token&bookingUid=booking-uid&userId=42",
+        "GET"
+      );
+      const res = await GET(req, { params: Promise.resolve({}) });
+      const redirectUrl = new URL(res.headers.get("location")!);
+
+      expect(mockGetRequestOrgBaseUrl).toHaveBeenCalledWith(req.headers);
+      expect(redirectUrl.origin).toBe(ORG_URL);
+      expect(redirectUrl.pathname).toBe("/booking/booking-uid");
+      expect(redirectUrl.searchParams.get("error")).toBe("Rejection requires POST method");
+    });
+
+    it("redirects a successful GET accept to the request organization's base URL", async () => {
+      const req = createMockRequest(
+        "https://acme.cal.local:3000/api/verify-booking-token?action=accept&token=valid-token&bookingUid=booking-uid&userId=42",
+        "GET"
+      );
+      const res = await GET(req, { params: Promise.resolve({}) });
+
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`${ORG_URL}/booking/booking-uid`);
+    });
+
+    it("redirects a failed POST to the request organization's base URL", async () => {
+      const req = createMockRequest(
+        "https://acme.cal.local:3000/api/verify-booking-token?token=valid-token&bookingUid=booking-uid&userId=42",
+        "POST"
+      );
+      const res = await POST(req, { params: Promise.resolve({}) });
+      const redirectUrl = new URL(res.headers.get("location")!);
+
+      expect(res.status).toBe(303);
+      expect(redirectUrl.origin).toBe(ORG_URL);
+      expect(redirectUrl.pathname).toBe("/booking/booking-uid");
+      expect(redirectUrl.searchParams.get("error")).toBe("Error confirming booking");
+    });
+
+    it("redirects a successful POST rejection to the request organization's base URL", async () => {
+      setMockRequestBody({ reason: "busy" });
+      const req = createMockRequest(
+        "https://acme.cal.local:3000/api/verify-booking-token?action=reject&token=valid-token&bookingUid=booking-uid&userId=42",
+        "POST",
+        { reason: "busy" }
+      );
+      const res = await POST(req, { params: Promise.resolve({}) });
+
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`${ORG_URL}/booking/booking-uid`);
     });
   });
 });
