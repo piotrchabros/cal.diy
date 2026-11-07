@@ -1,8 +1,8 @@
+import type { Prisma, Team } from "@calcom/prisma/client";
+import { TestingModule } from "@nestjs/testing";
+import { getOrCreateDefaultOrganizationId } from "./users.repository.fixture";
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
-import { TestingModule } from "@nestjs/testing";
-
-import type { Prisma, Team } from "@calcom/prisma/client";
 
 export class OrganizationRepositoryFixture {
   private primaReadClient: PrismaReadService["prisma"];
@@ -52,7 +52,14 @@ export class OrganizationRepositoryFixture {
   }
 
   async delete(teamId: Team["id"]) {
+    const defaultOrganizationId = await getOrCreateDefaultOrganizationId(this.prismaWriteClient);
     return await this.prismaWriteClient.$transaction(async (prisma) => {
+      // users.organizationId is ON DELETE RESTRICT. Callers often delete the org's users after the org,
+      // so the users are moved to the default organization rather than deleted here.
+      await prisma.user.updateMany({
+        where: { organizationId: teamId },
+        data: { organizationId: defaultOrganizationId },
+      });
       await prisma.organizationSettings.delete({
         where: { organizationId: teamId },
       });

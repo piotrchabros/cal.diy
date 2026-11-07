@@ -8,6 +8,7 @@ import { prisma } from "@calcom/prisma";
 import type { EventType, Prisma, Team, User } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import type { Schedule } from "@calcom/types/schedule";
 import type { Browser, Page, WorkerInfo } from "@playwright/test";
 import { expect } from "@playwright/test";
@@ -348,8 +349,9 @@ export const createUsersFixture = (
         teamFeatureFlags?: Array<keyof AppFlags>;
       } = {}
     ) => {
+      const defaultOrganizationId = await getOrCreateDefaultOrganizationId(prisma);
       const _user = await prisma.user.create({
-        data: createUser(workerInfo, opts),
+        data: createUser(workerInfo, defaultOrganizationId, opts),
         include: {
           profiles: true,
         },
@@ -440,7 +442,7 @@ export const createUsersFixture = (
             const teamMates = [];
             for (const teammateObj of scenario.teammates) {
               const teamUser = await prisma.user.create({
-                data: createUser(workerInfo, teammateObj),
+                data: createUser(workerInfo, defaultOrganizationId, teammateObj),
               });
 
               // Add teammates to the team
@@ -550,7 +552,8 @@ export const createUsersFixture = (
     deleteAll: async () => {
       const ids = store.users.map((u) => u.id);
       const trackedEmails = store.trackedEmails.map((e) => e.email);
-      const teamIds = store.teams.map((org) => org.id);
+      const defaultOrganizationId = await getOrCreateDefaultOrganizationId(prisma);
+      const teamIds = store.teams.map((org) => org.id).filter((id) => id !== defaultOrganizationId);
 
       if (emails) {
         const emailMessageIds: string[] = [];
@@ -579,6 +582,12 @@ export const createUsersFixture = (
         }
 
         if (teamIds.length > 0) {
+          // users.organizationId is ON DELETE RESTRICT, so users the app put into these orgs during the
+          // test (and the fixture never tracked) would block the delete
+          await tx.user.updateMany({
+            where: { organizationId: { in: teamIds } },
+            data: { organizationId: defaultOrganizationId },
+          });
           await tx.team.deleteMany({ where: { id: { in: teamIds } } });
         }
       });
@@ -632,23 +641,49 @@ const createUserFixture = (user: UserWithIncludes, page: Page) => {
     eventTypes: user.eventTypes,
     self,
     apiLogin: async (navigateToUrl?: string, password?: string) =>
-      apiLogin({ ...(await self()), password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1` }, store.page, navigateToUrl),
+      apiLogin(
+        {
+          ...(await self()),
+          password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1`,
+        },
+        store.page,
+        navigateToUrl
+      ),
     /** Don't forget to close context at the end */
     apiLoginOnNewBrowser: async (browser: Browser, password?: string) => {
       const newContext = await browser.newContext();
       const newPage = await newContext.newPage();
-      await apiLogin({ ...(await self()), password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1` }, newPage);
+      await apiLogin(
+        {
+          ...(await self()),
+          password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1`,
+        },
+        newPage
+      );
       // Don't forget to: newContext.close();
       return [newContext, newPage] as const;
     },
     /**
      * @deprecated use apiLogin instead
      */
-    login: async (password?: string) => login({ ...(await self()), password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1` }, store.page),
+    login: async (password?: string) =>
+      login(
+        {
+          ...(await self()),
+          password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1`,
+        },
+        store.page
+      ),
     loginOnNewBrowser: async (browser: Browser, password?: string) => {
       const newContext = await browser.newContext();
       const newPage = await newContext.newPage();
-      await login({ ...(await self()), password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1` }, newPage);
+      await login(
+        {
+          ...(await self()),
+          password: password ?? `${user.username!.charAt(0).toUpperCase()}${user.username!.slice(1)}1`,
+        },
+        newPage
+      );
       // Don't forget to: newContext.close();
       return [newContext, newPage] as const;
     },
@@ -812,6 +847,7 @@ type CustomUserOpts = Partial<Pick<User, CustomUserOptsKeys>> & {
 // creates the actual user in the db.
 const createUser = (
   workerInfo: WorkerInfo,
+  defaultOrganizationId: number,
   opts?:
     | (CustomUserOpts & {
         organizationId?: number | null;
@@ -843,6 +879,7 @@ const createUser = (
     locale: opts?.locale ?? "en",
     role: opts?.role ?? "USER",
     twoFactorEnabled: opts?.twoFactorEnabled ?? false,
+    organizationId: opts?.organizationId ?? defaultOrganizationId,
     ...getOrganizationRelatedProps({
       organizationId: opts?.organizationId,
       role: opts?.roleInOrganization,
