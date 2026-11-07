@@ -7,7 +7,7 @@ vi.mock("@calcom/app-store/zod-utils", () => ({
   },
 }));
 
-const { createMock, collectCardMock } = vi.hoisted(() => {
+const { createMock, collectCardMock, afterPaymentMock, taskerMock } = vi.hoisted(() => {
   const mockPayment = async (paymentData: { amount: number; currency: string }) => ({
     ...paymentData,
     id: "mock-payment-id",
@@ -17,8 +17,13 @@ const { createMock, collectCardMock } = vi.hoisted(() => {
   return {
     createMock: vi.fn(mockPayment),
     collectCardMock: vi.fn(mockPayment),
+    afterPaymentMock: vi.fn(async () => true),
+    taskerMock: { create: vi.fn() },
   };
 });
+
+// The real tasker pulls in prisma.
+vi.mock("@calcom/features/tasker", () => ({ default: taskerMock }));
 
 vi.mock("@calcom/app-store/payment.services.generated", () => ({
   PaymentServiceMap: {
@@ -26,7 +31,7 @@ vi.mock("@calcom/app-store/payment.services.generated", () => ({
       BuildPaymentService: () => ({
         create: createMock,
         collectCard: collectCardMock,
-        afterPayment: async () => true,
+        afterPayment: afterPaymentMock,
       }),
     }),
   },
@@ -327,5 +332,27 @@ describe("handlePayment", () => {
     expect(collectCardMock).toHaveBeenCalledTimes(1);
     expect(collectCardMock.mock.calls[0].at(-1)).toBe("https://acme.example.org");
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the tasker to afterPayment", async () => {
+    const evt = { ...mockEvent, bookerUrl: "https://acme.example.org" };
+    const result = await handlePayment({
+      evt,
+      selectedEventType: mockEventType,
+      paymentAppCredentials: mockPaymentCredentials,
+      booking: mockBooking,
+      bookerName: "John Doe",
+      bookerEmail: "john@example.com",
+      bookingFields: [],
+    });
+
+    expect(afterPaymentMock).toHaveBeenCalledTimes(1);
+    expect(afterPaymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: evt.title, bookerUrl: evt.bookerUrl }),
+      mockBooking,
+      result,
+      mockEventType.metadata,
+      { tasker: taskerMock }
+    );
   });
 });
