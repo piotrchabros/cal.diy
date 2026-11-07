@@ -16,6 +16,9 @@ const mockFindTokenByToken: Mock = vi.fn();
 const mockValidateAndGetCorrectedUsernameForTeam: Mock = vi.fn();
 const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
 const mockRequireDefaultOrganizationId: Mock = vi.fn();
+const mockIsOrganizationsEnabled: Mock = vi.fn().mockReturnValue(false);
+const mockAddMember: Mock = vi.fn();
+const mockLogError: Mock = vi.fn();
 
 const DEFAULT_ORG_ID = 99;
 
@@ -27,7 +30,10 @@ type UsernameStatus = {
 
 type InnerHandler = (body: Record<string, string>, status: UsernameStatus) => Promise<MockResponse>;
 
+type CapturedOptions = { resolveOrganizationId?: (body: Record<string, string>) => Promise<number | null> };
+
 var mockCapturedHandler: InnerHandler | null;
+var mockCapturedOptions: CapturedOptions | undefined;
 
 vi.mock("next/server", async () => {
   const { createNextServerMock } = await import(
@@ -54,7 +60,14 @@ vi.mock("@calcom/prisma/client", async () => {
   return createPrismaMock();
 });
 vi.mock("@calcom/lib/logger", () => ({
-  default: { getSubLogger: () => ({ warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() }) },
+  default: {
+    getSubLogger: () => ({
+      warn: vi.fn(),
+      error: (...args: unknown[]) => mockLogError(...args),
+      debug: vi.fn(),
+      info: vi.fn(),
+    }),
+  },
 }));
 vi.mock("@calcom/lib/auth/hashPassword", () => ({ hashPassword: vi.fn().mockResolvedValue("hashed") }));
 vi.mock("@calcom/lib/constants", () => ({ WEBAPP_URL: "http://localhost:3000" }));
@@ -102,10 +115,17 @@ vi.mock("@calcom/features/auth/signup/utils/token", () => ({
 
 // Capture inner handler from usernameHandler wrapper
 vi.mock("@calcom/lib/server/username", () => ({
-  usernameHandler: (handler: InnerHandler) => {
+  usernameHandler: (handler: InnerHandler, options?: CapturedOptions) => {
     mockCapturedHandler = handler;
+    mockCapturedOptions = options;
     return handler;
   },
+}));
+vi.mock("@calcom/lib/organizations/isOrganizationsEnabled", () => ({
+  isOrganizationsEnabled: () => mockIsOrganizationsEnabled(),
+}));
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
 }));
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
   requireDefaultOrganizationId: (...args: unknown[]) => mockRequireDefaultOrganizationId(...args),
@@ -122,7 +142,10 @@ vi.mock("@calcom/features/membership/services/TeamMembersService", () => ({
 import { describe, expect, it } from "vitest";
 
 import "./calcomSignupHandler";
+import { SIGNUP_ERROR_CODES } from "@calcom/features/auth/signup/constants";
 import { runP2002TestSuite } from "@calcom/features/auth/signup/handlers/__tests__/p2002.test-suite";
+import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
+import { ErrorWithCode } from "@calcom/lib/errors";
 
 function callHandler(body: SignupBody): Promise<MockResponse> {
   if (!mockCapturedHandler) throw new Error("Handler not captured");
@@ -242,5 +265,149 @@ describe("calcomHandler – default organization", () => {
     expect(prismaMock.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ organizationId: 7 }) })
     );
+  });
+});
+
+describe("calcomHandler – organization membership", () => {
+  const plainSignup = {
+    email: "new@example.com",
+    password: "ValidPassword123!",
+    username: "testuser",
+    language: "en",
+  };
+
+  function setup(): void {
+    vi.clearAllMocks();
+    resetPrismaMock();
+    mockIsOrganizationsEnabled.mockReturnValue(false);
+    mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "no-invites", teamIds: [] });
+    mockAddMember.mockResolvedValue(undefined);
+    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
+    prismaMock.user.deleteMany.mockResolvedValue({ count: 1 } as never);
+  }
+
+  it("adds a plain signup to the default organization as MEMBER", async () => {
+    setup();
+
+    const response = await callHandler(plainSignup);
+
+    expect(response.status).toBe(201);
+    expect(mockAddMember).toHaveBeenCalledWith({
+      organizationId: DEFAULT_ORG_ID,
+      userId: 42,
+      role: "MEMBER",
+    });
+    expect(prismaMock.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the membership for a premium username awaiting payment", async () => {
+    setup();
+    if (!mockCapturedHandler) throw new Error("Handler not captured");
+
+    const response = await mockCapturedHandler(plainSignup, {
+      statusCode: 402,
+      requestedUserName: "testuser",
+      json: { available: true, premium: true },
+    });
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ username: null }) })
+    );
+    expect(mockAddMember).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 and removes the user when the membership conflicts", async () => {
+    setup();
+    mockAddMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+    );
+
+    const response = await callHandler(plainSignup);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS });
+    expect(prismaMock.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [42] } } });
+    expect(mockAcceptPendingInvitesOnSignup).not.toHaveBeenCalled();
+  });
+
+  it("still returns 409 and logs when removing the user after a conflict fails", async () => {
+    setup();
+    mockAddMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+    );
+    prismaMock.user.deleteMany.mockRejectedValue(new Error("db down"));
+
+    const response = await callHandler(plainSignup);
+
+    expect(response.status).toBe(409);
+    expect(mockLogError).toHaveBeenCalledWith(
+      "Failed to remove a user whose organization membership could not be created",
+      { userId: 42, organizationId: DEFAULT_ORG_ID }
+    );
+  });
+
+  it("rethrows membership errors other than conflicts after removing the user", async () => {
+    setup();
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("Organization not found"));
+
+    await expect(callHandler(plainSignup)).rejects.toThrow("Organization not found");
+    expect(prismaMock.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [42] } } });
+  });
+
+  it("scopes username validation to the default organization with the flag on", async () => {
+    setup();
+    mockIsOrganizationsEnabled.mockReturnValue(true);
+
+    await callHandler(plainSignup);
+
+    expect(validateAndGetCorrectedUsernameAndEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ usernameOrganizationId: DEFAULT_ORG_ID })
+    );
+  });
+
+  it("keeps username validation global with the flag off", async () => {
+    setup();
+
+    await callHandler(plainSignup);
+
+    expect(validateAndGetCorrectedUsernameAndEmail).toHaveBeenCalledWith(
+      expect.not.objectContaining({ usernameOrganizationId: expect.anything() })
+    );
+  });
+});
+
+describe("calcomHandler – username availability organization", () => {
+  function resolveOrganizationId(body: Record<string, string>): Promise<number | null> {
+    const resolve = mockCapturedOptions?.resolveOrganizationId;
+    if (!resolve) throw new Error("resolveOrganizationId not captured");
+    return resolve(body);
+  }
+
+  function setup(orgsEnabled: boolean): void {
+    vi.clearAllMocks();
+    mockIsOrganizationsEnabled.mockReturnValue(orgsEnabled);
+    mockRequireDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
+  }
+
+  it("checks globally with the flag off", async () => {
+    setup(false);
+
+    expect(await resolveOrganizationId({ username: "testuser" })).toBeNull();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
+  });
+
+  it("checks within the default organization with the flag on", async () => {
+    setup(true);
+
+    expect(await resolveOrganizationId({ username: "testuser" })).toBe(DEFAULT_ORG_ID);
+  });
+
+  it("checks globally for an invitee with the flag on", async () => {
+    setup(true);
+
+    expect(await resolveOrganizationId({ username: "testuser", token: "invite-token" })).toBeNull();
+    expect(mockRequireDefaultOrganizationId).not.toHaveBeenCalled();
   });
 });
