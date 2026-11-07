@@ -1,12 +1,7 @@
-import { auth, Client, webln } from "@getalby/sdk";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, useCallback, useEffect } from "react";
-import { Toaster } from "sonner";
-
 import AppNotInstalledMessage from "@calcom/app-store/_components/AppNotInstalledMessage";
 import { albyCredentialKeysSchema } from "@calcom/app-store/alby/lib/albyCredentialKeysSchema";
 import type { IAlbySetupProps } from "@calcom/app-store/alby/pages/setup/_getServerSideProps";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
@@ -14,6 +9,11 @@ import { Badge } from "@calcom/ui/components/badge";
 import { Button } from "@calcom/ui/components/button";
 import { showToast } from "@calcom/ui/components/toast";
 import { InfoIcon } from "@coss/ui/icons";
+import { auth, Client, webln } from "@getalby/sdk";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { Toaster } from "sonner";
 
 export default function AlbySetup(props: IAlbySetupProps) {
   const params = useCompatSearchParams();
@@ -68,6 +68,7 @@ function AlbySetupCallback() {
 function AlbySetupPage(props: IAlbySetupProps) {
   const router = useRouter();
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const integrations = trpc.viewer.apps.integrations.useQuery({ variant: "payment", appId: "alby" });
   const [albyPaymentAppCredentials] = integrations.data?.items || [];
   const [credentialId] = albyPaymentAppCredentials?.userCredentialIds || [-1];
@@ -86,7 +87,7 @@ function AlbySetupPage(props: IAlbySetupProps) {
     const authClient = new auth.OAuth2User({
       client_id: props.clientId,
       client_secret: props.clientSecret,
-      callback: `${process.env.NEXT_PUBLIC_WEBAPP_URL}/apps/alby/setup?callback=true`,
+      callback: `${orgBaseUrl}/apps/alby/setup?callback=true`,
       scopes: ["invoices:read", "account:read"],
       user_agent: "cal.com",
     });
@@ -115,7 +116,7 @@ function AlbySetupPage(props: IAlbySetupProps) {
         webhook_endpoint_secret: webhookEndpoint.endpoint_secret,
       }),
     });
-  }, [credentialId, props.clientId, props.clientSecret, saveKeysMutation]);
+  }, [credentialId, orgBaseUrl, props.clientId, props.clientSecret, saveKeysMutation]);
 
   if (integrations.isPending) {
     return <div className="absolute z-50 flex h-screen w-full items-center bg-gray-200" />;
@@ -165,9 +166,9 @@ function AlbySetupPage(props: IAlbySetupProps) {
 
             {/* TODO: remove when invoices are generated using user identifier */}
             <div className="mt-4 rounded bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              <InfoIcon className="mb-0.5 inline-flex h-4 w-4" /> Your Alby lightning address will be
-              used to generate invoices. If you update your lightning address, please disconnect and setup the
-              Alby app again.
+              <InfoIcon className="mb-0.5 inline-flex h-4 w-4" /> Your Alby lightning address will be used to
+              generate invoices. If you update your lightning address, please disconnect and setup the Alby
+              app again.
             </div>
             <Link href="/apps/alby">
               <Button color="secondary">Go to App Store Listing</Button>
