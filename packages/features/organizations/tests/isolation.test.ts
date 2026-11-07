@@ -49,8 +49,10 @@ function buildServices(world: InMemoryIsolationWorld) {
     () => world.organizationMembershipService()
   );
   const organizationMembership = world.organizationMembershipService();
-  const teamProfile = new TeamProfileService(world.teamProfilePrisma(), undefined, (userId, organizationId) =>
-    organizationMembership.getRole(userId, organizationId)
+  const teamProfile = new TeamProfileService(
+    { teamRepo: world.teamRepository(), membershipRepo: world.membershipRepository() },
+    undefined,
+    (userId, organizationId) => organizationMembership.getRole(userId, organizationId)
   );
   const eventTypeHosts = new EventTypeHostService({} as never, world.eventTypeHostDeps());
   return { teamMembers, teamProfile, eventTypeHosts };

@@ -1,4 +1,6 @@
 export const TEAMS_DI_TOKENS = {
+  TEAM_PROFILE_SERVICE: Symbol("TeamProfileService"),
+  TEAM_PROFILE_SERVICE_MODULE: Symbol("TeamProfileServiceModule"),
   TEAM_CREATION_SERVICE: Symbol("TeamCreationService"),
   TEAM_CREATION_SERVICE_MODULE: Symbol("TeamCreationServiceModule"),
   TEAM_ACCESS_SERVICE: Symbol("TeamAccessService"),

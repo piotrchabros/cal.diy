@@ -1,7 +1,5 @@
-import { TeamProfileService } from "@calcom/features/teams/services/TeamProfileService";
-import { prisma } from "@calcom/prisma";
+import { getTeamProfileService } from "@calcom/features/teams/di/TeamProfileService.container";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import type { TUpdateTeamProfileInput } from "./teamProfile.schema";
 
 type UpdateTeamProfileOptions = {
@@ -12,7 +10,7 @@ type UpdateTeamProfileOptions = {
 };
 
 export const updateTeamProfileHandler = async ({ ctx, input }: UpdateTeamProfileOptions) => {
-  const service = new TeamProfileService(prisma);
+  const service = getTeamProfileService();
   const { teamId, ...rest } = input;
   return service.updateTeamProfile({ teamId, userId: ctx.user.id, input: { teamId, ...rest } });
 };
