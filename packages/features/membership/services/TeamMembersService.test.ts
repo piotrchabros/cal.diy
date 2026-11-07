@@ -3,6 +3,10 @@ import { MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TeamMembersService } from "./TeamMembersService";
 
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
+  getOrganizationUrlService: () => ({ getBaseUrlForTeam: async () => "https://app.example.com" }),
+}));
+
 vi.mock("@calcom/lib/auth/hashPassword", () => ({
   hashPassword: vi.fn(async (password: string) => `hashed:${password}`),
 }));

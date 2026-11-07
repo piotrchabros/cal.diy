@@ -1,9 +1,7 @@
-import type { TFunction } from "i18next";
-
 import type BaseEmail from "@calcom/emails/templates/_base-email";
-import type { CalendarEvent } from "@calcom/types/Calendar";
 import { formatCalEvent } from "@calcom/lib/formatCalendarEvent";
-
+import type { CalendarEvent } from "@calcom/types/Calendar";
+import type { TFunction } from "i18next";
 import BrokenIntegrationEmail from "./templates/broken-integration-email";
 import DisabledAppEmail from "./templates/disabled-app-email";
 import SlugReplacementEmail from "./templates/slug-replacement-email";
@@ -31,6 +29,7 @@ export const sendDisabledAppEmail = async ({
   t,
   title = undefined,
   eventTypeId = undefined,
+  baseUrl,
 }: {
   email: string;
   appName: string;
@@ -38,8 +37,9 @@ export const sendDisabledAppEmail = async ({
   t: TFunction;
   title?: string;
   eventTypeId?: number;
+  baseUrl?: string;
 }) => {
-  await sendEmail(() => new DisabledAppEmail(email, appName, appType, t, title, eventTypeId));
+  await sendEmail(() => new DisabledAppEmail(email, appName, appType, t, title, eventTypeId, baseUrl));
 };
 
 export const sendSlugReplacementEmail = async ({
@@ -48,12 +48,14 @@ export const sendSlugReplacementEmail = async ({
   teamName,
   t,
   slug,
+  baseUrl,
 }: {
   email: string;
   name: string;
   teamName: string | null;
   t: TFunction;
   slug: string;
+  baseUrl?: string;
 }) => {
-  await sendEmail(() => new SlugReplacementEmail(email, name, teamName, slug, t));
+  await sendEmail(() => new SlugReplacementEmail(email, name, teamName, slug, t, baseUrl));
 };

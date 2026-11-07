@@ -231,7 +231,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PRs 13–15: server link sweep** (replace `WEBAPP_URL` user-facing links with `OrganizationUrlService` for the subject; leave server-to-server API bases alone)
 
-- [ ] T047 [US3] PR 13, emails, links in:
+- [X] T047 [US3] PR 13, emails, links in:
   - `packages/emails/src/templates/{TeamInviteEmail,OrganizerRequestEmail,OrganizerRequestEmailV2,BrokenIntegrationEmail,DisabledAppEmail,DailyVideoDownloadRecordingEmail,DailyVideoDownloadTranscriptEmail,SlugReplacementEmail}.tsx`
   - `packages/emails/templates/organizer-request-email.ts`
 

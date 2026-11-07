@@ -1,11 +1,10 @@
 import { getLocalAppMetadata } from "@calcom/app-store/utils";
 import { sendDisabledAppEmail } from "@calcom/emails/integration-email-service";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import type { PrismaClient } from "@calcom/prisma";
 import { AppCategories } from "@calcom/prisma/enums";
-
 import { TRPCError } from "@trpc/server";
-
 import type { TrpcSessionUser } from "../../../types";
 import type { TToggleInputSchema } from "./toggle.schema";
 
@@ -67,6 +66,7 @@ export const toggleHandler = async ({ input, ctx }: ToggleOptions) => {
         select: {
           user: {
             select: {
+              id: true,
               email: true,
               locale: true,
             },
@@ -93,6 +93,7 @@ export const toggleHandler = async ({ input, ctx }: ToggleOptions) => {
             appName: appMetadata?.name || app.slug,
             appType: app.categories,
             t,
+            baseUrl: await getOrganizationUrlService().getBaseUrlForUser({ userId: credential.user.id }),
           });
         })
       );
@@ -109,6 +110,7 @@ export const toggleHandler = async ({ input, ctx }: ToggleOptions) => {
           title: true,
           users: {
             select: {
+              id: true,
               email: true,
               locale: true,
             },
@@ -157,6 +159,7 @@ export const toggleHandler = async ({ input, ctx }: ToggleOptions) => {
                 t,
                 title: eventType.title,
                 eventTypeId: eventType.id,
+                baseUrl: await getOrganizationUrlService().getBaseUrlForUser({ userId: user.id }),
               });
             })
           );
