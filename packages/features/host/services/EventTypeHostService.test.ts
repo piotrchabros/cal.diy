@@ -1,16 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { MembershipRole } from "@calcom/prisma/enums";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the repositories and external dependencies
 vi.mock("@calcom/features/host/repositories/HostRepository");
 vi.mock("@calcom/features/membership/repositories/MembershipRepository");
 vi.mock("@calcom/features/eventtypes/repositories/eventTypeRepository");
+vi.mock("@calcom/features/teams/repositories/TeamRepository");
+vi.mock("@calcom/features/users/repositories/UserRepository");
 
-import { EventTypeHostService } from "./EventTypeHostService";
+import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { HostRepository } from "@calcom/features/host/repositories/HostRepository";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
-import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
+import { EventTypeHostService } from "./EventTypeHostService";
 
 const mockPrisma = {} as never;
 
@@ -39,8 +41,46 @@ function getEventTypeRepoInstance(): InstanceType<typeof EventTypeRepository> {
   ).mock.instances[0];
 }
 
+type TeamBasic = {
+  id: number;
+  name: string;
+  slug: string | null;
+  logoUrl: string | null;
+  isOrganization: boolean;
+  parentId: number | null;
+};
+
+function createOrgService({
+  team,
+  users = [],
+}: {
+  team: TeamBasic | null;
+  users?: { id: number; organizationId: number | null }[];
+}) {
+  const teamRepository = { findBasicById: vi.fn().mockResolvedValue(team) };
+  const userRepository = { findOrganizationIdsByIds: vi.fn().mockResolvedValue(users) };
+  const service = new EventTypeHostService(mockPrisma, { teamRepository, userRepository });
+  return { service, teamRepository, userRepository };
+}
+
+function buildTeam(overrides: Partial<TeamBasic> = {}): TeamBasic {
+  return {
+    id: 10,
+    name: "Team",
+    slug: "team",
+    logoUrl: null,
+    isOrganization: false,
+    parentId: 100,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("EventTypeHostService", () => {
@@ -264,7 +304,8 @@ describe("EventTypeHostService", () => {
   });
 
   describe("searchTeamMembers", () => {
-    it("should throw FORBIDDEN if user is not a member of the team", async () => {
+    it("should throw FORBIDDEN if user is not a member of the team when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
       const service = createService();
       const membershipRepo = getMembershipRepoInstance();
 
@@ -285,6 +326,19 @@ describe("EventTypeHostService", () => {
           limit: 10,
         })
       ).rejects.toMatchObject({ code: "forbidden_error" });
+    });
+
+    it("should throw NOT_FOUND if user is not a member of the team when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const service = createService();
+      const membershipRepo = getMembershipRepoInstance();
+
+      vi.mocked(membershipRepo.hasMembership).mockResolvedValue(false);
+
+      await expect(service.searchTeamMembers({ teamId: 1, userId: 99, limit: 10 })).rejects.toMatchObject({
+        code: "not_found_error",
+      });
+      expect(membershipRepo.searchMembers).not.toHaveBeenCalled();
     });
 
     it("should return mapped team members when user is authorized", async () => {
@@ -354,6 +408,126 @@ describe("EventTypeHostService", () => {
         limit: 20,
         memberUserIds: [1, 2],
       });
+    });
+  });
+
+  describe("assertHostsInTeamOrganization", () => {
+    it("should do nothing when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      const { service, teamRepository, userRepository } = createOrgService({ team: buildTeam() });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1] })).resolves.toBe(
+        undefined
+      );
+      expect(teamRepository.findBasicById).not.toHaveBeenCalled();
+      expect(userRepository.findOrganizationIdsByIds).not.toHaveBeenCalled();
+    });
+
+    it("should do nothing when there are no host ids", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service, teamRepository, userRepository } = createOrgService({ team: buildTeam() });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [] })).resolves.toBe(
+        undefined
+      );
+      expect(teamRepository.findBasicById).not.toHaveBeenCalled();
+      expect(userRepository.findOrganizationIdsByIds).not.toHaveBeenCalled();
+    });
+
+    it("should resolve when the team is not in an organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service, teamRepository, userRepository } = createOrgService({
+        team: buildTeam({ parentId: null, isOrganization: false }),
+      });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1] })).resolves.toBe(
+        undefined
+      );
+      expect(teamRepository.findBasicById).toHaveBeenCalledWith({ teamId: 10 });
+      expect(userRepository.findOrganizationIdsByIds).not.toHaveBeenCalled();
+    });
+
+    it("should resolve when the team is not found", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service, userRepository } = createOrgService({ team: null });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1] })).resolves.toBe(
+        undefined
+      );
+      expect(userRepository.findOrganizationIdsByIds).not.toHaveBeenCalled();
+    });
+
+    it("should use the team's own id as the organization when the team is an organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service, userRepository } = createOrgService({
+        team: buildTeam({ id: 50, isOrganization: true, parentId: null }),
+        users: [{ id: 1, organizationId: 50 }],
+      });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 50, hostUserIds: [1] })).resolves.toBe(
+        undefined
+      );
+      expect(userRepository.findOrganizationIdsByIds).toHaveBeenCalledWith({ ids: [1] });
+    });
+
+    it("should reject with NOT_FOUND when a host belongs to another organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service } = createOrgService({
+        team: buildTeam({ parentId: 100 }),
+        users: [
+          { id: 1, organizationId: 100 },
+          { id: 2, organizationId: 200 },
+        ],
+      });
+
+      const promise = service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1, 2] });
+
+      await expect(promise).rejects.toBeInstanceOf(ErrorWithCode);
+      await expect(promise).rejects.toMatchObject({ code: "not_found_error" });
+      await expect(promise).rejects.toThrow(/users 2 are not in organization 100/);
+    });
+
+    it("should reject when a host id is unknown", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service } = createOrgService({
+        team: buildTeam({ parentId: 100 }),
+        users: [{ id: 1, organizationId: 100 }],
+      });
+
+      const promise = service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1, 999] });
+
+      await expect(promise).rejects.toMatchObject({ code: "not_found_error" });
+      await expect(promise).rejects.toThrow(/999/);
+    });
+
+    it("should resolve when all hosts are in the team's organization", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service } = createOrgService({
+        team: buildTeam({ parentId: 100 }),
+        users: [
+          { id: 1, organizationId: 100 },
+          { id: 2, organizationId: 100 },
+        ],
+      });
+
+      await expect(service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1, 2] })).resolves.toBe(
+        undefined
+      );
+    });
+
+    it("should dedupe host ids before querying users", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { service, userRepository } = createOrgService({
+        team: buildTeam({ parentId: 100 }),
+        users: [
+          { id: 1, organizationId: 100 },
+          { id: 2, organizationId: 100 },
+        ],
+      });
+
+      await service.assertHostsInTeamOrganization({ teamId: 10, hostUserIds: [1, 2, 1, 2] });
+
+      expect(userRepository.findOrganizationIdsByIds).toHaveBeenCalledWith({ ids: [1, 2] });
     });
   });
 

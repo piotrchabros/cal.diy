@@ -121,6 +121,8 @@ export interface IEventTypeHostService {
     memberUserIds?: number[] | null;
   }): Promise<PaginatedTeamMembersResponse>;
 
+  assertHostsInTeamOrganization(input: { teamId: number; hostUserIds: number[] }): Promise<void>;
+
   exportHostsForWeights(input: {
     eventTypeId: number;
     assignAllTeamMembers: boolean;

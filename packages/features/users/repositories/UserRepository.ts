@@ -502,6 +502,24 @@ export class UserRepository {
     });
   }
 
+  async findOrganizationIdsByIds({
+    ids,
+  }: {
+    ids: number[];
+  }): Promise<{ id: number; organizationId: number | null }[]> {
+    return this.prismaClient.user.findMany({
+      where: {
+        id: {
+          in: ids,
+        },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+      },
+    });
+  }
+
   async findByIdsWithPagination({
     ids,
     search,

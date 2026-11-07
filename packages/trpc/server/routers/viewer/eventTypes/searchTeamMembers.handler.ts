@@ -1,7 +1,7 @@
 import { EventTypeHostService } from "@calcom/features/host/services/EventTypeHostService";
 import type { PaginatedTeamMembersResponse } from "@calcom/features/host/services/IEventTypeHostService";
 import type { PrismaClient } from "@calcom/prisma/client";
-
+import { convertErrorWithCodeToTRPCError } from "../../../lib/toTRPCError";
 import type { TrpcSessionUser } from "../../../types";
 import type { TSearchTeamMembersInputSchema } from "./searchTeamMembers.schema";
 
@@ -21,12 +21,16 @@ export const searchTeamMembersHandler = async ({
   input,
 }: SearchTeamMembersInput): Promise<PaginatedTeamMembersResponse> => {
   const service = new EventTypeHostService(ctx.prisma);
-  return service.searchTeamMembers({
-    teamId: input.teamId,
-    userId: ctx.user.id,
-    cursor: input.cursor,
-    limit: input.limit,
-    search: input.search,
-    memberUserIds: input.memberUserIds,
-  });
+  try {
+    return await service.searchTeamMembers({
+      teamId: input.teamId,
+      userId: ctx.user.id,
+      cursor: input.cursor,
+      limit: input.limit,
+      search: input.search,
+      memberUserIds: input.memberUserIds,
+    });
+  } catch (error) {
+    throw convertErrorWithCodeToTRPCError(error);
+  }
 };
