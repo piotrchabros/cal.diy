@@ -17,6 +17,7 @@ export const DailyVideoDownloadRecordingEmail = (
   const image = `${WEBAPP_URL}/emails/logo.png`;
   return (
     <V2BaseEmailHtml
+      logoHref={props.baseUrl}
       subject={props.language("download_your_recording", {
         title: props.title,
         date: props.date,

@@ -16,7 +16,7 @@ export const DisabledAppEmail = (
   const baseUrl = props.baseUrl ?? WEBAPP_URL;
 
   return (
-    <BaseEmailHtml subject={t("app_disabled", { appName: appName })}>
+    <BaseEmailHtml logoHref={baseUrl} subject={t("app_disabled", { appName: appName })}>
       {appType.some((type) => type === "payment") ? (
         <>
           <p>
