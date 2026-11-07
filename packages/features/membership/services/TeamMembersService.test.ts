@@ -139,6 +139,57 @@ describe("TeamMembersService", () => {
       await expect(service.getTeam({ teamId: 7, viewerId: 42 })).rejects.toBeInstanceOf(ErrorWithCode);
     });
 
+    it("rejects a non-member with Forbidden when the organizations flag is off", async () => {
+      const service = buildService(null, team);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 42 })).rejects.toMatchObject({
+        code: "forbidden_error",
+      });
+    });
+
+    it("hides the team from a non-member with NotFound when the organizations flag is on", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const service = buildService(null, team);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 42 })).rejects.toMatchObject({
+        code: "not_found_error",
+      });
+    });
+
+    it("hides the team from a pending member with NotFound when the organizations flag is on", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const service = buildService({ ...adminMembership, accepted: false }, team);
+
+      await expect(service.getTeam({ teamId: 7, viewerId: 9 })).rejects.toMatchObject({
+        code: "not_found_error",
+      });
+    });
+
+    it("keeps Forbidden for a non-admin member when the organizations flag is on", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi
+          .fn()
+          .mockResolvedValue({ ...adminMembership, role: MembershipRole.MEMBER }),
+      });
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        makeTeamRepo() as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+
+      await expect(
+        service.inviteMember({
+          teamId: 7,
+          requesterId: 9,
+          requesterName: "Member",
+          email: "x@example.com",
+          role: MembershipRole.MEMBER,
+        })
+      ).rejects.toMatchObject({ code: "forbidden_error" });
+    });
+
     it("throws NotFound when the team does not exist", async () => {
       const service = buildService(adminMembership, null);
 
