@@ -13,6 +13,7 @@ export type NotetakerAttendeeNoticeEmailInput = {
   bookingStartTime: Date;
   hostName: string;
   isPending: boolean;
+  logoHref?: string | null;
 };
 
 export default class AttendeeNotetakerNoticeEmail extends BaseEmail {
@@ -50,6 +51,7 @@ export default class AttendeeNotetakerNoticeEmail extends BaseEmail {
         bookingDate: this.getBookingDate(),
         hostName,
         isPending,
+        logoHref: this.input.logoHref,
       }),
       text: this.getTextBody(),
     };

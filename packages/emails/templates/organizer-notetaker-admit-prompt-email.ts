@@ -12,6 +12,7 @@ export type NotetakerAdmitPromptEmailInput = {
   bookingTitle: string;
   bookingStartTime: Date;
   notetakerUrl: string;
+  logoHref?: string | null;
 };
 
 export default class OrganizerNotetakerAdmitPromptEmail extends BaseEmail {
@@ -42,6 +43,7 @@ export default class OrganizerNotetakerAdmitPromptEmail extends BaseEmail {
         bookingTitle,
         bookingDate: this.getBookingDate(),
         notetakerUrl,
+        logoHref: this.input.logoHref,
       }),
       text: this.getTextBody(),
     };
