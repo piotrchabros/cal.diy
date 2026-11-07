@@ -1,18 +1,20 @@
-import { WEBAPP_URL_FOR_OAUTH } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
 import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthRedirectUri, getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getLyraAppKeys, LYRA_API_URL } from "../lib";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const state = decodeOAuthState(req);
+  const safeRedirectOptions = getOAuthSafeRedirectOptions(req);
 
   // Handle user denial or other OAuth errors gracefully
   if (req.query.error) {
-    const errorReturnTo = getSafeRedirectUrl(state?.onErrorReturnTo) ?? "/apps/installed/conferencing";
+    const errorReturnTo =
+      getSafeRedirectUrl(state?.onErrorReturnTo, safeRedirectOptions) ?? "/apps/installed/conferencing";
     res.redirect(errorReturnTo);
     return;
   }
@@ -25,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { code } = req.query;
   const { client_id, client_secret } = await getLyraAppKeys();
 
-  const redirectUri = `${WEBAPP_URL_FOR_OAUTH}/api/integrations/lyra/callback`;
+  const redirectUri = getOAuthRedirectUri(req, "lyra");
 
   // Exchange authorization code for access token
   const result = await fetch(`${LYRA_API_URL}/api/oauth/token`, {
@@ -75,6 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await createOAuthAppCredential({ appId: "lyra", type: "lyra_video" }, responseBody, req);
 
   res.redirect(
-    getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "conferencing", slug: "lyra" })
+    getSafeRedirectUrl(state?.returnTo, safeRedirectOptions) ??
+      getInstalledAppPath({ variant: "conferencing", slug: "lyra" })
   );
 }

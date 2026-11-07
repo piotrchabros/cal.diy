@@ -297,7 +297,8 @@ description: "Task list for Organizations (spec 005)"
   - Split for the 10-file PR limit: 18.1a (`basecamp3`, `closecom`, `feishucalendar`, `larkcalendar`) and 18.1b (`hubspot`, `intercom`, `pipedrive-crm`, `salesforce`)
 - [X] T059 [P] [US3] PR 18.2: `webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`, `huddle01video`, `tandemvideo`, `nextcloudtalk`, `vital`, `jelly`
   - Split for the 10-file PR limit: 18.2a (`webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`) and 18.2b (`huddle01video`, `tandemvideo`, `nextcloudtalk`, `jelly`). `vital` moved to T060
-- [ ] T060 [P] [US3] PR 18.3: payment apps `stripepayment`, `paypal`, `hitpay`, `lyra`, plus `packages/app-store/_utils/paid-apps.ts`
+- [X] T060 [P] [US3] PR 18.3: payment apps `stripepayment`, `paypal`, `hitpay`, `lyra`, plus `packages/app-store/_utils/paid-apps.ts`
+  - Switched `stripepayment` (add, callback, setup page), `lyra` and `vital` (moved from T059). `paypal` and `hitpay` build no OAuth `redirect_uri`; their payment return and webhook URLs have no request in scope (T163). `_utils/paid-apps.ts` has no callers (T164)
 
 **Checkpoint**: S4 (links), S5, S8, S9 and S10 pass on scratch.
 
@@ -379,6 +380,12 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T150 [US2] With the flag on, make the shared tRPC procedures `createEventPbacProcedure` and `eventOwnerProcedure` (`packages/trpc/server/routers/viewer/eventTypes/util.ts`) and the notetaker `assertActorIsMember` (`packages/features/notetaker/services/NotetakerSharingSettingsService.ts`) refuse callers outside the team's organization with NOT_FOUND instead of FORBIDDEN (FR-008). Add tests
 - [ ] T151 Close the cross-team hole in webhook create without the flag (with the flag on, T037 added an accepted-membership check that answers NOT_FOUND): `packages/trpc/server/routers/viewer/webhook/create.handler.ts` accepts any `input.teamId` (the membership check runs only for `includeMemberMeetings`). Require team admin/owner membership unconditionally, and confirm whether team webhooks currently fail at runtime from mixing the `teamId` scalar with a `user` connect. Add tests
 - [ ] T170 [P] [US3] Secondary-email verification links (`sendEmailVerification` with `secondaryEmailId` in `packages/features/auth/lib/verifyEmail.ts`, called from `packages/trpc/server/routers/loggedInViewer/addSecondaryEmail.handler.ts`) fall back to `WEBAPP_URL`, because `getBaseUrlForEmail` looks up the secondary address, which is not on a user record. Pass the owning user id (or base URL) from the caller. Add tests
+- [ ] T160 [P] [US3] OAuth token refresh still sends `WEBAPP_URL` as `redirect_uri` without a request in scope: `packages/app-store/hubspot/lib/CrmService.ts`, `packages/app-store/salesforce/lib/CrmService.ts`, `packages/app-store/basecamp3/lib/helpers.ts`. Verify each provider ignores `redirect_uri` on refresh grants; if one checks it, store the redirect URI used at connect time on the credential and reuse it
+- [ ] T161 [P] [US3] Client `returnTo` props built from `WEBAPP_URL` in `packages/app-store/{closecom,hubspot,pipedrive-crm,salesforce,zoho-bigin,zohocrm,stripepayment,paypal,hitpay}/components/EventTypeAppCardInterface.tsx` send org-domain users back to the default domain after installing; use `window.location.origin` (or `OrgBaseUrlContext`). Add tests
+- [ ] T162 [P] [US3] Stripe billing-portal return URL defaults to `${WEBAPP_URL}/settings/billing` in `packages/app-store/stripepayment/api/portal.ts` and `packages/app-store/stripepayment/lib/services/base/BillingPortalService.ts`; pass the request and use `getOAuthAppOrigin` / `getOAuthSafeRedirectOptions`. Add tests
+- [ ] T163 [US3] Booker-facing payment return URLs use `WEBAPP_URL` in `packages/app-store/paypal/lib/PaymentService.ts` and `packages/app-store/hitpay/lib/PaymentService.ts`; make them follow the booking's organization base URL (webhook URLs stay on `WEBAPP_URL`). Add tests
+- [ ] T164 [P] Delete dead `packages/app-store/_utils/paid-apps.ts` (no callers; owner approval for deletions)
+- [ ] T165 [P] [US3] `packages/app-store/{feishucalendar,larkcalendar}/api/callback.ts` catch blocks redirect to `state.returnTo` unvalidated; route it through `getSafeRedirectUrl` with `getOAuthSafeRedirectOptions(req)` (relative fallback kept). Add tests
 
 ---
 

@@ -1,11 +1,10 @@
+import process from "node:process";
+import prisma from "@calcom/prisma";
 import type { NextApiRequest, NextApiResponse } from "next";
 import stringify from "qs-stringify";
 import type Stripe from "stripe";
 import { z } from "zod";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import prisma from "@calcom/prisma";
-
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getStripeAppKeys } from "../lib/getStripeAppKeys";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -23,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    const redirect_uri = encodeURI(`${WEBAPP_URL}/api/integrations/stripepayment/callback`);
+    const redirect_uri = encodeURI(getOAuthRedirectUri(req, "stripepayment"));
     const stripeConnectParams: Stripe.OAuthAuthorizeUrlParams = {
       client_id,
       scope: "read_write",

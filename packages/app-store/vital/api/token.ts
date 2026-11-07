@@ -1,9 +1,7 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import prisma from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
-
+import type { NextApiRequest, NextApiResponse } from "next";
+import { getOAuthRedirectUri } from "../../_utils/oauth/getOAuthRedirectUri";
 import { initVitalClient, vitalEnv } from "../lib/client";
 
 /**
@@ -45,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const token = await vitalClient.Link.create(
       userVital?.user_id,
       undefined,
-      `${WEBAPP_URL}/api/integrations/vital/callback`
+      getOAuthRedirectUri(req, "vital")
     );
     return res.status(200).json({
       token: token.link_token,
