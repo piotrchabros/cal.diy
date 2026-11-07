@@ -1,17 +1,31 @@
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
-import type { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
+import {
+  type OrganizationMembershipService,
+  USERNAME_TAKEN_IN_ORGANIZATION,
+} from "@calcom/features/organizations/services/OrganizationMembershipService";
 import { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
+import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import slugify from "@calcom/lib/slugify";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { defaultSendTeamInviteEmail, type SendTeamInviteEmail, TeamInviteService } from "./TeamInviteService";
 
 type TeamWithParent = { id: number; parentId: number | null };
+
+type TeamInviteDto = {
+  teamId: number;
+  teamName: string;
+  email: string;
+  isOrganization: boolean;
+  needsPassword: boolean;
+  needsUsername: boolean;
+};
 
 export const TEAM_MEMBER_ROLES = [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER] as const;
 export type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
@@ -241,7 +255,16 @@ export class TeamMembersService {
     await this.userRepository.setOrganizationId({ id: invitee.id, organizationId });
   }
 
-  async getInviteByToken({ token }: { token: string }) {
+  private getInviteOrganizationId(team: TeamWithParent & { isOrganization: boolean }) {
+    if (!isOrganizationsEnabled()) {
+      return null;
+    }
+    return team.isOrganization ? team.id : team.parentId;
+  }
+
+  private async resolveInvite(
+    token: string
+  ): Promise<{ invite: TeamInviteDto; organizationId: number | null; inviteeId: number } | null> {
     const invite = await this.teamRepository.findTeamInviteByToken({ token });
     if (!invite || invite.teamId === null || invite.expires <= new Date()) {
       return null;
@@ -253,42 +276,86 @@ export class TeamMembersService {
     if (!team || !invitee) {
       return null;
     }
+    const organizationId = this.getInviteOrganizationId(team);
     return {
-      teamId: team.id,
-      teamName: team.name,
-      email: invitee.email,
-      isOrganization: team.isOrganization,
-      // Passwordless accounts include admin-created GOOGLE ones, which cannot sign in while
-      // Google login is disabled; the emailed token proves mailbox ownership like a reset link.
-      needsPassword: !invitee.hasPassword,
+      invite: {
+        teamId: team.id,
+        teamName: team.name,
+        email: invitee.email,
+        isOrganization: team.isOrganization,
+        // Passwordless accounts include admin-created GOOGLE ones, which cannot sign in while
+        // Google login is disabled; the emailed token proves mailbox ownership like a reset link.
+        needsPassword: !invitee.hasPassword,
+        // Organization invitees are created without a username, but the organization profile
+        // needs one; the invitee picks it here and it only has to be free in this organization.
+        needsUsername: organizationId !== null && invitee.username === null,
+      },
+      organizationId,
+      inviteeId: invitee.id,
     };
   }
 
-  async completeInviteSignup({ token, password }: { token: string; password: string }) {
-    const invite = await this.getInviteByToken({ token });
-    if (!invite) {
+  async getInviteByToken({ token }: { token: string }): Promise<TeamInviteDto | null> {
+    return (await this.resolveInvite(token))?.invite ?? null;
+  }
+
+  async completeInviteSignup({
+    token,
+    password,
+    username,
+  }: {
+    token: string;
+    password?: string;
+    username?: string;
+  }) {
+    const resolved = await this.resolveInvite(token);
+    if (!resolved) {
       throw ErrorWithCode.Factory.NotFound("This invitation link is invalid or has expired");
     }
-    if (!invite.needsPassword) {
+    const { invite, organizationId, inviteeId } = resolved;
+    if (!invite.needsPassword && !invite.needsUsername) {
       throw ErrorWithCode.Factory.BadRequest(`An account for ${invite.email} already exists, please log in`);
     }
-    if (!validPassword(password)) {
+    if (invite.needsPassword && (!password || !validPassword(password))) {
       throw ErrorWithCode.Factory.BadRequest("Password does not meet the requirements");
     }
-    const invitee = await this.userRepository.findInviteeByEmail({ email: invite.email });
-    if (!invitee) {
-      throw ErrorWithCode.Factory.NotFound("This invitation link is invalid or has expired");
+    if (invite.needsUsername && organizationId !== null) {
+      const orgUsername = slugify(username ?? "");
+      if (!orgUsername) {
+        throw ErrorWithCode.Factory.BadRequest("A username is required to join this organization");
+      }
+      // Joining the organization goes first so a taken username fails before the password is
+      // set; the upsert keeps a pending membership's role and accepts it.
+      try {
+        await this.getOrganizationMembershipService().addMember({
+          organizationId,
+          userId: inviteeId,
+          role: "MEMBER",
+          username: orgUsername,
+        });
+      } catch (error) {
+        if (
+          error instanceof ErrorWithCode &&
+          error.code === ErrorCode.Conflict &&
+          error.message === USERNAME_TAKEN_IN_ORGANIZATION
+        ) {
+          throw ErrorWithCode.Factory.Conflict("username_taken_in_organization");
+        }
+        throw error;
+      }
     }
-    await this.userRepository.switchToPasswordLogin({
-      id: invitee.id,
-      hashedPassword: await hashPassword(password),
-    });
+    if (invite.needsPassword && password) {
+      await this.userRepository.switchToPasswordLogin({
+        id: inviteeId,
+        hashedPassword: await hashPassword(password),
+      });
+    }
     const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({
       teamId: invite.teamId,
-      userId: invitee.id,
+      userId: inviteeId,
     });
     if (membership && !membership.accepted) {
-      await this.membershipRepository.acceptTeamMembership({ teamId: invite.teamId, userId: invitee.id });
+      await this.membershipRepository.acceptTeamMembership({ teamId: invite.teamId, userId: inviteeId });
     }
     await this.teamRepository.deleteTeamInviteTokens({ teamId: invite.teamId, email: invite.email });
     return { email: invite.email, teamId: invite.teamId };

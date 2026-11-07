@@ -851,6 +851,7 @@ describe("TeamMembersService", () => {
         email: "ada@example.com",
         isOrganization: false,
         needsPassword: true,
+        needsUsername: false,
       });
     });
 
@@ -1105,7 +1106,9 @@ describe("TeamMembersService", () => {
       await expect(calls[method]()).rejects.toMatchObject({ code: "not_found_error" });
     });
 
-    it.each(guardedMethods)("hides the team from an admin of another organization calling %s", async (method) => {
+    it.each(
+      guardedMethods
+    )("hides the team from an admin of another organization calling %s", async (method) => {
       vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
       const { calls } = setup({ orgRole: "ADMIN", roleOrganizationId: 4 });
 
@@ -1166,6 +1169,240 @@ describe("TeamMembersService", () => {
         teamId: 3,
         isOrganization: true,
         needsPassword: false,
+        needsUsername: false,
+      });
+    });
+  });
+
+  describe("organization invite username", () => {
+    const orgRow = { ...team, id: 3, name: "Acme", isOrganization: true, parentId: null };
+    const orgTeam = { ...team, parentId: 3 };
+    const orgInvitee = {
+      id: 11,
+      email: "ada@example.com",
+      name: null,
+      locale: null,
+      identityProvider: "CAL",
+      organizationId: 3,
+      username: null as string | null,
+      hasPassword: true,
+    };
+
+    const setup = ({
+      teamResult = orgTeam,
+      invitee = orgInvitee,
+      membership = { id: 5, role: MembershipRole.MEMBER, accepted: false } as {
+        id: number;
+        role: MembershipRole;
+        accepted: boolean;
+      } | null,
+    }: {
+      teamResult?: typeof team;
+      invitee?: typeof orgInvitee;
+      membership?: { id: number; role: MembershipRole; accepted: boolean } | null;
+    } = {}) => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn().mockResolvedValue(membership),
+      });
+      const teamRepo = makeTeamRepo({
+        findTeamInviteByToken: vi.fn().mockResolvedValue({
+          identifier: "ada@example.com",
+          teamId: teamResult.id,
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+        findBasicById: vi.fn().mockResolvedValue(teamResult),
+      });
+      const userRepo = makeUserRepo({ findInviteeByEmail: vi.fn().mockResolvedValue(invitee) });
+      const orgMembership = {
+        addMember: vi.fn().mockResolvedValue(undefined),
+        getRole: vi.fn().mockResolvedValue(null),
+      };
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        vi.fn(),
+        () => orgMembership
+      );
+      return { service, membershipRepo, teamRepo, userRepo, orgMembership };
+    };
+
+    describe("getInviteByToken", () => {
+      it("asks for a username on an organization invite", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = setup({ teamResult: orgRow });
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result?.needsUsername).toBe(true);
+      });
+
+      it("asks for a username on a team-in-organization invite", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = setup();
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result?.needsUsername).toBe(true);
+      });
+
+      it("does not ask for a username when the flag is off", async () => {
+        const { service } = setup({ teamResult: orgRow });
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result?.needsUsername).toBe(false);
+      });
+
+      it("does not ask for a username for a team without a parent organization", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = setup({ teamResult: team });
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result?.needsUsername).toBe(false);
+      });
+
+      it("does not ask for a username when the invitee already has one", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = setup({ invitee: { ...orgInvitee, username: "ada" } });
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result?.needsUsername).toBe(false);
+      });
+
+      it("does not expose the organization id", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = setup();
+
+        const result = await service.getInviteByToken({ token: "t" });
+        expect(result).not.toHaveProperty("organizationId");
+      });
+    });
+
+    describe("completeInviteSignup", () => {
+      it("joins an organization with only a username when the invitee has a password", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, membershipRepo, teamRepo, userRepo, orgMembership } = setup({ teamResult: orgRow });
+
+        const result = await service.completeInviteSignup({ token: "t", username: "Ada Lovelace" });
+
+        expect(result).toEqual({ email: "ada@example.com", teamId: 3 });
+        expect(orgMembership.addMember).toHaveBeenCalledWith({
+          organizationId: 3,
+          userId: 11,
+          role: "MEMBER",
+          username: "ada-lovelace",
+        });
+        expect(userRepo.switchToPasswordLogin).not.toHaveBeenCalled();
+        expect(membershipRepo.acceptTeamMembership).toHaveBeenCalledWith({ teamId: 3, userId: 11 });
+        expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({ teamId: 3, email: "ada@example.com" });
+      });
+
+      it("adds a team invitee to the parent organization", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, membershipRepo, orgMembership } = setup();
+
+        await service.completeInviteSignup({ token: "t", username: "ada" });
+
+        expect(orgMembership.addMember).toHaveBeenCalledWith(
+          expect.objectContaining({ organizationId: 3, userId: 11, username: "ada" })
+        );
+        expect(membershipRepo.acceptTeamMembership).toHaveBeenCalledWith({ teamId: 7, userId: 11 });
+      });
+
+      it("skips accepting a team membership that is already accepted", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, membershipRepo, teamRepo } = setup({
+          membership: { id: 5, role: MembershipRole.MEMBER, accepted: true },
+        });
+
+        await service.completeInviteSignup({ token: "t", username: "ada" });
+
+        expect(membershipRepo.acceptTeamMembership).not.toHaveBeenCalled();
+        expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledTimes(1);
+      });
+
+      it("sets the password and joins the organization", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, userRepo, orgMembership } = setup({
+          invitee: { ...orgInvitee, hasPassword: false },
+        });
+
+        await service.completeInviteSignup({ token: "t", password: "Secret123", username: "ada" });
+
+        expect(orgMembership.addMember).toHaveBeenCalledTimes(1);
+        expect(userRepo.switchToPasswordLogin).toHaveBeenCalledWith({
+          id: 11,
+          hashedPassword: "hashed:Secret123",
+        });
+      });
+
+      it.each([undefined, "", "!!!"])("rejects a missing or unusable username (%s)", async (username) => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, orgMembership, teamRepo } = setup();
+
+        await expect(service.completeInviteSignup({ token: "t", username })).rejects.toMatchObject({
+          code: "bad_request_error",
+          message: "A username is required to join this organization",
+        });
+        expect(orgMembership.addMember).not.toHaveBeenCalled();
+        expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+      });
+
+      it("rejects a missing password when one is needed", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, orgMembership } = setup({ invitee: { ...orgInvitee, hasPassword: false } });
+
+        await expect(service.completeInviteSignup({ token: "t", username: "ada" })).rejects.toMatchObject({
+          code: "bad_request_error",
+          message: "Password does not meet the requirements",
+        });
+        expect(orgMembership.addMember).not.toHaveBeenCalled();
+      });
+
+      it("rejects when neither a password nor a username is needed", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, orgMembership } = setup({ invitee: { ...orgInvitee, username: "ada" } });
+
+        await expect(service.completeInviteSignup({ token: "t", username: "ada" })).rejects.toMatchObject({
+          code: "bad_request_error",
+        });
+        expect(orgMembership.addMember).not.toHaveBeenCalled();
+      });
+
+      it("maps a taken username to a Conflict without setting the password or consuming the token", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, userRepo, teamRepo, orgMembership } = setup({
+          invitee: { ...orgInvitee, hasPassword: false },
+        });
+        orgMembership.addMember.mockRejectedValueOnce(
+          ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+        );
+
+        await expect(
+          service.completeInviteSignup({ token: "t", password: "Secret123", username: "ada" })
+        ).rejects.toMatchObject({ code: "conflict_error", message: "username_taken_in_organization" });
+        expect(userRepo.switchToPasswordLogin).not.toHaveBeenCalled();
+        expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+      });
+
+      it("propagates other organization membership failures", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, teamRepo, orgMembership } = setup();
+        const failure = ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization");
+        orgMembership.addMember.mockRejectedValueOnce(failure);
+
+        await expect(service.completeInviteSignup({ token: "t", username: "ada" })).rejects.toBe(failure);
+        expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalled();
+      });
+
+      it("keeps the password-only flow and never joins the organization when the flag is off", async () => {
+        const { service, userRepo, orgMembership, teamRepo } = setup({
+          invitee: { ...orgInvitee, hasPassword: false },
+        });
+
+        await service.completeInviteSignup({ token: "t", password: "Secret123", username: "ada" });
+
+        expect(orgMembership.addMember).not.toHaveBeenCalled();
+        expect(userRepo.switchToPasswordLogin).toHaveBeenCalledTimes(1);
+        expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledTimes(1);
       });
     });
   });

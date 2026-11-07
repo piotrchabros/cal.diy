@@ -120,6 +120,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     const user = this.users.find((existing) => existing.id === input.userId);
     if (!user) throw new Error(`InMemoryOrganizationMembershipRepository: user ${input.userId} not seeded`);
     user.organizationId = input.organizationId;
+    user.username = input.username;
 
     const profile = this.findProfile(input.organizationId, input.userId);
     if (profile) {

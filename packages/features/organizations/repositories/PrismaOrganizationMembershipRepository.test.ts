@@ -135,7 +135,7 @@ describe("PrismaOrganizationMembershipRepository", () => {
 
       expect(user.update).toHaveBeenCalledWith({
         where: { id: 7 },
-        data: { organizationId: 1 },
+        data: { organizationId: 1, username: "alice" },
         select: { id: true },
       });
 

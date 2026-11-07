@@ -5,7 +5,10 @@ import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrganizationMembershipRepository";
 import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRepository";
-import { OrganizationMembershipService } from "./OrganizationMembershipService";
+import {
+  OrganizationMembershipService,
+  USERNAME_TAKEN_IN_ORGANIZATION,
+} from "./OrganizationMembershipService";
 
 const { mockLogInfo } = vi.hoisted(() => ({ mockLogInfo: vi.fn() }));
 
@@ -128,6 +131,39 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.Conflict,
         "Username is already taken in this organization"
       );
+      expect(disableByFrom).not.toHaveBeenCalled();
+    });
+
+    it("uses the given username for a user without one", async () => {
+      membershipRepository.seedUser({ id: 1, username: null });
+      const addMember = vi.spyOn(membershipRepository, "addMember");
+
+      await service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER", username: "alice" });
+
+      expect(addMember).toHaveBeenCalledWith({
+        organizationId: ORG_ID,
+        userId: 1,
+        username: "alice",
+        role: "MEMBER",
+      });
+      expect(disableByFrom).toHaveBeenCalledWith({ fromOrgId: ORG_ID, from: "alice", types: ["User"] });
+    });
+
+    it("checks the given username, not the stored one, for conflicts", async () => {
+      membershipRepository.seedUser({ id: 1, username: "alice" });
+      membershipRepository.seedProfile({ userId: 2, organizationId: ORG_ID, username: "taken" });
+      const isUsernameTaken = vi.spyOn(membershipRepository, "isUsernameTaken");
+
+      await expectRejection(
+        service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER", username: "taken" }),
+        ErrorCode.Conflict,
+        USERNAME_TAKEN_IN_ORGANIZATION
+      );
+      expect(isUsernameTaken).toHaveBeenCalledWith({
+        organizationId: ORG_ID,
+        username: "taken",
+        excludeUserId: 1,
+      });
       expect(disableByFrom).not.toHaveBeenCalled();
     });
 

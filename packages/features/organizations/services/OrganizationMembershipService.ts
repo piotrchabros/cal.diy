@@ -22,6 +22,8 @@ const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] })
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 100;
 
+export const USERNAME_TAKEN_IN_ORGANIZATION = "Username is already taken in this organization";
+
 export interface IOrganizationMembershipServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
   organizationRepository: IOrganizationRepository;
@@ -41,6 +43,7 @@ export class OrganizationMembershipService {
     organizationId: number;
     userId: number;
     role: OrganizationRoleDto;
+    username?: string;
   }): Promise<{ userId: number; organizationId: number; role: OrganizationRoleDto }> {
     const { organizationId, userId, role } = params;
     const organization = await this.deps.organizationRepository.findById(organizationId);
@@ -52,27 +55,28 @@ export class OrganizationMembershipService {
       throw ErrorWithCode.Factory.Conflict("User belongs to another organization");
     }
     // Org profiles are keyed by username, so a user without one cannot get a profile in the org
-    if (user.username === null) {
+    const username = params.username ?? user.username;
+    if (username === null) {
       throw ErrorWithCode.Factory.PreconditionFailed("User needs a username before joining an organization");
     }
 
     const usernameTaken = await this.deps.organizationMembershipRepository.isUsernameTaken({
       organizationId,
-      username: user.username,
+      username,
       excludeUserId: userId,
     });
-    if (usernameTaken) throw ErrorWithCode.Factory.Conflict("Username is already taken in this organization");
+    if (usernameTaken) throw ErrorWithCode.Factory.Conflict(USERNAME_TAKEN_IN_ORGANIZATION);
 
     const member = await this.deps.organizationMembershipRepository.addMember({
       organizationId,
       userId,
-      username: user.username,
+      username,
       role,
     });
     // A username freed by a move may still redirect to the moved user's new org; the new owner wins
     await this.deps.tempOrgRedirectRepository.disableByFrom({
       fromOrgId: organizationId,
-      from: user.username,
+      from: username,
       types: ["User"],
     });
     return member;
