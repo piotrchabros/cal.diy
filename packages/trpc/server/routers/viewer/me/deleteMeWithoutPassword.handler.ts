@@ -1,7 +1,8 @@
-import { deleteStripeCustomer } from "@calcom/app-store/stripepayment/lib/customer";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
+import { deleteUser } from "@calcom/features/users/lib/deleteUser";
 import { prisma } from "@calcom/prisma";
 import { IdentityProvider } from "@calcom/prisma/enums";
+import { convertErrorWithCodeToTRPCError } from "@calcom/trpc/server/lib/toTRPCError";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 type DeleteMeWithoutPasswordOptions = {
@@ -28,14 +29,9 @@ export const deleteMeWithoutPasswordHandler = async ({ ctx }: DeleteMeWithoutPas
     throw new Error(ErrorCode.SocialIdentityProviderRequired);
   }
 
-  // Remove me from Stripe
-  await deleteStripeCustomer(user).catch(console.warn);
-
-  // Remove my account
-  await prisma.user.delete({
-    where: {
-      id: ctx.user.id,
-    },
+  // tRPC v11 hands resolver errors back without running errorConversionMiddleware
+  await deleteUser(user).catch((error: unknown) => {
+    throw convertErrorWithCodeToTRPCError(error);
   });
 
   return;

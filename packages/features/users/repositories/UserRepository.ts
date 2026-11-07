@@ -1481,6 +1481,10 @@ export class UserRepository {
     });
   }
 
+  async deleteById({ id }: { id: number }): Promise<void> {
+    await this.prismaClient.user.delete({ where: { id } });
+  }
+
   async deleteMany({ userIds }: { userIds: number[] }) {
     await this.prismaClient.user.deleteMany({
       where: {

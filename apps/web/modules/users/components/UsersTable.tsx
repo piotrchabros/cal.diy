@@ -72,7 +72,11 @@ export function UsersTable({ organizationsEnabled }: { organizationsEnabled: boo
     },
     onError: (err) => {
       console.error(err.message);
-      showToast(t("error_deleting_user"), "error");
+      // A refused last-owner deletion carries a translatable reason the admin needs to act on
+      showToast(
+        err.data?.code === "PRECONDITION_FAILED" ? t(err.message) : t("error_deleting_user"),
+        "error"
+      );
     },
     onSettled: () => {
       setUserToDelete(null);

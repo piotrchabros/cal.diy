@@ -1,5 +1,6 @@
 "use client";
 
+import process from "node:process";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
 import { Dialog } from "@calcom/features/components/controlled-dialog";
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
@@ -164,7 +165,7 @@ const ProfileView = ({ user }: Props) => {
 
   const onDeleteMeErrorMutation = (error: TRPCClientErrorLike<AppRouter>) => {
     setHasDeleteErrors(true);
-    setDeleteErrorMessage(errorMessages[error.message]);
+    setDeleteErrorMessage(errorMessages[error.message] ?? t(error.message));
   };
   const deleteMeMutation = trpc.viewer.me.deleteMe.useMutation({
     onSuccess: onDeleteMeSuccessMutation,
