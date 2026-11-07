@@ -9,16 +9,8 @@ import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import authedProcedure from "../../../procedures/authedProcedure";
-import { assertTeamEventVisible, teamVisibilitySelect } from "./teamEventVisibility";
+import { assertTeamEventVisible, hasTeamEventRole, teamVisibilitySelect } from "./teamEventVisibility";
 import type { TUpdateInputSchema } from "./types";
-
-type PermissionString = string;
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
-}
 
 type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
 
@@ -103,11 +95,12 @@ export const eventOwnerProcedure = authedProcedure
 /**
  * Creates an event admin procedure with configurable permissions
  * @param permission - The specific permission required (e.g., "eventType.manage", "eventType.update")
- * @param fallbackRoles - Roles to check when PBAC is disabled (defaults to ["ADMIN", "OWNER"])
+ * @param fallbackRoles - Team roles allowed to access team events (defaults to ["ADMIN", "OWNER"]).
+ *   Accepted admins/owners of the team's parent organization are always allowed.
  * @returns A procedure that checks the specified permission
  */
 export const createEventPbacProcedure = (
-  permission: PermissionString,
+  permission: string,
   fallbackRoles: MembershipRole[] = ["ADMIN", "OWNER"]
 ) => {
   return authedProcedure
@@ -143,6 +136,7 @@ export const createEventPbacProcedure = (
                 select: {
                   userId: true,
                   accepted: true,
+                  role: true,
                 },
               },
               ...teamVisibilitySelect(ctx.user.id),
@@ -165,17 +159,16 @@ export const createEventPbacProcedure = (
           });
         }
       } else {
-        // Team event - check PBAC/fallback permissions
-        if (event.team) assertTeamEventVisible(event.team, ctx.user.id);
-        const permissionCheckService = new PermissionCheckService();
-        const hasPermission = await permissionCheckService.checkPermission({
-          userId: ctx.user.id,
-          teamId: event.teamId,
-          permission,
-          fallbackRoles,
-        });
+        if (!event.team) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: `Permission required: ${permission}`,
+          });
+        }
 
-        if (!hasPermission) {
+        assertTeamEventVisible(event.team, ctx.user.id);
+
+        if (!hasTeamEventRole(event.team, ctx.user.id, fallbackRoles)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: `Permission required: ${permission}`,

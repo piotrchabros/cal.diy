@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { TRPCError } from "@trpc/server";
-import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { authedProcedure } from "../../../procedures/authedProcedure";
 import { createEventPbacProcedure, ensureEmailOrPhoneNumberIsPresent, eventOwnerProcedure } from "../util";
 
@@ -171,9 +171,9 @@ describe("createEventPbacProcedure", () => {
       users: [],
       team: {
         members: [
-          { userId: 1, accepted: true },
-          { userId: 2, accepted: true },
-          { userId: 3, accepted: true },
+          { userId: 1, accepted: true, role: MembershipRole.ADMIN },
+          { userId: 2, accepted: true, role: MembershipRole.MEMBER },
+          { userId: 3, accepted: true, role: MembershipRole.MEMBER },
         ],
         parent: null,
       },
@@ -205,7 +205,7 @@ describe("createEventPbacProcedure", () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
         ...teamEvent,
         team: {
-          members: [{ userId: 2, accepted: true }],
+          members: [{ userId: 2, accepted: true, role: MembershipRole.MEMBER }],
           parent: { members: [{ userId: 1 }] },
         },
       });
@@ -213,7 +213,6 @@ describe("createEventPbacProcedure", () => {
       const procedure = createEventPbacProcedure("eventType.update");
       const middleware = getMiddleware(procedure);
 
-      // PermissionCheckService stub always returns true, so org admin access is always granted
       await expect(
         middleware({
           ctx: mockCtx,
@@ -236,9 +235,9 @@ describe("createEventPbacProcedure", () => {
       users: [],
       team: {
         members: [
-          { userId: 1, accepted: true },
-          { userId: 2, accepted: true },
-          { userId: 3, accepted: true },
+          { userId: 1, accepted: true, role: MembershipRole.ADMIN },
+          { userId: 2, accepted: true, role: MembershipRole.MEMBER },
+          { userId: 3, accepted: true, role: MembershipRole.MEMBER },
         ],
         parent: null,
       },
@@ -370,7 +369,7 @@ describe("createEventPbacProcedure", () => {
       teamId: 10,
       users: [],
       team: {
-        members: [{ userId: 2, accepted: true }],
+        members: [{ userId: 2, accepted: true, role: MembershipRole.MEMBER }],
         parent: null,
       },
     };
@@ -403,25 +402,38 @@ describe("createEventPbacProcedure", () => {
     it("should throw NOT_FOUND for a pending member of the team", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
         ...teamEvent,
-        team: { members: [{ userId: 1, accepted: false }], parent: null },
+        team: { members: [{ userId: 1, accepted: false, role: MembershipRole.ADMIN }], parent: null },
       });
 
       await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
     });
 
-    it("should allow an accepted member of the team", async () => {
+    it("should allow an accepted admin of the team", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
         ...teamEvent,
-        team: { members: [{ userId: 1, accepted: true }], parent: null },
+        team: { members: [{ userId: 1, accepted: true, role: MembershipRole.ADMIN }], parent: null },
       });
 
       await expect(runMiddleware()).resolves.not.toThrow();
     });
 
+    it("should throw FORBIDDEN for an accepted MEMBER of the team", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: { members: [{ userId: 1, accepted: true, role: MembershipRole.MEMBER }], parent: null },
+      });
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
     it("should allow an admin of the parent organization without team membership", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
         ...teamEvent,
-        team: { members: [{ userId: 2, accepted: true }], parent: { members: [{ userId: 1 }] } },
+        team: {
+          members: [{ userId: 2, accepted: true, role: MembershipRole.MEMBER }],
+          parent: { members: [{ userId: 1 }] },
+        },
       });
 
       await expect(runMiddleware()).resolves.not.toThrow();
@@ -498,7 +510,7 @@ describe("createEventPbacProcedure", () => {
       teamId: 10,
       users: [],
       team: {
-        members: [{ userId: 1, accepted: true }],
+        members: [{ userId: 1, accepted: true, role: MembershipRole.ADMIN }],
         parent: null,
       },
     };
@@ -509,7 +521,6 @@ describe("createEventPbacProcedure", () => {
       const procedure = createEventPbacProcedure("eventType.delete");
       const middleware = getMiddleware(procedure);
 
-      // PermissionCheckService stub always returns true
       await expect(
         middleware({
           ctx: mockCtx,
@@ -523,13 +534,35 @@ describe("createEventPbacProcedure", () => {
       ).resolves.not.toThrow();
     });
 
-    it("should allow access with custom fallback roles", async () => {
+    it("should throw FORBIDDEN for an ADMIN when custom fallback roles only allow OWNER", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(teamEvent);
 
       const procedure = createEventPbacProcedure("eventType.create", [MembershipRole.OWNER]);
       const middleware = getMiddleware(procedure);
 
-      // PermissionCheckService stub always returns true
+      await expect(
+        middleware({
+          ctx: mockCtx,
+          input: { id: 2 },
+          next: mockNext,
+          path: "test",
+          type: "mutation",
+          getRawInput: async () => ({}),
+          meta: undefined,
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN", message: "Permission required: eventType.create" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow an OWNER when custom fallback roles only allow OWNER", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: { members: [{ userId: 1, accepted: true, role: MembershipRole.OWNER }], parent: null },
+      });
+
+      const procedure = createEventPbacProcedure("eventType.create", [MembershipRole.OWNER]);
+      const middleware = getMiddleware(procedure);
+
       await expect(
         middleware({
           ctx: mockCtx,
@@ -541,6 +574,141 @@ describe("createEventPbacProcedure", () => {
           meta: undefined,
         })
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe.each([
+    { flag: "", refusalCode: "FORBIDDEN" },
+    { flag: "1", refusalCode: "NOT_FOUND" },
+  ])("role-based authorization (ORGANIZATIONS_ENABLED=$flag)", ({ flag, refusalCode }) => {
+    const teamEventWith = (
+      members: { userId: number; accepted: boolean; role: MembershipRole }[],
+      parent: { members: { userId: number }[] } | null = null
+    ) => ({ id: 2, userId: null, teamId: 10, users: [], team: { members, parent } });
+
+    const runMiddleware = (procedure: ReturnType<typeof createEventPbacProcedure>) =>
+      getMiddleware(procedure)({
+        ctx: mockCtx,
+        input: { id: 2 },
+        next: mockNext,
+        path: "test",
+        type: "mutation",
+        getRawInput: async () => ({}),
+        meta: undefined,
+      });
+
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", flag);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should allow a MEMBER when MEMBER is among the allowed roles", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 1, accepted: true, role: MembershipRole.MEMBER }]));
+
+      await expect(
+        runMiddleware(
+          createEventPbacProcedure("eventType.read", [
+            MembershipRole.OWNER,
+            MembershipRole.ADMIN,
+            MembershipRole.MEMBER,
+          ])
+        )
+      ).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should throw FORBIDDEN for a MEMBER with the default roles", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 1, accepted: true, role: MembershipRole.MEMBER }]));
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: "Permission required: eventType.update",
+      });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow an ADMIN with the default roles", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 1, accepted: true, role: MembershipRole.ADMIN }]));
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should allow an OWNER with the default roles", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 1, accepted: true, role: MembershipRole.OWNER }]));
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it(`should throw ${refusalCode} for a pending ADMIN`, async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 1, accepted: false, role: MembershipRole.ADMIN }]));
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).rejects.toMatchObject({
+        code: refusalCode,
+      });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it(`should throw ${refusalCode} for a non-member of the team`, async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWith([{ userId: 2, accepted: true, role: MembershipRole.MEMBER }]));
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).rejects.toMatchObject({
+        code: refusalCode,
+      });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it(`should throw ${refusalCode} for an admin of another team`, async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWith([
+          { userId: 2, accepted: true, role: MembershipRole.OWNER },
+          { userId: 3, accepted: true, role: MembershipRole.ADMIN },
+        ])
+      );
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).rejects.toMatchObject({
+        code: refusalCode,
+      });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow an admin of the parent organization who is not a team member", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWith([{ userId: 2, accepted: true, role: MembershipRole.MEMBER }], {
+          members: [{ userId: 1 }],
+        })
+      );
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should throw FORBIDDEN when teamId is set but the team is missing", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue({ id: 2, userId: null, teamId: 10, users: [], team: null });
+
+      await expect(runMiddleware(createEventPbacProcedure("eventType.update"))).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: "Permission required: eventType.update",
+      });
+      expect(mockNext).not.toHaveBeenCalled();
     });
   });
 
