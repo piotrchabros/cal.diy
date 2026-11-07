@@ -1,8 +1,7 @@
 import { checkIfUserHasFeatureController } from "@calcom/features/flags/operations/check-if-user-has-feature.controller";
-import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
+import { EMAIL_FROM_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import { getReplyToHeader } from "@calcom/lib/getReplyToHeader";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
-
 import renderEmail from "../src/renderEmail";
 import OrganizerScheduledEmail from "./organizer-scheduled-email";
 
@@ -39,9 +38,9 @@ export default class OrganizerRequestEmail extends OrganizerScheduledEmail {
       `${this.calEvent.organizer.language.translate("someone_requested_an_event")}`,
       "",
       `${this.calEvent.organizer.language.translate("confirm_or_reject_request")}
-${process.env.NEXT_PUBLIC_WEBAPP_URL} + ${
-        this.calEvent.recurringEvent?.count ? "/bookings/recurring" : "/bookings/upcoming"
-      }`
+${this.calEvent.bookerUrl ?? WEBAPP_URL}${
+  this.calEvent.recurringEvent?.count ? "/bookings/recurring" : "/bookings/upcoming"
+}`
     );
   }
 

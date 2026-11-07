@@ -1,7 +1,6 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { symmetricEncrypt } from "@calcom/lib/crypto";
-
-import { CallToAction, Separator, CallToActionTable } from "../components";
+import { CallToAction, CallToActionTable, Separator } from "../components";
 import { OrganizerScheduledEmail } from "./OrganizerScheduledEmail";
 
 export const OrganizerRequestEmail = (props: React.ComponentProps<typeof OrganizerScheduledEmail>) => {
@@ -14,8 +13,7 @@ export const OrganizerRequestEmail = (props: React.ComponentProps<typeof Organiz
     platformBookingUrl: props.calEvent.platformBookingUrl,
   };
   const token = symmetricEncrypt(JSON.stringify(seedData), process.env.CALENDSO_ENCRYPTION_KEY || "");
-  //TODO: We should switch to using org domain if available
-  const actionHref = `${WEBAPP_URL}/api/link/?token=${encodeURIComponent(token)}`;
+  const actionHref = `${props.calEvent.bookerUrl ?? WEBAPP_URL}/api/link/?token=${encodeURIComponent(token)}`;
   return (
     <OrganizerScheduledEmail
       title={
