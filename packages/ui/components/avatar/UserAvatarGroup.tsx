@@ -9,6 +9,7 @@ type UserAvatarProps = Omit<React.ComponentProps<typeof AvatarGroup>, "items"> &
   users: (Pick<User, "name" | "username" | "avatarUrl"> & {
     profile: Omit<UserProfile, "upId">;
   })[];
+  baseUrl?: string;
 };
 
 type AvatarItem = {
@@ -19,7 +20,7 @@ type AvatarItem = {
 };
 
 export function UserAvatarGroup(props: UserAvatarProps) {
-  const { users, ...rest } = props;
+  const { users, baseUrl = WEBAPP_URL, ...rest } = props;
 
   const [items, setItems] = useState<AvatarItem[]>(
     users.map((user) => ({
@@ -34,14 +35,14 @@ export function UserAvatarGroup(props: UserAvatarProps) {
     setItems(
       users.map((user) => {
         return {
-          href: `${WEBAPP_URL}/${user.profile?.username}?redirect=false`,
+          href: `${baseUrl}/${user.profile?.username}?redirect=false`,
           alt: user.name || "",
           title: user.name || "",
           image: getUserAvatarUrl(user),
         };
       })
     );
-  }, [users]);
+  }, [users, baseUrl]);
 
   return <AvatarGroup {...rest} items={items} />;
 }

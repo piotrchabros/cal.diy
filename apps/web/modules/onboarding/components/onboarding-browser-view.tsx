@@ -1,6 +1,6 @@
 "use client";
 
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Avatar } from "@calcom/ui/components/avatar";
 import { Button } from "@calcom/ui/components/button";
@@ -17,20 +17,14 @@ type OnboardingBrowserViewProps = {
   teamSlug?: string;
 };
 
-const getDisplayUrl = (
-  orgSlug: string | null | undefined,
+export function getDisplayUrl(
+  baseUrl: string,
   username: string | null | undefined,
   teamSlug: string | undefined
-): string => {
-  if (orgSlug) {
-    return teamSlug !== undefined
-      ? `${orgSlug}.${""}/team/${teamSlug || ""}`
-      : `${orgSlug}.${""}/${username || ""}`;
-  }
-
-  const webappUrl = WEBAPP_URL.replace(/^https?:\/\//, "");
-  return teamSlug !== undefined ? `${webappUrl}/team/${teamSlug || ""}` : `${webappUrl}/${username || ""}`;
-};
+): string {
+  const host = baseUrl.replace(/^https?:\/\//, "");
+  return teamSlug !== undefined ? `${host}/team/${teamSlug || ""}` : `${host}/${username || ""}`;
+}
 
 export const OnboardingBrowserView = ({
   avatar,
@@ -41,9 +35,9 @@ export const OnboardingBrowserView = ({
 }: OnboardingBrowserViewProps) => {
   const { t } = useLocale();
   const pathname = usePathname();
-  const orgBranding = null as { slug: string } | null;
+  const orgBaseUrl = useOrgBaseUrl();
 
-  const displayUrl = getDisplayUrl(orgBranding?.slug, username, teamSlug);
+  const displayUrl = getDisplayUrl(orgBaseUrl, username, teamSlug);
 
   // Animation variants for entry and exit
   const containerVariants = {
