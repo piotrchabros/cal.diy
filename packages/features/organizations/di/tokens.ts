@@ -17,4 +17,8 @@ export const ORGANIZATIONS_DI_TOKENS = {
   ORGANIZATION_SIGN_IN_SERVICE_MODULE: Symbol("OrganizationSignInServiceModule"),
   TEMP_ORG_REDIRECT_REPOSITORY: Symbol("TempOrgRedirectRepository"),
   TEMP_ORG_REDIRECT_REPOSITORY_MODULE: Symbol("TempOrgRedirectRepositoryModule"),
+  ORGANIZATION_MOVE_REPOSITORY: Symbol("OrganizationMoveRepository"),
+  ORGANIZATION_MOVE_REPOSITORY_MODULE: Symbol("OrganizationMoveRepositoryModule"),
+  ORGANIZATION_MOVE_SERVICE: Symbol("OrganizationMoveService"),
+  ORGANIZATION_MOVE_SERVICE_MODULE: Symbol("OrganizationMoveServiceModule"),
 };
