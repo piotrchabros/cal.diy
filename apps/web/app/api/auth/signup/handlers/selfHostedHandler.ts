@@ -45,6 +45,15 @@ async function respondConflictAs409(
   }
 }
 
+// Users join the org of the domain they signed up on; with organizations off that is always the default org
+async function resolveHostOrganizationId(
+  orgsEnabled: boolean,
+  requestHeaders: Pick<Headers, "get">
+): Promise<number | null> {
+  if (!orgsEnabled) return findDefaultOrganizationId();
+  return (await getOrgFromRequest(requestHeaders))?.id ?? null;
+}
+
 export default async function handler(body: Record<string, string>, requestHeaders: Pick<Headers, "get">) {
   const { email, password, language, token } = signupSchema.parse(body);
   const orgsEnabled = isOrganizationsEnabled();
@@ -81,23 +90,16 @@ export default async function handler(body: Record<string, string>, requestHeade
       }
     }
   } else {
-    // Without an invite the user joins the org of the domain they signed up on (the default org on the default domain)
-    if (orgsEnabled) {
-      const hostOrg = await getOrgFromRequest(requestHeaders);
-      if (!hostOrg) {
-        return NextResponse.json({ message: "Organization not found" }, { status: 404 });
-      }
-      hostOrgId = hostOrg.id;
-    } else {
-      // Every user needs an org; null only until the default org has been created by its migration
-      hostOrgId = await findDefaultOrganizationId();
+    hostOrgId = await resolveHostOrganizationId(orgsEnabled, requestHeaders);
+    if (hostOrgId === null) {
+      return NextResponse.json({ message: "Organization not found" }, { status: 404 });
     }
     const userValidation = await validateAndGetCorrectedUsernameAndEmail({
       username,
       email: userEmail,
       isSignup: true,
       // With the flag off usernames stay globally unique, so validation must not narrow to the default org
-      ...(orgsEnabled && hostOrgId !== null && { usernameOrganizationId: hostOrgId }),
+      ...(orgsEnabled && { usernameOrganizationId: hostOrgId }),
     });
     if (!userValidation.isValid) {
       logger.error("User validation failed", { userValidation });
@@ -143,13 +145,12 @@ export default async function handler(body: Record<string, string>, requestHeade
 
       const teamOrganizationId = team.isOrganization ? team.id : (team.parent?.id ?? null);
       // A team outside any org has no org namespace of its own, so its invitees join the host org
-      let fallbackHostOrgId: number | null = null;
-      if (teamOrganizationId === null && orgsEnabled) {
-        fallbackHostOrgId = (await getOrgFromRequest(requestHeaders))?.id ?? null;
-      } else if (teamOrganizationId === null) {
-        fallbackHostOrgId = await findDefaultOrganizationId();
-      }
+      const fallbackHostOrgId =
+        teamOrganizationId === null ? await resolveHostOrganizationId(orgsEnabled, requestHeaders) : null;
       const organizationId = teamOrganizationId ?? fallbackHostOrgId;
+      if (organizationId === null) {
+        return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+      }
 
       const existingUserByUsername = await userRepository.findByUsernameAndOrganizationId({
         username: correctedUsername,
@@ -215,13 +216,18 @@ export default async function handler(body: Record<string, string>, requestHeade
         return NextResponse.json({ message: "A user exists with that username" }, { status: 409 });
       }
     }
+    // A token without a team skips the host org lookup above, yet every user needs an organization
+    const organizationId = hostOrgId ?? (await resolveHostOrganizationId(orgsEnabled, requestHeaders));
+    if (organizationId === null) {
+      return NextResponse.json({ message: "Organization not found" }, { status: 404 });
+    }
     let createdUser: { id: number };
     try {
       createdUser = await userRepository.create({
         username: correctedUsername,
         email: userEmail,
         hashedPassword,
-        organizationId: hostOrgId,
+        organizationId,
         creationSource: CreationSource.WEBAPP,
         identityProvider: IdentityProvider.CAL,
         locked: false,
@@ -236,35 +242,32 @@ export default async function handler(body: Record<string, string>, requestHeade
       }
       throw error;
     }
-    if (hostOrgId !== null) {
-      const organizationId = hostOrgId;
-      const conflictResponse = await respondConflictAs409(
-        async () => {
-          await getOrganizationMembershipService().addMember({
-            organizationId,
+    const conflictResponse = await respondConflictAs409(
+      async () => {
+        await getOrganizationMembershipService().addMember({
+          organizationId,
+          userId: createdUser.id,
+          role: "MEMBER",
+        });
+      },
+      // Without the membership the user would keep the org id (and maybe a profile) yet not belong to it
+      async () => {
+        try {
+          await userRepository.deleteMany({ userIds: [createdUser.id] });
+        } catch {
+          logger.error("Failed to remove a user whose organization membership could not be created", {
             userId: createdUser.id,
-            role: "MEMBER",
+            organizationId,
           });
-        },
-        // Without the membership the user would keep the org id (and maybe a profile) yet not belong to it
-        async () => {
-          try {
-            await userRepository.deleteMany({ userIds: [createdUser.id] });
-          } catch {
-            logger.error("Failed to remove a user whose organization membership could not be created", {
-              userId: createdUser.id,
-              organizationId,
-            });
-          }
         }
-      );
-      if (conflictResponse) return conflictResponse;
-    }
+      }
+    );
+    if (conflictResponse) return conflictResponse;
     try {
       await new TeamMembersService().acceptPendingInvitesOnSignup({
         userId: createdUser.id,
         email: userEmail,
-        organizationId: hostOrgId ?? undefined,
+        organizationId,
       });
     } catch {
       logger.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });

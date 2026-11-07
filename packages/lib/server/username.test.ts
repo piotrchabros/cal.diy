@@ -91,10 +91,10 @@ describe("usernameCheck", () => {
 
     expect(res.available).toBe(false);
     expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { username: "john", organizationId: null } })
+      expect.objectContaining({ where: { username: "john" } })
     );
     expect(prismaMock.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { username: { contains: "john" }, organizationId: null } })
+      expect.objectContaining({ where: { username: { contains: "john" } } })
     );
     expect(prismaMock.tempOrgRedirect.findUnique).toHaveBeenCalled();
     expect(prismaMock.team.findFirst).not.toHaveBeenCalled();
@@ -105,7 +105,7 @@ describe("usernameCheck", () => {
 
     expect(res.available).toBe(true);
     expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { username: "john", organizationId: null } })
+      expect.objectContaining({ where: { username: "john" } })
     );
     expect(prismaMock.tempOrgRedirect.findUnique).toHaveBeenCalled();
   });

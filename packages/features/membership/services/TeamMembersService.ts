@@ -55,7 +55,7 @@ export class TeamMembersService {
       OrganizationMembershipService,
       "addMember" | "getRole"
     > = defaultGetOrganizationMembershipService,
-    private readonly resolveDefaultOrganizationId: () => Promise<number | null> = findDefaultOrganizationId
+    private readonly resolveDefaultOrganizationId: () => Promise<number> = findDefaultOrganizationId
   ) {
     this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
   }
@@ -191,8 +191,7 @@ export class TeamMembersService {
         email: normalizedEmail,
         teamId,
         role,
-        // Users outside an organization team land in the default organization; null (no default
-        // organization yet) keeps the invitee unattached as before.
+        // Users outside an organization team land in the default organization.
         organizationId: organizationId ?? (await this.resolveDefaultOrganizationId()),
       });
       await this.teamInviteService.sendInvite({

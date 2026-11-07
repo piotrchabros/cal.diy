@@ -16,7 +16,8 @@ const mockAcceptPendingInvitesOnSignup: Mock = vi.fn();
 const mockIsOrganizationsEnabled: Mock = vi.fn().mockReturnValue(false);
 const mockGetOrgFromRequest: Mock = vi.fn();
 const mockAddMember: Mock = vi.fn();
-const mockFindDefaultOrganizationId: Mock = vi.fn().mockResolvedValue(null);
+const DEFAULT_ORG_ID = 1;
+const mockFindDefaultOrganizationId: Mock = vi.fn().mockResolvedValue(DEFAULT_ORG_ID);
 
 vi.mock("next/server", async () => {
   const { createNextServerMock } = await import(
@@ -127,7 +128,7 @@ describe("selfHostedHandler – team invite materialization", () => {
     expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
       userId: 42,
       email: "invited@example.com",
-      organizationId: undefined,
+      organizationId: DEFAULT_ORG_ID,
     });
   });
 
@@ -150,7 +151,7 @@ describe("selfHostedHandler – team invite materialization", () => {
 
 describe("selfHostedHandler – organizations", () => {
   const hostOrg = { id: 7, slug: "acme", name: "Acme" };
-  const defaultOrgId = 1;
+  const defaultOrgId = DEFAULT_ORG_ID;
   const signupBody = {
     email: "new@example.com",
     password: "ValidPassword123!",
@@ -175,12 +176,14 @@ describe("selfHostedHandler – organizations", () => {
   });
 
   function lastCreatedOrganizationId(): unknown {
-    const [args] = prismaMock.user.create.mock.calls[0] as [{ data: { organizationId?: number } }];
-    return args.data.organizationId ?? null;
+    const [args] = prismaMock.user.create.mock.calls[0] as [
+      { data: { organization: { connect: { id: number } } } },
+    ];
+    return args.data.organization.connect.id;
   }
 
   function lastUpsertedOrganizationId(): unknown {
-    const [args] = prismaMock.user.upsert.mock.calls[0] as [{ create: { organizationId: number | null } }];
+    const [args] = prismaMock.user.upsert.mock.calls[0] as [{ create: { organizationId: number } }];
     return args.create.organizationId;
   }
 
@@ -223,16 +226,14 @@ describe("selfHostedHandler – organizations", () => {
     expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
-  it("keeps the legacy global signup when the flag is off and no default org exists yet", async () => {
+  it("creates no user when the flag is off and no default org exists", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    mockFindDefaultOrganizationId.mockResolvedValue(null);
+    mockFindDefaultOrganizationId.mockRejectedValue(
+      ErrorWithCode.Factory.PreconditionFailed("No default organization")
+    );
 
-    const response = await callHandler(signupBody);
-
-    expect(response.status).toBe(201);
-    expect(lastCreatedOrganizationId()).toBeNull();
-    expect(mockAddMember).not.toHaveBeenCalled();
-    expect(isUsernameReservedDueToMigration).toHaveBeenCalled();
+    await expect(callHandler(signupBody)).rejects.toThrow("No default organization");
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   it("joins the default org when the inviting team has no org and the flag is off", async () => {
@@ -250,19 +251,16 @@ describe("selfHostedHandler – organizations", () => {
     expect(mockAddMember).toHaveBeenCalledWith({ organizationId: defaultOrgId, userId: 42, role: "MEMBER" });
   });
 
-  it("keeps a team invite outside any org when the flag is off and no default org exists yet", async () => {
+  it("joins the default org with a token that has no team and the flag off", async () => {
     mockIsOrganizationsEnabled.mockReturnValue(false);
-    mockFindDefaultOrganizationId.mockResolvedValue(null);
-    prismaMock.team.findUnique.mockResolvedValue(
-      createMockTeam({ id: 3, isOrganization: false, parent: null }) as never
-    );
+    mockFindTokenByToken.mockResolvedValue(createMockFoundToken({ teamId: null }));
+    prismaMock.verificationToken.delete.mockResolvedValue({} as never);
 
-    const response = await callHandler({ ...signupBody, token: "invite-token" });
+    const response = await callHandler({ ...signupBody, token: "plain-token" });
 
     expect(response.status).toBe(201);
-    expect(lastUpsertedOrganizationId()).toBeNull();
-    expect(createOrUpdateMemberships).toHaveBeenCalled();
-    expect(mockAddMember).not.toHaveBeenCalled();
+    expect(lastCreatedOrganizationId()).toBe(defaultOrgId);
+    expect(mockAddMember).toHaveBeenCalledWith({ organizationId: defaultOrgId, userId: 42, role: "MEMBER" });
   });
 
   it("treats a sub-team invite as a top-level team invite with the flag off", async () => {
@@ -388,6 +386,18 @@ describe("selfHostedHandler – organizations", () => {
     expect(response.status).toBe(201);
     expect(lastUpsertedOrganizationId()).toBe(5);
     expect(mockAddMember).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the inviting team has no org and the request has no organization", async () => {
+    mockGetOrgFromRequest.mockResolvedValue(null);
+    prismaMock.team.findUnique.mockResolvedValue(
+      createMockTeam({ id: 3, isOrganization: false, parent: null }) as never
+    );
+
+    const response = await callHandler({ ...signupBody, token: "invite-token" });
+
+    expect(response.status).toBe(404);
+    expect(prismaMock.user.upsert).not.toHaveBeenCalled();
   });
 
   it("joins the host org when the inviting team has no org", async () => {
