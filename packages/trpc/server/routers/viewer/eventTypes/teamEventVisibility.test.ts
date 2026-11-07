@@ -108,10 +108,20 @@ describe("hasTeamEventRole", () => {
     expect(hasTeamEventRole({ ...nonMember, parent: { members: [] } }, 1, allRoles)).toBe(false);
   });
 
-  it("allows an admin of the parent organization who is not a team member", () => {
+  it("allows an admin of the parent organization who is not a team member when organizations are on", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     expect(hasTeamEventRole({ ...nonMember, parent: { members: [{ userId: 1 }] } }, 1, adminRoles)).toBe(
       true
     );
+    vi.unstubAllEnvs();
+  });
+
+  it("ignores the BlueBee parent organization while organizations are off", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    expect(hasTeamEventRole({ ...nonMember, parent: { members: [{ userId: 1 }] } }, 1, adminRoles)).toBe(
+      false
+    );
+    vi.unstubAllEnvs();
   });
 
   it("rejects when the parent organization membership belongs to another user", () => {

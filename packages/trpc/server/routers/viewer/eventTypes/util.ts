@@ -2,8 +2,7 @@ import type { EventTypeRepository } from "@calcom/features/eventtypes/repositori
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
 import prisma from "@calcom/prisma";
-import type { MembershipRole } from "@calcom/prisma/enums";
-import { PeriodType } from "@calcom/prisma/enums";
+import { MembershipRole, PeriodType } from "@calcom/prisma/enums";
 import type { CustomInputSchema } from "@calcom/prisma/zod-utils";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
@@ -68,10 +67,7 @@ export const eventOwnerProcedure = authedProcedure
 
     const isAuthorized = (() => {
       if (event.team) {
-        const teamMember = event.team.members.find((member) => member.userId === ctx.user.id);
-        const isOwnerOrAdmin = teamMember?.role === "ADMIN" || teamMember?.role === "OWNER";
-
-        return isOwnerOrAdmin;
+        return hasTeamEventRole(event.team, ctx.user.id, [MembershipRole.ADMIN, MembershipRole.OWNER]);
       }
       return event.userId === ctx.user.id || event.users.find((user) => user.id === ctx.user.id);
     })();
@@ -103,7 +99,7 @@ export const eventOwnerProcedure = authedProcedure
  * Creates an event admin procedure with configurable permissions
  * @param permission - The specific permission required (e.g., "eventType.manage", "eventType.update")
  * @param fallbackRoles - Team roles allowed to access team events (defaults to ["ADMIN", "OWNER"]).
- *   Accepted admins/owners of the team's parent organization are always allowed.
+ *   With organizations on, accepted admins/owners of the team's parent organization are always allowed.
  * @returns A procedure that checks the specified permission
  */
 export const createEventPbacProcedure = (

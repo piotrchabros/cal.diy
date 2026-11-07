@@ -38,6 +38,9 @@ export function hasTeamEventRole(
     (member) => member.userId === userId && member.accepted && allowedRoles.includes(member.role)
   );
   if (hasTeamRole) return true;
+  // With organizations off every team still sits under BlueBee after the switch-over, so its admins
+  // must not manage every team event (spec 005).
+  if (!isOrganizationsEnabled()) return false;
   // Admins and owners of the parent organization manage every team event in it.
   return team.parent?.members.some((member) => member.userId === userId) ?? false;
 }
