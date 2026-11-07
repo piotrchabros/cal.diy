@@ -9,7 +9,7 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import slugify from "@calcom/lib/slugify";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus, RedirectType } from "@calcom/prisma/enums";
-import { handleOrgRedirect } from "@lib/handleOrgRedirect";
+import { handleOrgRedirect, omitRouteParams } from "@lib/handleOrgRedirect";
 import { getUsersInOrgContext } from "@server/lib/[user]/getServerSideProps";
 import type { GetServerSidePropsContext } from "next";
 import type { Session } from "next-auth";
@@ -132,8 +132,8 @@ async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
     slugs: usernames,
     redirectType: RedirectType.User,
     eventTypeSlug: slug,
-    context,
-    currentOrgDomain: org,
+    query: omitRouteParams(context.query, context.params),
+    hostOrgId: null,
   });
 
   if (redirect) {
@@ -230,8 +230,8 @@ async function getUserPageProps(context: GetServerSidePropsContext) {
     slugs: usernames,
     redirectType: RedirectType.User,
     eventTypeSlug: slug,
-    context,
-    currentOrgDomain: isValidOrgDomain ? currentOrgDomain : null,
+    query: omitRouteParams(context.query, context.params),
+    hostOrgId: null,
   });
 
   if (redirect) {

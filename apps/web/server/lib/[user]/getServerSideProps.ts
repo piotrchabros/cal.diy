@@ -14,7 +14,7 @@ import type { EventType, User } from "@calcom/prisma/client";
 import { RedirectType } from "@calcom/prisma/enums";
 import type { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { UserProfile } from "@calcom/types/UserProfile";
-import { handleOrgRedirect } from "@lib/handleOrgRedirect";
+import { handleOrgRedirect, omitRouteParams } from "@lib/handleOrgRedirect";
 import type { EmbedProps } from "app/WithEmbedSSR";
 import type { GetServerSideProps } from "next";
 import type { z } from "zod";
@@ -86,8 +86,8 @@ export const getServerSideProps: GetServerSideProps<UserPageProps> = async (cont
     slugs: usernameList,
     redirectType: RedirectType.User,
     eventTypeSlug: null,
-    context,
-    currentOrgDomain: isValidOrgDomain ? currentOrgDomain : null,
+    query: omitRouteParams(context.query, context.params),
+    hostOrgId: null,
   });
 
   if (redirect) {

@@ -1,703 +1,288 @@
-import type { GetServerSidePropsContext } from "next";
 import type { ParsedUrlQuery } from "node:querystring";
-import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import type { RedirectTypeDto } from "@calcom/features/organizations/repositories/interfaces/ITempOrgRedirectRepository";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  getRedirectWithOriginAndSearchString,
+  handleOrgRedirect,
+  NON_ORG_REDIRECT_FROM_ORG_ID,
+  type OrgRedirect,
+  omitRouteParams,
+} from "./handleOrgRedirect";
 
-import * as constants from "@calcom/lib/constants";
-import { RedirectType } from "@calcom/prisma/enums";
-
-import { handleOrgRedirect, getRedirectWithOriginAndSearchString } from "./handleOrgRedirect";
-
-// Mock prisma for all tests
-const prismaMock = vi.hoisted(() => ({
-  tempOrgRedirect: {
-    findMany: vi.fn(),
-  },
+const repoMock = vi.hoisted(() => ({
+  findEnabledByFromSlugs: vi.fn(),
 }));
 
-vi.mock("@calcom/prisma", () => ({
-  default: prismaMock,
+vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
+  getTempOrgRedirectRepository: () => repoMock,
 }));
-
-const createTestContext = (overrides?: {
-  host?: string;
-  query?: ParsedUrlQuery;
-}): GetServerSidePropsContext =>
-  ({
-    req: {
-      headers: {
-        host: overrides?.host || "cal.local:3000",
-      },
-    },
-    query: overrides?.query || {},
-  }) as unknown as GetServerSidePropsContext;
 
 const createTestRedirectParams = (overrides?: {
   slugs?: string[];
-  redirectType?: RedirectType;
+  redirectType?: RedirectTypeDto;
   eventTypeSlug?: string | null;
-  context?: GetServerSidePropsContext;
-  currentOrgDomain?: string | null;
+  query?: ParsedUrlQuery;
+  hostOrgId?: number | null;
 }) => ({
-  slugs: overrides?.slugs || ["pro"],
-  redirectType: overrides?.redirectType || RedirectType.User,
+  slugs: overrides?.slugs ?? ["john87"],
+  redirectType: overrides?.redirectType ?? "User",
   eventTypeSlug: overrides?.eventTypeSlug ?? null,
-  context: overrides?.context || createTestContext(),
-  currentOrgDomain: overrides?.currentOrgDomain ?? null,
+  query: overrides?.query ?? {},
+  hostOrgId: overrides?.hostOrgId === undefined ? null : overrides.hostOrgId,
 });
 
-interface RedirectScenario {
-  redirects: Array<{
-    from: string;
-    toUrl: string;
-    type?: RedirectType;
-  }>;
-}
-
-const createRedirectScenario = (scenario: RedirectScenario) => {
-  // Create a map for quick lookup based on input parameters
-  const redirectMap = new Map<string, (typeof scenario.redirects)[0]>();
-
-  scenario.redirects.forEach((redirect) => {
-    const key = `${redirect.type || RedirectType.User}-${redirect.from}`;
-    redirectMap.set(key, redirect);
-  });
-
-  // Return a mock implementation that returns data based on the actual query
-  prismaMock.tempOrgRedirect.findMany.mockImplementation(async (params) => {
-    const { type, from } = params?.where || {};
-    const slugsToFind = from?.in || [];
-
-    // Return redirects that match the requested type and slugs
-    const matchingRedirects = slugsToFind
-      .map((slug: string) => {
-        const key = `${type}-${slug}`;
-        const redirect = redirectMap.get(key);
-        if (redirect) {
-          return {
-            from: redirect.from,
-            toUrl: redirect.toUrl,
-            type: redirect.type || type,
-            fromOrgId: 0,
-          };
-        }
-        return null;
-      })
-      .filter(Boolean);
-
-    return matchingRedirects;
-  });
+const createRedirectScenario = (redirects: Array<{ from: string; toUrl: string }>) => {
+  const toUrlBySlug = new Map(redirects.map((redirect) => [redirect.from, redirect.toUrl]));
+  repoMock.findEnabledByFromSlugs.mockImplementation(async ({ fromSlugs }: { fromSlugs: string[] }) =>
+    fromSlugs.flatMap((slug) => {
+      const toUrl = toUrlBySlug.get(slug);
+      return toUrl ? [{ from: slug, toUrl }] : [];
+    })
+  );
 };
 
-const expectRedirectTo = (result: any, expectedDestination: string) => {
-  expect(result).toEqual({
-    redirect: {
-      permanent: false,
-      destination: expectedDestination,
-    },
-  });
-};
-
-const expectNoRedirect = (result: any) => {
-  expect(result).toBeNull();
-};
-
-const expectPrismaCalledWith = (expectedParams: { type: RedirectType; slugs: string[] }) => {
-  expect(prismaMock.tempOrgRedirect.findMany).toHaveBeenCalledWith({
-    where: {
-      type: expectedParams.type,
-      from: {
-        in: expectedParams.slugs,
-      },
-      fromOrgId: 0,
-    },
-  });
-};
-
-const expectPrismaNotCalled = () => {
-  expect(prismaMock.tempOrgRedirect.findMany).not.toHaveBeenCalled();
-};
-
-// Verify that the redirect was actually built from the data returned by Prisma
-const expectRedirectUsesData = (
-  result: any,
-  expectedSlug: string,
-  expectedOrigin = "https://acme.cal.local:3000"
-) => {
-  if (!result || !result.redirect) {
-    throw new Error("Expected a redirect result but got null/undefined");
-  }
-  const url = new URL(result.redirect.destination);
-  expect(url.origin).toBe(expectedOrigin);
-  expect(url.pathname).toContain(expectedSlug);
+const expectRedirectTo = (result: OrgRedirect | null, expectedDestination: string) => {
+  expect(result).toEqual({ redirect: { permanent: true, destination: expectedDestination } });
 };
 
 describe("handleOrgRedirect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default to no redirects - tests will override with specific scenarios
-    createRedirectScenario({ redirects: [] });
+    createRedirectScenario([]);
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  describe("repository lookup", () => {
+    it("queries the host organization's redirects", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
 
-  describe("when not in organization context", () => {
-    it("should redirect to organization URL when redirect exists", async () => {
-      // Setup scenario with unique test data to verify correct usage
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-          // Add a decoy redirect to ensure the code picks the right one
-          {
-            from: "other-user",
-            toUrl: "https://acme.cal.local:3000/wrong-redirect",
-            type: RedirectType.User,
-          },
-        ],
+      await handleOrgRedirect(createTestRedirectParams({ hostOrgId: 7 }));
+
+      expect(repoMock.findEnabledByFromSlugs).toHaveBeenCalledWith({
+        fromOrgId: 7,
+        type: "User",
+        fromSlugs: ["john87"],
       });
-
-      const params = createTestRedirectParams({
-        slugs: ["pro"],
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: ["pro"] });
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example?orgRedirection=true");
-      expectRedirectUsesData(result, "pro-example");
     });
 
-    it("should return null when no redirect exists", async () => {
-      // Explicitly set up no redirects scenario
-      createRedirectScenario({ redirects: [] });
+    it("queries non-org redirects when organizations are disabled", async () => {
+      await handleOrgRedirect(createTestRedirectParams({ hostOrgId: null }));
 
-      const params = createTestRedirectParams({
-        slugs: ["pro"],
+      expect(repoMock.findEnabledByFromSlugs).toHaveBeenCalledWith({
+        fromOrgId: NON_ORG_REDIRECT_FROM_ORG_ID,
+        type: "User",
+        fromSlugs: ["john87"],
       });
-      const result = await handleOrgRedirect(params);
-
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: ["pro"] });
-      expectNoRedirect(result);
+      expect(NON_ORG_REDIRECT_FROM_ORG_ID).toBe(0);
     });
 
-    it("should handle Team redirect type", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "sales-team",
-            toUrl: "https://acme.cal.local:3000/sales",
-            type: RedirectType.Team,
-          },
-          // Add a User redirect with same slug to verify type filtering
-          {
-            from: "sales-team",
-            toUrl: "https://acme.cal.local:3000/wrong-user-redirect",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("returns null when no redirect exists", async () => {
+      expect(await handleOrgRedirect(createTestRedirectParams())).toBeNull();
+    });
 
-      const params = createTestRedirectParams({
-        slugs: ["sales-team"],
-        redirectType: RedirectType.Team,
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectPrismaCalledWith({ type: RedirectType.Team, slugs: ["sales-team"] });
-      expectRedirectTo(result, "https://acme.cal.local:3000/sales?orgRedirection=true");
-      expectRedirectUsesData(result, "sales");
+    it("returns null for empty slugs without querying", async () => {
+      expect(await handleOrgRedirect(createTestRedirectParams({ slugs: [] }))).toBeNull();
+      expect(repoMock.findEnabledByFromSlugs).not.toHaveBeenCalled();
     });
   });
 
-  describe("when SINGLE_ORG_SLUG mode is enabled", () => {
-    beforeEach(() => {
-      vi.spyOn(constants, "SINGLE_ORG_SLUG", "get").mockReturnValue("acme");
+  describe("destination", () => {
+    it("redirects to the exact toUrl", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
+
+      const result = await handleOrgRedirect(createTestRedirectParams());
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john");
     });
 
-    it("should redirect using relative path when accessing from base domain", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("appends the event type slug", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
 
-      const params = createTestRedirectParams({
-        context: createTestContext({ host: "cal.local:3000" }),
-        currentOrgDomain: "acme",
-      });
-      const result = await handleOrgRedirect(params);
+      const result = await handleOrgRedirect(createTestRedirectParams({ eventTypeSlug: "30min" }));
 
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: ["pro"] });
-      // Should use relative path to stay on same domain
-      expectRedirectTo(result, "/pro-example?orgRedirection=true");
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john/30min");
     });
 
-    it("should redirect john87 to john using relative path in single org mode", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "john87",
-            toUrl: "https://acme.cal.local:3000/john",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("handles Team redirects", async () => {
+      createRedirectScenario([{ from: "acme-sales", toUrl: "https://new.domain/team/newslug" }]);
 
-      const params = createTestRedirectParams({
-        slugs: ["john87"],
-        context: createTestContext({
-          host: "my-instance.com",
-        }),
-        currentOrgDomain: "acme",
-      });
-      const result = await handleOrgRedirect(params);
+      const result = await handleOrgRedirect(
+        createTestRedirectParams({ slugs: ["acme-sales"], redirectType: "Team", eventTypeSlug: "intro" })
+      );
 
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: ["john87"] });
-      // Should redirect to relative path /john to stay on my-instance.com
-      expectRedirectTo(result, "/john?orgRedirection=true");
+      expect(repoMock.findEnabledByFromSlugs).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "Team", fromSlugs: ["acme-sales"] })
+      );
+      expectRedirectTo(result, "https://new.domain/team/newslug/intro");
     });
 
-    describe("when orgRedirection parameter is present", () => {
-      it("should not redirect to prevent loops", async () => {
-        const params = createTestRedirectParams({
-          context: createTestContext({ query: { orgRedirection: "true" } }),
-          currentOrgDomain: "acme",
-        });
-        const result = await handleOrgRedirect(params);
+    it("strips trailing slashes from the toUrl path", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john/" }]);
 
-        expectPrismaNotCalled();
-        expectNoRedirect(result);
-      });
-    });
-  });
+      const result = await handleOrgRedirect(createTestRedirectParams({ eventTypeSlug: "30min" }));
 
-  describe("when event type slug is provided", () => {
-    it("should include event type slug in redirect destination", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        eventTypeSlug: "30min",
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: ["pro"] });
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example/30min?orgRedirection=true");
-      // Verify the event type slug was properly appended
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.pathname).toBe("/pro-example/30min");
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john/30min");
     });
 
-    it("should handle empty event type slug", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("handles a root toUrl", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://x/" }]);
 
-      const params = createTestRedirectParams({
-        eventTypeSlug: null,
-      });
-      const result = await handleOrgRedirect(params);
+      expectRedirectTo(await handleOrgRedirect(createTestRedirectParams()), "https://x/");
+      expectRedirectTo(
+        await handleOrgRedirect(createTestRedirectParams({ eventTypeSlug: "30min" })),
+        "https://x/30min"
+      );
+    });
 
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example?orgRedirection=true");
-      expectRedirectUsesData(result, "pro-example");
+    it("ignores the toUrl search and hash", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john?a=b#h" }]);
+
+      const result = await handleOrgRedirect(createTestRedirectParams());
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john");
+    });
+
+    it("returns null for an invalid toUrl", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "not a url" }]);
+
+      expect(await handleOrgRedirect(createTestRedirectParams())).toBeNull();
+    });
+
+    it("encodes special characters in the event type slug", async () => {
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
+
+      const result = await handleOrgRedirect(createTestRedirectParams({ eventTypeSlug: "a b/c?" }));
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john/a%20b%2Fc%3F");
     });
   });
 
   describe("when handling multiple slugs (group bookings)", () => {
-    it("should preserve order of slugs in redirect", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "user1",
-            toUrl: "https://acme.cal.local:3000/org-user1",
-            type: RedirectType.User,
-          },
-          {
-            from: "user2",
-            toUrl: "https://acme.cal.local:3000/org-user2",
-            type: RedirectType.User,
-          },
-          {
-            from: "user3",
-            toUrl: "https://acme.cal.local:3000/org-user3",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("joins paths in input order even when the repository returns them out of order", async () => {
+      repoMock.findEnabledByFromSlugs.mockResolvedValue([
+        { from: "bob1", toUrl: "https://acme.example/bob" },
+        { from: "alice1", toUrl: "https://acme.example/alice" },
+      ]);
 
-      const params = createTestRedirectParams({
-        slugs: ["user1", "user2", "user3"],
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(
-        result,
-        "https://acme.cal.local:3000/org-user1+org-user2+org-user3?orgRedirection=true"
+      const result = await handleOrgRedirect(
+        createTestRedirectParams({ slugs: ["alice1", "bob1"], eventTypeSlug: "30min" })
       );
-      // Verify order is preserved from input slugs
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.pathname).toBe("/org-user1+org-user2+org-user3");
+
+      expectRedirectTo(result, "https://acme.example/alice+bob/30min");
     });
 
-    it("should handle partial redirects in group bookings", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "user1",
-            toUrl: "https://acme.cal.local:3000/org-user1",
-            type: RedirectType.User,
-          },
-          // user2 has no redirect - it should stay as-is
-          {
-            from: "user3",
-            toUrl: "https://acme.cal.local:3000/org-user3",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("returns null when only some slugs have redirects", async () => {
+      createRedirectScenario([{ from: "alice1", toUrl: "https://acme.example/alice" }]);
 
-      const params = createTestRedirectParams({
-        slugs: ["user1", "user2", "user3"],
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/org-user1+user2+org-user3?orgRedirection=true");
-      // Verify that user2 remains unchanged while others are redirected
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.pathname).toBe("/org-user1+user2+org-user3");
+      expect(await handleOrgRedirect(createTestRedirectParams({ slugs: ["alice1", "bob1"] }))).toBeNull();
     });
 
-    it("should handle different origins in redirects", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "user1",
-            toUrl: "https://org1.cal.com/john",
-            type: RedirectType.User,
-          },
-          {
-            from: "user2",
-            toUrl: "https://org1.cal.com/jane",
-            type: RedirectType.User,
-          },
-        ],
-      });
+    it("returns null when redirects point to different origins", async () => {
+      createRedirectScenario([
+        { from: "alice1", toUrl: "https://acme.example/alice" },
+        { from: "bob1", toUrl: "https://other.example/bob" },
+      ]);
 
-      const params = createTestRedirectParams({
-        slugs: ["user1", "user2"],
-      });
-      const result = await handleOrgRedirect(params);
+      expect(await handleOrgRedirect(createTestRedirectParams({ slugs: ["alice1", "bob1"] }))).toBeNull();
+    });
 
-      // Should use the first redirect's origin
-      expectRedirectTo(result, "https://org1.cal.com/john+jane?orgRedirection=true");
-      expectRedirectUsesData(result, "john+jane", "https://org1.cal.com");
+    it("returns null when a target path has several segments", async () => {
+      createRedirectScenario([
+        { from: "alice1", toUrl: "https://acme.example/alice" },
+        { from: "bob1", toUrl: "https://acme.example/team/bob" },
+      ]);
+
+      expect(await handleOrgRedirect(createTestRedirectParams({ slugs: ["alice1", "bob1"] }))).toBeNull();
     });
   });
 
   describe("when handling query parameters", () => {
-    it("should add orgRedirection=true to empty query", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        context: createTestContext({ query: {} }),
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example?orgRedirection=true");
-      expectRedirectUsesData(result, "pro-example");
-    });
-
-    it("should preserve existing query parameters", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        context: createTestContext({
-          query: { abc: "1", xyz: "test" },
-        }),
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example?abc=1&xyz=test&orgRedirection=true");
-      // Verify query parameters are preserved
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.searchParams.get("abc")).toBe("1");
-      expect(url.searchParams.get("xyz")).toBe("test");
-    });
-
-    it("should not duplicate orgRedirection parameter", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        context: createTestContext({
-          query: { orgRedirection: "true", abc: "1" },
-        }),
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example?abc=1&orgRedirection=true");
-
-      // Verify only one orgRedirection parameter exists
-      const url = new URL(result?.redirect.destination || "");
-      const orgRedirectionParams = url.searchParams.getAll("orgRedirection");
-      expect(orgRedirectionParams).toHaveLength(1);
-      expect(orgRedirectionParams[0]).toBe("true");
-    });
-
-    it("should handle array query parameters", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        context: createTestContext({
-          query: { tags: ["tag1", "tag2"], filter: "active" },
-        }),
-      });
-      const result = await handleOrgRedirect(params);
-
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.searchParams.getAll("tags")).toEqual(["tag1", "tag2"]);
-      expect(url.searchParams.get("filter")).toBe("active");
-      expect(url.searchParams.get("orgRedirection")).toBe("true");
-    });
-  });
-
-  describe("edge cases and error scenarios", () => {
-    it("should handle empty slugs array", async () => {
-      createRedirectScenario({ redirects: [] });
-
-      const params = createTestRedirectParams({
-        slugs: [],
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectPrismaCalledWith({ type: RedirectType.User, slugs: [] });
-      expectNoRedirect(result);
-    });
-
-    it("should handle redirects with trailing slashes", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000/pro-example/",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams();
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/pro-example/?orgRedirection=true");
-      // Verify trailing slash is preserved
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.pathname).toBe("/pro-example/");
-    });
-
-    it("should handle redirects to root path", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "pro",
-            toUrl: "https://acme.cal.local:3000",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams();
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000?orgRedirection=true");
-      // Verify root path redirect
-      const url = new URL(result?.redirect.destination || "");
-      expect(url.pathname).toBe("/");
-    });
-
-    it("should handle special characters in slugs", async () => {
-      createRedirectScenario({
-        redirects: [
-          {
-            from: "user-name.test",
-            toUrl: "https://acme.cal.local:3000/user_name_test",
-            type: RedirectType.User,
-          },
-        ],
-      });
-
-      const params = createTestRedirectParams({
-        slugs: ["user-name.test"],
-      });
-      const result = await handleOrgRedirect(params);
-
-      expectRedirectTo(result, "https://acme.cal.local:3000/user_name_test?orgRedirection=true");
-      expectRedirectUsesData(result, "user_name_test");
-    });
-  });
-
-  describe("when SINGLE_ORG_SLUG is not set", () => {
     beforeEach(() => {
-      vi.spyOn(constants, "SINGLE_ORG_SLUG", "get").mockReturnValue(undefined);
+      createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
     });
 
-    it("should not check for redirects when in org context", async () => {
-      const params = createTestRedirectParams({
-        currentOrgDomain: "acme",
-      });
-      const result = await handleOrgRedirect(params);
+    it("preserves existing query parameters", async () => {
+      const result = await handleOrgRedirect(
+        createTestRedirectParams({ query: { month: "2026-11", layout: "week_view" } })
+      );
 
-      expectPrismaNotCalled();
-      expectNoRedirect(result);
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john?month=2026-11&layout=week_view");
     });
+
+    it("repeats keys for array values", async () => {
+      const result = await handleOrgRedirect(createTestRedirectParams({ query: { tag: ["a", "b"] } }));
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john?tag=a&tag=b");
+    });
+
+    it("strips orgRedirection", async () => {
+      expectRedirectTo(
+        await handleOrgRedirect(createTestRedirectParams({ query: { orgRedirection: "true" } })),
+        "https://cal.bespokesoft.pl/john"
+      );
+      expectRedirectTo(
+        await handleOrgRedirect(createTestRedirectParams({ query: { orgRedirection: "true", a: "1" } })),
+        "https://cal.bespokesoft.pl/john?a=1"
+      );
+    });
+
+    it("drops undefined values", async () => {
+      const result = await handleOrgRedirect(createTestRedirectParams({ query: { a: undefined, b: "2" } }));
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john?b=2");
+    });
+
+    it("encodes special characters", async () => {
+      const result = await handleOrgRedirect(createTestRedirectParams({ query: { name: "a b&c=d" } }));
+
+      expectRedirectTo(result, "https://cal.bespokesoft.pl/john?name=a%20b%26c%3Dd");
+    });
+  });
+});
+
+describe("omitRouteParams", () => {
+  it("removes keys present in route params", () => {
+    expect(
+      omitRouteParams({ user: "john87", type: "30min", month: "2026-11" }, { user: "john87", type: "30min" })
+    ).toEqual({
+      month: "2026-11",
+    });
+  });
+
+  it("returns a copy when params are undefined", () => {
+    const query = { month: "2026-11" };
+    const result = omitRouteParams(query, undefined);
+
+    expect(result).toEqual(query);
+    expect(result).not.toBe(query);
   });
 });
 
 describe("getRedirectWithOriginAndSearchString", () => {
   beforeEach(() => {
-    vi.spyOn(constants, "SINGLE_ORG_SLUG", "get").mockReturnValue(undefined);
+    vi.clearAllMocks();
+    createRedirectScenario([]);
   });
 
-  afterEach(() => {
-    prismaMock.tempOrgRedirect.findMany.mockReset();
-  });
+  it("returns the origin and search string of the destination", async () => {
+    createRedirectScenario([{ from: "john87", toUrl: "https://cal.bespokesoft.pl/john" }]);
 
-  it("should return origin and search string for absolute URL redirects", async () => {
-    createRedirectScenario({
-      redirects: [
-        {
-          from: "john",
-          toUrl: "https://acme.cal.local:3000/john-org",
-          type: RedirectType.User,
-        },
-      ],
+    const result = await getRedirectWithOriginAndSearchString({
+      slugs: ["john87"],
+      redirectType: "User",
+      query: { duration: "30", orgRedirection: "true" },
+      hostOrgId: null,
     });
 
-    const params = {
-      slugs: ["john"],
-      redirectType: RedirectType.User,
-      context: createTestContext(),
-      currentOrgDomain: null,
-    };
-    const result = await getRedirectWithOriginAndSearchString(params);
-
-    expect(result).not.toBeNull();
-    expect(result?.origin).toBe("https://acme.cal.local:3000");
-    expect(result?.searchString).toBe("?orgRedirection=true");
+    expect(result).toEqual({ origin: "https://cal.bespokesoft.pl", searchString: "?duration=30" });
   });
 
-  it("should return null origin for relative path redirects", async () => {
-    // Enable SINGLE_ORG_SLUG for this test to get relative paths
-    vi.spyOn(constants, "SINGLE_ORG_SLUG", "get").mockReturnValue("acme");
-
-    createRedirectScenario({
-      redirects: [
-        {
-          from: "john",
-          toUrl: "https://acme.cal.local:3000/john-org",
-          type: RedirectType.User,
-        },
-      ],
+  it("returns null when no redirect exists", async () => {
+    const result = await getRedirectWithOriginAndSearchString({
+      slugs: ["john87"],
+      redirectType: "User",
+      query: {},
+      hostOrgId: null,
     });
-
-    const params = {
-      slugs: ["john"],
-      redirectType: RedirectType.User,
-      context: createTestContext({ host: "my-instance.com" }),
-      currentOrgDomain: "acme",
-    };
-    const result = await getRedirectWithOriginAndSearchString(params);
-
-    expect(result).not.toBeNull();
-    expect(result?.origin).toBeNull(); // Relative path has no origin
-    expect(result?.searchString).toBe("?orgRedirection=true");
-  });
-
-  it("should preserve existing query parameters in search string", async () => {
-    createRedirectScenario({
-      redirects: [
-        {
-          from: "john",
-          toUrl: "https://acme.cal.local:3000/john-org",
-          type: RedirectType.User,
-        },
-      ],
-    });
-
-    const params = {
-      slugs: ["john"],
-      redirectType: RedirectType.User,
-      context: createTestContext({ query: { foo: "bar", baz: "qux" } }),
-      currentOrgDomain: null,
-    };
-    const result = await getRedirectWithOriginAndSearchString(params);
-
-    expect(result).not.toBeNull();
-    expect(result?.origin).toBe("https://acme.cal.local:3000");
-    expect(result?.searchString).toBe("?foo=bar&baz=qux&orgRedirection=true");
-  });
-
-  it("should return null when no redirect exists", async () => {
-    createRedirectScenario({ redirects: [] });
-
-    const params = {
-      slugs: ["john"],
-      redirectType: RedirectType.User,
-      context: createTestContext(),
-      currentOrgDomain: null,
-    };
-    const result = await getRedirectWithOriginAndSearchString(params);
 
     expect(result).toBeNull();
   });
