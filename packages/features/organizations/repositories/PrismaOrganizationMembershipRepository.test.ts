@@ -5,7 +5,13 @@ import { PrismaOrganizationMembershipRepository } from "./PrismaOrganizationMemb
 function buildRepository() {
   const user = { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() };
   const profile = { findFirst: vi.fn(), upsert: vi.fn() };
-  const membership = { findUnique: vi.fn(), upsert: vi.fn(), count: vi.fn(), update: vi.fn() };
+  const membership = {
+    findUnique: vi.fn(),
+    findMany: vi.fn(),
+    upsert: vi.fn(),
+    count: vi.fn(),
+    update: vi.fn(),
+  };
   const $transaction = vi.fn((operations: Promise<unknown>[]) => Promise.all(operations));
   const prismaClient = { user, profile, membership, $transaction } as unknown as PrismaClient;
   return {
@@ -203,5 +209,106 @@ describe("PrismaOrganizationMembershipRepository", () => {
     });
     expect(membership.update.mock.calls[0][0]).not.toHaveProperty("include");
     expect(result).toEqual({ userId: 7, role: "ADMIN" });
+  });
+
+  describe("listMembers", () => {
+    const memberSelect = {
+      id: true,
+      role: true,
+      accepted: true,
+      user: { select: { id: true, name: true, email: true, username: true } },
+    };
+
+    function memberRow(id: number, overrides: { role?: string; accepted?: boolean } = {}) {
+      return {
+        id,
+        role: overrides.role ?? "MEMBER",
+        accepted: overrides.accepted ?? true,
+        user: { id: id + 100, name: `User ${id}`, email: `user${id}@acme.com`, username: `user${id}` },
+      };
+    }
+
+    it("lists the organization's memberships by id and selects only the fields it needs", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findMany.mockResolvedValue([]);
+
+      await repository.listMembers({ organizationId: 1, limit: 10 });
+
+      expect(membership.findMany).toHaveBeenCalledWith({
+        where: { teamId: 1 },
+        orderBy: { id: "asc" },
+        take: 11,
+        select: memberSelect,
+      });
+      expect(membership.findMany.mock.calls[0][0]).not.toHaveProperty("include");
+    });
+
+    it("filters by search across name, email and username and starts after the cursor", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findMany.mockResolvedValue([]);
+
+      await repository.listMembers({ organizationId: 1, search: "ali", cursor: 40, limit: 5 });
+
+      expect(membership.findMany).toHaveBeenCalledWith({
+        where: {
+          teamId: 1,
+          id: { gt: 40 },
+          user: {
+            OR: [
+              { name: { contains: "ali", mode: "insensitive" } },
+              { email: { contains: "ali", mode: "insensitive" } },
+              { username: { contains: "ali", mode: "insensitive" } },
+            ],
+          },
+        },
+        orderBy: { id: "asc" },
+        take: 6,
+        select: memberSelect,
+      });
+    });
+
+    it("maps rows to member records and omits nextCursor when there are no more rows", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findMany.mockResolvedValue([
+        memberRow(1, { role: "OWNER" }),
+        memberRow(2, { role: "ADMIN", accepted: false }),
+      ]);
+
+      const result = await repository.listMembers({ organizationId: 1, limit: 2 });
+
+      expect(result).toEqual({
+        items: [
+          {
+            membershipId: 1,
+            userId: 101,
+            name: "User 1",
+            email: "user1@acme.com",
+            username: "user1",
+            role: "OWNER",
+            accepted: true,
+          },
+          {
+            membershipId: 2,
+            userId: 102,
+            name: "User 2",
+            email: "user2@acme.com",
+            username: "user2",
+            role: "ADMIN",
+            accepted: false,
+          },
+        ],
+      });
+      expect(result).not.toHaveProperty("nextCursor");
+    });
+
+    it("returns limit items and the last membership id as nextCursor when more rows exist", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findMany.mockResolvedValue([memberRow(3), memberRow(5), memberRow(8)]);
+
+      const result = await repository.listMembers({ organizationId: 1, limit: 2 });
+
+      expect(result.items.map((item) => item.membershipId)).toEqual([3, 5]);
+      expect(result.nextCursor).toBe(5);
+    });
   });
 });

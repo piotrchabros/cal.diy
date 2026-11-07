@@ -6,6 +6,7 @@ import type {
   AddMemberInput,
   IOrganizationMembershipRepository,
   MembershipUserRecord,
+  OrganizationMemberRecord,
 } from "./interfaces/IOrganizationMembershipRepository";
 
 const toRoleDto: Record<MembershipRole, OrganizationRoleDto> = {
@@ -124,5 +125,53 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
       select: { userId: true, role: true },
     });
     return { userId: membership.userId, role: toRoleDto[membership.role] };
+  }
+
+  async listMembers({
+    organizationId,
+    search,
+    cursor,
+    limit,
+  }: {
+    organizationId: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationMemberRecord[]; nextCursor?: number }> {
+    const rows = await this.prismaClient.membership.findMany({
+      where: {
+        teamId: organizationId,
+        ...(cursor !== undefined && { id: { gt: cursor } }),
+        ...(search && {
+          user: {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+              { username: { contains: search, mode: "insensitive" } },
+            ],
+          },
+        }),
+      },
+      orderBy: { id: "asc" },
+      take: limit + 1,
+      select: {
+        id: true,
+        role: true,
+        accepted: true,
+        user: { select: { id: true, name: true, email: true, username: true } },
+      },
+    });
+
+    const items = rows.slice(0, limit).map((row) => ({
+      membershipId: row.id,
+      userId: row.user.id,
+      name: row.user.name,
+      email: row.user.email,
+      username: row.user.username,
+      role: toRoleDto[row.role],
+      accepted: row.accepted,
+    }));
+    if (rows.length <= limit) return { items };
+    return { items, nextCursor: items[limit - 1].membershipId };
   }
 }
