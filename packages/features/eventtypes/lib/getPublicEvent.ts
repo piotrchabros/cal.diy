@@ -5,6 +5,7 @@ import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-util
 import dayjs from "@calcom/dayjs";
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
 import { getDefaultEvent, getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getOrgOrTeamAvatar, getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
@@ -27,18 +28,6 @@ import {
 } from "@calcom/prisma/zod-utils";
 import type { UserProfile } from "@calcom/types/UserProfile";
 
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) {
-    return true;
-  }
-  async hasPermission(..._args: unknown[]) {
-    return true;
-  }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
-    return [];
-  }
-}
 const getSlugOrRequestedSlug = (slug: string) => ({ slug });
 
 const userSelect = {
@@ -545,23 +534,13 @@ export const getPublicEvent = async (
     });
   }
   let canViewPrivateTeamMembers = false;
-  if (currentUserId && event.teamId) {
-    const permissionCheckService = new PermissionCheckService();
-    canViewPrivateTeamMembers = await permissionCheckService.checkPermission({
+  if (currentUserId && event.teamId && eventWithUserProfiles.team?.isPrivate) {
+    canViewPrivateTeamMembers = await new TeamRolePermissionService().checkPermission({
       userId: currentUserId,
       teamId: event.teamId,
       permission: "team.read",
       fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
     });
-
-    if (!canViewPrivateTeamMembers && eventWithUserProfiles.team?.parentId) {
-      canViewPrivateTeamMembers = await permissionCheckService.checkPermission({
-        userId: currentUserId,
-        teamId: eventWithUserProfiles.team.parentId,
-        permission: "team.read",
-        fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
-      });
-    }
   }
 
   if (eventWithUserProfiles.team?.isPrivate && !canViewPrivateTeamMembers) {

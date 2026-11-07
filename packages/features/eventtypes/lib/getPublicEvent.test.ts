@@ -27,6 +27,16 @@ vi.mock("@calcom/features/users/repositories/UserRepository", () => ({
   },
 }));
 
+const { checkPermission } = vi.hoisted(() => ({
+  checkPermission: vi.fn(),
+}));
+
+vi.mock("@calcom/features/membership/services/TeamRolePermissionService", () => ({
+  TeamRolePermissionService: class {
+    checkPermission = checkPermission;
+  },
+}));
+
 type GetUsersFromEventInput = Parameters<typeof getUsersFromEvent>[0];
 
 const prisma = {} as unknown as PrismaClient;
@@ -264,5 +274,92 @@ describe("getPublicEvent entity of a team under the organization", () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "");
 
     expect(await getTeamEvent()).toMatchObject({ name: "Sales", teamSlug: "sales" });
+  });
+});
+
+describe("getPublicEvent private team members", () => {
+  afterEach(() => {
+    checkPermission.mockReset();
+  });
+
+  async function getTeamEventUsers({
+    isPrivate,
+    currentUserId,
+  }: {
+    isPrivate: boolean;
+    currentUserId?: number;
+  }) {
+    const team = {
+      parentId: 1,
+      metadata: {},
+      brandColor: null,
+      darkBrandColor: null,
+      slug: "sales",
+      name: "Sales",
+      logoUrl: null,
+      theme: null,
+      hideTeamProfileLink: false,
+      isPrivate,
+      parent: {
+        slug: "bluebee",
+        name: "BlueBee",
+        bannerUrl: null,
+        logoUrl: null,
+        organizationSettings: null,
+      },
+    };
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 1,
+      slug: "30min",
+      length: 30,
+      teamId: 2,
+      team,
+      owner: null,
+      hosts: [buildHost("alice", null)],
+      metadata: {},
+      description: null,
+      customInputs: [],
+      locations: [],
+      bookingFields: [],
+      recurringEvent: null,
+      schedule: null,
+      isInstantEvent: false,
+      instantMeetingSchedule: null,
+      parent: null,
+    });
+    const fakePrisma = { eventType: { findFirst } } as unknown as PrismaClient;
+
+    const event = await getPublicEvent("sales", "30min", true, null, fakePrisma, false, currentUserId);
+
+    return event?.subsetOfUsers;
+  }
+
+  it("hides the members of a private team from an anonymous visitor", async () => {
+    expect(await getTeamEventUsers({ isPrivate: true })).toEqual([]);
+    expect(checkPermission).not.toHaveBeenCalled();
+  });
+
+  it("shows the members of a private team to a user with team.read", async () => {
+    checkPermission.mockResolvedValue(true);
+
+    expect(await getTeamEventUsers({ isPrivate: true, currentUserId: 5 })).toHaveLength(1);
+    expect(checkPermission).toHaveBeenCalledTimes(1);
+    expect(checkPermission).toHaveBeenCalledWith({
+      userId: 5,
+      teamId: 2,
+      permission: "team.read",
+      fallbackRoles: ["ADMIN", "OWNER"],
+    });
+  });
+
+  it("hides the members of a private team from a user without team.read", async () => {
+    checkPermission.mockResolvedValue(false);
+
+    expect(await getTeamEventUsers({ isPrivate: true, currentUserId: 5 })).toEqual([]);
+  });
+
+  it("shows the members of a public team without checking permissions", async () => {
+    expect(await getTeamEventUsers({ isPrivate: false, currentUserId: 5 })).toHaveLength(1);
+    expect(checkPermission).not.toHaveBeenCalled();
   });
 });

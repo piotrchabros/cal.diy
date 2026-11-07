@@ -1,6 +1,7 @@
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
@@ -16,19 +17,6 @@ import prisma from "@calcom/prisma";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
 import { eventTypeMetaDataSchemaWithUntypedApps, teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import { orderBy } from "lodash";
-
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) {
-    return true;
-  }
-  async hasPermission(..._args: unknown[]) {
-    return true;
-  }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
-    return [];
-  }
-}
 
 const log = logger.getSubLogger({ prefix: ["viewer.eventTypes.getByViewer"] });
 
@@ -62,7 +50,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
     shouldListUserEvents = true;
   }
 
-  const permissionCheckService = new PermissionCheckService();
+  const permissionCheckService = new TeamRolePermissionService();
   const urlService = getOrganizationUrlService();
   const [teamsWithEventTypeReadPermission, teamsWithEventTypeUpdatePermission] = await Promise.all([
     permissionCheckService.getTeamIdsWithPermission({
