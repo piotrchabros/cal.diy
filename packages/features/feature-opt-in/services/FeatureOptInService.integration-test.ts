@@ -3,8 +3,8 @@ import { getFeaturesRepository } from "@calcom/features/di/containers/FeaturesRe
 import type { FeatureId } from "@calcom/features/flags/config";
 import type { FeaturesRepository } from "@calcom/features/flags/features.repository";
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import type { IFeatureOptInService } from "./IFeatureOptInService";
 
 // Mock isFeatureAllowedForScope to always return true for integration tests.
@@ -59,6 +59,7 @@ async function setup(): Promise<TestEntities> {
     data: {
       email: `test-opt-in-${id}@example.com`,
       username: `test-opt-in-${id}`,
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
     },
   });
 
