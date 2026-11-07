@@ -32,4 +32,5 @@ export interface IOrganizationRepository {
   findOwners(organizationId: number): Promise<OrganizationOwnerDto[]>;
   findDomainById(id: number): Promise<string | null>;
   findTeamParentById(teamId: number): Promise<TeamParentRecord | null>;
+  findIdByVerifiedAutoAcceptEmailDomain(domain: string): Promise<number | null>;
 }

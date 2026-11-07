@@ -137,20 +137,13 @@ export const checkIfUserBelongsToActiveTeam = <T extends UserTeams>(user: T) =>
 
 const checkIfUserShouldBelongToOrg = async (idP: IdentityProvider, email: string) => {
   const [orgUsername, apexDomain] = email.split("@");
-  if (!ORGANIZATIONS_AUTOLINK || (idP !== "GOOGLE" && idP !== "AZUREAD"))
+  if (!ORGANIZATIONS_AUTOLINK || !isOrganizationsEnabled() || (idP !== "GOOGLE" && idP !== "AZUREAD"))
     return { orgUsername, orgId: undefined };
-  const existingOrg = await prisma.team.findFirst({
-    where: {
-      organizationSettings: {
-        isOrganizationVerified: true,
-        orgAutoAcceptEmail: apexDomain,
-      },
-    },
-    select: {
-      id: true,
-    },
-  });
-  return { orgUsername, orgId: existingOrg?.id };
+  const { getOrganizationRepository } = await import(
+    "@calcom/features/organizations/di/OrganizationRepository.container"
+  );
+  const orgId = await getOrganizationRepository().findIdByVerifiedAutoAcceptEmailDomain(apexDomain);
+  return { orgUsername, orgId: orgId ?? undefined };
 };
 
 /**
