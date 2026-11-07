@@ -26,11 +26,11 @@ The organization is always the caller's own organization. No `organizationId` is
 | Procedure | Who | Input | Output | Errors |
 |-----------|-----|-------|--------|--------|
 | `current` | any member | — | `OrganizationDto` minus counts; plus `viewerRole` | |
-| `listMembers` | any member | `{ search?, cursor?, limit? }` | `{ items: { userId, name, email, username, role }[], nextCursor? }` | |
+| `listMembers` | any member | `{ search?, cursor?, limit? }` | `{ items: { userId, name, email, username, role, accepted }[], nextCursor? }` (pending invitees have `accepted: false`) | |
 | `inviteMember` | ADMIN, OWNER | `{ email, role: "MEMBER" \| "ADMIN" \| "OWNER" }` | `{ invited: true }` | FORBIDDEN (granting OWNER as ADMIN), CONFLICT (email belongs to another org: "belongs to another organization") |
 | `updateRole` | ADMIN, OWNER | `{ userId, role }` | `{ userId, role }` | FORBIDDEN, PRECONDITION_FAILED (last owner) |
 | `removeMember` | ADMIN, OWNER | `{ userId }` | `{ userId }` | FORBIDDEN, PRECONDITION_FAILED (last owner); the effect is a move to the default org (FR-011) |
-| `listTeams` | any member (read-only); ADMIN and OWNER see every team | `{ search?, cursor?, limit? }` | `{ items: { teamId, name, slug, memberCount, viewerIsMember }[] }` | |
+| `listTeams` | any member (read-only); ADMIN and OWNER see every team | `{ search?, cursor?, limit? }` | `{ items: { teamId, name, slug, memberCount, viewerIsMember }[], nextCursor? }` (a MEMBER sees only their own teams) | |
 
 Team management for org admins (delete a team, add or remove members of a team they are not in) reuses the existing `viewer.teams.*` procedures. Their permission check is extended: "team admin **or** org ADMIN/OWNER of the team's parent org".
 

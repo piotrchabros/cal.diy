@@ -1,3 +1,4 @@
+import { useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { IS_SELF_HOSTED, WEBSITE_URL } from "@calcom/lib/constants";
 import { trpc } from "@calcom/trpc/react";
 import type { AppRouter } from "@calcom/trpc/types/server/routers/_app";
@@ -48,6 +49,7 @@ export const UsernameAvailabilityField = ({
 }: UsernameAvailabilityFieldProps) => {
   const searchParams = useSearchParams();
   const [user] = trpc.viewer.me.get.useSuspenseQuery();
+  const publicBase = useOrgBaseUrlOr(WEBSITE_URL);
   const [currentUsernameState, setCurrentUsernameState] = useState(user.username || "");
   const { username: usernameFromQuery, setQuery: setUsernameFromQuery } = useRouterQuery("username");
   const { username: currentUsername, setQuery: setCurrentUsername } =
@@ -64,7 +66,7 @@ export const UsernameAvailabilityField = ({
 
   const usernamePrefix = orgBranding
     ? "".replace(/^(https?:|)\/\//, "")
-    : `${WEBSITE_URL?.replace(/^(https?:|)\/\//, "")}`;
+    : `${publicBase?.replace(/^(https?:|)\/\//, "")}`;
 
   const isPremium = !IS_SELF_HOSTED && !user.organization?.id;
 

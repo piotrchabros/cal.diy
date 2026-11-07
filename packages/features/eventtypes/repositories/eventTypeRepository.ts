@@ -1098,6 +1098,18 @@ export class EventTypeRepository implements IEventTypesRepository {
     });
   }
 
+  async findByIdIncludeTeamAndOwnerOrganization({ id }: { id: number }) {
+    return await this.prismaClient.eventType.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        team: { select: { id: true, parentId: true, isOrganization: true } },
+        parent: { select: { team: { select: { parentId: true } } } },
+        owner: { select: { organizationId: true } },
+      },
+    });
+  }
+
   async findFirstEventTypeId({ slug, teamId, userId }: { slug: string; teamId?: number; userId?: number }) {
     // Use compound unique keys when available for optimal performance
     // Note: teamId and userId are mutually exclusive - never both provided

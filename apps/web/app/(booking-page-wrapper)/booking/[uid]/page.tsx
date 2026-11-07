@@ -1,3 +1,4 @@
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { loadTranslations } from "@calcom/i18n/server";
 import { BookingStatus } from "@calcom/prisma/enums";
 import { buildLegacyCtx } from "@lib/buildLegacyCtx";
@@ -15,9 +16,11 @@ import {
 const getData = withAppDirSsr<ClientPageProps>(getServerSideProps);
 
 export const generateMetadata = async ({ params, searchParams }: _PageProps) => {
+  const requestHeaders = await headers();
   const { bookingInfo, eventType, recurringBookings, orgSlug } = await getData(
-    buildLegacyCtx(await headers(), await cookies(), await params, await searchParams)
+    buildLegacyCtx(requestHeaders, await cookies(), await params, await searchParams)
   );
+  const { baseUrl } = await getRequestOrgBaseUrl(requestHeaders);
   const needsConfirmation = bookingInfo.status === BookingStatus.PENDING && eventType.requiresConfirmation;
 
   const metadata = await _generateMetadata(
@@ -26,7 +29,7 @@ export const generateMetadata = async ({ params, searchParams }: _PageProps) => 
     (t) =>
       t(`booking_${needsConfirmation ? "submitted" : "confirmed"}${recurringBookings ? "_recurring" : ""}`),
     false,
-    process.env.NEXT_PUBLIC_WEBAPP_URL ?? "",
+    baseUrl,
     `/booking/${(await params).uid}`
   );
 

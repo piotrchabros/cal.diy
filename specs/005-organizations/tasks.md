@@ -253,18 +253,18 @@ description: "Task list for Organizations (spec 005)"
 
 **PRs 16.1–16.7: client link sweep** (replace `WEBAPP_URL` / `WEBSITE_URL` / `NEXT_PUBLIC_WEBAPP_URL` in user-facing links with `useOrgBaseUrl()`, or `window.location.origin` where the current host is by definition right; keep build-time constants for assets and SEO defaults)
 
-- [ ] T050 [P] [US3] PR 16.1, auth:
+- [X] T050 [P] [US3] PR 16.1, auth:
   - `apps/web/modules/auth/{logout-view,team-invite-view,verify-view}.tsx`
   - `apps/web/modules/auth/hooks/useRedirectToLoginIfUnauthenticated.tsx`
   - `apps/web/modules/signup-view.tsx`
   - `apps/web/components/setup/AdminUser.tsx`
-- [ ] T051 [P] [US3] PR 16.2, booking pages:
+- [X] T051 [P] [US3] PR 16.2, booking pages:
   - `apps/web/modules/bookings/components/{BookerWebWrapper,event-meta/AvailableEventLocations,event-meta/Members}.tsx`
   - `packages/features/bookings/components/Header.tsx`
   - `apps/web/app/(booking-page-wrapper)/{[user]/page,[user]/[type]/page,booking/[uid]/page,team/[slug]/[type]/page}.tsx`
-- [ ] T052 [P] [US3] PR 16.3, event types:
+- [X] T052 [P] [US3] PR 16.3, event types:
   - `apps/web/modules/event-types/components/{CreateEventTypeDialog,DuplicateDialog,EventTypeWebWrapper,locations/Locations,tabs/setup/EventSetupTabWebWrapper}.tsx`
-- [ ] T053 [P] [US3] PR 16.4, settings and teams:
+- [X] T053 [P] [US3] PR 16.4, settings and teams:
   - `apps/web/modules/settings/my-account/{appearance-view,profile-view}.tsx`
   - `apps/web/modules/settings/teams/team-profile-view.tsx`
   - `apps/web/modules/teams/views/teams-listing-view.tsx`
@@ -333,7 +333,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 25**
 
-- [ ] T066 [US4] Create `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/organization/{members,teams}/page.tsx`, with the flag check and membership check in `page.tsx`. Create the views `apps/web/modules/organizations/views/{org-members-view,org-teams-view}.tsx` (read-only for MEMBER), add the nav entry in `SettingsLayoutAppDirClient.tsx`, the i18n strings and view tests
+- [X] T066 [US4] Create `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/organization/{members,teams}/page.tsx`, with the flag check and membership check in `page.tsx`. Create the views `apps/web/modules/organizations/views/{org-members-view,org-teams-view}.tsx` (read-only for MEMBER), add the nav entry in `SettingsLayoutAppDirClient.tsx`, the i18n strings and view tests
 
 ---
 
@@ -344,7 +344,7 @@ description: "Task list for Organizations (spec 005)"
 
 **PR 26**
 
-- [ ] T067 [US5] Implement `OrganizationMoveService` in `packages/features/organizations/services/OrganizationMoveService.ts`:
+- [X] T067 [US5] Implement `OrganizationMoveService` in `packages/features/organizations/services/OrganizationMoveService.ts`:
   - `moveUser({ userId, toOrganizationId, newUsername? })` removes the user's memberships of old-org teams, updates `User.organizationId`, the `Profile` and the org `Membership`, writes `TempOrgRedirect { from: oldUsername, fromOrgId: oldOrgId, type: User, toUrl: https://<new domain>/<username>, enabled: true }`, and returns CONFLICT when the username is taken in the target org.
   - `previewMoveTeam` and `moveTeam({ outsideMembers: "move" | "remove", newSlug? })` set `parentId` and write the `Team` redirect.
   - Disable redirects (`enabled = false`) when the old org reuses the `from` username or slug. Hook this into `addMember` and team create/rename.
@@ -367,14 +367,15 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T074 Create OAuth (Google, Azure AD) sign-ups in the request organization when the flag is on. Today they are created without an organization, so the `signIn` domain policy refuses them. Add tests
 - [ ] T075 In `getServerSession` / `ensureSession`, check on each request that the database `user.organizationId` matches the request organization. This defends against a session token copied to another domain. Add tests
 - [ ] T076 Owner checklist (`contracts/infra-owner-checklist.md`): set `AUTH_TRUST_HOST` only together with `ORGANIZATIONS_ENABLED`; Caddy must overwrite `X-Forwarded-*` headers; the Node ports must not be reachable from outside
-- [ ] T110 [US3] Run the T045 host-organization check (`assertEventTypeInHostOrganization` in `packages/features/organizations/lib/resolveBookingHostOrganization.ts`) for instant meetings and API v1 bookings (`createBookingForApiV1`), which bypass `RegularBookingService.handler`. Add tests
-- [ ] T111 [US3] In `packages/trpc/server/routers/viewer/slots/getSchedule.handler.ts`, refuse (NOT_FOUND) a direct `eventTypeId` whose owner/team organization differs from the request organization; T046 only scopes slug lookups. Add tests
-- [ ] T112 [P] [US3] Let `apps/api/v2` bookings skip the host-organization check explicitly (instead of relying on its Host not resolving): with a loopback Host the resolver returns the default org and would refuse other organizations' event types. Pass a flag from `packages/platform/libraries` into `RegularBookingService`. Add tests
+- [X] T110 [US3] Run the T045 host-organization check (`assertEventTypeInHostOrganization` in `packages/features/organizations/lib/resolveBookingHostOrganization.ts`) for instant meetings and API v1 bookings (`createBookingForApiV1`), which bypass `RegularBookingService.handler`. Add tests
+  - NOTE: this repo has no API v1 app and no instant-meeting booking service; `createBookingForApiV1` runs the same `handler` as web bookings, so the check already applies. Covered by a test in `handleNewBooking/test/organization-host.test.ts`.
+- [X] T111 [US3] In `packages/trpc/server/routers/viewer/slots/getSchedule.handler.ts`, refuse (NOT_FOUND) a direct `eventTypeId` whose owner/team organization differs from the request organization; T046 only scopes slug lookups. Add tests
+- [X] T112 [P] [US3] Let `apps/api/v2` bookings skip the host-organization check explicitly (instead of relying on its Host not resolving): with a loopback Host the resolver returns the default org and would refuse other organizations' event types. Pass a flag from `packages/platform/libraries` into `RegularBookingService`. Add tests
 - [ ] T120 [P] [US2] Add an instance-admin teams list (none exists today) with the `organization: { id, name }` column and `organizationId` filter required by US2-5 / contracts/trpc-organizations.md, e.g. `apps/web/app/(use-page-wrapper)/settings/(admin-layout)/admin/teams/page.tsx` + an admin `teams.listPaginated` procedure (split out of T032)
 - [ ] T130 [US2] Keep the org `Profile.username` in sync when an org member changes their username in `packages/trpc/server/routers/viewer/me/updateProfile.handler.ts` (data-model.md: `users.username` equals `Profile.username`; both are written on change). Today only `users.username` is updated. Add tests
 - [ ] T131 [US2] In `TeamMembersService.acceptPendingInvitesOnSignup` (`packages/features/membership/services/TeamMembersService.ts`), skip pending invites to teams outside the organization the new user just joined when the flag is on. Add tests
 - [ ] T132 [US2] In `apps/web/app/api/auth/signup/handlers/selfHostedHandler.ts`, when `addMember` fails after `userRepository.create` on the invitation-less path (flag on), the new user is left with the org id and profile but no membership. Create the user and the membership in one step (or compensate by deleting the user) and add tests
-- [ ] T100 [P] [US3] `packages/trpc/server/routers/publicViewer/event.handler.ts` passes the client-supplied `org` straight to `getPublicEvent`; take the org slug from the request host org (`getHostOrganization`) instead, so a booking page can't load another organization's event through the tRPC call. Add a test
+- [X] T100 [P] [US3] `packages/trpc/server/routers/publicViewer/event.handler.ts` passes the client-supplied `org` straight to `getPublicEvent`; take the org slug from the request host org (`getHostOrganization`) instead, so a booking page can't load another organization's event through the tRPC call. Add a test
 - [X] T101 [US6] With the flag on, `apps/web/server/lib/[user]/[type]/getServerSideProps.ts` indexes a booking page only when `OrganizationSettings.allowSEOIndexing` is true, and that column defaults to `false`. Make the T061 switch-over migration set `allowSEOIndexing = true` for BlueBee (and default it for organizations created by `OrganizationService.create`), so public pages don't become `noindex` at go-live
 - [ ] T102 [US5] Move redirects are now 308s (`apps/web/lib/handleOrgRedirect.ts`, `apps/web/app/WithAppDirSsr.tsx`, `apps/web/app/WithEmbedSSR.tsx`) and browsers cache them, so disabling a redirect when the old org reuses the username (US5-6) does not reach visitors who already followed it. Document this in `contracts/infra-owner-checklist.md` or send a bounded `Cache-Control` on those redirects
 - [ ] T150 [US2] With the flag on, make the shared tRPC procedures `createEventPbacProcedure` and `eventOwnerProcedure` (`packages/trpc/server/routers/viewer/eventTypes/util.ts`) and the notetaker `assertActorIsMember` (`packages/features/notetaker/services/NotetakerSharingSettingsService.ts`) refuse callers outside the team's organization with NOT_FOUND instead of FORBIDDEN (FR-008). Add tests
@@ -386,10 +387,17 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T163 [US3] Booker-facing payment return URLs use `WEBAPP_URL` in `packages/app-store/paypal/lib/PaymentService.ts` and `packages/app-store/hitpay/lib/PaymentService.ts`; make them follow the booking's organization base URL (webhook URLs stay on `WEBAPP_URL`). Add tests
 - [ ] T164 [P] Delete dead `packages/app-store/_utils/paid-apps.ts` (no callers; owner approval for deletions)
 - [ ] T165 [P] [US3] `packages/app-store/{feishucalendar,larkcalendar}/api/callback.ts` catch blocks redirect to `state.returnTo` unvalidated; route it through `getSafeRedirectUrl` with `getOAuthSafeRedirectOptions(req)` (relative fallback kept). Add tests
+- [ ] T230 [US3] With `skipHostOrganizationCheck` (API v2), `loadAndValidateUsers` in `packages/features/bookings/lib/handleNewBooking/loadUsers.ts` still resolves the dynamic-group org slug from the API's own Host (loopback → default organization) when the flag is on, so non-platform API v2 dynamic group bookings only find default-organization users. Decide whether API v2 should scope by `forcedSlug` / the authenticated user's organization instead, and add tests
 - [ ] T220 [US2] The T061 switch-over gives BlueBee members without a username `organizationId` and a membership but no org `Profile` (`Profile.username` is NOT NULL). When such a user sets a username (`packages/trpc/server/routers/viewer/me/updateProfile.handler.ts`, together with T130), create their org `Profile` through `OrganizationMembershipService`, and make sure profile/session code tolerates an org member without a profile until then. Add tests
 - [ ] T221 [US6] With `ORGANIZATIONS_ENABLED` off, `UserRepository._getWhereClauseForFindingUsersByUsername` (`packages/features/users/repositories/UserRepository.ts`, used by `apps/web/server/lib/[user]/getServerSideProps.ts`) matches only users with `organization: null` (team pages similarly use `parentId: null`), so once the T061 switch-over runs, booking pages 404 until the flag is on. Either make the flag-off lookups ignore the organization, or add an explicit step to `contracts/infra-owner-checklist.md` to apply T061 and enable the flag in the same window (the Go-live gate currently implies a gap between the two)
 
 ---
+- [ ] T180 [US4] `OrganizationMembershipService.removeMember` refuses with CONFLICT `username_taken_in_default_organization` when the removed member's username is already used in the default organization (FR-011 gives no rule). Let the remover (or an instance admin) pick a new username, e.g. reuse T067 `moveUser({ newUsername })`, and surface the prompt in `apps/web/modules/organizations/components/org-member-actions.tsx`. Add tests
+- [ ] T181 [US4] Decide whether removing an org member (FR-011 move to the default org) should write a `TempOrgRedirect` for their old public URL like FR-005 moves do (FR-018 only covers instance-admin moves); today it writes none. Implement in `PrismaOrganizationMembershipRepository.moveToOrganization` / T067 if yes. Add tests
+- [ ] T182 [US4] Profile-less org invitees (created by `viewer.organization.inviteMember` / T031 with `username = null`) have `ctx.user.organizationId = null` (it comes from the session profile, `packages/features/auth/lib/userFromSessionUtils.ts`), so they get NOT_FOUND on `/settings/organization/*` and the org invite landing sends them to "/". Resolve together with the T034 username question, then point org invites (`apps/web/app/(use-page-wrapper)/auth/team-invite/page.tsx`, `apps/web/modules/auth/team-invite-view.tsx`) at `/settings/organization/members`
+- [ ] T183 [P] `packages/features/teams/services/TeamProfileService.ts` imports schemas from `@calcom/trpc/server/routers/viewer/teams/teamProfile.schema` (features must not import trpc). Move `ZTeamProfileMetadataSchema`, `TEAM_LOGO_DATA_URL_PATTERN` and the input types into `packages/features/teams/` and re-export from the trpc schema file
+- [ ] T200 [US4] Make `OrganizationMembershipService.removeMember` (FR-011) delegate to `OrganizationMoveService.moveUser` with the default organization as target (covers T180's `newUsername` and, if decided, T181's redirect), and drop `PrismaOrganizationMembershipRepository.moveToOrganization`: it deletes and recreates the `Profile`, so event types lose their `profileId` and the session `upId` breaks, and it leaves `Host` rows on the old organization's team events. Add tests
+- [ ] T201 [US5] Disable move redirects (US5-6) on the remaining username-reuse paths: a user renaming themselves (`packages/trpc/server/routers/viewer/me/updateProfile.handler.ts`) or an admin renaming them (`packages/trpc/server/routers/viewer/users/_router.ts`) to a username freed by a move in their organization. Call `TempOrgRedirectRepository.disableByFrom({ fromOrgId, from: username, types: ["User"] })`. Add tests
 
 ## Dependencies and execution order
 

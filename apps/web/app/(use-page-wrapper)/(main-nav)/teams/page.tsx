@@ -1,5 +1,5 @@
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { getRequestOrgBaseUrl } from "@calcom/features/organizations/lib/getRequestOrgBaseUrl";
 import { prisma } from "@calcom/prisma";
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import { _generateMetadata } from "app/_utils";
@@ -17,6 +17,7 @@ const Page = async (): Promise<ReactElement> => {
   if (!session?.user?.id) {
     return redirect("/auth/login");
   }
+  const { baseUrl } = await getRequestOrgBaseUrl(await headers());
 
   const memberships = await prisma.membership.findMany({
     // Org admins hold a membership on the organization's own team row, which is not a team they manage here
@@ -43,7 +44,7 @@ const Page = async (): Promise<ReactElement> => {
     logoUrl: membership.team.logoUrl,
     bio: membership.team.bio,
     role: membership.role,
-    publicUrl: getTeamPublicUrl(WEBAPP_URL, membership.team.slug),
+    publicUrl: getTeamPublicUrl(baseUrl, membership.team.slug),
   }));
 
   return <TeamsListingView teams={teams} />;

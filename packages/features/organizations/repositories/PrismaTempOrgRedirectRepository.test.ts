@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PrismaTempOrgRedirectRepository } from "./PrismaTempOrgRedirectRepository";
 
 function buildRepository() {
-  const tempOrgRedirect = { findMany: vi.fn() };
+  const tempOrgRedirect = { findMany: vi.fn(), updateMany: vi.fn() };
   const prismaClient = { tempOrgRedirect } as unknown as PrismaClient;
   return { repository: new PrismaTempOrgRedirectRepository(prismaClient), tempOrgRedirect };
 }
@@ -42,6 +42,32 @@ describe("PrismaTempOrgRedirectRepository", () => {
 
       expect(result).toEqual([]);
       expect(tempOrgRedirect.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("disableByFrom", () => {
+    it("disables enabled redirects of the given types and returns the count", async () => {
+      const { repository, tempOrgRedirect } = buildRepository();
+      tempOrgRedirect.updateMany.mockResolvedValue({ count: 2 });
+
+      const result = await repository.disableByFrom({
+        fromOrgId: 3,
+        from: "sales",
+        types: ["Team", "TeamEventType"],
+      });
+
+      expect(tempOrgRedirect.updateMany).toHaveBeenCalledWith({
+        where: { fromOrgId: 3, from: "sales", type: { in: ["Team", "TeamEventType"] }, enabled: true },
+        data: { enabled: false },
+      });
+      expect(result).toBe(2);
+    });
+
+    it("returns 0 without querying when no types are given", async () => {
+      const { repository, tempOrgRedirect } = buildRepository();
+
+      expect(await repository.disableByFrom({ fromOrgId: 3, from: "sales", types: [] })).toBe(0);
+      expect(tempOrgRedirect.updateMany).not.toHaveBeenCalled();
     });
   });
 });

@@ -8,4 +8,5 @@ export interface ITempOrgRedirectRepository {
     type: RedirectTypeDto;
     fromSlugs: string[];
   }): Promise<TempOrgRedirectRecord[]>;
+  disableByFrom(params: { fromOrgId: number; from: string; types: RedirectTypeDto[] }): Promise<number>;
 }

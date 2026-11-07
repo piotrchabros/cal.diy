@@ -1,14 +1,6 @@
-import classNames from "classnames";
-// eslint-disable-next-line no-restricted-imports
-import { noop } from "lodash";
-import { useSession } from "next-auth/react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { RefCallback } from "react";
-import { useEffect, useState } from "react";
-
 import { getPremiumPlanPriceValue } from "@calcom/app-store/stripepayment/lib/utils";
 import { Dialog } from "@calcom/features/components/controlled-dialog";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { useOrgBaseUrl, useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { fetchUsername } from "@calcom/lib/fetchUsername";
 import hasKeyInMetadata from "@calcom/lib/hasKeyInMetadata";
 import { useDebounce } from "@calcom/lib/hooks/useDebounce";
@@ -17,12 +9,18 @@ import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
 import type { AppRouter } from "@calcom/trpc/types/server/routers/_app";
 import { Button } from "@calcom/ui/components/button";
-import { DialogContent, DialogFooter, DialogClose } from "@calcom/ui/components/dialog";
-import { Label, Input } from "@calcom/ui/components/form";
+import { DialogClose, DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
+import { Input, Label } from "@calcom/ui/components/form";
 import { Icon } from "@calcom/ui/components/icon";
 import { CheckIcon, ExternalLinkIcon } from "@coss/ui/icons";
-
 import type { TRPCClientErrorLike } from "@trpc/client";
+import classNames from "classnames";
+// eslint-disable-next-line no-restricted-imports
+import { noop } from "lodash";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
+import type { RefCallback } from "react";
+import { useEffect, useState } from "react";
 
 export enum UsernameChangeStatusEnum {
   UPGRADE = "UPGRADE",
@@ -58,6 +56,8 @@ const PremiumTextfield = (props: ICustomUsernameProps) => {
   const router = useRouter();
   const { t } = useLocale();
   const { update } = useSession();
+  const orgBaseUrl = useOrgBaseUrl();
+  const publicBase = useOrgBaseUrlOr(process.env.NEXT_PUBLIC_WEBSITE_URL);
   const {
     currentUsername,
     setCurrentUsername = noop,
@@ -127,7 +127,7 @@ const PremiumTextfield = (props: ICustomUsernameProps) => {
 
   const paymentLink = `/api/integrations/stripepayment/subscription?intentUsername=${
     inputUsernameValue || usernameFromStripe
-  }&action=${usernameChangeCondition}&callbackUrl=${WEBAPP_URL}${pathname}`;
+  }&action=${usernameChangeCondition}&callbackUrl=${orgBaseUrl}${pathname}`;
 
   const ActionButtons = () => {
     if (paymentRequired) {
@@ -205,7 +205,7 @@ const PremiumTextfield = (props: ICustomUsernameProps) => {
             isInputUsernamePremium ? "border border-orange-400 " : "",
             "border-default bg-cal-muted text-subtle hidden h-8 items-center rounded-l-md border border-r-0 px-3 text-sm md:inline-flex"
           )}>
-          {process.env.NEXT_PUBLIC_WEBSITE_URL.replace("https://", "").replace("http://", "")}/
+          {publicBase.replace("https://", "").replace("http://", "")}/
         </span>
 
         <div className="relative w-full">

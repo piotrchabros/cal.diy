@@ -1,4 +1,4 @@
-import type { OrganizationMemberDto } from "@calcom/lib/dto/OrganizationDto";
+import type { OrganizationMemberDto, OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import OrgMembersView from "./org-members-view";
@@ -15,6 +15,21 @@ type ListQuery = {
 const mocks = vi.hoisted(() => ({
   useInfiniteQuery: vi.fn<(input: ListInput, options: unknown) => ListQuery>(),
   fetchNextPage: vi.fn<() => void>(),
+  memberActions:
+    vi.fn<(props: { member: OrganizationMemberDto; viewerRole: string; viewerUserId: number }) => void>(),
+}));
+
+vi.mock("../components/org-member-actions", () => ({
+  OrgMemberActions: (props: { member: OrganizationMemberDto; viewerRole: string; viewerUserId: number }) => {
+    mocks.memberActions(props);
+    return <span data-testid="org-member-actions" />;
+  },
+}));
+
+vi.mock("../components/org-invite-member-dialog", () => ({
+  OrgInviteMemberDialog: ({ open }: { open: boolean }) => (
+    <div data-testid="org-invite-dialog" data-open={String(open)} />
+  ),
 }));
 
 vi.mock("@calcom/lib/hooks/useLocale", () => ({
@@ -70,9 +85,9 @@ const PENDING_MEMBER = buildMember({
   accepted: false,
 });
 
-function renderView(query: ListQuery): ReturnType<typeof render> {
+function renderView(query: ListQuery, viewerRole: OrganizationRoleDto = "MEMBER"): ReturnType<typeof render> {
   mocks.useInfiniteQuery.mockReturnValue(query);
-  return render(<OrgMembersView viewerRole="OWNER" viewerUserId={1} />);
+  return render(<OrgMembersView viewerRole={viewerRole} viewerUserId={1} />);
 }
 
 describe("OrgMembersView", () => {
@@ -151,6 +166,25 @@ describe("OrgMembersView", () => {
     renderView(buildQuery([OWNER, PENDING_MEMBER]));
 
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByTestId("org-invite-dialog")).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId("org-member-actions")).toHaveLength(0);
+  });
+
+  it.each(["ADMIN", "OWNER"] as const)("lets an %s invite members and manage each row", (viewerRole) => {
+    renderView(buildQuery([OWNER, PENDING_MEMBER]), viewerRole);
+
+    expect(screen.getByTestId("org-invite-dialog").dataset.open).toBe("false");
+    fireEvent.click(screen.getByText("invite_organization_member"));
+    expect(screen.getByTestId("org-invite-dialog").dataset.open).toBe("true");
+
+    expect(
+      within(screen.getByTestId("org-member-row-1")).getByTestId("org-member-actions")
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("org-member-row-2")).getByTestId("org-member-actions")
+    ).toBeInTheDocument();
+    expect(mocks.memberActions).toHaveBeenCalledWith({ member: OWNER, viewerRole, viewerUserId: 1 });
+    expect(mocks.memberActions).toHaveBeenCalledWith({ member: PENDING_MEMBER, viewerRole, viewerUserId: 1 });
   });
 
   it("fetches the next page when load more is clicked", () => {

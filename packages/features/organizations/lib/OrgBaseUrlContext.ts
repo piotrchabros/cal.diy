@@ -10,3 +10,9 @@ export const OrgBaseUrlContext = createContext<OrgBaseUrlContextValue>(DEFAULT_O
 export function useOrgBaseUrl(): string {
   return useContext(OrgBaseUrlContext).baseUrl;
 }
+
+// WEBSITE_URL can differ from WEBAPP_URL, so off an organization host callers keep their historical fallback.
+export function useOrgBaseUrlOr<T extends string | undefined>(fallback: T): string | T {
+  const { baseUrl, orgSlug } = useContext(OrgBaseUrlContext);
+  return orgSlug ? baseUrl : fallback;
+}

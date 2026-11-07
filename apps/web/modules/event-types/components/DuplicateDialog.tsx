@@ -1,11 +1,6 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-
 import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { EventTypeDuplicateInput } from "@calcom/features/eventtypes/lib/types";
+import { useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useDebounce } from "@calcom/lib/hooks/useDebounce";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
@@ -16,12 +11,16 @@ import slugify from "@calcom/lib/slugify";
 import turndown from "@calcom/lib/turndownService";
 import { trpc } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
-import { DialogContent, DialogFooter, DialogClose } from "@calcom/ui/components/dialog";
+import { DialogClose, DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
 import { Editor } from "@calcom/ui/components/editor";
-import { Form } from "@calcom/ui/components/form";
-import { TextField } from "@calcom/ui/components/form";
+import { Form, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { revalidateEventTypesList } from "@calcom/web/app/(use-page-wrapper)/(main-nav)/event-types/actions";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 const querySchema = z.object({
   title: z.string().min(1),
@@ -38,6 +37,7 @@ const DuplicateDialog = () => {
   const utils = trpc.useUtils();
 
   const searchParams = useCompatSearchParams();
+  const websiteUrl = useOrgBaseUrlOr(process.env.NEXT_PUBLIC_WEBSITE_URL);
   const { t } = useLocale();
   const router = useRouter();
   const [firstRender, setFirstRender] = useState(true);
@@ -137,10 +137,9 @@ const DuplicateDialog = () => {
               }}
             />
 
-            {process.env.NEXT_PUBLIC_WEBSITE_URL !== undefined &&
-            process.env.NEXT_PUBLIC_WEBSITE_URL?.length >= 21 ? (
+            {websiteUrl !== undefined && websiteUrl.length >= 21 ? (
               <TextField
-                label={`${t("url")}: ${process.env.NEXT_PUBLIC_WEBSITE_URL}`}
+                label={`${t("url")}: ${websiteUrl}`}
                 required
                 addOnLeading={<>/{pageSlug}/</>}
                 {...register("slug")}
@@ -154,7 +153,7 @@ const DuplicateDialog = () => {
                 required
                 addOnLeading={
                   <>
-                    {process.env.NEXT_PUBLIC_WEBSITE_URL}/{pageSlug}/
+                    {websiteUrl}/{pageSlug}/
                   </>
                 }
                 {...register("slug")}
