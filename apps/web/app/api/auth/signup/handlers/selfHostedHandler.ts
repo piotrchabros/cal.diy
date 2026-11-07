@@ -13,8 +13,6 @@ import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/s
 import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
-import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
-import { getOrgFromRequest } from "@calcom/features/organizations/lib/getOrgFromRequest";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
@@ -26,16 +24,8 @@ import { prisma } from "@calcom/prisma";
 import { CreationSource, IdentityProvider } from "@calcom/prisma/enums";
 import { signupSchema } from "@calcom/prisma/zod-utils";
 import { NextResponse } from "next/server";
+import { resolveHostOrganizationId } from "./resolveHostOrganizationId";
 import { respondConflictAs409 } from "./respondConflictAs409";
-
-// Users join the org of the domain they signed up on; with organizations off that is always the default org
-async function resolveHostOrganizationId(
-  orgsEnabled: boolean,
-  requestHeaders: Pick<Headers, "get">
-): Promise<number | null> {
-  if (!orgsEnabled) return requireDefaultOrganizationId();
-  return (await getOrgFromRequest(requestHeaders))?.id ?? null;
-}
 
 export default async function handler(body: Record<string, string>, requestHeaders: Pick<Headers, "get">) {
   const { email, password, language, token } = signupSchema.parse(body);
