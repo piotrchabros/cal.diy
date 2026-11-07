@@ -5218,5 +5218,9 @@
   "organization_cannot_remove_from_default": "Members cannot be removed from the default organization",
   "organization_must_keep_one_owner": "An organization must keep at least one owner",
   "organization_invalid_invite_email": "Enter a valid email address to invite",
+  "organization_member_not_owner": "This person is not an owner of the organization",
+  "organization_make_admin": "Make admin",
+  "organization_make_member": "Make member",
+  "organization_owner_demoted": "Owner removed",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

@@ -239,6 +239,22 @@ export class OrganizationService {
     return this.toDto(updated);
   }
 
+  // Removing an owner keeps them in the organization with a lesser role; the last owner cannot be demoted
+  async demoteOwner(
+    id: number,
+    input: { userId: number; role: "ADMIN" | "MEMBER" },
+    actorUserId: number
+  ): Promise<OrganizationDto> {
+    await this.findByIdOrThrow(id);
+    await this.deps.organizationMembershipService.demoteOwner({
+      organizationId: id,
+      userId: input.userId,
+      role: input.role,
+      actorUserId,
+    });
+    return this.get(id);
+  }
+
   async delete(id: number, actorUserId: number): Promise<{ id: number }> {
     const existing = await this.findByIdOrThrow(id);
 

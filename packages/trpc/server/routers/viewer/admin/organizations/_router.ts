@@ -15,6 +15,7 @@ import {
   ZCreateOrganizationInput,
   ZDeleteOrganizationInput,
   ZDeleteOrganizationOutput,
+  ZDemoteOrganizationOwnerInput,
   ZGetOrganizationInput,
   ZListOrganizationsInput,
   ZListOrganizationTeamsInput,
@@ -69,6 +70,14 @@ export const organizationsRouter = router({
       const { id, ...rest } = input;
       const service = await loadService();
       return service.update(id, rest, ctx.user.id);
+    }),
+  demoteOwner: organizationsProcedure
+    .input(ZDemoteOrganizationOwnerInput)
+    .output(OrganizationDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { id, ...rest } = input;
+      const service = await loadService();
+      return service.demoteOwner(id, rest, ctx.user.id);
     }),
   delete: organizationsProcedure
     .input(ZDeleteOrganizationInput)

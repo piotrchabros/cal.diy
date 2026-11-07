@@ -286,18 +286,57 @@ function EditOrganizationFormInner({ organization }: { organization: Organizatio
           />
         </div>
       )}
-      <div>
-        <Label>{t("owner")}</Label>
-        <ul className="text-default text-sm">
-          {organization.owners.map((owner) => (
-            <li key={owner.userId}>{`${owner.name ?? owner.email} (${owner.email})`}</li>
-          ))}
-        </ul>
-      </div>
+      <OwnerList organization={organization} />
       <Button type="submit" loading={mutation.isPending}>
         {t("save")}
       </Button>
     </Form>
+  );
+}
+
+function OwnerList({ organization }: { organization: OrganizationDto }) {
+  const { t } = useLocale();
+  const utils = trpc.useUtils();
+
+  const mutation = trpc.viewer.admin.organizations.demoteOwner.useMutation({
+    onSuccess: async () => {
+      showToast(t("organization_owner_demoted"), "success");
+      await Promise.all([
+        utils.viewer.admin.organizations.list.invalidate(),
+        utils.viewer.admin.organizations.get.invalidate({ id: organization.id }),
+      ]);
+    },
+    onError: (err) => {
+      showToast(t(err.message), "error");
+    },
+  });
+
+  // The server refuses to demote the last accepted owner anyway; hiding the actions avoids a dead click
+  const canDemote = organization.owners.length > 1;
+
+  return (
+    <div>
+      <Label>{t("owner")}</Label>
+      <ul className="stack-y-1 text-default text-sm">
+        {organization.owners.map((owner) => (
+          <li key={owner.userId} className="flex items-center gap-2" data-testid="organization-owner">
+            <span>{`${owner.name ?? owner.email} (${owner.email})`}</span>
+            {canDemote &&
+              (["ADMIN", "MEMBER"] as const).map((role) => (
+                <Button
+                  key={role}
+                  type="button"
+                  color="secondary"
+                  size="sm"
+                  disabled={mutation.isPending}
+                  onClick={() => mutation.mutate({ id: organization.id, userId: owner.userId, role })}>
+                  {t(role === "ADMIN" ? "organization_make_admin" : "organization_make_member")}
+                </Button>
+              ))}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

@@ -133,6 +133,12 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     });
   }
 
+  async countPendingOwners(organizationId: number): Promise<number> {
+    return this.prismaClient.membership.count({
+      where: { teamId: organizationId, role: MembershipRole.OWNER, accepted: false },
+    });
+  }
+
   async updateRole({
     organizationId,
     userId,

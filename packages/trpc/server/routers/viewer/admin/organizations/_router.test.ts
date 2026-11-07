@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  demoteOwner: vi.fn(),
   delete: vi.fn(),
   moveUser: vi.fn(),
   previewMoveTeam: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationService.container", () =>
     get: mocks.get,
     create: mocks.create,
     update: mocks.update,
+    demoteOwner: mocks.demoteOwner,
     delete: mocks.delete,
   }),
 }));
@@ -85,6 +87,7 @@ const serviceMocks = () => [
   mocks.get,
   mocks.create,
   mocks.update,
+  mocks.demoteOwner,
   mocks.delete,
   mocks.moveUser,
   mocks.previewMoveTeam,
@@ -99,6 +102,7 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.get({ id: 5 }),
   caller.create(validCreateInput),
   caller.update({ id: 5, name: "Acme 2" }),
+  caller.demoteOwner({ id: 5, userId: 9, role: "ADMIN" }),
   caller.delete({ id: 5 }),
   caller.moveUser({ userId: 9, toOrganizationId: 5 }),
   caller.previewMoveTeam({ teamId: 11, toOrganizationId: 5 }),
@@ -115,6 +119,7 @@ describe("admin organizations router", () => {
     mocks.get.mockResolvedValue(organization);
     mocks.create.mockResolvedValue(organization);
     mocks.update.mockResolvedValue(organization);
+    mocks.demoteOwner.mockResolvedValue(organization);
     mocks.delete.mockResolvedValue({ id: 5 });
     mocks.moveUser.mockResolvedValue({ userId: 9, organizationId: 5, username: "owner" });
     mocks.previewMoveTeam.mockResolvedValue({ membersOutsideTarget: [], slugTaken: false });
@@ -327,6 +332,33 @@ describe("admin organizations router", () => {
       await createCaller(ctx).update({ id: 5, ownerUserId: 9 });
 
       expect(mocks.update).toHaveBeenCalledWith(5, { ownerUserId: 9 }, 7);
+    });
+
+    it("demotes an owner with the id, the user, the role and the acting admin id", async () => {
+      await expect(createCaller(ctx).demoteOwner({ id: 5, userId: 9, role: "MEMBER" })).resolves.toEqual(
+        organization
+      );
+
+      expect(mocks.demoteOwner).toHaveBeenCalledWith(5, { userId: 9, role: "MEMBER" }, 7);
+    });
+
+    it("rejects demoting an owner to OWNER", async () => {
+      await expect(
+        // @ts-expect-error OWNER is not a valid demotion target
+        createCaller(ctx).demoteOwner({ id: 5, userId: 9, role: "OWNER" })
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(mocks.demoteOwner).not.toHaveBeenCalled();
+    });
+
+    it("maps a refused last-owner demotion to PRECONDITION_FAILED with its key", async () => {
+      mocks.demoteOwner.mockRejectedValue(
+        ErrorWithCode.Factory.PreconditionFailed("organization_must_keep_one_owner")
+      );
+
+      await expect(createCaller(ctx).demoteOwner({ id: 5, userId: 9, role: "ADMIN" })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "organization_must_keep_one_owner",
+      });
     });
 
     it("deletes with the id and the acting admin id", async () => {

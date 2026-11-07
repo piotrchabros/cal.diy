@@ -876,6 +876,35 @@ describe("OrganizationService", () => {
     });
   });
 
+  describe("demoteOwner", () => {
+    it("demotes the owner through the membership service and returns the organization", async () => {
+      const { id } = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      membershipRepo.seedUser({ id: 2, organizationId: id });
+      membershipRepo.seedMembership({ userId: OWNER_ID, teamId: id, role: "OWNER" });
+      membershipRepo.seedMembership({ userId: 2, teamId: id, role: "OWNER" });
+
+      const result = await service.demoteOwner(id, { userId: 2, role: "ADMIN" }, ACTOR_ID);
+
+      expect(result.id).toBe(id);
+      expect(await membershipRepo.findMembership({ organizationId: id, userId: 2 })).toEqual({
+        role: "ADMIN",
+        accepted: true,
+      });
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        "organization.owner.demote",
+        expect.objectContaining({ actorUserId: ACTOR_ID, organizationId: id, userId: 2 })
+      );
+    });
+
+    it("throws NotFound for an unknown organization", async () => {
+      await expectRejection(
+        service.demoteOwner(999, { userId: 2, role: "ADMIN" }, ACTOR_ID),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+  });
+
   describe("delete", () => {
     it("deletes an empty organization", async () => {
       const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });

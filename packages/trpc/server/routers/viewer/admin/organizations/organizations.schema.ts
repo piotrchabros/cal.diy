@@ -31,6 +31,12 @@ export const ZUpdateOrganizationInput = z.object({
   ownerUserId: id.optional(),
 });
 
+export const ZDemoteOrganizationOwnerInput = z.object({
+  id,
+  userId: id,
+  role: z.enum(["ADMIN", "MEMBER"]),
+});
+
 export const ZDeleteOrganizationInput = z.object({ id });
 
 export const ZDeleteOrganizationOutput = z.object({ id });

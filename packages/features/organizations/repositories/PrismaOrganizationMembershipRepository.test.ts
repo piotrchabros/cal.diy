@@ -241,6 +241,16 @@ describe("PrismaOrganizationMembershipRepository", () => {
     expect(result).toBe(2);
   });
 
+  it("countPendingOwners counts owner invites not accepted yet", async () => {
+    const { repository, membership } = buildRepository();
+    membership.count.mockResolvedValue(1);
+
+    const result = await repository.countPendingOwners(1);
+
+    expect(membership.count).toHaveBeenCalledWith({ where: { teamId: 1, role: "OWNER", accepted: false } });
+    expect(result).toBe(1);
+  });
+
   it("updateRole updates the membership role", async () => {
     const { repository, membership } = buildRepository();
     membership.update.mockResolvedValue({ userId: 7, role: "ADMIN" });

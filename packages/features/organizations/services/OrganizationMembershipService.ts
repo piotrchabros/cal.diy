@@ -131,7 +131,8 @@ export class OrganizationMembershipService {
 
     if (targetRole === role) return { userId, role };
 
-    await this.assertNotLastOwner(organizationId, userId, targetRole, role);
+    // findRole only returns accepted memberships
+    await this.assertNotLastOwner(organizationId, { role: targetRole, accepted: true }, role);
 
     const updated = await repository.updateRole({ organizationId, userId, role });
     log.info("organization.member.role", {
@@ -171,8 +172,7 @@ export class OrganizationMembershipService {
     if (membership.role === "OWNER" && actorRole !== "OWNER") {
       throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyOwnersCanRemoveOwner);
     }
-    // A pending owner invite never counted as an owner, so withdrawing it cannot orphan the org
-    if (membership.accepted) await this.assertNotLastOwner(organizationId, userId, membership.role, null);
+    await this.assertNotLastOwner(organizationId, membership, null);
 
     const user = await repository.findUserById(userId);
     if (!user) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
@@ -278,6 +278,38 @@ export class OrganizationMembershipService {
     if (member.role !== "OWNER") await repository.updateRole({ organizationId, userId, role: "OWNER" });
     this.logOwnerGrant(organizationId, userId, actorUserId);
     return { userId, role: "OWNER" };
+  }
+
+  // Instance admins manage owners without being org members, so there is no actor role to check (US1-5)
+  async demoteOwner({
+    organizationId,
+    userId,
+    role,
+    actorUserId,
+  }: {
+    organizationId: number;
+    userId: number;
+    role: Exclude<OrganizationRoleDto, "OWNER">;
+    actorUserId: number;
+  }): Promise<{ userId: number; role: OrganizationRoleDto }> {
+    const repository = this.deps.organizationMembershipRepository;
+    const membership = await repository.findMembership({ organizationId, userId });
+    if (!membership) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
+    if (membership.role !== "OWNER") {
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.memberNotOwner);
+    }
+
+    await this.assertNotLastOwner(organizationId, membership, role);
+
+    const updated = await repository.updateRole({ organizationId, userId, role });
+    log.info("organization.owner.demote", {
+      action: "organization.owner.demote",
+      actorUserId,
+      organizationId,
+      userId,
+      role,
+    });
+    return updated;
   }
 
   private logOwnerGrant(organizationId: number, userId: number, actorUserId: number): void {
@@ -454,16 +486,23 @@ export class OrganizationMembershipService {
     return member;
   }
 
-  // newRole is null when the member is being removed rather than demoted
+  // newRole is null when the member is being removed rather than demoted. An organization created with an
+  // email owner has no accepted owner until that invite is accepted, so its last pending owner invite
+  // must stay too (FR-003)
   private async assertNotLastOwner(
     organizationId: number,
-    _userId: number,
-    targetRole: OrganizationRoleDto,
+    membership: { role: OrganizationRoleDto; accepted: boolean },
     newRole: OrganizationRoleDto | null
   ): Promise<void> {
-    if (targetRole !== "OWNER" || newRole === "OWNER") return;
-    const owners = await this.deps.organizationMembershipRepository.countOwners(organizationId);
-    if (owners <= 1) {
+    if (membership.role !== "OWNER" || newRole === "OWNER") return;
+    const repository = this.deps.organizationMembershipRepository;
+    const acceptedOwners = await repository.countOwners(organizationId);
+    if (membership.accepted) {
+      if (acceptedOwners <= 1) throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.lastOwner);
+      return;
+    }
+    if (acceptedOwners > 0) return;
+    if ((await repository.countPendingOwners(organizationId)) <= 1) {
       throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.lastOwner);
     }
   }
