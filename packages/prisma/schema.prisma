@@ -468,9 +468,9 @@ model User {
   verifiedNumbers    VerifiedNumber[]
   verifiedEmails     VerifiedEmail[]
   hosts              Host[]
-  // organizationId is deprecated. Instead, rely on the Profile to search profiles by organizationId and then get user from the profile.
-  organizationId     Int?
-  organization       Team?              @relation("scope", fields: [organizationId], references: [id], onDelete: SetNull)
+  // Every user belongs to exactly one organization (spec 005 FR-002); Restrict keeps an organization with members from being deleted (FR-004).
+  organizationId     Int
+  organization       Team               @relation("scope", fields: [organizationId], references: [id], onDelete: Restrict)
   accessCodes        AccessCode[]
   bookingRedirects   OutOfOfficeEntry[]
   bookingRedirectsTo OutOfOfficeEntry[] @relation(name: "toUser")
