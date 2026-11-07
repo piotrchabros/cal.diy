@@ -555,6 +555,7 @@ async function handler(
     platformBookingLocation,
     hostname,
     forcedSlug,
+    skipHostOrganizationCheck = false,
     areCalendarEventsEnabled = true,
     skipAvailabilityCheck = false,
     skipEventLimitsCheck = false,
@@ -580,16 +581,18 @@ async function handler(
     eventTypeSlug: rawBookingData.eventTypeSlug,
   });
 
-  const { hostOrganization } = await resolveBookingHostOrganization({
-    hostname,
-    forcedSlug,
-    isPlatform: isPlatformBooking,
-  });
-  assertEventTypeInHostOrganization({
-    hostOrganization,
-    eventTypeOrganizationId: getEventTypeOrganizationId(eventType),
-    eventTypeId: eventType.id,
-  });
+  if (!skipHostOrganizationCheck) {
+    const { hostOrganization } = await resolveBookingHostOrganization({
+      hostname,
+      forcedSlug,
+      isPlatform: isPlatformBooking,
+    });
+    assertEventTypeInHostOrganization({
+      hostOrganization,
+      eventTypeOrganizationId: getEventTypeOrganizationId(eventType),
+      eventTypeId: eventType.id,
+    });
+  }
 
   // Early validation: Check reschedule restrictions if rescheduling
   await validateRescheduleRestrictions({

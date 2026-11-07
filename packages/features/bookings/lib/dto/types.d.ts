@@ -36,6 +36,9 @@ export type CreateBookingMeta = {
   // These used to come from headers but now we're passing them as params
   hostname?: string;
   forcedSlug?: string;
+  // apps/api/v2 sets this: its Host is the API's own (often loopback) host, which the organization
+  // resolver would map to the default organization and so refuse other organizations' event types.
+  skipHostOrganizationCheck?: boolean;
   noEmail?: boolean;
   traceContext?: TraceContext;
 } & PlatformParams;
