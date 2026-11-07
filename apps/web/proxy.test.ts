@@ -776,5 +776,45 @@ describe("Moved team redirects", () => {
       expectStatus(res, 200);
       expect(handleOrgRedirect).not.toHaveBeenCalled();
     });
+
+    // T430: the team pages 404 on a host without an organization before their own redirect lookup, so
+    // non-org (fromOrgId 0) redirects are only served with organizations disabled; the proxy must not add them.
+    it.each([
+      ["/team/sales", "loopback", "localhost:3000"],
+      ["/team/sales/30min", "loopback", "localhost:3000"],
+      ["/team/sales", "WEBAPP_URL", new URL(WEBAPP_URL).host],
+      ["/team/sales/30min", "WEBAPP_URL", new URL(WEBAPP_URL).host],
+    ])("does not look up %s on the %s host without an organization", async (path, _label, host) => {
+      resolveOrg.mockResolvedValue(null);
+      handleOrgRedirect.mockResolvedValue(movedTo("https://bespoke.test/team/sales"));
+
+      const res = await callProxy(createTestRequest({ url: `http://${host}${path}`, headers: { host } }));
+
+      expectStatus(res, 200);
+      expect(getHeader(res, "location")).toBeNull();
+      expect(handleOrgRedirect).not.toHaveBeenCalled();
+    });
+
+    it("does not look up team links when the trusted-host org lookup fails", async () => {
+      resolveOrg.mockRejectedValue(new Error("db down"));
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const res = await callProxy(
+        createTestRequest({ url: "http://localhost:3000/team/sales", headers: { host: "localhost:3000" } })
+      );
+
+      expectStatus(res, 200);
+      expect(handleOrgRedirect).not.toHaveBeenCalled();
+      consoleSpy.mockRestore();
+    });
+
+    it("does not look up team links on an organization without a slug", async () => {
+      resolveOrg.mockResolvedValue({ ...org, slug: null });
+
+      const res = await callProxy(teamRequest("/team/sales"));
+
+      expectStatus(res, 200);
+      expect(handleOrgRedirect).not.toHaveBeenCalled();
+    });
   });
 });

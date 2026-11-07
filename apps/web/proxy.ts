@@ -194,7 +194,8 @@ const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
     });
   }
 
-  // Mirrors getHostOrganization: without a host org (or one lacking a slug) the team page 404s instead.
+  // Mirrors getHostOrganization: without a host org (or one lacking a slug) the team pages 404 before their
+  // own redirect lookup, so non-org (hostOrgId null) redirects only exist with organizations disabled (T430).
   if (isOrganizationsEnabled() && resolution.org?.slug) {
     const destination = await getMovedTeamRedirect(req, resolution.org.id);
     if (destination) return NextResponse.redirect(new URL(destination, url), 308);
