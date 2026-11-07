@@ -280,8 +280,7 @@ test.describe("Organizations (quickstart S2, S4, S5, S6)", () => {
     const page = await newSignedInPage(browser, BESPOKE, teamAdmin.email, PASSWORD);
     await page.goto(`${BESPOKE}/settings/my-teams/${support.id}/members`);
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    // TextField renders its label without a programmatic association here, so target the input itself
-    await page.locator('input[type="email"]').fill(jellyJan.email);
+    await page.getByLabel("Email address").fill(jellyJan.email);
     await page.getByRole("button", { name: "Send invite" }).click();
 
     await expect(page.getByText("This person belongs to another organization")).toBeVisible();

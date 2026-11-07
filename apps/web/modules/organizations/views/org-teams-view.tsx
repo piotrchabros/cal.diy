@@ -123,6 +123,7 @@ export default function OrgTeamsView({ viewerRole }: OrgTeamsViewProps) {
   return (
     <div className="flex flex-col gap-3">
       <TextField
+        name="teamSearch"
         label={t("search")}
         placeholder={t("search")}
         value={searchTerm}

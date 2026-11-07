@@ -127,6 +127,7 @@ export default function OrgMembersView({ viewerRole, viewerUserId }: OrgMembersV
         </div>
       )}
       <TextField
+        name="memberSearch"
         label={t("search")}
         placeholder={t("search")}
         value={searchTerm}

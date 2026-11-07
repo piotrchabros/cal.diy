@@ -8,7 +8,7 @@ import { Button } from "@calcom/ui/components/button";
 import { DialogContent, DialogFooter, DialogHeader } from "@calcom/ui/components/dialog";
 import { Select, TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 const roleOptions = (t: (key: string) => string) => [
   { value: MembershipRole.MEMBER, label: t("member") },
@@ -30,6 +30,7 @@ export default function InviteMemberDialog({
   const { t } = useLocale();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<MembershipRole>(MembershipRole.MEMBER);
+  const roleInputId = useId();
 
   const inviteMutation = trpc.viewer.teams.inviteMember.useMutation({
     onSuccess: (data) => {
@@ -58,6 +59,7 @@ export default function InviteMemberDialog({
         <DialogHeader title={t("invite_member")} subtitle={t("invite_member_description")} />
         <div className="space-y-4">
           <TextField
+            name="email"
             label={t("email_address")}
             type="email"
             value={email}
@@ -66,8 +68,11 @@ export default function InviteMemberDialog({
             autoComplete="off"
           />
           <div>
-            <label className="mb-1 block text-sm font-medium text-emphasis">{t("role")}</label>
+            <label htmlFor={roleInputId} className="mb-1 block text-sm font-medium text-emphasis">
+              {t("role")}
+            </label>
             <Select
+              inputId={roleInputId}
               options={options}
               value={options.find((option) => option.value === role)}
               onChange={(option) => {
