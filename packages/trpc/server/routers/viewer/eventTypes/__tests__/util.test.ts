@@ -13,12 +13,21 @@ describe("createEventPbacProcedure", () => {
   } as unknown as PrismaClient;
 
   const mockCtx = {
-    user: { id: 1, profile: { upId: "user-1" } },
+    user: { id: 1, organizationId: 100, profile: { upId: "user-1" } },
     session: { user: { id: 1 } },
     prisma: mockPrisma,
   };
 
   const mockNext = vi.fn().mockResolvedValue({ ctx: mockCtx });
+
+  const otherOrgPersonalEvent = {
+    id: 1,
+    userId: 2,
+    teamId: null,
+    users: [{ id: 2 }],
+    team: null,
+    owner: { organizationId: 200 },
+  };
 
   // Helper to get the custom middleware (after authedProcedure)
   const getMiddleware = (procedure: ReturnType<typeof authedProcedure>) => {
@@ -440,11 +449,62 @@ describe("createEventPbacProcedure", () => {
     });
 
     it("should still throw FORBIDDEN for a non-owner of a personal event", async () => {
-      mockPrisma.eventType.findUnique = vi
-        .fn()
-        .mockResolvedValue({ id: 1, userId: 2, teamId: null, users: [{ id: 2 }], team: null });
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        id: 1,
+        userId: 2,
+        teamId: null,
+        users: [{ id: 2 }],
+        team: null,
+        owner: { organizationId: 100 },
+      });
 
       await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("should throw NOT_FOUND for a personal event owned by another organization's user", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(otherOrgPersonalEvent);
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow the owner of a personal event regardless of the owner's organization", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({ ...otherOrgPersonalEvent, userId: 1 });
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should allow an assignee of a personal event owned by another organization's user", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...otherOrgPersonalEvent, users: [{ id: 1 }] });
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+  });
+
+  describe("with organizations disabled", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should throw FORBIDDEN for a personal event owned by another organization's user", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(otherOrgPersonalEvent);
+
+      await expect(
+        getMiddleware(createEventPbacProcedure("eventType.update"))({
+          ctx: mockCtx,
+          input: { id: 1 },
+          next: mockNext,
+          path: "test",
+          type: "mutation",
+          getRawInput: async () => ({}),
+          meta: undefined,
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
   });
 
@@ -880,7 +940,7 @@ describe("eventOwnerProcedure", () => {
   } as unknown as PrismaClient;
 
   const mockCtx = {
-    user: { id: 1, profile: { upId: "user-1" } },
+    user: { id: 1, organizationId: 100, profile: { upId: "user-1" } },
     session: { user: { id: 1 } },
     prisma: mockPrisma,
   };
@@ -904,6 +964,13 @@ describe("eventOwnerProcedure", () => {
     members: { userId: number; role: MembershipRole; accepted: boolean }[],
     parent: { members: { userId: number }[] } | null = null
   ) => ({ userId: null, users: [], team: { members, parent } });
+
+  const personalEventOwnedBy = (organizationId: number | null, userId = 2, users: { id: number }[] = []) => ({
+    userId,
+    users,
+    team: null,
+    owner: { organizationId },
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -965,6 +1032,12 @@ describe("eventOwnerProcedure", () => {
 
       await expect(runMiddleware([1, 99])).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
+
+    it("should throw FORBIDDEN for a personal event owned by another organization's user", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200));
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
   });
 
   describe("with organizations enabled", () => {
@@ -996,6 +1069,39 @@ describe("eventOwnerProcedure", () => {
         .mockResolvedValue(teamEventWithMembers([{ userId: 1, role: MembershipRole.ADMIN, accepted: true }]));
 
       await expect(runMiddleware()).resolves.not.toThrow();
+    });
+
+    it("should throw NOT_FOUND for a personal event owned by another organization's user", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200));
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should throw FORBIDDEN for a same-organization non-owner of a personal event", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(100));
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("should allow the owner of a personal event", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200, 1));
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should allow an assignee of a personal event", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200, 2, [{ id: 1 }]));
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it("should throw FORBIDDEN, not NOT_FOUND, when the owner assigns users other than themselves", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200, 1));
+
+      await expect(runMiddleware([99])).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
   });
 });

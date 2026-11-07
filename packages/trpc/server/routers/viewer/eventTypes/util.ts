@@ -9,7 +9,12 @@ import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import authedProcedure from "../../../procedures/authedProcedure";
-import { assertTeamEventVisible, hasTeamEventRole, teamVisibilitySelect } from "./teamEventVisibility";
+import {
+  assertPersonalEventVisible,
+  assertTeamEventVisible,
+  hasTeamEventRole,
+  teamVisibilitySelect,
+} from "./teamEventVisibility";
 import type { TUpdateInputSchema } from "./types";
 
 type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
@@ -39,6 +44,7 @@ export const eventOwnerProcedure = authedProcedure
             id: true,
           },
         },
+        owner: { select: { organizationId: true } },
         team: {
           select: {
             members: {
@@ -71,6 +77,7 @@ export const eventOwnerProcedure = authedProcedure
     })();
 
     if (!isAuthorized) {
+      if (!event.team) assertPersonalEventVisible(event.owner, ctx.user.organizationId);
       throw new TRPCError({ code: "FORBIDDEN" });
     }
 
@@ -130,6 +137,7 @@ export const createEventPbacProcedure = (
               id: true,
             },
           },
+          owner: { select: { organizationId: true } },
           team: {
             select: {
               members: {
@@ -153,6 +161,7 @@ export const createEventPbacProcedure = (
       if (!event.teamId) {
         // Personal event - must be owner or assigned user
         if (event.userId !== ctx.user.id && !event.users.find((user) => user.id === ctx.user.id)) {
+          assertPersonalEventVisible(event.owner, ctx.user.organizationId);
           throw new TRPCError({
             code: "FORBIDDEN",
             message: `Permission required: ${permission}`,

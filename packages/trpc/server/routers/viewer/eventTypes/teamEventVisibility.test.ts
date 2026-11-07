@@ -1,6 +1,11 @@
 import { MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assertTeamEventVisible, hasTeamEventRole, teamVisibilitySelect } from "./teamEventVisibility";
+import {
+  assertPersonalEventVisible,
+  assertTeamEventVisible,
+  hasTeamEventRole,
+  teamVisibilitySelect,
+} from "./teamEventVisibility";
 
 const nonMemberTeam = { members: [{ userId: 2, accepted: true }], parent: null };
 
@@ -117,5 +122,56 @@ describe("hasTeamEventRole", () => {
 
   it("rejects a non-member of a team without a parent", () => {
     expect(hasTeamEventRole({ ...nonMember, parent: null }, 1, allRoles)).toBe(false);
+  });
+});
+
+describe("assertPersonalEventVisible", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("passes across organizations when organizations are disabled", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    expect(() => assertPersonalEventVisible({ organizationId: 1 }, 2)).not.toThrow();
+  });
+
+  describe("with organizations enabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    });
+
+    it("passes when the owner is in the caller's organization", () => {
+      expect(() => assertPersonalEventVisible({ organizationId: 1 }, 1)).not.toThrow();
+    });
+
+    it("passes when neither the owner nor the caller is in an organization", () => {
+      expect(() => assertPersonalEventVisible({ organizationId: null }, null)).not.toThrow();
+    });
+
+    it("throws NOT_FOUND when the owner is in another organization", () => {
+      expect(() => assertPersonalEventVisible({ organizationId: 1 }, 2)).toThrow(
+        expect.objectContaining({ code: "NOT_FOUND" })
+      );
+    });
+
+    it("throws NOT_FOUND when the caller has no organization but the owner does", () => {
+      expect(() => assertPersonalEventVisible({ organizationId: 1 }, null)).toThrow(
+        expect.objectContaining({ code: "NOT_FOUND" })
+      );
+    });
+
+    it("throws NOT_FOUND when the caller has an organization but the owner does not", () => {
+      expect(() => assertPersonalEventVisible({ organizationId: null }, 1)).toThrow(
+        expect.objectContaining({ code: "NOT_FOUND" })
+      );
+    });
+
+    it("passes when there is no owner", () => {
+      expect(() => assertPersonalEventVisible(null, 1)).not.toThrow();
+    });
+
+    it("passes when the owner is undefined", () => {
+      expect(() => assertPersonalEventVisible(undefined, 1)).not.toThrow();
+    });
   });
 });

@@ -50,3 +50,18 @@ export function assertTeamEventVisible(team: TeamVisibilitySource, userId: numbe
   // another organization's event type ids cannot be probed.
   throw new TRPCError({ code: "NOT_FOUND" });
 }
+
+export type PersonalEventOwnerSource = { organizationId: number | null } | null | undefined;
+
+export function assertPersonalEventVisible(
+  owner: PersonalEventOwnerSource,
+  callerOrganizationId: number | null | undefined
+): void {
+  if (!isOrganizationsEnabled()) return;
+  if (!owner) return;
+  // FR-008: a personal event type of another organization must look nonexistent so its id
+  // cannot be probed.
+  if ((owner.organizationId ?? null) !== (callerOrganizationId ?? null)) {
+    throw new TRPCError({ code: "NOT_FOUND" });
+  }
+}
