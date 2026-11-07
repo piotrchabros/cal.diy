@@ -55,6 +55,31 @@ Expected: all pass. Coverage of the new and changed code is at least 80%.
 
 `apps/web/playwright/organizations.e2e.ts` covers S2, S4, S5 and S6 against the scratch setup (it skips unless `ORGANIZATIONS_ENABLED` is set and `NEXT_PUBLIC_WEBAPP_URL` is on `bluebee.test`, so CI never runs it). With the dev server from §2 running and the env file loaded: `PLAYWRIGHT_HEADLESS=1 yarn e2e apps/web/playwright/organizations.e2e.ts --workers=1`. The spec creates its own users and teams with a random suffix and removes them (and the BespokeSoft/JellyMatch organizations on `bespoke.test` / `jelly.test`) before and after the run, so it can be repeated. S4 checks the moved team's old link by following it in the browser because it redirects client-side today (T350).
 
+## Results (T073, 2026-11-07)
+
+Run on the scratch setup from §2 (`caldiy-e2e-pg` on 127.0.0.1:5547, develop at `a38c722d` including the T062 `organizationId NOT NULL` migration, `next dev` on port 3747, `NEXT_PUBLIC_WEBAPP_URL=http://bluebee.test:3747`). S2, S4, S5 and S6 ran through `apps/web/playwright/organizations.e2e.ts` (4/4 passed). The other scenarios were checked with a temporary Playwright script (browser sign-in plus tRPC calls made with the signed-in session, the same calls the settings pages make) and `curl`.
+
+| # | Expected | Actual | Result |
+|---|----------|--------|--------|
+| S1 | Existing user's page and sign-in work; user is in BlueBee | `bluebee.test/pro` 200; `pro@example.com` signs in, session OK; `pro.organizationId` = BlueBee | Pass |
+| S2 | BespokeSoft listed; invitation link on `bespoke.test` | Listed with domain `bespoke.test`; owner has a pending OWNER membership; the invite email links to `http://bespoke.test:3747/auth/team-invite?token=…` | Pass |
+| S3 | Duplicate slug / domain refused | Same slug: CONFLICT "Organization slug is already taken". Same domain: CONFLICT "Organization domain is already taken". Invalid host: BAD_REQUEST "Organization domain must be a valid hostname" | Pass |
+| S4 | Moved user and team pages work on `bespoke.test`; old links 308/301; bookings kept | `bespoke.test/jan-…` and `/team/sales-…` 200; `bluebee.test/jan-…` and `bluebee.test/team/sales-…` answer 301/308 to the same path on `bespoke.test` (server-side since T350); booking still Jan's | Pass |
+| S5 | Jan on `bluebee.test` is sent to `bespoke.test` login; no session on `bluebee.test` | Sent to `bespoke.test/auth/login?reason=wrong_organization_domain`; signing in there works; `bluebee.test/api/auth/session` has no user | Pass |
+| S6 | Inviting JellyMatch's Jan refused | Toast "This person belongs to another organization"; no membership created | Pass |
+| S7 | `viewer.teams.get` with a JellyMatch team id → NOT_FOUND | NOT_FOUND "Team not found" | Pass |
+| S8 | Confirmation email, ICS and webhook links use `bespoke.test` | Booking made on `bespoke.test/jan-…/30min`; success page on `bespoke.test`; ICS and BOOKING_CREATED webhook payload use only `http://bespoke.test:3747`; both emails link to `bespoke.test`, **except** the shared footer logo link (`href="http://bluebee.test:3747"`) and image assets, which use WEBAPP_URL | Pass with a gap (T353) |
+| S9 | `unknown.test` → 404, no content | 404 `Not Found` (plain text) | Pass |
+| S10 | `127.0.0.1/api/version` → 200 | 200 | Pass |
+| S11 | Owner can invite, promote, remove, delete a team; last-owner demotion refused; removed member in BlueBee | invite, promote to ADMIN, remove, delete team: all OK; removed member's organization = BlueBee; demoting the last owner: PRECONDITION_FAILED "An organization must keep at least one owner" | Pass |
+| S12 | Deleting BespokeSoft (with members) and BlueBee refused | PRECONDITION_FAILED "Move the organization's members and teams out before deleting it" / "The default organization cannot be deleted"; both still exist | Pass |
+| S13 | Flag off: behaviour on `bluebee.test` identical to today | Restarted without `ORGANIZATIONS_ENABLED`/`AUTH_TRUST_HOST`: `/pro`, `/pro/30min`, `/team/seeded-team`, `/auth/login` 200; `/api/version` 200; `pro` and `admin` sign in with no `org` in the session; `/event-types`, profile and admin users pages work; `/settings/admin/organizations` 404; any host is served (no organization lookup) | Pass |
+
+Notes from the run:
+
+- After deleting an organization and recreating one on the same domain, the domain resolver keeps the old organization id for up to 60 seconds (`ORGANIZATION_DOMAIN_CACHE_TTL_MS`). Bookings on that domain fail with `event_not_found` until it expires. Test scripts that recreate organizations must wait it out. In production a domain only moves between organizations through an edit, where up to 60 seconds of staleness is acceptable.
+- With the scratch setup's default Daily video location (no API key), the booking still succeeds but only the organizer's "[Action Required]" email is sent. S8 used an in-person location.
+
 ## 5. Production rollout (owner)
 
 Production behaviour stays unchanged until step 5: every behaviour change is behind `ORGANIZATIONS_ENABLED`, and the migrations are applied by the owner, never by the deploy script.
