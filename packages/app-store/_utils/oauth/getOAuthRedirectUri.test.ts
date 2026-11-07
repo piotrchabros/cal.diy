@@ -189,3 +189,52 @@ describe("getOAuthSafeRedirectOptions", () => {
     });
   });
 });
+
+describe("organization origins on a local multi-domain setup", () => {
+  const original = {
+    WEBAPP_URL: constants.WEBAPP_URL,
+    WEBAPP_URL_FOR_OAUTH: constants.WEBAPP_URL_FOR_OAUTH,
+    ALLOWED_HOSTNAMES: constants.ALLOWED_HOSTNAMES,
+  };
+  const req = reqWithHost("bespoke.test:3747");
+
+  beforeEach(() => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    constants.WEBAPP_URL = "http://bluebee.test:3747";
+    constants.WEBAPP_URL_FOR_OAUTH = "http://bluebee.test:3747";
+    constants.ALLOWED_HOSTNAMES = ["bluebee.test", "bespoke.test"];
+  });
+
+  afterEach(() => {
+    Object.assign(constants, original);
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("keeps the webapp's http scheme and dev port", () => {
+    expect(getOAuthRedirectUri(req, "googlecalendar")).toBe(
+      "http://bespoke.test:3747/api/integrations/googlecalendar/callback"
+    );
+    expect(getOAuthAllowedOrigins(req)).toEqual(["http://bespoke.test:3747"]);
+    expect(getOAuthAppOrigin(req)).toBe("http://bespoke.test:3747");
+    expect(getOAuthSafeRedirectOptions(req)).toEqual({
+      allowedOrigins: ["http://bespoke.test:3747"],
+      fallbackUrl: "http://bespoke.test:3747/",
+    });
+    expect(mockWarn).not.toHaveBeenCalled();
+  });
+
+  it("uses the default callback when organizations are disabled", () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    expect(getOAuthRedirectUri(req, "googlecalendar")).toBe(
+      "http://bluebee.test:3747/api/integrations/googlecalendar/callback"
+    );
+    expect(getOAuthAllowedOrigins(req)).toEqual([]);
+    expect(getOAuthAppOrigin(req)).toBe("http://bluebee.test:3747");
+    expect(getOAuthSafeRedirectOptions(req)).toEqual({
+      allowedOrigins: [],
+      fallbackUrl: "http://bluebee.test:3747/",
+    });
+  });
+});
