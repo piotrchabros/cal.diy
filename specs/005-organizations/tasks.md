@@ -295,8 +295,8 @@ description: "Task list for Organizations (spec 005)"
 - [X] T057 [US3] PR 17: create `getOAuthRedirectUri(req, appSlug)` in `packages/app-store/_utils/oauth/getOAuthRedirectUri.ts`. It builds the URL from the request `Host` via `normalizeHost`, refuses unknown hosts, and must not import features: the host is checked against an allow-list passed by the caller or read from `ALLOWED_HOSTNAMES`. Use it in the `api/add.ts` and `api/callback.ts` of `googlecalendar`, `office365calendar`, `office365video` and `zoomvideo`, and let `getSafeRedirectUrl` targets include the org domains. Add tests
 - [X] T058 [P] [US3] PR 18.1: `basecamp3`, `closecom`, `feishucalendar`, `hubspot`, `intercom`, `larkcalendar`, `pipedrive-crm`, `salesforce` (`packages/app-store/<app>/api/*` and `lib/*` files referencing `WEBAPP_URL_FOR_OAUTH`)
   - Split for the 10-file PR limit: 18.1a (`basecamp3`, `closecom`, `feishucalendar`, `larkcalendar`) and 18.1b (`hubspot`, `intercom`, `pipedrive-crm`, `salesforce`)
-- [ ] T059 [P] [US3] PR 18.2: `webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`, `huddle01video`, `tandemvideo`, `nextcloudtalk`, `vital`, `jelly`
-  - 18.2a done: `webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`. 18.2b (`huddle01video`, `tandemvideo`, `nextcloudtalk`, `jelly`) follows. `vital` (redirect built in `vital/api/token.ts`) moved to T060 for the 10-file PR limit
+- [X] T059 [P] [US3] PR 18.2: `webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`, `huddle01video`, `tandemvideo`, `nextcloudtalk`, `vital`, `jelly`
+  - Split for the 10-file PR limit: 18.2a (`webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`) and 18.2b (`huddle01video`, `tandemvideo`, `nextcloudtalk`, `jelly`). `vital` moved to T060
 - [ ] T060 [P] [US3] PR 18.3: payment apps `stripepayment`, `paypal`, `hitpay`, `lyra`, plus `packages/app-store/_utils/paid-apps.ts`
 
 **Checkpoint**: S4 (links), S5, S8, S9 and S10 pass on scratch.

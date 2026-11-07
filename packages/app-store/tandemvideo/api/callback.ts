@@ -1,12 +1,11 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getAppKeysFromSlug from "../../_utils/getAppKeysFromSlug";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import createOAuthAppCredential from "../../_utils/oauth/createOAuthAppCredential";
 import { decodeOAuthState } from "../../_utils/oauth/decodeOAuthState";
+import { getOAuthSafeRedirectOptions } from "../../_utils/oauth/getOAuthRedirectUri";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!req.query.code) {
@@ -65,7 +64,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await createOAuthAppCredential({ appId: "tandem", type: "tandem_video" }, responseBody, req);
 
     res.redirect(
-      getSafeRedirectUrl(state?.returnTo) ?? getInstalledAppPath({ variant: "conferencing", slug: "tandem" })
+      getSafeRedirectUrl(state?.returnTo, getOAuthSafeRedirectOptions(req)) ??
+        getInstalledAppPath({ variant: "conferencing", slug: "tandem" })
     );
   }
 }
