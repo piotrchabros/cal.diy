@@ -99,7 +99,7 @@ export const getHandler = async ({ ctx, input }: MeOptions) => {
         profiles: [],
       }
     : {
-        organizationId: user.profile?.organizationId ?? null,
+        organizationId: user.profile?.organizationId ?? user.organizationId ?? null,
         organization: user.organization,
         username: user.profile?.username ?? user.username ?? null,
         profile: user.profile ?? null,

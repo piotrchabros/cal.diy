@@ -17,9 +17,12 @@ type TeamInvite = {
   teamName: string;
   email: string;
   isOrganization: boolean;
+  needsPassword: boolean;
+  needsUsername: boolean;
 };
 
 type FormValues = {
+  username: string;
   password: string;
   confirmPassword: string;
   csrfToken: string;
@@ -37,14 +40,32 @@ function InvalidInvite() {
   );
 }
 
-function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string }) {
+function getFormCopyKeys(invite: TeamInvite): { description: string; submit: string } {
+  if (invite.needsUsername && invite.needsPassword) {
+    return { description: "team_invite_complete_account_description", submit: "team_invite_complete_submit" };
+  }
+  if (invite.needsUsername) {
+    return { description: "team_invite_choose_username_description", submit: "team_invite_complete_submit" };
+  }
+  return { description: "team_invite_set_password_description", submit: "team_invite_set_password_submit" };
+}
+
+function CompleteInviteForm({
+  invite,
+  token,
+  landingPath,
+}: {
+  invite: TeamInvite;
+  token: string;
+  landingPath: string;
+}) {
   const { t } = useLocale();
   const router = useRouter();
   const orgBaseUrl = useOrgBaseUrl();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshToken, forceRefresh] = useReducer((x) => x + 1, 0);
   const formMethods = useForm<FormValues>({
-    defaultValues: { password: "", confirmPassword: "", csrfToken: "" },
+    defaultValues: { username: "", password: "", confirmPassword: "", csrfToken: "" },
   });
   const {
     register,
@@ -60,23 +81,38 @@ function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string 
       .catch(() => setValue("csrfToken", ""));
   }, [setValue, refreshToken]);
 
+  const copyKeys = getFormCopyKeys(invite);
+
   const onSubmit = async (values: FormValues) => {
     setErrorMessage(null);
     const res = await fetch("/api/auth/team-invite", {
       method: "POST",
-      body: JSON.stringify({ token, password: values.password, csrfToken: values.csrfToken }),
+      body: JSON.stringify({
+        token,
+        csrfToken: values.csrfToken,
+        ...(invite.needsPassword && { password: values.password }),
+        ...(invite.needsUsername && { username: values.username }),
+      }),
       headers: { "Content-Type": "application/json" },
     });
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
       forceRefresh();
-      setErrorMessage(json.message || t("something_went_wrong"));
+      setErrorMessage(
+        json.message === "username_taken_in_organization"
+          ? t("username_taken_in_organization")
+          : json.message || t("something_went_wrong")
+      );
       return;
     }
 
-    const callbackUrl = invite.isOrganization
-      ? `${orgBaseUrl}/`
-      : `${orgBaseUrl}/settings/my-teams/${invite.teamId}/members`;
+    const callbackUrl = `${orgBaseUrl}${landingPath}`;
+    if (!invite.needsPassword) {
+      // The invitee already has a password, so they finish by logging in with it.
+      const loginParams = new URLSearchParams({ email: invite.email, callbackUrl });
+      router.push(`/auth/login?${loginParams.toString()}`);
+      return;
+    }
     const signInResult = await signIn<"credentials">("credentials", {
       email: invite.email,
       password: values.password,
@@ -95,43 +131,69 @@ function SetPasswordForm({ invite, token }: { invite: TeamInvite; token: string 
   return (
     <Form className="stack-y-6" form={formMethods} handleSubmit={onSubmit}>
       <input {...register("csrfToken")} type="hidden" hidden />
-      <p className="text-default text-sm">
-        {t("team_invite_set_password_description", { teamName: invite.teamName })}
-      </p>
+      <p className="text-default text-sm">{t(copyKeys.description, { teamName: invite.teamName })}</p>
       <TextField label={t("email_address")} type="email" value={invite.email} disabled readOnly />
-      <PasswordField
-        label={t("password")}
-        autoComplete="new-password"
-        {...register("password", {
-          validate: (value) => validPassword(value) || t("invalid_password_hint", { passwordLength: 7 }),
-        })}
-      />
-      {errors.password?.message && <p className="text-error text-sm">{errors.password.message}</p>}
-      <PasswordField
-        label={t("confirm_password")}
-        autoComplete="new-password"
-        {...register("confirmPassword", {
-          validate: (value) => value === getValues("password") || t("passwords_do_not_match"),
-        })}
-      />
-      {errors.confirmPassword?.message && (
-        <p className="text-error text-sm">{errors.confirmPassword.message}</p>
+      {invite.needsUsername && (
+        <>
+          <TextField
+            label={t("username")}
+            autoComplete="username"
+            {...register("username", {
+              validate: (value) => value.trim().length > 0 || t("team_invite_username_required"),
+            })}
+          />
+          {errors.username?.message && <p className="text-error text-sm">{errors.username.message}</p>}
+        </>
+      )}
+      {invite.needsPassword && (
+        <>
+          <PasswordField
+            label={t("password")}
+            autoComplete="new-password"
+            {...register("password", {
+              validate: (value) => validPassword(value) || t("invalid_password_hint", { passwordLength: 7 }),
+            })}
+          />
+          {errors.password?.message && <p className="text-error text-sm">{errors.password.message}</p>}
+          <PasswordField
+            label={t("confirm_password")}
+            autoComplete="new-password"
+            {...register("confirmPassword", {
+              validate: (value) => value === getValues("password") || t("passwords_do_not_match"),
+            })}
+          />
+          {errors.confirmPassword?.message && (
+            <p className="text-error text-sm">{errors.confirmPassword.message}</p>
+          )}
+        </>
       )}
       {errorMessage && <Alert severity="error" title={errorMessage} />}
       <Button type="submit" loading={isSubmitting} className="w-full justify-center">
-        {t("team_invite_set_password_submit")}
+        {t(copyKeys.submit)}
       </Button>
     </Form>
   );
 }
 
-export default function TeamInviteView({ invite, token }: { invite: TeamInvite | null; token: string }) {
+export default function TeamInviteView({
+  invite,
+  token,
+  landingPath,
+}: {
+  invite: TeamInvite | null;
+  token: string;
+  landingPath: string;
+}) {
   const { t } = useLocale();
   return (
     <AuthContainer
       showLogo
       heading={invite ? t("join_team_name", { teamName: invite.teamName }) : t("join_team")}>
-      {invite ? <SetPasswordForm invite={invite} token={token} /> : <InvalidInvite />}
+      {invite ? (
+        <CompleteInviteForm invite={invite} token={token} landingPath={landingPath} />
+      ) : (
+        <InvalidInvite />
+      )}
     </AuthContainer>
   );
 }

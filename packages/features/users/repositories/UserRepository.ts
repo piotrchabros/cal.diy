@@ -1277,6 +1277,7 @@ export class UserRepository {
         brandColor: true,
         darkBrandColor: true,
         movedToProfileId: true,
+        organizationId: true,
         selectedCalendars: {
           select: {
             id: true,
