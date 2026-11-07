@@ -1,15 +1,11 @@
-import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
 import { createHmac } from "node:crypto";
-import { headers } from "next/headers";
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
-
-import { getRoomNameFromRecordingId, getBatchProcessorJobAccessLink } from "@calcom/app-store/dailyvideo/lib";
-import { BookingRepository } from "@calcom/features/bookings/repositories/BookingRepository";
+import process from "node:process";
+import { getBatchProcessorJobAccessLink, getRoomNameFromRecordingId } from "@calcom/app-store/dailyvideo/lib";
 import {
   sendDailyVideoRecordingEmails,
   sendDailyVideoTranscriptEmails,
 } from "@calcom/emails/daily-video-emails";
+import { BookingRepository } from "@calcom/features/bookings/repositories/BookingRepository";
 import {
   getAllTranscriptsAccessLinkFromMeetingId,
   submitBatchProcessorTranscriptionJob,
@@ -25,15 +21,19 @@ import { getBooking } from "@calcom/web/lib/daily-webhook/getBooking";
 import { getBookingReference } from "@calcom/web/lib/daily-webhook/getBookingReference";
 import { getCalendarEvent } from "@calcom/web/lib/daily-webhook/getCalendarEvent";
 import {
+  batchProcessorJobFinishedSchema,
   meetingEndedSchema,
   recordingReadySchema,
-  batchProcessorJobFinishedSchema,
   testRequestSchema,
 } from "@calcom/web/lib/daily-webhook/schema";
 import {
   triggerRecordingReadyWebhook,
   triggerTranscriptionGeneratedWebhook,
 } from "@calcom/web/lib/daily-webhook/triggerWebhooks";
+import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
+import { headers } from "next/headers";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 const log = logger.getSubLogger({ prefix: ["daily-video-webhook-handler"] });
 
@@ -45,9 +45,9 @@ const computeSignature = (hmacSecret: string, reqBody: any, webhookTimestampHead
   return computed_signature;
 };
 
-const getProxyDownloadLinkOfCalVideo = async (recordingId: string) => {
+const getProxyDownloadLinkOfCalVideo = async (recordingId: string, baseUrl: string) => {
   const token = generateVideoToken(recordingId);
-  const downloadLink = `${WEBAPP_URL}/api/video/recording?token=${token}`;
+  const downloadLink = `${baseUrl}/api/video/recording?token=${token}`;
   return downloadLink;
 };
 
@@ -101,13 +101,15 @@ export async function postHandler(request: NextRequest) {
 
       const bookingRepository = new BookingRepository(prisma);
 
-      const [evt, updateRecordStatus, downloadLink, teamId] = await Promise.all([
-        getCalendarEvent(booking),
+      // evt.bookerUrl is the organizer's organization base URL, which the download link must use.
+      const evt = await getCalendarEvent(booking);
+
+      const [updateRecordStatus, downloadLink, teamId] = await Promise.all([
         bookingRepository.updateRecordedStatus({
           bookingUid: booking.uid,
           isRecorded: true,
         }),
-        getProxyDownloadLinkOfCalVideo(recording_id),
+        getProxyDownloadLinkOfCalVideo(recording_id, evt.bookerUrl ?? WEBAPP_URL),
         getTeamIdFromEventType({
           eventType: {
             team: { id: booking?.eventType?.teamId ?? null },
@@ -198,11 +200,11 @@ export async function postHandler(request: NextRequest) {
         },
       });
 
-      const [evt, recording, batchProcessorJobAccessLink] = await Promise.all([
+      const [evt, batchProcessorJobAccessLink] = await Promise.all([
         getCalendarEvent(booking),
-        getProxyDownloadLinkOfCalVideo(input.recordingId),
         getBatchProcessorJobAccessLink(id),
       ]);
+      const recording = await getProxyDownloadLinkOfCalVideo(input.recordingId, evt.bookerUrl ?? WEBAPP_URL);
 
       await triggerTranscriptionGeneratedWebhook({
         evt,
