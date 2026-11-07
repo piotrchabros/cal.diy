@@ -1,8 +1,3 @@
-import axios from "axios";
-import qs from "qs";
-import { v4 as uuidv4 } from "uuid";
-import type z from "zod";
-
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import {
   convertFromSmallestToPresentableCurrencyUnit,
@@ -15,7 +10,10 @@ import prisma from "@calcom/prisma";
 import type { Booking, Payment, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 import type { IAbstractPaymentService } from "@calcom/types/PaymentService";
-
+import axios from "axios";
+import qs from "qs";
+import { v4 as uuidv4 } from "uuid";
+import type z from "zod";
 import appConfig from "../config.json";
 import { API_HITPAY, SANDBOX_API_HITPAY } from "./constants";
 import { hitpayCredentialKeysSchema } from "./hitpayCredentialKeysSchema";
@@ -42,7 +40,11 @@ class HitPayPaymentService implements IAbstractPaymentService {
     username: string | null,
     bookerName: string,
     paymentOption: PaymentOption,
-    bookerEmail: string
+    bookerEmail: string,
+    _bookerPhoneNumber?: string | null,
+    _eventTitle?: string,
+    _bookingTitle?: string,
+    bookerUrl?: string
   ) {
     try {
       const booking: PaidBooking | null = await prisma.booking.findUnique({
@@ -106,7 +108,8 @@ class HitPayPaymentService implements IAbstractPaymentService {
       const hitpayAPIurl = isSandbox ? SANDBOX_API_HITPAY : API_HITPAY;
 
       const requestUrl = `${hitpayAPIurl}/v1/payment-requests`;
-      const redirectUri = `${WEBAPP_URL}/api/integrations/${appConfig.slug}/callback`;
+      const redirectUri = `${bookerUrl ?? WEBAPP_URL}/api/integrations/${appConfig.slug}/callback`;
+      // HitPay calls the webhook server-to-server, so it must not depend on an organization's DNS.
       const webhookUri = `${WEBAPP_URL}/api/integrations/${appConfig.slug}/webhook`;
 
       const formData = {

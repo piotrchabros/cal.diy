@@ -1,3 +1,4 @@
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import axios from "axios";
 import qs from "qs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -94,5 +95,51 @@ describe("HitPayPaymentService.create", () => {
     { currency: "sgd", amount: 5000, sent: "50" },
   ])("converts $currency from minor units", async ({ currency, amount, sent }) => {
     expect(await createPaymentWith({ amount, currency })).toEqual({ sent, stored: amount });
+  });
+});
+
+describe("HitPayPaymentService.create return URLs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(axios.post).mockResolvedValue({
+      data: { id: "hitpay-request-id", amount: "50", currency: "usd" },
+    });
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { data: [{ url: "https://securecheckout.sandbox.hit-pay.com/payment-request/test" }] },
+    });
+  });
+
+  const createWithBookerUrl = async (bookerUrl?: string) => {
+    await BuildPaymentService(credentials).create(
+      { amount: 5000, currency: "usd" },
+      1,
+      101,
+      "organizer",
+      "Booker",
+      "ON_BOOKING",
+      "booker@example.com",
+      null,
+      "Paid event",
+      "Paid event between Organizer and Booker",
+      bookerUrl
+    );
+    return qs.parse(vi.mocked(axios.post).mock.calls[0][1] as string) as {
+      redirect_url: string;
+      webhook: string;
+    };
+  };
+
+  it("sends the booker back to the organization domain but keeps the webhook on WEBAPP_URL", async () => {
+    const body = await createWithBookerUrl("https://acme.example.org");
+
+    expect(body.redirect_url).toBe("https://acme.example.org/api/integrations/hitpay/callback");
+    expect(body.webhook).toBe(`${WEBAPP_URL}/api/integrations/hitpay/webhook`);
+  });
+
+  it("falls back to WEBAPP_URL for both URLs without a booker URL", async () => {
+    const body = await createWithBookerUrl();
+
+    expect(body.redirect_url).toBe(`${WEBAPP_URL}/api/integrations/hitpay/callback`);
+    expect(body.webhook).toBe(`${WEBAPP_URL}/api/integrations/hitpay/webhook`);
   });
 });
