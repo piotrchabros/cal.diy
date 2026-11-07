@@ -649,7 +649,13 @@ describe("TeamMembersService", () => {
     const buildService = ({
       invites,
     }: {
-      invites: { id: number; teamId: number | null; token: string; expires: Date }[];
+      invites: {
+        id: number;
+        teamId: number | null;
+        token: string;
+        expires: Date;
+        team: { id: number; parentId: number | null } | null;
+      }[];
     }) => {
       const membershipRepo = makeMembershipRepo({
         upsertAcceptedTeamMembership: vi.fn().mockResolvedValue({ id: 9, accepted: true }),
@@ -669,7 +675,7 @@ describe("TeamMembersService", () => {
 
     it("accepts a valid invite and consumes the token", async () => {
       const { service, membershipRepo, teamRepo } = buildService({
-        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } }],
       });
 
       const result = await service.acceptPendingInvitesOnSignup({
@@ -690,7 +696,7 @@ describe("TeamMembersService", () => {
 
     it("normalizes the email before lookup and cleanup", async () => {
       const { service, teamRepo } = buildService({
-        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } }],
       });
 
       await service.acceptPendingInvitesOnSignup({ userId: 12, email: "  Ada@Example.com " });
@@ -706,7 +712,7 @@ describe("TeamMembersService", () => {
 
     it("skips expired tokens without touching memberships", async () => {
       const { service, membershipRepo, teamRepo } = buildService({
-        invites: [{ id: 1, teamId: 7, token: "t1", expires: pastDate() }],
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: pastDate(), team: { id: 7, parentId: null } }],
       });
 
       const result = await service.acceptPendingInvitesOnSignup({
@@ -721,7 +727,7 @@ describe("TeamMembersService", () => {
 
     it("skips tokens whose team no longer exists", async () => {
       const { service, membershipRepo, teamRepo } = buildService({
-        invites: [{ id: 1, teamId: null, token: "t1", expires: futureDate() }],
+        invites: [{ id: 1, teamId: null, token: "t1", expires: futureDate(), team: null }],
       });
 
       const result = await service.acceptPendingInvitesOnSignup({
@@ -737,8 +743,8 @@ describe("TeamMembersService", () => {
     it("dedupes duplicate tokens for the same team (invite races)", async () => {
       const { service, membershipRepo, teamRepo } = buildService({
         invites: [
-          { id: 1, teamId: 7, token: "t1", expires: futureDate() },
-          { id: 2, teamId: 7, token: "t2", expires: futureDate() },
+          { id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } },
+          { id: 2, teamId: 7, token: "t2", expires: futureDate(), team: { id: 7, parentId: null } },
         ],
       });
 
@@ -755,8 +761,8 @@ describe("TeamMembersService", () => {
     it("accepts invites across multiple teams", async () => {
       const { service } = buildService({
         invites: [
-          { id: 1, teamId: 7, token: "t1", expires: futureDate() },
-          { id: 2, teamId: 8, token: "t2", expires: futureDate() },
+          { id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } },
+          { id: 2, teamId: 8, token: "t2", expires: futureDate(), team: { id: 8, parentId: null } },
         ],
       });
 
@@ -770,7 +776,7 @@ describe("TeamMembersService", () => {
 
     it("accepts idempotently when the membership already exists", async () => {
       const { service, membershipRepo } = buildService({
-        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate() }],
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } }],
       });
 
       const result = await service.acceptPendingInvitesOnSignup({
@@ -792,6 +798,88 @@ describe("TeamMembersService", () => {
 
       expect(result).toEqual({ status: "no-invites", teamIds: [] });
       expect(teamRepo.findTeamInviteTokensByEmail).not.toHaveBeenCalled();
+    });
+
+    describe("organization scoping", () => {
+      const orgInvites = () => [
+        { id: 1, teamId: 21, token: "t1", expires: futureDate(), team: { id: 21, parentId: 20 } },
+        { id: 2, teamId: 20, token: "t2", expires: futureDate(), team: { id: 20, parentId: null } },
+        { id: 3, teamId: 31, token: "t3", expires: futureDate(), team: { id: 31, parentId: 30 } },
+        { id: 4, teamId: 7, token: "t4", expires: futureDate(), team: { id: 7, parentId: null } },
+      ];
+
+      it("with the flag on, accepts only the organization and its sub-teams", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, membershipRepo, teamRepo } = buildService({ invites: orgInvites() });
+
+        const result = await service.acceptPendingInvitesOnSignup({
+          userId: 12,
+          email: "ada@example.com",
+          organizationId: 20,
+        });
+
+        expect(result).toEqual({ status: "accepted", teamIds: [21, 20] });
+        expect(membershipRepo.upsertAcceptedTeamMembership).toHaveBeenCalledTimes(2);
+        expect(membershipRepo.upsertAcceptedTeamMembership).not.toHaveBeenCalledWith({
+          teamId: 31,
+          userId: 12,
+        });
+        expect(membershipRepo.upsertAcceptedTeamMembership).not.toHaveBeenCalledWith({
+          teamId: 7,
+          userId: 12,
+        });
+        expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledTimes(2);
+        expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalledWith({
+          teamId: 31,
+          email: "ada@example.com",
+        });
+        expect(teamRepo.deleteTeamInviteTokens).not.toHaveBeenCalledWith({
+          teamId: 7,
+          email: "ada@example.com",
+        });
+      });
+
+      it("with the flag on, skips an invite whose team relation is missing", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service, membershipRepo } = buildService({
+          invites: [{ id: 1, teamId: 21, token: "t1", expires: futureDate(), team: null }],
+        });
+
+        const result = await service.acceptPendingInvitesOnSignup({
+          userId: 12,
+          email: "ada@example.com",
+          organizationId: 20,
+        });
+
+        expect(result).toEqual({ status: "no-invites", teamIds: [] });
+        expect(membershipRepo.upsertAcceptedTeamMembership).not.toHaveBeenCalled();
+      });
+
+      it("with the flag on but no organizationId, accepts every invite", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        const { service } = buildService({ invites: orgInvites() });
+
+        const result = await service.acceptPendingInvitesOnSignup({
+          userId: 12,
+          email: "ada@example.com",
+          organizationId: null,
+        });
+
+        expect(result).toEqual({ status: "accepted", teamIds: [21, 20, 31, 7] });
+      });
+
+      it("with the flag off, ignores the organizationId and accepts every invite", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+        const { service } = buildService({ invites: orgInvites() });
+
+        const result = await service.acceptPendingInvitesOnSignup({
+          userId: 12,
+          email: "ada@example.com",
+          organizationId: 20,
+        });
+
+        expect(result).toEqual({ status: "accepted", teamIds: [21, 20, 31, 7] });
+      });
     });
   });
 

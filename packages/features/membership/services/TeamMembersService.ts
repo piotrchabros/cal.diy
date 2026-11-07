@@ -365,16 +365,34 @@ export class TeamMembersService {
     return { email: invite.email, teamId: invite.teamId };
   }
 
-  async acceptPendingInvitesOnSignup({ userId, email }: { userId: number; email: string }) {
+  async acceptPendingInvitesOnSignup({
+    userId,
+    email,
+    organizationId,
+  }: {
+    userId: number;
+    email: string;
+    organizationId?: number | null;
+  }) {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail || !normalizedEmail.includes("@")) {
       return { status: "no-invites" as const, teamIds: [] as number[] };
     }
     const invites = await this.teamRepository.findTeamInviteTokensByEmail({ email: normalizedEmail });
+    const scopeOrganizationId = isOrganizationsEnabled() && organizationId != null ? organizationId : null;
     const now = new Date();
     const acceptedTeamIds: number[] = [];
     for (const invite of invites) {
       if (invite.teamId === null || invite.expires <= now) {
+        continue;
+      }
+      // Users and teams stay inside their organization, so invites to teams outside the user's org are
+      // left pending (token kept) rather than pulling the user across organizations.
+      if (
+        scopeOrganizationId !== null &&
+        (!invite.team ||
+          (invite.team.id !== scopeOrganizationId && invite.team.parentId !== scopeOrganizationId))
+      ) {
         continue;
       }
       await this.membershipRepository.upsertAcceptedTeamMembership({ teamId: invite.teamId, userId });
