@@ -10,7 +10,7 @@ import { TextArea } from "@calcom/ui/components/form";
 import type { EmbedFramework, EmbedType, PreviewState } from "../types";
 import { Codes } from "./EmbedCodes";
 import { buildCssVarsPerTheme } from "./buildCssVarsPerTheme";
-import { embedLibUrl, EMBED_PREVIEW_HTML_URL } from "./constants";
+import { buildEmbedPreviewIframeSrc, embedLibUrl } from "./constants";
 import { getApiNameForReactSnippet, getApiNameForVanillaJsSnippet } from "./getApiName";
 import { getDimension } from "./getDimension";
 import { useEmbedCalOrigin } from "./hooks";
@@ -189,7 +189,7 @@ ${getEmbedTypeSpecificString({
       { calLink: string; embedType: EmbedType; previewState: PreviewState; namespace: string }
     >(function Preview({ calLink, embedType }, ref) {
       const bookerUrl = useEmbedBookerUrl();
-      const iframeSrc = `${EMBED_PREVIEW_HTML_URL}?embedType=${embedType}&calLink=${calLink}&embedLibUrl=${embedLibUrl}&bookerUrl=${bookerUrl}`;
+      const iframeSrc = buildEmbedPreviewIframeSrc({ baseUrl: bookerUrl, embedType, calLink, embedLibUrl });
       if (ref instanceof Function || !ref) {
         return null;
       }
