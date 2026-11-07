@@ -27,6 +27,11 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 }));
 
 const mockFindDefaultOrganizationId = vi.fn();
+const mockAddMember = vi.fn();
+
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ addMember: mockAddMember }),
+}));
 
 vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
   findDefaultOrganizationId: () => mockFindDefaultOrganizationId(),
@@ -34,6 +39,7 @@ vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
 
 const mockPrismaUserFindFirst = vi.fn();
 const mockPrismaUserCreate = vi.fn();
+const mockPrismaUserDelete = vi.fn();
 const mockPrismaTeamFindFirst = vi.fn();
 const mockPrismaMembershipFindUnique = vi.fn();
 
@@ -42,6 +48,7 @@ vi.mock("@calcom/prisma", () => {
     user: {
       findFirst: (...args: unknown[]) => mockPrismaUserFindFirst(...args),
       create: (...args: unknown[]) => mockPrismaUserCreate(...args),
+      delete: (...args: unknown[]) => mockPrismaUserDelete(...args),
       update: vi.fn(),
     },
     team: { findFirst: (...args: unknown[]) => mockPrismaTeamFindFirst(...args) },
@@ -118,9 +125,11 @@ vi.mock("@calcom/lib/safeStringify", () => ({
   safeStringify: vi.fn((obj) => JSON.stringify(obj)),
 }));
 
+const mockLinkAccount = vi.fn();
+
 vi.mock("./next-auth-custom-adapter", () => ({
   default: vi.fn(() => ({
-    linkAccount: vi.fn(),
+    linkAccount: (...args: unknown[]) => mockLinkAccount(...args),
   })),
 }));
 
@@ -267,6 +276,8 @@ describe("next-auth options with organizations", () => {
     mockGetOrganizationOriginForUrl.mockResolvedValue(null);
     mockGetBaseUrl.mockResolvedValue("https://acme.example.org");
     mockFindDefaultOrganizationId.mockResolvedValue(null);
+    mockAddMember.mockResolvedValue({ userId: 100, organizationId: 7, role: "MEMBER" });
+    mockPrismaUserDelete.mockResolvedValue({ id: 100 });
   });
 
   describe("flag off", () => {
@@ -610,6 +621,85 @@ describe("next-auth options with organizations", () => {
         teams: { create: { role: "MEMBER", accepted: true, team: { connect: { id: 55 } } } },
       });
       expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    });
+
+    it("does not add another membership for an autolinked user with the flag on", async () => {
+      vi.stubEnv("ORGANIZATIONS_AUTOLINK", "1");
+      vi.resetModules();
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      });
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockPrismaTeamFindFirst.mockResolvedValue({ id: 55 });
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(createdUserData()).toMatchObject({ organization: { connect: { id: 55 } } });
+      expect(mockAddMember).not.toHaveBeenCalled();
+      expect(mockLinkAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not add an organization membership with the flag off", async () => {
+      mockFindDefaultOrganizationId.mockResolvedValue(1);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(mockAddMember).not.toHaveBeenCalled();
+      expect(mockLinkAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("adds the organization membership before linking the account with the flag on", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe(true);
+
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 7, userId: 100, role: "MEMBER" });
+      expect(mockAddMember.mock.invocationCallOrder[0]).toBeLessThan(
+        mockLinkAccount.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("adds the organization membership for a new Azure AD user with the flag on", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockGetIdentityProvider.mockReturnValue("AZUREAD");
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      const result = await signIn({
+        user: { id: "1", email: "new@acme.com", name: "New User" },
+        account: { provider: "azure-ad", providerAccountId: "azure-1", type: "oauth" },
+        profile: { email: "new@acme.com", xms_edov: true } as SignInParams["profile"],
+      });
+
+      expect(result).toBe(true);
+      expect(mockAddMember).toHaveBeenCalledWith({ organizationId: 7, userId: 100, role: "MEMBER" });
+      expect(mockAddMember.mock.invocationCallOrder[0]).toBeLessThan(
+        mockLinkAccount.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("deletes the new user and refuses sign-in when adding the membership fails", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockAddMember.mockRejectedValue(new Error("username taken"));
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
+
+      expect(mockPrismaUserDelete).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 100 } }));
+      expect(mockLinkAccount).not.toHaveBeenCalled();
+    });
+
+    it("refuses sign-in when deleting the new user also fails", async () => {
+      mockIsOrganizationsEnabled.mockReturnValue(true);
+      mockAddMember.mockRejectedValue(new Error("username taken"));
+      mockPrismaUserDelete.mockRejectedValue(new Error("db down"));
+      const { signIn } = await getCallbacks(() => requestHeaders("acme.example.org"));
+
+      await expect(signIn(googleSignUpParams)).resolves.toBe("/auth/error?error=user-creation-error");
+      expect(mockLinkAccount).not.toHaveBeenCalled();
     });
   });
 });
