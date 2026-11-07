@@ -1,0 +1,36 @@
+import { OrganizationRoleDtoSchema } from "@calcom/lib/dto/OrganizationDto";
+import { z } from "zod";
+
+const id = z.number().int().positive();
+
+export const ZListOrganizationMembersInput = z.object({
+  search: z.string().trim().max(100).optional(),
+  cursor: id.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export const ZListOrganizationTeamsInput = ZListOrganizationMembersInput;
+
+export const ZInviteOrganizationMemberInput = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  role: OrganizationRoleDtoSchema,
+});
+
+export const ZInviteOrganizationMemberOutput = z.object({ invited: z.literal(true) });
+
+export const ZUpdateOrganizationMemberRoleInput = z.object({ userId: id, role: OrganizationRoleDtoSchema });
+
+export const ZUpdateOrganizationMemberRoleOutput = ZUpdateOrganizationMemberRoleInput;
+
+export const ZRemoveOrganizationMemberInput = z.object({ userId: id });
+
+export const ZRemoveOrganizationMemberOutput = ZRemoveOrganizationMemberInput;
+
+export type TListOrganizationMembersInput = z.infer<typeof ZListOrganizationMembersInput>;
+export type TListOrganizationTeamsInput = z.infer<typeof ZListOrganizationTeamsInput>;
+export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationMemberInput>;
+export type TInviteOrganizationMemberOutput = z.infer<typeof ZInviteOrganizationMemberOutput>;
+export type TUpdateOrganizationMemberRoleInput = z.infer<typeof ZUpdateOrganizationMemberRoleInput>;
+export type TUpdateOrganizationMemberRoleOutput = z.infer<typeof ZUpdateOrganizationMemberRoleOutput>;
+export type TRemoveOrganizationMemberInput = z.infer<typeof ZRemoveOrganizationMemberInput>;
+export type TRemoveOrganizationMemberOutput = z.infer<typeof ZRemoveOrganizationMemberOutput>;

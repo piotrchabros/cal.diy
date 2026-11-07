@@ -38,4 +38,5 @@ export const ENDPOINTS = [
   "filterSegments",
   "phoneNumber",
   "notetaker",
+  "organization",
 ] as const;
