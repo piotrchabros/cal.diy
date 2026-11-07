@@ -11,6 +11,8 @@ import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { defaultSendTeamInviteEmail, type SendTeamInviteEmail, TeamInviteService } from "./TeamInviteService";
 
+type TeamWithParent = { id: number; parentId: number | null };
+
 export const TEAM_MEMBER_ROLES = [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER] as const;
 export type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
 
@@ -36,39 +38,76 @@ export class TeamMembersService {
     sendInviteEmail: SendTeamMemberInviteEmail = defaultSendTeamInviteEmail,
     private readonly getOrganizationMembershipService: () => Pick<
       OrganizationMembershipService,
-      "addMember"
+      "addMember" | "getRole"
     > = defaultGetOrganizationMembershipService
   ) {
     this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
   }
 
-  private async requireTeamMembership(teamId: number, userId: number) {
-    const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({ teamId, userId });
-    if (!membership || !membership.accepted) {
-      // FR-008: with organizations on, a team the caller cannot see must look nonexistent so
-      // another organization's team ids cannot be probed.
-      if (isOrganizationsEnabled()) {
-        throw ErrorWithCode.Factory.NotFound("Team not found");
-      }
-      throw ErrorWithCode.Factory.Forbidden(`User ${userId} is not a member of team ${teamId}`);
+  // Organization rows live in the team table too; rejecting them here keeps team endpoints
+  // (and the team settings pages built on them) from managing an organization as a team.
+  private async requireTeam(teamId: number) {
+    const team = await this.teamRepository.findBasicById({ teamId });
+    if (!team || team.isOrganization) {
+      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
     }
-    return membership;
+    return team;
   }
 
-  private async requireTeamAdmin(teamId: number, userId: number) {
-    const membership = await this.requireTeamMembership(teamId, userId);
-    if (membership.role !== MembershipRole.OWNER && membership.role !== MembershipRole.ADMIN) {
-      throw ErrorWithCode.Factory.Forbidden(`User ${userId} lacks owner/admin access to team ${teamId}`);
+  private async isOrganizationAdminOfTeam(team: TeamWithParent, userId: number) {
+    if (!isOrganizationsEnabled() || team.parentId === null) {
+      return false;
     }
-    return membership;
+    const role = await this.getOrganizationMembershipService().getRole(userId, team.parentId);
+    return role === "OWNER" || role === "ADMIN";
+  }
+
+  private async requireTeamAccess(team: TeamWithParent, userId: number) {
+    const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({
+      teamId: team.id,
+      userId,
+    });
+    if (membership?.accepted) {
+      return;
+    }
+    if (await this.isOrganizationAdminOfTeam(team, userId)) {
+      return;
+    }
+    this.throwNotVisible(team.id, userId);
+  }
+
+  private async requireTeamAdmin(team: TeamWithParent, userId: number) {
+    const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({
+      teamId: team.id,
+      userId,
+    });
+    if (
+      membership?.accepted &&
+      (membership.role === MembershipRole.OWNER || membership.role === MembershipRole.ADMIN)
+    ) {
+      return;
+    }
+    if (await this.isOrganizationAdminOfTeam(team, userId)) {
+      return;
+    }
+    if (!membership?.accepted) {
+      this.throwNotVisible(team.id, userId);
+    }
+    throw ErrorWithCode.Factory.Forbidden(`User ${userId} lacks owner/admin access to team ${team.id}`);
+  }
+
+  private throwNotVisible(teamId: number, userId: number): never {
+    // FR-008: with organizations on, a team the caller cannot see must look nonexistent so
+    // another organization's team ids cannot be probed.
+    if (isOrganizationsEnabled()) {
+      throw ErrorWithCode.Factory.NotFound("Team not found");
+    }
+    throw ErrorWithCode.Factory.Forbidden(`User ${userId} is not a member of team ${teamId}`);
   }
 
   async getTeam({ teamId, viewerId }: { teamId: number; viewerId: number }) {
-    await this.requireTeamMembership(teamId, viewerId);
-    const team = await this.teamRepository.findBasicById({ teamId });
-    if (!team) {
-      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
-    }
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAccess(team, viewerId);
     return team;
   }
 
@@ -81,11 +120,8 @@ export class TeamMembersService {
     page = 1,
     pageSize = 10,
   }: ListTeamMembersInput) {
-    await this.requireTeamMembership(teamId, viewerId);
-    const team = await this.teamRepository.findBasicById({ teamId });
-    if (!team) {
-      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
-    }
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAccess(team, viewerId);
     const safePage = Math.max(1, Math.floor(page));
     const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
     const [items, total] = await Promise.all([
@@ -121,11 +157,8 @@ export class TeamMembersService {
     email: string;
     role: TeamMemberRole;
   }) {
-    await this.requireTeamAdmin(teamId, requesterId);
-    const team = await this.teamRepository.findBasicById({ teamId });
-    if (!team) {
-      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
-    }
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAdmin(team, requesterId);
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail || !normalizedEmail.includes("@")) {
       throw ErrorWithCode.Factory.BadRequest(`Invalid invite email for team ${teamId}`);
@@ -224,6 +257,7 @@ export class TeamMembersService {
       teamId: team.id,
       teamName: team.name,
       email: invitee.email,
+      isOrganization: team.isOrganization,
       // Passwordless accounts include admin-created GOOGLE ones, which cannot sign in while
       // Google login is disabled; the emailed token proves mailbox ownership like a reset link.
       needsPassword: !invitee.hasPassword,
@@ -307,7 +341,8 @@ export class TeamMembersService {
     userId: number;
     role: TeamMemberRole;
   }) {
-    await this.requireTeamAdmin(teamId, requesterId);
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAdmin(team, requesterId);
     const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({ teamId, userId });
     if (!membership) {
       throw ErrorWithCode.Factory.NotFound(`User ${userId} is not a member of team ${teamId}`);
@@ -330,7 +365,8 @@ export class TeamMembersService {
     requesterId: number;
     userId: number;
   }) {
-    await this.requireTeamAdmin(teamId, requesterId);
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAdmin(team, requesterId);
     const membership = await this.membershipRepository.findUniqueByUserIdAndTeamId({ teamId, userId });
     if (!membership) {
       throw ErrorWithCode.Factory.NotFound(`User ${userId} is not a member of team ${teamId}`);
@@ -356,11 +392,8 @@ export class TeamMembersService {
     requesterName: string;
     email: string;
   }) {
-    await this.requireTeamAdmin(teamId, requesterId);
-    const team = await this.teamRepository.findBasicById({ teamId });
-    if (!team) {
-      throw ErrorWithCode.Factory.NotFound(`Team ${teamId} not found`);
-    }
+    const team = await this.requireTeam(teamId);
+    await this.requireTeamAdmin(team, requesterId);
     const normalizedEmail = email.trim().toLowerCase();
     const invitee = await this.userRepository.findInviteeByEmail({ email: normalizedEmail });
     if (!invitee) {

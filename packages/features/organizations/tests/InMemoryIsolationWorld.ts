@@ -207,8 +207,12 @@ export class InMemoryIsolationWorld {
     };
   }
 
-  organizationMembershipService(): Pick<OrganizationMembershipService, "addMember"> {
+  organizationMembershipService(): Pick<OrganizationMembershipService, "addMember" | "getRole"> {
     return {
+      getRole: async (userId, organizationId) => {
+        const membership = this.membership(userId, organizationId);
+        return membership?.accepted ? membership.role : null;
+      },
       addMember: async ({ organizationId, userId, role }) => {
         const user = this.user(userId);
         if (user) user.organizationId = organizationId;
