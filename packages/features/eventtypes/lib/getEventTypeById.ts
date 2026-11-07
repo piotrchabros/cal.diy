@@ -14,6 +14,7 @@ import { parseBookingLimit } from "@calcom/lib/intervalLimits/isBookingLimits";
 import { parseDurationLimit } from "@calcom/lib/intervalLimits/isDurationLimits";
 import { parseEventTypeColor } from "@calcom/lib/isEventTypeColor";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -55,7 +56,7 @@ export const getEventTypeById = async ({
     timeZone: true,
   } satisfies Prisma.UserSelect;
 
-  const rawEventType = await getRawEventType({
+  const fetchedEventType = await getRawEventType({
     userId,
     eventTypeId,
     isUserOrganizationAdmin,
@@ -63,13 +64,18 @@ export const getEventTypeById = async ({
     prisma,
   });
 
-  if (!rawEventType) {
+  if (!fetchedEventType) {
     if (isTrpcCall) {
       throw new TRPCError({ code: "NOT_FOUND" });
     } else {
       throw new Error("Event type not found");
     }
   }
+
+  const rawEventType = {
+    ...fetchedEventType,
+    team: fetchedEventType.team ? withoutOrganizationParent(fetchedEventType.team) : null,
+  };
 
   const { locations, metadata, ...restEventType } = rawEventType;
   const newMetadata = eventTypeMetaDataSchemaWithTypedApps.parse(metadata || {}) || {};

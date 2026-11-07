@@ -27,6 +27,7 @@ import {
   handleCustomInputs,
   handlePeriodType,
 } from "../util";
+import { isOrganizationTeam } from "./isOrganizationTeam";
 import type { TUpdateInputSchema } from "./update.schema";
 
 const isUrlScanningEnabled = (..._args: unknown[]) => false;
@@ -177,6 +178,8 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
       },
     },
   });
+
+  const isOrgTeam = isOrganizationTeam(eventType.team);
 
   if (input.teamId && eventType.team?.id && input.teamId !== eventType.team.id) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -459,7 +462,7 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
     // check if all hosts can be assigned (memberships that have accepted invite)
     const teamMemberIds = await membershipRepo.listAcceptedTeamMemberIds({ teamId });
     const teamMemberIdSet = new Set(teamMemberIds);
-    if (!hosts.every((host) => teamMemberIdSet.has(host.userId)) && !eventType.team?.parentId) {
+    if (!hosts.every((host) => teamMemberIdSet.has(host.userId)) && !isOrgTeam) {
       throw new TRPCError({
         code: "FORBIDDEN",
       });
@@ -595,7 +598,7 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
   }
 
   if (input.metadata?.disableStandardEmails?.all) {
-    if (!eventType?.team?.parentId) {
+    if (!isOrgTeam) {
       input.metadata.disableStandardEmails.all.host = false;
       input.metadata.disableStandardEmails.all.attendee = false;
     }
