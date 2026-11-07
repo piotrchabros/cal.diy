@@ -167,31 +167,10 @@ describe("calcomHandler – team invite materialization", () => {
     });
   });
 
-  it("accepts pending invites without an organization while the default organization does not exist", async () => {
-    vi.clearAllMocks();
-    resetPrismaMock();
-    mockFindDefaultOrganizationId.mockResolvedValue(null);
-    mockAcceptPendingInvitesOnSignup.mockResolvedValue({ status: "accepted", teamIds: [1] });
-    prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
-
-    const response = await callHandler({
-      email: "invited@example.com",
-      password: "ValidPassword123!",
-      username: "invited",
-      language: "en",
-    });
-
-    expect(response.status).toBe(201);
-    expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
-      userId: 42,
-      email: "invited@example.com",
-      organizationId: null,
-    });
-  });
-
   it("still signs up when invite materialization fails", async () => {
     vi.clearAllMocks();
     resetPrismaMock();
+    mockFindDefaultOrganizationId.mockResolvedValue(DEFAULT_ORG_ID);
     mockAcceptPendingInvitesOnSignup.mockRejectedValue(new Error("db down"));
     prismaMock.user.create.mockResolvedValue({ id: 42 } as never);
 
@@ -207,7 +186,7 @@ describe("calcomHandler – team invite materialization", () => {
 });
 
 describe("calcomHandler – default organization", () => {
-  function setup(defaultOrgId: number | null): void {
+  function setup(defaultOrgId: number): void {
     vi.clearAllMocks();
     resetPrismaMock();
     mockFindDefaultOrganizationId.mockResolvedValue(defaultOrgId);
@@ -226,18 +205,18 @@ describe("calcomHandler – default organization", () => {
 
     expect(response.status).toBe(201);
     expect(prismaMock.user.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ organizationId: DEFAULT_ORG_ID }) })
+      expect.objectContaining({
+        data: expect.objectContaining({ organization: { connect: { id: DEFAULT_ORG_ID } } }),
+      })
     );
   });
 
-  it("leaves a plain signup without an organization when no default organization exists", async () => {
-    setup(null);
+  it("creates no user when no default organization exists", async () => {
+    setup(DEFAULT_ORG_ID);
+    mockFindDefaultOrganizationId.mockRejectedValue(new Error("No default organization"));
 
-    const response = await callHandler(createSignupBody());
-
-    expect(response.status).toBe(201);
-    const createArgs = prismaMock.user.create.mock.calls[0][0];
-    expect(createArgs.data).not.toHaveProperty("organizationId");
+    await expect(callHandler(createSignupBody())).rejects.toThrow("No default organization");
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   it("places a non-org team invitee in the default organization", async () => {
@@ -249,18 +228,6 @@ describe("calcomHandler – default organization", () => {
     expect(response.status).toBe(201);
     expect(prismaMock.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ organizationId: DEFAULT_ORG_ID }) })
-    );
-  });
-
-  it("leaves a non-org team invitee without an organization when no default organization exists", async () => {
-    setup(null);
-    prismaMock.team.findUnique.mockResolvedValue(createMockTeam({ isOrganization: false }) as never);
-
-    const response = await callHandler(createSignupBody({ token: "token" }));
-
-    expect(response.status).toBe(201);
-    expect(prismaMock.user.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ create: expect.objectContaining({ organizationId: null }) })
     );
   });
 

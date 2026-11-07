@@ -245,7 +245,7 @@ export class UserRepository {
           organization: getParsedTeam(profile.organization),
         }))
       : null;
-    const where =
+    const where: Prisma.UserWhereInput =
       profiles && profiles.length > 0
         ? {
             // Get UserIds from profiles
@@ -261,7 +261,8 @@ export class UserRepository {
               ? {
                   organization: whereClauseForOrgWithSlugOrRequestedSlug(orgSlug),
                 }
-              : outsideOrganizationsFilter({ organization: null })),
+              : // Every user belongs to an organization, so "users outside any organization" matches nobody.
+                outsideOrganizationsFilter({ id: { in: [] as number[] } })),
           };
     return { where, profiles };
   }
@@ -301,12 +302,12 @@ export class UserRepository {
     email,
     teamId,
     role,
-    organizationId = null,
+    organizationId,
   }: {
     email: string;
     teamId: number;
     role: MembershipRole;
-    organizationId?: number | null;
+    organizationId: number;
   }) {
     const user = await this.create({
       email: email.toLowerCase(),
@@ -987,7 +988,7 @@ export class UserRepository {
     data: Omit<Prisma.UserCreateInput, "password" | "organization" | "movedToProfile"> & {
       username: string | null;
       hashedPassword?: string;
-      organizationId: number | null;
+      organizationId: number;
       creationSource: CreationSource;
       locked: boolean;
     }
@@ -1027,9 +1028,9 @@ export class UserRepository {
         },
         creationSource,
         locked,
-        ...(organizationId ? { organizationId } : {}),
+        organization: { connect: { id: organizationId } },
         // Invited users have no username yet; their profile is created once they pick one.
-        ...(organizationId && username
+        ...(username
           ? {
               profiles: {
                 create: {
@@ -1566,7 +1567,7 @@ export class UserRepository {
     excludeEmail,
   }: {
     username: string;
-    organizationId: number | null;
+    organizationId: number;
     excludeEmail: string;
   }) {
     return this.prismaClient.user.findFirst({
@@ -1619,7 +1620,7 @@ export class UserRepository {
     email: string;
     username: string | null;
     hashedPassword: string;
-    organizationId: number | null;
+    organizationId: number;
     emailVerified: Date;
     identityProvider: IdentityProvider;
   }) {
