@@ -1,5 +1,6 @@
 "use client";
 
+import type { MoveTeamPreviewDto } from "@calcom/lib/dto/OrganizationMoveDto";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { Badge } from "@calcom/ui/components/badge";
@@ -21,7 +22,11 @@ type FormValues = {
   newUsernames: Record<string, string>;
 };
 
+type OutsideMember = MoveTeamPreviewDto["membersOutsideTarget"][number];
+
 export type MoveTeamDialogTeam = { teamId: number; name: string; slug: string | null };
+
+const needsNewUsername = (member: OutsideMember) => member.usernameTaken || member.usernameMissing;
 
 export function MoveTeamDialog({
   team,
@@ -70,19 +75,16 @@ export function MoveTeamDialog({
 
   const outsideMembers = toOrganizationId !== null ? (preview.data?.membersOutsideTarget ?? []) : [];
   const slugTaken = toOrganizationId !== null && preview.data?.slugTaken === true;
-  const askForNewUsernames =
-    outsideChoice === "move" && outsideMembers.some((member) => member.usernameTaken);
+  const askForNewUsernames = outsideChoice === "move" && outsideMembers.some(needsNewUsername);
 
   const handleSubmit = (values: FormValues) => {
     if (values.toOrganizationId === null || !preview.data) return;
     const newUsernames =
       values.outsideMembers === "move"
-        ? outsideMembers
-            .filter((member) => member.usernameTaken)
-            .map((member) => ({
-              userId: member.userId,
-              username: values.newUsernames[`u${member.userId}`]?.trim() ?? "",
-            }))
+        ? outsideMembers.filter(needsNewUsername).map((member) => ({
+            userId: member.userId,
+            username: values.newUsernames[`u${member.userId}`]?.trim() ?? "",
+          }))
         : [];
     moveTeam.mutate({
       teamId: team.teamId,
@@ -112,15 +114,23 @@ export function MoveTeamDialog({
             {outsideMembers.length > 0 && (
               <div className="stack-y-2">
                 <p className="text-default text-sm">{t("move_team_outside_members_description")}</p>
-                {askForNewUsernames && (
+                {askForNewUsernames && outsideMembers.some((member) => member.usernameTaken) && (
                   <p className="text-default text-sm">{t("move_team_member_usernames_taken_description")}</p>
+                )}
+                {askForNewUsernames && outsideMembers.some((member) => member.usernameMissing) && (
+                  <p className="text-default text-sm">
+                    {t("move_team_member_usernames_missing_description")}
+                  </p>
                 )}
                 <ul className="text-default stack-y-2 text-sm" data-testid="move-team-outside-members">
                   {outsideMembers.map((member) => (
                     <li key={member.userId} className="flex flex-wrap items-center gap-2">
                       <span>{member.name ? `${member.name} (${member.email})` : member.email}</span>
                       {member.usernameTaken && <Badge variant="orange">{t("username_taken_badge")}</Badge>}
-                      {member.usernameTaken && outsideChoice === "move" && (
+                      {member.usernameMissing && (
+                        <Badge variant="orange">{t("username_missing_badge")}</Badge>
+                      )}
+                      {needsNewUsername(member) && outsideChoice === "move" && (
                         <div className="w-full">
                           <TextField
                             required

@@ -158,6 +158,7 @@ export class OrganizationMoveService {
         name: m.name,
         email: m.email,
         usernameTaken: m.username !== null && taken.has(m.username),
+        usernameMissing: m.username === null,
       })),
       slugTaken,
     };
