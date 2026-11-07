@@ -63,6 +63,7 @@ export const BaseScheduledEmail = (
 
   return (
     <BaseEmailHtml
+      logoHref={props.logoHref ?? props.calEvent.bookerUrl}
       hideLogo={Boolean(props.calEvent.platformClientId) || Boolean(props.calEvent.hideBranding)}
       headerType={props.headerType || "checkCircle"}
       subject={props.subject || subject}

@@ -8,6 +8,7 @@ export const OrganizerPaymentRefundFailedEmail = (
 
   return (
     <BaseEmailHtml
+      logoHref={props.calEvent.bookerUrl}
       headerType="xCircle"
       subject="refund_failed_subject"
       title={t("a_refund_failed")}

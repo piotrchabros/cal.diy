@@ -1,11 +1,11 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
-
 import RawHtml from "./RawHtml";
 import Row from "./Row";
 
 const CommentIE = ({ html = "" }) => <RawHtml html={`<!--[if mso | IE]>${html}<![endif]-->`} />;
 
-const EmailBodyLogo = () => {
+// The link follows the email's organization domain; image assets stay on WEBAPP_URL.
+const EmailBodyLogo = ({ href }: { href?: string | null }) => {
   const image = `${WEBAPP_URL}/emails/logo.png`;
 
   return (
@@ -46,7 +46,7 @@ const EmailBodyLogo = () => {
                   }}>
                   <Row border="0" style={{ borderCollapse: "collapse", borderSpacing: "0px" }}>
                     <td style={{ width: "89px" }}>
-                      <a href={WEBAPP_URL} target="_blank" rel="noreferrer">
+                      <a href={href || WEBAPP_URL} target="_blank" rel="noreferrer">
                         <img
                           height="19"
                           src={image}

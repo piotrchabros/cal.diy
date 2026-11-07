@@ -16,6 +16,7 @@ export const SlugReplacementEmail = (
 
   return (
     <BaseEmailHtml
+      logoHref={props.baseUrl}
       subject={t("email_subject_slug_replacement", { slug: slug })}
       headerType="teamCircle"
       title={t("event_replaced_notice")}>
