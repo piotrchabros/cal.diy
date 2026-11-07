@@ -1,14 +1,13 @@
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import prisma from "@calcom/prisma";
+import { MembershipRole } from "@calcom/prisma/enums";
+import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import type { PageProps } from "app/_types";
 import { _generateMetadata } from "app/_utils";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import prisma from "@calcom/prisma";
-import { MembershipRole } from "@calcom/prisma/enums";
-
-import { buildLegacyRequest } from "@lib/buildLegacyCtx";
-
 import MembersView from "~/settings/teams/members-view";
 
 export const generateMetadata = async ({ params }: { params: Promise<{ id: string }> }) =>
@@ -34,9 +33,9 @@ const Page = async ({ params: _params }: PageProps) => {
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { id: true },
+    select: { id: true, parentId: true, isOrganization: true },
   });
-  if (!team) {
+  if (!team || team.isOrganization) {
     notFound();
   }
 
@@ -52,20 +51,28 @@ const Page = async ({ params: _params }: PageProps) => {
       accepted: true,
     },
   });
-  if (!membership) {
+
+  let isOrganizationAdmin = false;
+  if (isOrganizationsEnabled() && team.parentId) {
+    const organizationRole = await getOrganizationMembershipService().getRole(session.user.id, team.parentId);
+    isOrganizationAdmin = organizationRole === "OWNER" || organizationRole === "ADMIN";
+  }
+
+  if (!membership && !isOrganizationAdmin) {
     notFound();
   }
 
-  const canManage =
-    membership.accepted &&
+  const isAcceptedTeamAdmin =
+    !!membership?.accepted &&
     (membership.role === MembershipRole.OWNER || membership.role === MembershipRole.ADMIN);
+  const canManage = isOrganizationAdmin || isAcceptedTeamAdmin;
 
   return (
     <MembersView
       teamId={teamId}
       viewerId={session.user.id}
       canManage={canManage}
-      isPendingInvite={!membership.accepted}
+      isPendingInvite={!!membership && !membership.accepted}
     />
   );
 };

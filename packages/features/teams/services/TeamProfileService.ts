@@ -1,9 +1,11 @@
+import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { uploadLogo } from "@calcom/lib/server/avatar";
 import { isBase64Image, resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
 import slugify from "@calcom/lib/slugify";
-import type { EventType, Membership, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
+import type { EventType, Prisma, PrismaClient, Team } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 import type {
   TDisbandTeamInput,
@@ -65,6 +67,21 @@ const teamProfileSelect = {
   parentId: true,
 } satisfies Prisma.TeamSelect;
 
+const teamAccessSelect = {
+  ...teamProfileSelect,
+  isOrganization: true,
+} satisfies Prisma.TeamSelect;
+
+type TeamAccess = {
+  team: Prisma.TeamGetPayload<{ select: typeof teamAccessSelect }>;
+  membershipRole: MembershipRole | null;
+  isOrganizationAdmin: boolean;
+};
+
+// Org admins have owner authority over the org's teams, so they also see the danger zone (US4-6).
+const effectiveRole = ({ membershipRole, isOrganizationAdmin }: TeamAccess): MembershipRole =>
+  isOrganizationAdmin ? MembershipRole.OWNER : (membershipRole ?? MembershipRole.MEMBER);
+
 const parseProfileMetadata = (metadata: unknown): TTeamProfileMetadata => {
   const parsed = ZTeamProfileMetadataSchema.safeParse(metadata ?? {});
   if (!parsed.success) {
@@ -81,35 +98,60 @@ const defaultUploadTeamLogo: UploadTeamLogo = async ({ teamId, logo }) => {
   return await uploadLogo({ teamId, logo: resized });
 };
 
+export type GetOrganizationRole = (
+  userId: number,
+  organizationId: number
+) => Promise<OrganizationRoleDto | null>;
+
+// Lazy so public team pages that construct this service don't load the organizations DI graph.
+const defaultGetOrganizationRole: GetOrganizationRole = async (userId, organizationId) => {
+  const { getOrganizationMembershipService } = await import(
+    "@calcom/features/organizations/di/OrganizationMembershipService.container"
+  );
+  return getOrganizationMembershipService().getRole(userId, organizationId);
+};
+
 export class TeamProfileService {
   constructor(
     private prisma: PrismaLike,
-    private uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo
+    private uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo,
+    private getOrganizationRole: GetOrganizationRole = defaultGetOrganizationRole
   ) {}
 
-  private async getAcceptedMembership(userId: number, teamId: number): Promise<Membership> {
+  private async resolveAccess(userId: number, teamId: number): Promise<TeamAccess> {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: teamAccessSelect,
+    });
+    // Organization rows are not teams; treating them as one would let team admins edit or delete the org.
+    if (!team || team.isOrganization) {
+      throw new ErrorWithCode(ErrorCode.NotFound, `Team profile not found: team ${teamId} does not exist`);
+    }
+
     const membership = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { id: true, teamId: true, userId: true, accepted: true, role: true },
+      select: { accepted: true, role: true },
     });
-    if (!membership || !membership.accepted) {
+    const membershipRole = membership?.accepted ? membership.role : null;
+
+    let isOrganizationAdmin = false;
+    if (isOrganizationsEnabled() && team.parentId) {
+      const organizationRole = await this.getOrganizationRole(userId, team.parentId);
+      isOrganizationAdmin = organizationRole === "OWNER" || organizationRole === "ADMIN";
+    }
+
+    if (!membershipRole && !isOrganizationAdmin) {
       throw new ErrorWithCode(
         ErrorCode.NotFound,
         `Team profile not found: no accepted membership for user ${userId} on team ${teamId}`
       );
     }
-    return membership as Membership;
+    return { team, membershipRole, isOrganizationAdmin };
   }
 
   async getTeamProfile({ teamId, userId }: { teamId: number; userId: number }): Promise<TeamProfile> {
-    const membership = await this.getAcceptedMembership(userId, teamId);
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      select: teamProfileSelect,
-    });
-    if (!team) {
-      throw new ErrorWithCode(ErrorCode.NotFound, `Team profile not found: team ${teamId} does not exist`);
-    }
+    const access = await this.resolveAccess(userId, teamId);
+    const { team } = access;
     const profileMeta = parseProfileMetadata(team.metadata);
     return {
       id: team.id,
@@ -118,7 +160,7 @@ export class TeamProfileService {
       logoUrl: team.logoUrl,
       bio: team.bio,
       metadata: team.metadata,
-      role: membership.role,
+      role: effectiveRole(access),
       location: profileMeta.location ?? null,
       showMap: profileMeta.showMap ?? false,
       socialLinks: profileMeta.socialLinks ?? [],
@@ -134,20 +176,14 @@ export class TeamProfileService {
     userId: number;
     input: TUpdateTeamProfileInput;
   }): Promise<TeamProfile> {
-    const membership = await this.getAcceptedMembership(userId, teamId);
-    if (membership.role !== MembershipRole.ADMIN && membership.role !== MembershipRole.OWNER) {
+    const access = await this.resolveAccess(userId, teamId);
+    const { team, membershipRole, isOrganizationAdmin } = access;
+    const isTeamAdmin = membershipRole === MembershipRole.ADMIN || membershipRole === MembershipRole.OWNER;
+    if (!isTeamAdmin && !isOrganizationAdmin) {
       throw new ErrorWithCode(
         ErrorCode.Forbidden,
         `Unable to update team ${teamId}: user ${userId} is not an admin or owner`
       );
-    }
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      select: teamProfileSelect,
-    });
-    if (!team) {
-      throw new ErrorWithCode(ErrorCode.NotFound, `Unable to update team: team ${teamId} does not exist`);
     }
 
     const slug = slugify(input.slug);
@@ -201,7 +237,7 @@ export class TeamProfileService {
       logoUrl: updated.logoUrl,
       bio: updated.bio,
       metadata: updated.metadata,
-      role: membership.role,
+      role: effectiveRole(access),
       location: updatedMeta.location ?? null,
       showMap: updatedMeta.showMap ?? false,
       socialLinks: updatedMeta.socialLinks ?? [],
@@ -238,19 +274,12 @@ export class TeamProfileService {
   }
 
   async disbandTeam({ teamId, userId }: TDisbandTeamInput & { userId: number }): Promise<{ id: number }> {
-    const membership = await this.getAcceptedMembership(userId, teamId);
-    if (membership.role !== MembershipRole.OWNER) {
+    const { membershipRole, isOrganizationAdmin } = await this.resolveAccess(userId, teamId);
+    if (membershipRole !== MembershipRole.OWNER && !isOrganizationAdmin) {
       throw new ErrorWithCode(
         ErrorCode.Forbidden,
         `Unable to disband team ${teamId}: user ${userId} is not the team owner`
       );
-    }
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      select: { id: true },
-    });
-    if (!team) {
-      throw new ErrorWithCode(ErrorCode.NotFound, `Unable to disband team: team ${teamId} does not exist`);
     }
     await this.prisma.team.delete({ where: { id: teamId } });
     return { id: teamId };
