@@ -1,16 +1,14 @@
-import type { MutableRefObject } from "react";
-import { forwardRef } from "react";
-
 import type { BookerLayout } from "@calcom/features/bookings/Booker/types";
 import { useEmbedBookerUrl } from "@calcom/features/bookings/hooks/useBookerUrl";
 import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { TextArea } from "@calcom/ui/components/form";
-
+import type { MutableRefObject } from "react";
+import { forwardRef } from "react";
 import type { EmbedFramework, EmbedType, PreviewState } from "../types";
-import { Codes } from "./EmbedCodes";
 import { buildCssVarsPerTheme } from "./buildCssVarsPerTheme";
 import { buildEmbedPreviewIframeSrc, embedLibUrl } from "./constants";
+import { buildEmbedSnippetString, Codes } from "./EmbedCodes";
 import { getApiNameForReactSnippet, getApiNameForVanillaJsSnippet } from "./getApiName";
 import { getDimension } from "./getDimension";
 import { useEmbedCalOrigin } from "./hooks";
@@ -332,10 +330,5 @@ const getInstructionString = ({
 
 function useGetEmbedSnippetString(namespace: string | null) {
   const bookerUrl = useEmbedBookerUrl();
-  // TODO: Import this string from @calcom/embed-snippet
-  // Right now the problem is that embed-snippet export is not minified and has comments which makes it unsuitable for giving it to users.
-  // If we can minify that during build time and then import the built code here, that could work
-  return `(function (C, A, L) { let p = function (a, ar) { a.q.push(ar); }; let d = C.document; C.Cal = C.Cal || function () { let cal = C.Cal; let ar = arguments; if (!cal.loaded) { cal.ns = {}; cal.q = cal.q || []; d.head.appendChild(d.createElement("script")).src = A; cal.loaded = true; } if (ar[0] === L) { const api = function () { p(api, arguments); }; const namespace = ar[1]; api.q = api.q || []; if(typeof namespace === "string"){cal.ns[namespace] = cal.ns[namespace] || api;p(cal.ns[namespace], ar);p(cal, ["initNamespace", namespace]);} else p(cal, ar); return;} p(cal, ar); }; })(window, "${embedLibUrl}", "init");
-Cal("init", ${namespace ? `"${namespace}",` : ""} {origin:"${bookerUrl}"});
-`;
+  return buildEmbedSnippetString({ namespace, bookerUrl, embedLibUrl });
 }

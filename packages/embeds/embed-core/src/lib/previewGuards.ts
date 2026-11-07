@@ -29,7 +29,7 @@ export function isAllowedPreviewReferrer(
   return referrerOrigin !== null && referrerOrigin === origins.currentOrigin;
 }
 
-// The TLD+1 rules are a copy of isSafeUrlToLoadResourceFrom in packages/lib/getSafeRedirectUrl. Keep them in sync
+// The only copy of these TLD+1 rules: the embed preview cannot import from @calcom/lib, so they live here
 export function isSafeUrlToLoadResourceFrom(urlString: string, origins: PreviewOrigins): boolean {
   try {
     const url = new URL(urlString);
