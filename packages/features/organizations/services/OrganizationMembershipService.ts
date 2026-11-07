@@ -85,6 +85,36 @@ export class OrganizationMembershipService {
     return member;
   }
 
+  async changeUsername(params: { userId: number; username: string }): Promise<void> {
+    const { userId, username } = params;
+    const repository = this.deps.organizationMembershipRepository;
+
+    const user = await repository.findUserById(userId);
+    if (!user) throw ErrorWithCode.Factory.NotFound("User not found");
+
+    const { organizationId } = user;
+    if (organizationId === null) {
+      await repository.updateUsername({ userId, organizationId: null, username });
+      return;
+    }
+
+    const usernameTaken = await repository.isUsernameTaken({
+      organizationId,
+      username,
+      excludeUserId: userId,
+    });
+    if (usernameTaken) throw ErrorWithCode.Factory.Conflict(USERNAME_TAKEN_IN_ORGANIZATION);
+
+    const membership = await repository.findMembership({ organizationId, userId });
+    if (membership?.accepted) {
+      await repository.updateUsernameAndUpsertProfile({ userId, organizationId, username });
+      return;
+    }
+    // A pending invitee must not become publicly visible in the org before accepting; addMember creates
+    // their profile on acceptance
+    await repository.updateUsername({ userId, organizationId, username });
+  }
+
   async setRole(params: {
     organizationId: number;
     actorUserId: number;

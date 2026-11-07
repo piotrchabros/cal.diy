@@ -1,15 +1,24 @@
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockCheckUsername, mockUserUpdate, mockDisableByFrom, mockRepoint } = vi.hoisted(() => ({
-  mockRepoint: vi.fn(),
-  mockCheckUsername: vi.fn(),
-  mockUserUpdate: vi.fn(),
-  mockDisableByFrom: vi.fn(),
-}));
+const { mockCheckUsername, mockUserUpdate, mockDisableByFrom, mockRepoint, mockChangeUsername } = vi.hoisted(
+  () => ({
+    mockRepoint: vi.fn(),
+    mockChangeUsername: vi.fn(),
+    mockCheckUsername: vi.fn(),
+    mockUserUpdate: vi.fn(),
+    mockDisableByFrom: vi.fn(),
+  })
+);
 
 vi.mock("@calcom/features/organizations/di/TempOrgRedirectRepository.container", () => ({
   getTempOrgRedirectRepository: () => ({ disableByFrom: mockDisableByFrom }),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
+  getOrganizationMembershipService: () => ({ changeUsername: mockChangeUsername }),
 }));
 
 vi.mock("@calcom/features/organizations/lib/repointUserRedirectsForRename", () => ({
@@ -84,6 +93,7 @@ describe("updateProfileHandler username", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCheckUsername.mockResolvedValue({ available: true, premium: false });
+    mockChangeUsername.mockResolvedValue(undefined);
     mockUserUpdate.mockResolvedValue({
       id: 1,
       username: "new-name",
@@ -98,12 +108,48 @@ describe("updateProfileHandler username", () => {
     vi.unstubAllEnvs();
   });
 
-  it("does not check the username of an org user when ORGANIZATIONS_ENABLED is off", async () => {
+  it("checks the username of an org user in the global namespace when ORGANIZATIONS_ENABLED is off", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "");
 
     await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } });
 
-    expect(mockCheckUsername).not.toHaveBeenCalled();
+    expect(mockCheckUsername).toHaveBeenCalledWith("new-name", null);
+  });
+
+  it.each([
+    "",
+    "true",
+  ])("changes the username through the membership service, not user.update (ORGANIZATIONS_ENABLED=%j)", async (flag) => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", flag);
+
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "New Name" } });
+
+    expect(mockChangeUsername).toHaveBeenCalledWith({ userId: 1, username: "new-name" });
+    expect(getUpdateData()).not.toHaveProperty("username");
+  });
+
+  it("throws BAD_REQUEST and skips the user update when the membership service reports a conflict", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+    mockChangeUsername.mockRejectedValue(new ErrorWithCode(ErrorCode.Conflict, "taken"));
+
+    const promise = updateProfileHandler({
+      ctx: makeCtx({ organizationId: 10 }),
+      input: { username: "new-name" },
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(TRPCError);
+    await expect(promise).rejects.toMatchObject({ code: "BAD_REQUEST", message: "username_already_taken" });
+    expect(mockUserUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rethrows non-conflict errors from the membership service", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+    mockChangeUsername.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "new-name" } })
+    ).rejects.toThrow("db down");
+    expect(mockUserUpdate).not.toHaveBeenCalled();
   });
 
   it("checks the username within the caller's organization when ORGANIZATIONS_ENABLED is on", async () => {
@@ -112,7 +158,7 @@ describe("updateProfileHandler username", () => {
     await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "New Name" } });
 
     expect(mockCheckUsername).toHaveBeenCalledWith("new-name", { organizationId: 10 });
-    expect(getUpdateData().username).toBe("new-name");
+    expect(mockChangeUsername).toHaveBeenCalledWith({ userId: 1, username: "new-name" });
   });
 
   it("throws BAD_REQUEST when the username is taken in the organization", async () => {
@@ -126,6 +172,7 @@ describe("updateProfileHandler username", () => {
 
     await expect(promise).rejects.toBeInstanceOf(TRPCError);
     await expect(promise).rejects.toMatchObject({ code: "BAD_REQUEST", message: "username_already_taken" });
+    expect(mockChangeUsername).not.toHaveBeenCalled();
     expect(mockUserUpdate).not.toHaveBeenCalled();
   });
 
@@ -152,15 +199,21 @@ describe("updateProfileHandler username", () => {
     });
 
     expect(mockCheckUsername).not.toHaveBeenCalled();
+    expect(mockChangeUsername).not.toHaveBeenCalled();
     expect(getUpdateData()).not.toHaveProperty("username");
   });
 
-  it("skips the check when the username is unchanged", async () => {
+  it.each([
+    "current",
+    "Current",
+  ])("skips the check and the change when the username is unchanged (input %j)", async (username) => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
 
-    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username: "current" } });
+    await updateProfileHandler({ ctx: makeCtx({ organizationId: 10 }), input: { username } });
 
     expect(mockCheckUsername).not.toHaveBeenCalled();
+    expect(mockChangeUsername).not.toHaveBeenCalled();
+    expect(getUpdateData()).not.toHaveProperty("username");
   });
 });
 
@@ -168,6 +221,7 @@ describe("updateProfileHandler reused username redirects", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCheckUsername.mockResolvedValue({ available: true, premium: false });
+    mockChangeUsername.mockResolvedValue(undefined);
     mockDisableByFrom.mockResolvedValue(1);
     mockUserUpdate.mockResolvedValue({
       id: 1,

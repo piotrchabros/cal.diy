@@ -1,4 +1,5 @@
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import type {
   AddMemberInput,
   IOrganizationMembershipRepository,
@@ -6,6 +7,7 @@ import type {
   OrganizationMemberRecord,
   OrganizationTeamRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
+import { USERNAME_TAKEN_IN_ORGANIZATION } from "../services/OrganizationMembershipService";
 
 type StoredUser = MembershipUserRecord & { name: string | null };
 
@@ -264,6 +266,53 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
       role: params.role,
       accepted: false,
     });
+  }
+
+  async updateUsername(params: {
+    userId: number;
+    organizationId: number | null;
+    username: string;
+  }): Promise<void> {
+    const user = this.findStoredUser(params.userId);
+    if (params.organizationId !== null) {
+      await this.assertUsernameAvailable(params.organizationId, params.username, params.userId);
+    }
+    user.username = params.username;
+    if (params.organizationId === null) return;
+    const profile = this.findProfile(params.organizationId, params.userId);
+    if (profile) profile.username = params.username;
+  }
+
+  async updateUsernameAndUpsertProfile(params: {
+    userId: number;
+    organizationId: number;
+    username: string;
+  }): Promise<void> {
+    const user = this.findStoredUser(params.userId);
+    await this.assertUsernameAvailable(params.organizationId, params.username, params.userId);
+    user.username = params.username;
+    const profile = this.findProfile(params.organizationId, params.userId);
+    if (profile) {
+      profile.username = params.username;
+    } else {
+      this.profiles.push({ ...params });
+    }
+  }
+
+  private findStoredUser(userId: number): StoredUser {
+    const user = this.users.find((existing) => existing.id === userId);
+    if (!user) throw new Error(`InMemoryOrganizationMembershipRepository: user ${userId} not seeded`);
+    return user;
+  }
+
+  private async assertUsernameAvailable(
+    organizationId: number,
+    username: string,
+    excludeUserId: number
+  ): Promise<void> {
+    if (await this.isUsernameTaken({ organizationId, username, excludeUserId })) {
+      throw ErrorWithCode.Factory.Conflict(USERNAME_TAKEN_IN_ORGANIZATION);
+    }
   }
 
   private pushMembership(membership: StoredMembership): void {

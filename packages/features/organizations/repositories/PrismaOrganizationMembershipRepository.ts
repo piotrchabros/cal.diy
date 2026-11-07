@@ -1,7 +1,10 @@
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import type { PrismaClient } from "@calcom/prisma";
+import { Prisma } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { v4 as uuidv4 } from "uuid";
+import { USERNAME_TAKEN_IN_ORGANIZATION } from "../services/OrganizationMembershipService";
 import type {
   AddMemberInput,
   IOrganizationMembershipRepository,
@@ -21,6 +24,10 @@ const toMembershipRole: Record<OrganizationRoleDto, MembershipRole> = {
   ADMIN: MembershipRole.ADMIN,
   MEMBER: MembershipRole.MEMBER,
 };
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
 
 export class PrismaOrganizationMembershipRepository implements IOrganizationMembershipRepository {
   constructor(private readonly prismaClient: PrismaClient) {}
@@ -254,5 +261,65 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
       data: { userId, teamId: organizationId, role: toMembershipRole[role], accepted: false },
       select: { id: true },
     });
+  }
+
+  async updateUsername({
+    userId,
+    organizationId,
+    username,
+  }: {
+    userId: number;
+    organizationId: number | null;
+    username: string;
+  }): Promise<void> {
+    const userUpdate = this.prismaClient.user.update({
+      where: { id: userId },
+      data: { username },
+      select: { id: true },
+    });
+    try {
+      if (organizationId === null) {
+        await this.prismaClient.$transaction([userUpdate]);
+        return;
+      }
+      await this.prismaClient.$transaction([
+        userUpdate,
+        this.prismaClient.profile.updateMany({ where: { userId, organizationId }, data: { username } }),
+      ]);
+    } catch (error) {
+      if (isUniqueConstraintViolation(error))
+        throw ErrorWithCode.Factory.Conflict(USERNAME_TAKEN_IN_ORGANIZATION);
+      throw error;
+    }
+  }
+
+  async updateUsernameAndUpsertProfile({
+    userId,
+    organizationId,
+    username,
+  }: {
+    userId: number;
+    organizationId: number;
+    username: string;
+  }): Promise<void> {
+    try {
+      await this.prismaClient.$transaction([
+        this.prismaClient.user.update({
+          where: { id: userId },
+          data: { username },
+          select: { id: true },
+        }),
+        this.prismaClient.profile.upsert({
+          where: { userId_organizationId: { userId, organizationId } },
+          create: { uid: uuidv4(), userId, organizationId, username },
+          update: { username },
+          select: { id: true },
+        }),
+      ]);
+    } catch (error) {
+      if (isUniqueConstraintViolation(error))
+        throw ErrorWithCode.Factory.Conflict(USERNAME_TAKEN_IN_ORGANIZATION);
+      throw error;
+    }
   }
 }
