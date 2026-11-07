@@ -1,10 +1,11 @@
-import prisma from "@calcom/prisma";
 import kysely from "@calcom/kysely";
+import prisma from "@calcom/prisma";
 import type { Booking, EventType, User } from "@calcom/prisma/client";
 import { BookingStatus } from "@calcom/prisma/enums";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBookings } from "./get.handler";
 
+let organizationId: number;
 let user1: User;
 let user2: User;
 let eventType1: EventType;
@@ -16,11 +17,23 @@ const timestamp = Date.now();
 
 describe("getBookings - integration", () => {
   beforeAll(async () => {
+    // @calcom/testing is not resolvable from this package's tsconfig, so the test owns its organization.
+    const organization = await prisma.team.create({
+      data: {
+        name: `GetBookings Org ${timestamp}`,
+        slug: `getbookings-org-${timestamp}`,
+        isOrganization: true,
+      },
+      select: { id: true },
+    });
+    organizationId = organization.id;
+
     user1 = await prisma.user.create({
       data: {
         username: `getbookings-user1-${timestamp}`,
         email: `getbookings-user1-${timestamp}@example.com`,
         name: "GetBookings User 1",
+        organizationId,
       },
     });
 
@@ -29,6 +42,7 @@ describe("getBookings - integration", () => {
         username: `getbookings-user2-${timestamp}`,
         email: `getbookings-user2-${timestamp}@example.com`,
         name: "GetBookings User 2",
+        organizationId,
       },
     });
 
@@ -117,6 +131,9 @@ describe("getBookings - integration", () => {
       const userIds = [user1?.id, user2?.id].filter(Boolean);
       if (userIds.length > 0) {
         await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+      }
+      if (organizationId) {
+        await prisma.team.delete({ where: { id: organizationId } });
       }
     } catch (error) {
       console.warn("Test cleanup failed:", error);

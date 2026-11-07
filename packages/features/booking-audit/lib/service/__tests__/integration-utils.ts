@@ -1,7 +1,8 @@
-import { prisma } from "@calcom/prisma";
-import { BookingStatus, MembershipRole } from "@calcom/prisma/enums";
 import type { FeatureId } from "@calcom/features/flags/config";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { prisma } from "@calcom/prisma";
+import { BookingStatus, MembershipRole } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 
 export const generateUniqueId = () => {
   const timestamp = Date.now();
@@ -16,6 +17,7 @@ export const createTestUser = async (overrides?: { email?: string; username?: st
       email: overrides?.email || `test-user-${uniqueId}@example.com`,
       username: overrides?.username || `testuser-${uniqueId}`,
       name: overrides?.name || "Test User",
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
     },
   });
 };
@@ -159,6 +161,12 @@ export const cleanupTestData = async (testData: {
     });
   }
 
+  if (testData.userIds?.length) {
+    await prisma.user.deleteMany({
+      where: { id: { in: testData.userIds } },
+    });
+  }
+
   if (testData.organizationId) {
     if (testData.featureSlug) {
       await prisma.teamFeatures.deleteMany({
@@ -173,12 +181,6 @@ export const cleanupTestData = async (testData: {
     });
     await prisma.team.deleteMany({
       where: { id: testData.organizationId },
-    });
-  }
-
-  if (testData.userIds?.length) {
-    await prisma.user.deleteMany({
-      where: { id: { in: testData.userIds } },
     });
   }
 };

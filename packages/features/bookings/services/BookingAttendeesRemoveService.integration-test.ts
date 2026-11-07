@@ -2,6 +2,7 @@ import { BookingRepository } from "@calcom/features/bookings/repositories/Bookin
 import { PrismaBookingAttendeeRepository } from "@calcom/features/bookings/repositories/PrismaBookingAttendeeRepository";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus, CreationSource } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockUpdateCalendarAttendees = vi.fn().mockResolvedValue({});
@@ -55,8 +56,10 @@ describe("BookingAttendeesRemoveService.removeAttendee (Integration Tests)", () 
   };
 
   beforeAll(async () => {
+    const organizationId = await getOrCreateDefaultOrganizationId(prisma);
     const organizer = await prisma.user.create({
       data: {
+        organizationId,
         email: `attendee-svc-organizer-${timestamp}@test.com`,
         username: `attendee-svc-organizer-${timestamp}`,
         name: "Test Organizer",
@@ -86,6 +89,7 @@ describe("BookingAttendeesRemoveService.removeAttendee (Integration Tests)", () 
 
     testUser.id = organizer.id;
     testUser.email = organizer.email;
+    testUser.organizationId = organizationId;
 
     const eventType = await prisma.eventType.create({
       data: {
