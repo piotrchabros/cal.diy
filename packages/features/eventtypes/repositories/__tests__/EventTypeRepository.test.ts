@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
+import type { PrismaClient } from "@calcom/prisma";
 import { readonlyPrisma } from "@calcom/prisma";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@calcom/prisma", () => ({
   readonlyPrisma: {
@@ -49,6 +49,43 @@ describe("EventTypeRepository", () => {
       team: { name: "Team A" },
     },
   ];
+
+  describe("findFirstIdByTeamSlugAndSlug", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const buildRepository = () => {
+      const findFirst = vi.fn().mockResolvedValue(null);
+      const repository = new EventTypeRepository({ eventType: { findFirst } } as unknown as PrismaClient);
+      return { findFirst, repository };
+    };
+
+    it("only matches teams outside organizations when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { findFirst, repository } = buildRepository();
+
+      const result = await repository.findFirstIdByTeamSlugAndSlug({ teamSlug: "team-a", slug: "intro" });
+
+      expect(result).toBeNull();
+      expect(findFirst).toHaveBeenCalledWith({
+        where: { slug: "intro", team: { slug: "team-a", parentId: null } },
+        select: { id: true },
+      });
+    });
+
+    it("matches teams by slug alone when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+      const { findFirst, repository } = buildRepository();
+
+      await repository.findFirstIdByTeamSlugAndSlug({ teamSlug: "team-a", slug: "intro" });
+
+      expect(findFirst).toHaveBeenCalledWith({
+        where: { slug: "intro", team: { slug: "team-a" } },
+        select: { id: true },
+      });
+    });
+  });
 
   describe("getEventTypeList", () => {
     describe("Early return scenarios", () => {

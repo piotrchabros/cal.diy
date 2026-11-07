@@ -17,7 +17,7 @@ These steps are done by the owner outside the repository. A domain works only af
 | Env | `/root/cal.diy/.env` (copied into releases) | `ORGANIZATIONS_ENABLED=1`, `AUTH_TRUST_HOST=true`; leave `NEXTAUTH_COOKIE_DOMAIN` empty; add the new hosts to `ALLOWED_HOSTNAMES` |
 | Forwarded headers | `/etc/caddy/Caddyfile`, firewall | next-auth trusts `X-Forwarded-Host` / `X-Forwarded-Proto` once `AUTH_TRUST_HOST` is set. Caddy must overwrite these headers, not pass on the client's values (the `reverse_proxy` default). The Node ports (`3221`, `3222`) must not be reachable from outside, only through Caddy |
 | `AUTH_TRUST_HOST` | `/root/cal.diy/.env` | set only together with `ORGANIZATIONS_ENABLED`. While the flag is off, leave it unset; when the flag is turned off again, remove it too |
-| Migrations | `yarn workspace @calcom/prisma db-deploy` | PR 1 (`customDomain`) and PR 22 (BlueBee switch-over), applied before the deploy that needs them; compare the printed counts |
+| Migrations | `yarn workspace @calcom/prisma db-deploy` | PR 1 (`customDomain`) and PR 22 (BlueBee switch-over), applied before the deploy that needs them; compare the printed counts. Deploy the T221 code (flag-off user/team lookups ignore the organization) before applying PR 22; with it, PR 22 can run while the flag is still off and public booking pages keep working. Without it, apply PR 22 and turn the flag on in the same window |
 
 ## OAuth providers: register each domain's callback
 

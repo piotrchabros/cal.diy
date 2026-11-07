@@ -3,6 +3,7 @@ import { getTranslation } from "@calcom/i18n/server";
 import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
 import { buildNonDelegationCredentials } from "@calcom/lib/delegationCredential";
 import logger from "@calcom/lib/logger";
+import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { withSelectedCalendars } from "@calcom/lib/server/withSelectedCalendars";
 import type { PrismaClient } from "@calcom/prisma";
@@ -259,9 +260,7 @@ export class UserRepository {
               ? {
                   organization: whereClauseForOrgWithSlugOrRequestedSlug(orgSlug),
                 }
-              : {
-                  organization: null,
-                }),
+              : outsideOrganizationsFilter({ organization: null })),
           };
     return { where, profiles };
   }

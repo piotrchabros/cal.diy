@@ -2,7 +2,7 @@ import prismock from "@calcom/testing/lib/__mocks__/prisma";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { CreationSource, MembershipRole } from "@calcom/prisma/enums";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("@calcom/app-store/delegationCredential", () => ({
   enrichHostsWithDelegationCredentials: vi.fn(),
@@ -434,6 +434,10 @@ describe("organization membership of invited users", () => {
 });
 
 describe("_getWhereClauseForFindingUsersByUsername", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   test("Should scope non-profile username matches to the organization with the given slug", async () => {
     const findManySpy = vi.spyOn(ProfileRepository, "findManyByOrgSlugOrRequestedSlug").mockResolvedValue([]);
 
@@ -448,6 +452,7 @@ describe("_getWhereClauseForFindingUsersByUsername", () => {
   });
 
   test("Should only match users outside any organization when no orgSlug is given", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     const findManySpy = vi.spyOn(ProfileRepository, "findManyByOrgSlugOrRequestedSlug");
 
     const { where } = await new UserRepository(prismock)._getWhereClauseForFindingUsersByUsername({
@@ -458,5 +463,17 @@ describe("_getWhereClauseForFindingUsersByUsername", () => {
     expect(findManySpy).not.toHaveBeenCalled();
     expect(where).toEqual({ username: { in: ["a"] }, organization: null });
     findManySpy.mockRestore();
+  });
+
+  test("ignores the organization when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    const { where } = await new UserRepository(prismock)._getWhereClauseForFindingUsersByUsername({
+      orgSlug: null,
+      usernameList: ["a"],
+    });
+
+    // Users who sit inside an organization must still match by username while the flag is off.
+    expect(where).toEqual({ username: { in: ["a"] } });
   });
 });
