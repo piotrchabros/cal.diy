@@ -1,24 +1,22 @@
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import type { IframeHTMLAttributes } from "react";
-import React, { useEffect, useState } from "react";
-
-import { AppDependencyComponent } from "@calcom/app-store/AppDependencyComponent";
-import { InstallAppButton } from "@calcom/app-store/InstallAppButton";
 import { isRedirectApp } from "@calcom/app-store/_utils/redirectApps";
 import useAddAppMutation from "@calcom/app-store/_utils/useAddAppMutation";
+import { AppDependencyComponent } from "@calcom/app-store/AppDependencyComponent";
+import { InstallAppButton } from "@calcom/app-store/InstallAppButton";
 import { doesAppSupportTeamInstall, isConferencing } from "@calcom/app-store/utils";
-import DisconnectIntegration from "@calcom/web/modules/apps/components/DisconnectIntegration";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { AppOnboardingSteps } from "@calcom/lib/apps/appOnboardingSteps";
 import { getAppOnboardingUrl } from "@calcom/lib/apps/getAppOnboardingUrl";
-import { APP_NAME, COMPANY_NAME, SUPPORT_MAIL_ADDRESS, WEBAPP_URL } from "@calcom/lib/constants";
+import { APP_NAME, COMPANY_NAME, SUPPORT_MAIL_ADDRESS } from "@calcom/lib/constants";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { trpc, type RouterOutputs } from "@calcom/trpc/react";
+import { type RouterOutputs, trpc } from "@calcom/trpc/react";
 import type { App as AppType } from "@calcom/types/App";
 import classNames from "@calcom/ui/classNames";
 import { Badge } from "@calcom/ui/components/badge";
 import { Button } from "@calcom/ui/components/button";
+import { SkeletonButton, SkeletonText } from "@calcom/ui/components/skeleton";
+import { showToast } from "@calcom/ui/components/toast";
+import DisconnectIntegration from "@calcom/web/modules/apps/components/DisconnectIntegration";
 import {
   BookOpenIcon,
   CircleAlertIcon,
@@ -28,9 +26,11 @@ import {
   MailIcon,
   ShieldIcon,
 } from "@coss/ui/icons";
-import { SkeletonButton, SkeletonText } from "@calcom/ui/components/skeleton";
-import { showToast } from "@calcom/ui/components/toast";
-
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import type React from "react";
+import type { IframeHTMLAttributes } from "react";
+import { useEffect, useState } from "react";
 import { InstallAppButtonChild } from "./InstallAppButtonChild";
 import { MultiDisconnectIntegration } from "./MultiDisconnectIntegration";
 
@@ -90,6 +90,7 @@ export const AppPage = ({
   const { t, i18n } = useLocale();
   const router = useRouter();
   const searchParams = useCompatSearchParams();
+  const orgBaseUrl = useOrgBaseUrl();
 
   const hasDescriptionItems = descriptionItems && descriptionItems.length > 0;
   const utils = trpc.useUtils();
@@ -132,7 +133,7 @@ export const AppPage = ({
         variant,
         slug,
         returnTo:
-          WEBAPP_URL +
+          orgBaseUrl +
           getAppOnboardingUrl({
             slug,
             step: AppOnboardingSteps.EVENT_TYPES_STEP,
@@ -422,7 +423,7 @@ export const AppPage = ({
           <>
             <h4 className="text-emphasis mt-8 font-semibold ">{t("pricing")}</h4>
             <span className="text-default">
-                {price === 0 ? (
+              {price === 0 ? (
                 t("free_to_use_apps")
               ) : (
                 <>

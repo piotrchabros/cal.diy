@@ -276,7 +276,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/modules/shell/{SideBar,navigation/useMobileMoreItems}.tsx`
   - `apps/web/modules/webhooks/{components/WebhookForm,views/webhooks-view}.tsx`
   - `apps/web/app/(use-page-wrapper)/settings/(settings-layout)/SettingsLayoutAppDirClient.tsx`
-- [ ] T055 [P] [US3] PR 16.6, apps:
+- [X] T055 [P] [US3] PR 16.6, apps:
   - `apps/web/components/apps/{AppPage,alby/Setup,btcpayserver/Setup,wipemycalother/confirmDialog}.tsx`
   - `apps/web/components/getting-started/components/AppConnectionItem.tsx`
   - `apps/web/modules/apps/{components/AppCard,installation/[[...step]]/step-view}.tsx`

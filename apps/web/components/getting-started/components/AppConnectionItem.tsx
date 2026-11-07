@@ -1,10 +1,6 @@
-import Link from "next/link";
-import { useState } from "react";
-import posthog from "posthog-js";
-
-import { InstallAppButtonWithoutPlanCheck } from "@calcom/app-store/InstallAppButtonWithoutPlanCheck";
 import type { TDependencyData } from "@calcom/app-store/_appRegistry";
-import { WEBAPP_URL } from "@calcom/lib/constants";
+import { InstallAppButtonWithoutPlanCheck } from "@calcom/app-store/InstallAppButtonWithoutPlanCheck";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import type { App } from "@calcom/types/App";
@@ -12,6 +8,9 @@ import { Badge } from "@calcom/ui/components/badge";
 import { Button } from "@calcom/ui/components/button";
 import { showToast } from "@calcom/ui/components/toast";
 import { ArrowRightIcon, CircleAlertIcon } from "@coss/ui/icons";
+import Link from "next/link";
+import posthog from "posthog-js";
+import { useState } from "react";
 
 interface IAppConnectionItem {
   title: string;
@@ -28,6 +27,7 @@ interface IAppConnectionItem {
 const AppConnectionItem = (props: IAppConnectionItem) => {
   const { title, logo, type, installed, isDefault, defaultInstall, slug } = props;
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const utils = trpc.useUtils();
   const setDefaultConferencingApp = trpc.viewer.apps.setDefaultConferencingApp.useMutation({
     onSuccess: async () => {
@@ -94,7 +94,7 @@ const AppConnectionItem = (props: IAppConnectionItem) => {
                           <div>
                             <>
                               <Link
-                                href={`${WEBAPP_URL}/getting-started/connected-calendar`}
+                                href={`${orgBaseUrl}/getting-started/connected-calendar`}
                                 className="flex items-center text-xs underline">
                                 <span className="mr-1">
                                   {t("connect_app", { dependencyName: dependency.name })}
