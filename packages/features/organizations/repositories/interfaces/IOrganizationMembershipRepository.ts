@@ -70,4 +70,9 @@ export interface IOrganizationMembershipRepository {
     toOrganizationId: number;
     username: string | null;
   }): Promise<void>;
+  createPendingMembership(p: {
+    organizationId: number;
+    userId: number;
+    role: OrganizationRoleDto;
+  }): Promise<void>;
 }

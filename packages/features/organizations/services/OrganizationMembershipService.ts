@@ -1,3 +1,5 @@
+import type { TeamInviteService } from "@calcom/features/membership/services/TeamInviteService";
+import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type {
   OrganizationMemberDto,
   OrganizationMemberListDto,
@@ -23,6 +25,11 @@ export interface IOrganizationMembershipServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
   organizationRepository: IOrganizationRepository;
   organizationsConfig: OrganizationsConfig;
+  userRepository: Pick<
+    UserRepository,
+    "findInviteeByEmail" | "createInvitedWithPendingTeamMembership" | "setOrganizationId"
+  >;
+  teamInviteService: Pick<TeamInviteService, "sendInvite">;
 }
 
 export class OrganizationMembershipService {
@@ -157,6 +164,86 @@ export class OrganizationMembershipService {
     });
 
     return { userId };
+  }
+
+  // Org invites reuse the team invite pipeline: the org row is a team, so its id doubles as teamId
+  async inviteMember(params: {
+    organizationId: number;
+    actorUserId: number;
+    actorName: string;
+    email: string;
+    role: OrganizationRoleDto;
+  }): Promise<{ invited: true }> {
+    const { organizationId, actorUserId, actorName, role } = params;
+    const actorRole = await this.requireManagerRole(organizationId, actorUserId);
+    if (role === "OWNER" && actorRole !== "OWNER") {
+      throw ErrorWithCode.Factory.Forbidden("Only owners can grant or remove the owner role");
+    }
+
+    const organization = await this.deps.organizationRepository.findById(organizationId);
+    if (!organization) throw ErrorWithCode.Factory.NotFound("Organization not found");
+
+    const email = params.email.trim().toLowerCase();
+    if (!email || !email.includes("@")) throw ErrorWithCode.Factory.BadRequest("Invalid invite email");
+
+    const sendInvite = (locale: string | null, isExistingUser: boolean) =>
+      this.deps.teamInviteService.sendInvite({
+        teamId: organizationId,
+        teamName: organization.name,
+        email,
+        inviterName: actorName,
+        locale: locale ?? "en",
+        isExistingUser,
+        isOrganization: true,
+      });
+
+    const invitee = await this.deps.userRepository.findInviteeByEmail({ email });
+    let targetUserId: number;
+    if (!invitee) {
+      const created = await this.deps.userRepository.createInvitedWithPendingTeamMembership({
+        email,
+        teamId: organizationId,
+        role,
+        organizationId,
+      });
+      targetUserId = created.id;
+      await sendInvite(created.locale, false);
+    } else {
+      if (invitee.organizationId !== null && invitee.organizationId !== organizationId) {
+        throw ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization");
+      }
+      targetUserId = invitee.id;
+      const membership = await this.deps.organizationMembershipRepository.findMembership({
+        organizationId,
+        userId: invitee.id,
+      });
+      if (membership?.accepted) throw ErrorWithCode.Factory.Conflict("user_is_already_a_member");
+
+      if (!membership && invitee.username) {
+        await this.addMember({ organizationId, userId: invitee.id, role });
+      } else if (!membership) {
+        // Without a username there is no org profile yet, so the invitee stays pending until they accept
+        await this.deps.organizationMembershipRepository.createPendingMembership({
+          organizationId,
+          userId: invitee.id,
+          role,
+        });
+        if (invitee.organizationId === null) {
+          await this.deps.userRepository.setOrganizationId({ id: invitee.id, organizationId });
+        }
+      }
+      await sendInvite(invitee.locale, invitee.hasPassword);
+    }
+
+    log.info("organization.member.invite", {
+      action: "organization.member.invite",
+      actorUserId,
+      organizationId,
+      targetUserId,
+      role,
+    });
+
+    return { invited: true };
   }
 
   async getRole(userId: number, organizationId: number): Promise<OrganizationRoleDto | null> {

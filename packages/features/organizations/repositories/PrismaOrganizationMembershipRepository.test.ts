@@ -8,6 +8,7 @@ function buildRepository() {
   const membership = {
     findUnique: vi.fn(),
     findMany: vi.fn(),
+    create: vi.fn(),
     upsert: vi.fn(),
     count: vi.fn(),
     update: vi.fn(),
@@ -275,6 +276,17 @@ describe("PrismaOrganizationMembershipRepository", () => {
       expect(user.update).toHaveBeenCalledTimes(1);
       expect(profile.upsert).not.toHaveBeenCalled();
       expect(membership.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  it("createPendingMembership creates a non-accepted membership", async () => {
+    const { repository, membership } = buildRepository();
+
+    await repository.createPendingMembership({ organizationId: 1, userId: 7, role: "ADMIN" });
+
+    expect(membership.create).toHaveBeenCalledWith({
+      data: { userId: 7, teamId: 1, role: "ADMIN", accepted: false },
+      select: { id: true },
     });
   });
 

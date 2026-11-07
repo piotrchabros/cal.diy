@@ -326,7 +326,7 @@ description: "Task list for Organizations (spec 005)"
 **PR 24**
 
 - [ ] T063 [US4] Create the `viewer.organization` router in `packages/trpc/server/routers/viewer/organization/_router.ts` with `current`, `listMembers`, `inviteMember`, `updateRole`, `removeMember` and `listTeams`, as in contracts/trpc-organizations.md. The org always comes from `ctx.user.organizationId`. Register it in `packages/trpc/server/routers/viewer/_router.tsx`. Add tests
-- [ ] T064 [US4] Add `inviteMember`, `removeMember` (a move to the default org, FR-011) and `listTeams` to `OrganizationMembershipService`, with the role rules. Log the actions with ids only. Add tests
+- [X] T064 [US4] Add `inviteMember`, `removeMember` (a move to the default org, FR-011) and `listTeams` to `OrganizationMembershipService`, with the role rules. Log the actions with ids only. Add tests
 - [X] T065 [US4] Extend the `viewer.teams.*` permission checks (`packages/features/membership/services/TeamMembersService.ts`, `TeamProfileService.ts`, delete team) so that "team admin **or** org ADMIN/OWNER of the team's parent org" may act. Add tests
 
 **PR 25**
