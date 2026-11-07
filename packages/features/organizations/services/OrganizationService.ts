@@ -29,6 +29,8 @@ const DEFAULT_ORGANIZATION_NAME = "Default";
 const DEFAULT_ORGANIZATION_SLUG = "default";
 const DEFAULT_ORGANIZATION_FALLBACK_SLUG = "default-organization";
 
+type ResolvedOwner = { kind: "user"; userId: number } | { kind: "invite"; email: string };
+
 export type OrganizationsConfig = { defaultDomain: string | null };
 
 export interface IOrganizationServiceDeps {
@@ -38,7 +40,7 @@ export interface IOrganizationServiceDeps {
   organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
 }
 
-export type OrganizationOwnerInput = { userId: number };
+export type OrganizationOwnerInput = { userId: number } | { email: string };
 
 export type CreateOrganizationInput = {
   name: string;
@@ -48,7 +50,7 @@ export type CreateOrganizationInput = {
   confirmMoveOwner?: boolean;
 };
 
-export type UpdateOrganizationInput = { name?: string; slug?: string; domain?: string };
+export type UpdateOrganizationInput = { name?: string; slug?: string; domain?: string; ownerUserId?: number };
 
 export const ORGANIZATION_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -139,28 +141,43 @@ export class OrganizationService {
     return this.toDto(record);
   }
 
-  async create(input: CreateOrganizationInput, actorUserId: number): Promise<OrganizationDto> {
+  async create(
+    input: CreateOrganizationInput,
+    actorUserId: number,
+    actorName?: string | null
+  ): Promise<OrganizationDto> {
     const name = this.parseName(input.name);
     const slug = this.parseSlug(input.slug);
     const domain = this.parseDomain(input.domain);
-    const ownerUserId = input.owner.userId;
 
     await this.assertSlugAvailable(slug, null);
     await this.assertDomainAvailable(domain, null);
-    const ownerMode = await this.assertOwnerEligible(ownerUserId, input.confirmMoveOwner ?? false);
+    const owner = await this.resolveOwner(input.owner);
+    const ownerMode =
+      owner.kind === "user"
+        ? await this.assertOwnerEligible(owner.userId, input.confirmMoveOwner ?? false)
+        : "invite";
+    // FR-023: logs carry ids only, so an invited owner is flagged rather than identified by email
+    const ownerLogFields = owner.kind === "user" ? { ownerUserId: owner.userId } : { invitedOwner: true };
 
     const record = await this.deps.organizationRepository.create({ name, slug, domain });
 
     try {
-      if (ownerMode === "move") {
+      if (owner.kind === "invite") {
+        await this.deps.organizationMembershipService.inviteOwner({
+          organizationId: record.id,
+          email: owner.email,
+          inviterName: actorName?.trim() || name,
+        });
+      } else if (ownerMode === "move") {
         await this.deps.organizationMoveService.moveUser(
-          { userId: ownerUserId, toOrganizationId: record.id, role: "OWNER" },
+          { userId: owner.userId, toOrganizationId: record.id, role: "OWNER" },
           actorUserId
         );
       } else {
         await this.deps.organizationMembershipService.addMember({
           organizationId: record.id,
-          userId: ownerUserId,
+          userId: owner.userId,
           role: "OWNER",
         });
       }
@@ -171,7 +188,7 @@ export class OrganizationService {
       } catch (cleanupError) {
         log.error("Failed to remove an organization whose owner could not be added", {
           organizationId: record.id,
-          ownerUserId,
+          ...ownerLogFields,
           cleanupError,
         });
       }
@@ -182,7 +199,7 @@ export class OrganizationService {
       action: "organization.create",
       actorUserId,
       organizationId: record.id,
-      ownerUserId,
+      ...ownerLogFields,
     });
 
     return this.get(record.id);
@@ -204,10 +221,18 @@ export class OrganizationService {
     if (slug !== undefined) await this.assertSlugAvailable(slug, id);
     if (domain !== undefined) await this.assertDomainAvailable(domain, id);
 
+    // Granted before the field write so a refused owner leaves the rest of the edit unapplied
+    if (input.ownerUserId !== undefined) {
+      await this.deps.organizationMembershipService.grantOwner({
+        organizationId: id,
+        userId: input.ownerUserId,
+      });
+    }
+
     const updated = await this.deps.organizationRepository.update(id, { name, slug, domain });
     if (!updated) throw ErrorWithCode.Factory.NotFound("Organization not found");
 
-    const changed = Object.entries({ name, slug, domain })
+    const changed = Object.entries({ name, slug, domain, owner: input.ownerUserId })
       .filter(([, value]) => value !== undefined)
       .map(([field]) => field);
     log.info("organization.update", {
@@ -215,8 +240,11 @@ export class OrganizationService {
       actorUserId,
       organizationId: id,
       changed,
+      ...(input.ownerUserId !== undefined ? { ownerUserId: input.ownerUserId } : {}),
     });
 
+    // Re-read so the returned owner list is guaranteed to include the owner just granted
+    if (input.ownerUserId !== undefined) return this.get(id);
     return this.toDto(updated);
   }
 
@@ -243,6 +271,17 @@ export class OrganizationService {
     log.info("organization.delete", { action: "organization.delete", actorUserId, organizationId: id });
 
     return deleted;
+  }
+
+  private async resolveOwner(owner: OrganizationOwnerInput): Promise<ResolvedOwner> {
+    if ("userId" in owner) return { kind: "user", userId: owner.userId };
+
+    const email = owner.email.trim().toLowerCase();
+    if (!email.includes("@"))
+      throw ErrorWithCode.Factory.BadRequest("Owner email must be a valid email address");
+
+    const candidate = await this.deps.organizationMembershipService.findMembershipCandidateByEmail(email);
+    return candidate ? { kind: "user", userId: candidate.id } : { kind: "invite", email };
   }
 
   private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<"add" | "move"> {

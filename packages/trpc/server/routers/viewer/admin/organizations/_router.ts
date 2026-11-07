@@ -60,7 +60,7 @@ export const organizationsRouter = router({
     .output(OrganizationDtoSchema)
     .mutation(async ({ ctx, input }) => {
       const service = await loadService();
-      return service.create(input, ctx.user.id);
+      return service.create(input, ctx.user.id, ctx.user.name);
     }),
   update: organizationsProcedure
     .input(ZUpdateOrganizationInput)

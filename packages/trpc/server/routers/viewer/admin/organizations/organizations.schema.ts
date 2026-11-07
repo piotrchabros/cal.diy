@@ -10,7 +10,10 @@ export const ZListOrganizationsInput = z.object({
 
 export const ZGetOrganizationInput = z.object({ id });
 
-export const ZOrganizationOwnerInput = z.object({ userId: id }).strict();
+export const ZOrganizationOwnerInput = z.union([
+  z.object({ userId: id }).strict(),
+  z.object({ email: z.string().trim().toLowerCase().email().max(254) }).strict(),
+]);
 
 export const ZCreateOrganizationInput = z.object({
   name: z.string().max(100),
@@ -25,6 +28,7 @@ export const ZUpdateOrganizationInput = z.object({
   name: z.string().max(100).optional(),
   slug: z.string().max(63).optional(),
   domain: z.string().max(253).optional(),
+  ownerUserId: id.optional(),
 });
 
 export const ZDeleteOrganizationInput = z.object({ id });
