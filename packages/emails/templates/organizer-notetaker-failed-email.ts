@@ -16,6 +16,7 @@ export type NotetakerFailedEmailInput = {
   notetakerUrl: string;
   outcomeReason: NotetakerOutcomeReasonDto;
   canEnableAgain: boolean;
+  logoHref?: string | null;
 };
 
 export default class OrganizerNotetakerFailedEmail extends BaseEmail {
@@ -48,6 +49,7 @@ export default class OrganizerNotetakerFailedEmail extends BaseEmail {
         notetakerUrl,
         outcomeReason,
         canEnableAgain,
+        logoHref: this.input.logoHref,
       }),
       text: this.getTextBody(),
     };

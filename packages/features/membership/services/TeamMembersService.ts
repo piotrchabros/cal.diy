@@ -206,7 +206,7 @@ export class TeamMembersService {
     }
 
     if (organizationId !== null) {
-      await this.assertInviteeCanJoinOrganization(invitee, organizationId);
+      this.assertInviteeCanJoinOrganization(invitee, organizationId);
     }
 
     const existing = await this.membershipRepository.findUniqueByUserIdAndTeamId({
@@ -235,27 +235,10 @@ export class TeamMembersService {
     return { status: existing ? ("already-invited" as const) : ("invited" as const), email: normalizedEmail };
   }
 
-  private async assertInviteeCanJoinOrganization(
-    invitee: { id: number; organizationId: number | null; username: string | null },
-    organizationId: number
-  ) {
-    if (invitee.organizationId !== null && invitee.organizationId !== organizationId) {
+  private assertInviteeCanJoinOrganization(invitee: { organizationId: number }, organizationId: number) {
+    if (invitee.organizationId !== organizationId) {
       throw ErrorWithCode.Factory.Conflict("user_belongs_to_another_organization");
     }
-    if (invitee.organizationId !== null) {
-      return;
-    }
-    if (invitee.username) {
-      await this.getOrganizationMembershipService().addMember({
-        organizationId,
-        userId: invitee.id,
-        role: "MEMBER",
-      });
-      return;
-    }
-    // addMember needs a username for the organization profile; that profile is created once
-    // the invitee finishes signup, so for now only the organization link is recorded.
-    await this.userRepository.setOrganizationId({ id: invitee.id, organizationId });
   }
 
   private getInviteOrganizationId(team: TeamWithParent & { isOrganization: boolean }) {

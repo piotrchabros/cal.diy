@@ -26,6 +26,7 @@ export type NotetakerResultsReadyEmailInput = {
   outcomeReason: NotetakerOutcomeReasonDto | null;
   transcriptCompleteness: NotetakerTranscriptCompletenessDto;
   summaryStatus: NotetakerSummaryStatusDto | null;
+  logoHref?: string | null;
 };
 
 export default class OrganizerNotetakerResultsReadyEmail extends BaseEmail {
@@ -69,6 +70,7 @@ export default class OrganizerNotetakerResultsReadyEmail extends BaseEmail {
         endedEarlyReason: this.getEndedEarlyReason(),
         isTruncated: transcriptCompleteness === "TRUNCATED",
         isSummaryMissing: this.isSummaryMissing(),
+        logoHref: this.input.logoHref,
       }),
       text: this.getTextBody(),
     };

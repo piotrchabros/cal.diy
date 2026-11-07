@@ -451,18 +451,6 @@ describe("PrismaOrganizationMembershipRepository", () => {
       expect(profile.upsert).not.toHaveBeenCalled();
     });
 
-    it("writes no profile when the user has no organization", async () => {
-      const { repository, user, profile, $transaction } = buildRepository();
-      user.update.mockResolvedValue({ id: 7 });
-
-      await repository.updateUsername({ userId: 7, organizationId: null, username: "alice" });
-
-      expect($transaction.mock.calls[0][0]).toHaveLength(1);
-      expect(user.update).toHaveBeenCalledTimes(1);
-      expect(profile.updateMany).not.toHaveBeenCalled();
-      expect(profile.upsert).not.toHaveBeenCalled();
-    });
-
     it("maps a unique-constraint violation to a Conflict error", async () => {
       const { repository, user, profile } = buildRepository();
       user.update.mockResolvedValue({ id: 7 });

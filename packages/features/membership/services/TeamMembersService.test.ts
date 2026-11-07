@@ -363,7 +363,7 @@ describe("TeamMembersService", () => {
       defaultOrganizationId = 1,
     }: {
       teamResult?: typeof team;
-      invitee: { id: number; organizationId: number | null; username: string | null } | null;
+      invitee: { id: number; organizationId: number; username: string | null } | null;
       defaultOrganizationId?: number;
     }) => {
       const membershipRepo = makeMembershipRepo({
@@ -469,46 +469,6 @@ describe("TeamMembersService", () => {
       expect(membershipRepo.createTeamMembership).toHaveBeenCalledTimes(1);
       expect(orgMembership.addMember).not.toHaveBeenCalled();
       expect(userRepo.setOrganizationId).not.toHaveBeenCalled();
-    });
-
-    it("adds an organization-less invitee with a username to the organization first", async () => {
-      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
-      const { invite, membershipRepo, orgMembership, sendInviteEmail, userRepo } = setup({
-        invitee: { id: 11, organizationId: null, username: "ada" },
-      });
-
-      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
-      expect(orgMembership.addMember).toHaveBeenCalledWith({ organizationId: 3, userId: 11, role: "MEMBER" });
-      expect(userRepo.setOrganizationId).not.toHaveBeenCalled();
-      expect(membershipRepo.createTeamMembership).toHaveBeenCalledWith(
-        expect.objectContaining({ teamId: 7, userId: 11, accepted: false })
-      );
-      expect(sendInviteEmail).toHaveBeenCalledTimes(1);
-    });
-
-    it("links an organization-less invitee without a username to the organization", async () => {
-      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
-      const { invite, membershipRepo, orgMembership, userRepo } = setup({
-        invitee: { id: 11, organizationId: null, username: null },
-      });
-
-      await expect(invite()).resolves.toEqual({ status: "invited", email: "ada@example.com" });
-      expect(userRepo.setOrganizationId).toHaveBeenCalledWith({ id: 11, organizationId: 3 });
-      expect(orgMembership.addMember).not.toHaveBeenCalled();
-      expect(membershipRepo.createTeamMembership).toHaveBeenCalledTimes(1);
-    });
-
-    it("propagates an organization membership failure without inviting", async () => {
-      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
-      const { invite, membershipRepo, orgMembership, sendInviteEmail } = setup({
-        invitee: { id: 11, organizationId: null, username: "ada" },
-      });
-      const failure = new Error("addMember failed");
-      orgMembership.addMember.mockRejectedValueOnce(failure);
-
-      await expect(invite()).rejects.toBe(failure);
-      expect(membershipRepo.createTeamMembership).not.toHaveBeenCalled();
-      expect(sendInviteEmail).not.toHaveBeenCalled();
     });
 
     it("creates a brand-new invitee inside the parent organization", async () => {

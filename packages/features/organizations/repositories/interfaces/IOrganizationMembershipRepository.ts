@@ -4,7 +4,7 @@ export type MembershipUserRecord = {
   id: number;
   username: string | null;
   email: string;
-  organizationId: number | null;
+  organizationId: number;
 };
 
 export type AddMemberInput = {
@@ -69,7 +69,7 @@ export interface IOrganizationMembershipRepository {
     userId: number;
     role: OrganizationRoleDto;
   }): Promise<void>;
-  updateUsername(params: { userId: number; organizationId: number | null; username: string }): Promise<void>;
+  updateUsername(params: { userId: number; organizationId: number; username: string }): Promise<void>;
   updateUsernameAndUpsertProfile(params: {
     userId: number;
     organizationId: number;

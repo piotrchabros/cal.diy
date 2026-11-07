@@ -20,6 +20,8 @@ const DEFAULT_DOMAIN = "cal.example.com";
 const ACTOR_ID = 100;
 const OWNER_ID = 1;
 const OWNER = { userId: OWNER_ID };
+// Every user already belongs to an organization (the owner's is not one these tests create)
+const OWNER_HOME_ORG_ID = 900;
 const INVITED_ID = 500;
 
 const SLUG_INVALID = "organization_slug_invalid";
@@ -57,11 +59,7 @@ describe("OrganizationService", () => {
         organizationMembershipRepository: membershipRepo,
         organizationRepository: repository,
         organizationsConfig: config,
-        userRepository: {
-          findInviteeByEmail,
-          createInvitedWithPendingTeamMembership,
-          setOrganizationId: vi.fn(),
-        },
+        userRepository: { findInviteeByEmail, createInvitedWithPendingTeamMembership },
         teamInviteService: { sendInvite },
         tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
         organizationMoveService: { moveUser },
@@ -79,7 +77,7 @@ describe("OrganizationService", () => {
     mockLogError.mockClear();
     repository = new InMemoryOrganizationRepository();
     membershipRepo = new InMemoryOrganizationMembershipRepository();
-    membershipRepo.seedUser({ id: OWNER_ID, username: "owner" });
+    membershipRepo.seedUser({ id: OWNER_ID, username: "owner", organizationId: OWNER_HOME_ORG_ID });
     moveUser = vi.fn().mockResolvedValue({ userId: OWNER_ID, organizationId: 0, username: "owner" });
     findInviteeByEmail = vi.fn().mockResolvedValue(null);
     createInvitedWithPendingTeamMembership = vi.fn().mockResolvedValue({ id: INVITED_ID, locale: null });
@@ -90,7 +88,13 @@ describe("OrganizationService", () => {
   describe("create", () => {
     it("creates an organization with trimmed name, normalized slug and domain", async () => {
       const created = await service.create(
-        { name: "  Acme  ", slug: " ACME-Inc ", domain: "Acme.COM:3000", owner: OWNER },
+        {
+          name: "  Acme  ",
+          slug: " ACME-Inc ",
+          domain: "Acme.COM:3000",
+          owner: OWNER,
+          confirmMoveOwner: true,
+        },
         ACTOR_ID
       );
 
@@ -108,16 +112,13 @@ describe("OrganizationService", () => {
     describe("owner", () => {
       const input = { name: "Acme", slug: "acme", domain: "acme.com" };
 
-      it("adds the owner as an OWNER member with an org profile and logs ids only", async () => {
-        const created = await service.create({ ...input, owner: OWNER }, ACTOR_ID);
+      it("moves the owner in as OWNER and logs ids only", async () => {
+        const created = await service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID);
 
-        expect(ownerUser()?.organizationId).toBe(created.id);
-        expect(membershipRepo.memberships).toEqual([
-          { userId: OWNER_ID, teamId: created.id, role: "OWNER", accepted: true },
-        ]);
-        expect(membershipRepo.profiles).toEqual([
-          { userId: OWNER_ID, organizationId: created.id, username: "owner" },
-        ]);
+        expect(moveUser).toHaveBeenCalledWith(
+          { userId: OWNER_ID, toOrganizationId: created.id, role: "OWNER" },
+          ACTOR_ID
+        );
         expect(mockLogInfo).toHaveBeenCalledWith("organization.create", {
           action: "organization.create",
           actorUserId: ACTOR_ID,
@@ -136,16 +137,13 @@ describe("OrganizationService", () => {
         expect(mockLogInfo).not.toHaveBeenCalled();
       });
 
-      it("asks for confirmation when the owner belongs to another organization", async () => {
-        const other = repository.seed({ name: "Globex", slug: "globex", domain: "globex.com" });
-        membershipRepo.seedUser({ id: OWNER_ID, username: "owner", organizationId: other.id });
-
+      it("asks for confirmation before moving the owner out of their organization", async () => {
         await expectRejection(
           service.create({ ...input, owner: OWNER }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
           "owner_in_another_organization"
         );
-        expect(repository.all()).toHaveLength(1);
+        expect(repository.all()).toHaveLength(0);
         expect(moveUser).not.toHaveBeenCalled();
       });
 
@@ -180,18 +178,11 @@ describe("OrganizationService", () => {
         });
       });
 
-      it("adds an owner without an organization even when confirmation is sent", async () => {
-        await service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID);
-
-        expect(moveUser).not.toHaveBeenCalled();
-        expect(membershipRepo.memberships).toHaveLength(1);
-      });
-
       it("rejects an owner without a username", async () => {
-        membershipRepo.seedUser({ id: OWNER_ID, username: null });
+        membershipRepo.seedUser({ id: OWNER_ID, username: null, organizationId: OWNER_HOME_ORG_ID });
 
         await expectRejection(
-          service.create({ ...input, owner: OWNER }, ACTOR_ID),
+          service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID),
           ErrorCode.PreconditionFailed,
           "organization_owner_needs_username"
         );
@@ -205,30 +196,33 @@ describe("OrganizationService", () => {
         repository.seed({ name: "Other", ...taken });
 
         await expectRejection(
-          service.create({ ...input, owner: OWNER }, ACTOR_ID),
+          service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID),
           ErrorCode.Conflict,
           message
         );
-        expect(ownerUser()?.organizationId).toBeNull();
-        expect(membershipRepo.memberships).toEqual([]);
-        expect(membershipRepo.profiles).toEqual([]);
+        expect(ownerUser()?.organizationId).toBe(OWNER_HOME_ORG_ID);
+        expect(moveUser).not.toHaveBeenCalled();
       });
 
-      it("deletes the organization and rethrows when adding the owner fails", async () => {
+      it("deletes the organization and rethrows when moving the owner fails", async () => {
         const failure = ErrorWithCode.Factory.Conflict("x");
-        vi.spyOn(membershipRepo, "addMember").mockRejectedValue(failure);
+        moveUser.mockRejectedValue(failure);
 
-        await expect(service.create({ ...input, owner: OWNER }, ACTOR_ID)).rejects.toBe(failure);
+        await expect(
+          service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID)
+        ).rejects.toBe(failure);
         expect(repository.all()).toEqual([]);
         expect(mockLogInfo).not.toHaveBeenCalled();
       });
 
       it("surfaces the original error when the compensating delete also fails", async () => {
         const failure = ErrorWithCode.Factory.Conflict("x");
-        vi.spyOn(membershipRepo, "addMember").mockRejectedValue(failure);
+        moveUser.mockRejectedValue(failure);
         vi.spyOn(repository, "delete").mockRejectedValue(new Error("delete failed"));
 
-        await expect(service.create({ ...input, owner: OWNER }, ACTOR_ID)).rejects.toBe(failure);
+        await expect(
+          service.create({ ...input, owner: OWNER, confirmMoveOwner: true }, ACTOR_ID)
+        ).rejects.toBe(failure);
         expect(mockLogError).toHaveBeenCalledWith(
           expect.any(String),
           expect.objectContaining({ organizationId: expect.any(Number), ownerUserId: OWNER_ID })
@@ -240,14 +234,23 @@ describe("OrganizationService", () => {
       const input = { name: "Acme", slug: "acme", domain: "acme.com" };
       const INVITE_EMAIL = "new.owner@acme.com";
 
-      it("adds an existing user matched case-insensitively as OWNER", async () => {
-        membershipRepo.seedUser({ id: OWNER_ID, username: "owner", email: "owner@acme.com" });
+      it("moves an existing user matched case-insensitively in as OWNER", async () => {
+        membershipRepo.seedUser({
+          id: OWNER_ID,
+          username: "owner",
+          email: "owner@acme.com",
+          organizationId: OWNER_HOME_ORG_ID,
+        });
 
-        const created = await service.create({ ...input, owner: { email: "  Owner@ACME.com " } }, ACTOR_ID);
+        const created = await service.create(
+          { ...input, owner: { email: "  Owner@ACME.com " }, confirmMoveOwner: true },
+          ACTOR_ID
+        );
 
-        expect(membershipRepo.memberships).toEqual([
-          { userId: OWNER_ID, teamId: created.id, role: "OWNER", accepted: true },
-        ]);
+        expect(moveUser).toHaveBeenCalledWith(
+          { userId: OWNER_ID, toOrganizationId: created.id, role: "OWNER" },
+          ACTOR_ID
+        );
         expect(createInvitedWithPendingTeamMembership).not.toHaveBeenCalled();
         expect(mockLogInfo).toHaveBeenCalledWith(
           "organization.create",
@@ -307,7 +310,12 @@ describe("OrganizationService", () => {
       });
 
       it("rejects an existing user without a username and creates nothing", async () => {
-        membershipRepo.seedUser({ id: OWNER_ID, username: null, email: "owner@acme.com" });
+        membershipRepo.seedUser({
+          id: OWNER_ID,
+          username: null,
+          email: "owner@acme.com",
+          organizationId: OWNER_HOME_ORG_ID,
+        });
 
         await expectRejection(
           service.create({ ...input, owner: { email: "owner@acme.com" } }, ACTOR_ID),
@@ -332,7 +340,10 @@ describe("OrganizationService", () => {
       ["over 100 characters", "a".repeat(101)],
     ])("rejects a name that is %s", async (_label, name) => {
       await expectRejection(
-        service.create({ name, slug: "acme", domain: "acme.com", owner: OWNER }, ACTOR_ID),
+        service.create(
+          { name, slug: "acme", domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
+          ACTOR_ID
+        ),
         ErrorCode.BadRequest,
         NAME_INVALID
       );
@@ -340,7 +351,7 @@ describe("OrganizationService", () => {
 
     it("accepts a name of exactly 100 characters", async () => {
       const created = await service.create(
-        { name: "a".repeat(100), slug: "acme", domain: "acme.com", owner: OWNER },
+        { name: "a".repeat(100), slug: "acme", domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
         ACTOR_ID
       );
       expect(created.name).toHaveLength(100);
@@ -356,7 +367,10 @@ describe("OrganizationService", () => {
         ["whitespace inside", "ac me"],
       ])("rejects a slug with %s", async (_label, slug) => {
         await expectRejection(
-          service.create({ name: "Acme", slug, domain: "acme.com", owner: OWNER }, ACTOR_ID),
+          service.create(
+            { name: "Acme", slug, domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
+            ACTOR_ID
+          ),
           ErrorCode.BadRequest,
           SLUG_INVALID
         );
@@ -368,7 +382,7 @@ describe("OrganizationService", () => {
         ["an inner hyphen", "a-b"],
       ])("accepts a slug with %s", async (_label, slug) => {
         const created = await service.create(
-          { name: "Acme", slug, domain: "acme.com", owner: OWNER },
+          { name: "Acme", slug, domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
           ACTOR_ID
         );
         expect(created.slug).toBe(slug);
@@ -376,7 +390,7 @@ describe("OrganizationService", () => {
 
       it("lowercases an uppercase slug", async () => {
         const created = await service.create(
-          { name: "Acme", slug: "ACME", domain: "acme.com", owner: OWNER },
+          { name: "Acme", slug: "ACME", domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
           ACTOR_ID
         );
         expect(created.slug).toBe("acme");
@@ -395,7 +409,10 @@ describe("OrganizationService", () => {
         ["a label starting with a hyphen", "-acme.com"],
       ])("rejects %s", async (_label, domain) => {
         await expectRejection(
-          service.create({ name: "Acme", slug: "acme", domain, owner: OWNER }, ACTOR_ID),
+          service.create(
+            { name: "Acme", slug: "acme", domain, owner: OWNER, confirmMoveOwner: true },
+            ACTOR_ID
+          ),
           ErrorCode.BadRequest,
           DOMAIN_INVALID
         );
@@ -403,7 +420,7 @@ describe("OrganizationService", () => {
 
       it("strips the port", async () => {
         const created = await service.create(
-          { name: "Acme", slug: "acme", domain: "acme.com:8080", owner: OWNER },
+          { name: "Acme", slug: "acme", domain: "acme.com:8080", owner: OWNER, confirmMoveOwner: true },
           ACTOR_ID
         );
         expect(created.domain).toBe("acme.com");
@@ -411,7 +428,7 @@ describe("OrganizationService", () => {
 
       it("normalizes uppercase and a trailing dot", async () => {
         const created = await service.create(
-          { name: "Acme", slug: "acme", domain: " App.Acme.COM. ", owner: OWNER },
+          { name: "Acme", slug: "acme", domain: " App.Acme.COM. ", owner: OWNER, confirmMoveOwner: true },
           ACTOR_ID
         );
         expect(created.domain).toBe("app.acme.com");
@@ -422,7 +439,10 @@ describe("OrganizationService", () => {
       repository.seed({ name: "Other", slug: "acme", domain: "other.com" });
 
       await expectRejection(
-        service.create({ name: "Acme", slug: "ACME", domain: "acme.com", owner: OWNER }, ACTOR_ID),
+        service.create(
+          { name: "Acme", slug: "ACME", domain: "acme.com", owner: OWNER, confirmMoveOwner: true },
+          ACTOR_ID
+        ),
         ErrorCode.Conflict,
         "organization_slug_taken"
       );
@@ -432,7 +452,10 @@ describe("OrganizationService", () => {
       repository.seed({ name: "Other", slug: "other", domain: "acme.com" });
 
       await expectRejection(
-        service.create({ name: "Acme", slug: "acme", domain: "ACME.com:443", owner: OWNER }, ACTOR_ID),
+        service.create(
+          { name: "Acme", slug: "acme", domain: "ACME.com:443", owner: OWNER, confirmMoveOwner: true },
+          ACTOR_ID
+        ),
         ErrorCode.Conflict,
         "organization_domain_taken"
       );
@@ -440,7 +463,7 @@ describe("OrganizationService", () => {
 
     it("marks the organization on the default domain as default", async () => {
       const created = await service.create(
-        { name: "Main", slug: "main", domain: DEFAULT_DOMAIN, owner: OWNER },
+        { name: "Main", slug: "main", domain: DEFAULT_DOMAIN, owner: OWNER, confirmMoveOwner: true },
         ACTOR_ID
       );
       expect(created.isDefault).toBe(true);
@@ -793,8 +816,8 @@ describe("OrganizationService", () => {
         expect(updated.owners.map((owner) => owner.userId)).toEqual([EXISTING_OWNER_ID]);
       });
 
-      it("adds an outsider with a username as OWNER", async () => {
-        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new" });
+      it("adds a user of the organization without a membership as OWNER", async () => {
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: "new", organizationId });
 
         await service.update(organizationId, { ownerUserId: NEW_OWNER_ID }, ACTOR_ID);
 
@@ -817,7 +840,7 @@ describe("OrganizationService", () => {
       });
 
       it("rejects a user without a username and leaves the other fields unchanged", async () => {
-        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: null });
+        membershipRepo.seedUser({ id: NEW_OWNER_ID, username: null, organizationId });
 
         await expectRejection(
           service.update(organizationId, { name: "Renamed", ownerUserId: NEW_OWNER_ID }, ACTOR_ID),

@@ -27,7 +27,7 @@ type Invitee = {
   email: string;
   name: string | null;
   locale: string | null;
-  organizationId: number | null;
+  organizationId: number;
   username: string | null;
   hasPassword: boolean;
 };
@@ -40,7 +40,6 @@ function buildUserRepository() {
       email: "new@acme.com",
       locale: "pl",
     }),
-    setOrganizationId: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -89,8 +88,8 @@ describe("OrganizationMembershipService", () => {
   });
 
   describe("addMember", () => {
-    it("sets the user's organization and creates the profile and accepted membership", async () => {
-      membershipRepository.seedUser({ id: 1, username: "alice" });
+    it("creates the profile and accepted membership for a user of the organization", async () => {
+      membershipRepository.seedUser({ id: 1, username: "alice", organizationId: ORG_ID });
 
       const result = await service.addMember({ organizationId: ORG_ID, userId: 1, role: "ADMIN" });
 
@@ -116,7 +115,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a user without a username", async () => {
-      membershipRepository.seedUser({ id: 1, username: null });
+      membershipRepository.seedUser({ id: 1, username: null, organizationId: ORG_ID });
 
       await expectRejection(
         service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER" }),
@@ -126,7 +125,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a username already taken in the organization", async () => {
-      membershipRepository.seedUser({ id: 1, username: "alice" });
+      membershipRepository.seedUser({ id: 1, username: "alice", organizationId: ORG_ID });
       membershipRepository.seedProfile({ userId: 2, organizationId: ORG_ID, username: "alice" });
 
       await expectRejection(
@@ -138,7 +137,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("uses the given username for a user without one", async () => {
-      membershipRepository.seedUser({ id: 1, username: null });
+      membershipRepository.seedUser({ id: 1, username: null, organizationId: ORG_ID });
       const addMember = vi.spyOn(membershipRepository, "addMember");
 
       await service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER", username: "alice" });
@@ -153,7 +152,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("checks the given username, not the stored one, for conflicts", async () => {
-      membershipRepository.seedUser({ id: 1, username: "alice" });
+      membershipRepository.seedUser({ id: 1, username: "alice", organizationId: ORG_ID });
       membershipRepository.seedProfile({ userId: 2, organizationId: ORG_ID, username: "taken" });
       const isUsernameTaken = vi.spyOn(membershipRepository, "isUsernameTaken");
 
@@ -171,7 +170,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a missing organization", async () => {
-      membershipRepository.seedUser({ id: 1, username: "alice" });
+      membershipRepository.seedUser({ id: 1, username: "alice", organizationId: ORG_ID });
 
       await expectRejection(
         service.addMember({ organizationId: 999, userId: 1, role: "MEMBER" }),
@@ -728,7 +727,7 @@ describe("OrganizationMembershipService", () => {
         email: "new@acme.com",
         name: "Bob",
         locale: "de",
-        organizationId: null,
+        organizationId: ORG_ID,
         username: "bob",
         hasPassword: true,
         ...overrides,
@@ -846,7 +845,7 @@ describe("OrganizationMembershipService", () => {
       expectInviteSent("de", true);
     });
 
-    it("creates a pending membership and attaches a username-less user to the org", async () => {
+    it("creates a pending membership for a username-less user", async () => {
       seedInvitee({ username: null });
 
       await invite(ADMIN_ID);
@@ -855,16 +854,8 @@ describe("OrganizationMembershipService", () => {
         role: "MEMBER",
         accepted: false,
       });
-      expect(userRepository.setOrganizationId).toHaveBeenCalledWith({ id: 5, organizationId: ORG_ID });
+      expect(membershipRepository.profiles).toEqual([]);
       expectInviteSent("de", true);
-    });
-
-    it("does not repoint a username-less user already in the org", async () => {
-      seedInvitee({ username: null, organizationId: ORG_ID });
-
-      await invite(ADMIN_ID);
-
-      expect(userRepository.setOrganizationId).not.toHaveBeenCalled();
     });
   });
 
@@ -906,8 +897,10 @@ describe("OrganizationMembershipService", () => {
   describe("grantOwner", () => {
     const USER_ID = 5;
 
+    const ADMIN_USER_ID = 99;
+
     function grant() {
-      return service.grantOwner({ organizationId: ORG_ID, userId: USER_ID });
+      return service.grantOwner({ organizationId: ORG_ID, userId: USER_ID, actorUserId: ADMIN_USER_ID });
     }
 
     it("promotes an accepted member to OWNER", async () => {
@@ -920,6 +913,7 @@ describe("OrganizationMembershipService", () => {
       expect(membershipRepository.updateRoleCalls).toBe(1);
       expect(mockLogInfo).toHaveBeenCalledWith("organization.owner.grant", {
         action: "organization.owner.grant",
+        actorUserId: ADMIN_USER_ID,
         organizationId: ORG_ID,
         userId: USER_ID,
       });
@@ -942,8 +936,8 @@ describe("OrganizationMembershipService", () => {
       expect(await membershipRepository.countOwners(ORG_ID)).toBe(2);
     });
 
-    it("adds an outsider with a username as OWNER", async () => {
-      membershipRepository.seedUser({ id: USER_ID, username: "bob" });
+    it("adds a user of the organization without a membership as OWNER", async () => {
+      membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
 
       await expect(grant()).resolves.toEqual({ userId: USER_ID, role: "OWNER" });
 
@@ -975,7 +969,7 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("rejects a user without a username", async () => {
-      membershipRepository.seedUser({ id: USER_ID, username: null });
+      membershipRepository.seedUser({ id: USER_ID, username: null, organizationId: ORG_ID });
 
       await expectRejection(grant(), ErrorCode.PreconditionFailed, "organization_owner_needs_username");
       expect(membershipRepository.memberships).toEqual([]);
@@ -997,15 +991,6 @@ describe("OrganizationMembershipService", () => {
     const USER_ID = 5;
     const usernameOf = (userId: number) =>
       membershipRepository.users.find((user) => user.id === userId)?.username;
-
-    it("renames an org-less user without creating a profile", async () => {
-      membershipRepository.seedUser({ id: USER_ID, username: "bob" });
-
-      await service.changeUsername({ userId: USER_ID, username: "robert" });
-
-      expect(usernameOf(USER_ID)).toBe("robert");
-      expect(membershipRepository.profiles).toEqual([]);
-    });
 
     it("renames both the user and the org profile of an accepted member", async () => {
       membershipRepository.seedUser({ id: USER_ID, username: "bob", organizationId: ORG_ID });
@@ -1093,13 +1078,18 @@ describe("OrganizationMembershipService", () => {
   describe("findMembershipCandidateByEmail", () => {
     it("trims and lowercases the email before the lookup", async () => {
       const findUserByEmail = vi.spyOn(membershipRepository, "findUserByEmail");
-      membershipRepository.seedUser({ id: 1, username: "alice", email: "alice@acme.com" });
+      membershipRepository.seedUser({
+        id: 1,
+        username: "alice",
+        email: "alice@acme.com",
+        organizationId: ORG_ID,
+      });
 
       expect(await service.findMembershipCandidateByEmail("  Alice@ACME.com ")).toEqual({
         id: 1,
         username: "alice",
         email: "alice@acme.com",
-        organizationId: null,
+        organizationId: ORG_ID,
       });
       expect(findUserByEmail).toHaveBeenCalledWith("alice@acme.com");
     });

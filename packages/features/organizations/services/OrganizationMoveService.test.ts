@@ -22,8 +22,9 @@ const TO_ORG_ID = 20;
 const USER_ID = 1;
 const ACTOR_ID = 100;
 const TEAM_ID = 5;
+const OTHER_ORG_ID = 30;
 
-const member = (userId: number, username: string | null, organizationId: number | null, accepted = true) => ({
+const member = (userId: number, username: string | null, organizationId: number, accepted = true) => ({
   userId,
   name: username,
   email: `${username ?? userId}@example.com`,
@@ -32,17 +33,18 @@ const member = (userId: number, username: string | null, organizationId: number 
   accepted,
 });
 
-// alice is in the source org, bob has no org, carol is a pending invitee and dave is already in the target
+// alice is in the source org, bob is in a third org, carol is a pending invitee and dave is already in the target
 const TEAM_MEMBERS = [
   member(USER_ID, "alice", FROM_ORG_ID),
-  member(2, "bob", null),
-  member(3, "carol", null, false),
+  member(2, "bob", OTHER_ORG_ID),
+  member(3, "carol", OTHER_ORG_ID, false),
   member(4, "dave", TO_ORG_ID),
 ];
 
 const BASE_URLS: Record<number, string> = {
   [FROM_ORG_ID]: "https://acme.example.com",
   [TO_ORG_ID]: "https://globex.example.com",
+  [OTHER_ORG_ID]: "https://initech.example.com",
 };
 
 async function expectRejection(promise: Promise<unknown>, code: ErrorCode, message: string) {
@@ -272,18 +274,6 @@ describe("OrganizationMoveService", () => {
       expect(moveRepository.applyMove).toHaveBeenCalledTimes(1);
     });
 
-    it("moves a user without an organization without an owner check or redirect", async () => {
-      seedUser({ organizationId: null });
-      const findRole = vi.spyOn(membershipRepository, "findRole");
-
-      await service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID }, ACTOR_ID);
-
-      expect(findRole).not.toHaveBeenCalled();
-      const move = moveRepository.applyMove.mock.calls[0][0].users[0];
-      expect(move.fromOrganizationId).toBeNull();
-      expect(move.redirect).toBeNull();
-    });
-
     it.each([
       { newUsername: undefined, redirect: null },
       {
@@ -395,7 +385,7 @@ describe("OrganizationMoveService", () => {
 
   describe("previewMoveTeam", () => {
     it("lists accepted members outside the target with username and slug conflicts", async () => {
-      seedTeam({ members: [...TEAM_MEMBERS, member(6, null, null)] });
+      seedTeam({ members: [...TEAM_MEMBERS, member(6, null, OTHER_ORG_ID)] });
       moveRepository.findTakenUsernames.mockResolvedValue(["bob"]);
       moveRepository.isTeamSlugTaken.mockResolvedValue(true);
 
@@ -463,9 +453,9 @@ describe("OrganizationMoveService", () => {
             ...userMove,
             userId: 2,
             email: "bob@example.com",
-            fromOrganizationId: null,
+            fromOrganizationId: OTHER_ORG_ID,
             username: "bob",
-            redirect: null,
+            redirect: { fromOrgId: OTHER_ORG_ID, from: "bob", toUrl: "https://globex.example.com/bob" },
           },
         ],
       });
@@ -644,13 +634,13 @@ describe("OrganizationMoveService", () => {
       { case: "a taken slug", slugTaken: true, code: ErrorCode.Conflict, message: MOVE_ERRORS.slugTaken },
       {
         case: "a mover without a username",
-        team: { members: [member(2, null, null)] },
+        team: { members: [member(2, null, OTHER_ORG_ID)] },
         code: ErrorCode.PreconditionFailed,
         message: MOVE_ERRORS.usernameRequired,
       },
       {
         case: "duplicate mover usernames",
-        team: { members: [member(2, "bob", null), member(6, "bob", null)] },
+        team: { members: [member(2, "bob", OTHER_ORG_ID), member(6, "bob", OTHER_ORG_ID)] },
         code: ErrorCode.Conflict,
         message: MOVE_ERRORS.memberUsernamesTaken,
       },

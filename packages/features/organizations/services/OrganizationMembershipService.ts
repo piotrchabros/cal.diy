@@ -31,10 +31,7 @@ export interface IOrganizationMembershipServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
   organizationRepository: IOrganizationRepository;
   organizationsConfig: OrganizationsConfig;
-  userRepository: Pick<
-    UserRepository,
-    "findInviteeByEmail" | "createInvitedWithPendingTeamMembership" | "setOrganizationId"
-  >;
+  userRepository: Pick<UserRepository, "findInviteeByEmail" | "createInvitedWithPendingTeamMembership">;
   teamInviteService: Pick<TeamInviteService, "sendInvite">;
   tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom">;
   organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
@@ -55,7 +52,7 @@ export class OrganizationMembershipService {
 
     const user = await this.deps.organizationMembershipRepository.findUserById(userId);
     if (!user) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.userNotFound);
-    if (user.organizationId !== null && user.organizationId !== organizationId) {
+    if (user.organizationId !== organizationId) {
       throw ErrorWithCode.Factory.Conflict(ORGANIZATION_ERRORS.userInAnotherOrganization);
     }
     // Org profiles are keyed by username, so a user without one cannot get a profile in the org
@@ -94,11 +91,6 @@ export class OrganizationMembershipService {
     if (!user) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.userNotFound);
 
     const { organizationId } = user;
-    if (organizationId === null) {
-      await repository.updateUsername({ userId, organizationId: null, username });
-      return;
-    }
-
     const usernameTaken = await repository.isUsernameTaken({
       organizationId,
       username,
@@ -258,15 +250,17 @@ export class OrganizationMembershipService {
   async grantOwner({
     organizationId,
     userId,
+    actorUserId,
   }: {
     organizationId: number;
     userId: number;
+    actorUserId: number;
   }): Promise<{ userId: number; role: "OWNER" }> {
     const repository = this.deps.organizationMembershipRepository;
     const membership = await repository.findMembership({ organizationId, userId });
     if (membership?.accepted) {
       if (membership.role !== "OWNER") await repository.updateRole({ organizationId, userId, role: "OWNER" });
-      this.logOwnerGrant(organizationId, userId);
+      this.logOwnerGrant(organizationId, userId, actorUserId);
       return { userId, role: "OWNER" };
     }
 
@@ -275,19 +269,24 @@ export class OrganizationMembershipService {
     if (user.username === null) {
       throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerNeedsUsername);
     }
-    if (user.organizationId !== null && user.organizationId !== organizationId) {
+    if (user.organizationId !== organizationId) {
       throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerInAnotherOrganization);
     }
 
     const member = await this.addMember({ organizationId, userId, role: "OWNER" });
     // Accepting a pending invite keeps the role it was sent with, so it has to be raised separately
     if (member.role !== "OWNER") await repository.updateRole({ organizationId, userId, role: "OWNER" });
-    this.logOwnerGrant(organizationId, userId);
+    this.logOwnerGrant(organizationId, userId, actorUserId);
     return { userId, role: "OWNER" };
   }
 
-  private logOwnerGrant(organizationId: number, userId: number): void {
-    log.info("organization.owner.grant", { action: "organization.owner.grant", organizationId, userId });
+  private logOwnerGrant(organizationId: number, userId: number, actorUserId: number): void {
+    log.info("organization.owner.grant", {
+      action: "organization.owner.grant",
+      actorUserId,
+      organizationId,
+      userId,
+    });
   }
 
   private async sendOrganizationInvite(params: {
@@ -328,7 +327,7 @@ export class OrganizationMembershipService {
       targetUserId = created.id;
       await sendInvite(created.locale, false);
     } else {
-      if (invitee.organizationId !== null && invitee.organizationId !== organizationId) {
+      if (invitee.organizationId !== organizationId) {
         throw ErrorWithCode.Factory.Conflict(ORGANIZATION_ERRORS.userInAnotherOrganization);
       }
       targetUserId = invitee.id;
@@ -347,9 +346,6 @@ export class OrganizationMembershipService {
           userId: invitee.id,
           role,
         });
-        if (invitee.organizationId === null) {
-          await this.deps.userRepository.setOrganizationId({ id: invitee.id, organizationId });
-        }
       }
       await sendInvite(invitee.locale, invitee.hasPassword);
     }
