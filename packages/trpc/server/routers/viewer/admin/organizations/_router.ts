@@ -1,8 +1,5 @@
 import { OrganizationDtoSchema, OrganizationListResultDtoSchema } from "@calcom/lib/dto/OrganizationDto";
-import { ErrorWithCode } from "@calcom/lib/errors";
-import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import { TRPCError } from "@trpc/server";
-import { convertErrorWithCodeToTRPCError } from "../../../../lib/toTRPCError";
+import { organizationsFeatureMiddleware } from "../../../../middlewares/organizationsFeatureMiddleware";
 import { authedAdminProcedure } from "../../../../procedures/authedProcedure";
 import { router } from "../../../../trpc";
 import {
@@ -14,17 +11,7 @@ import {
   ZUpdateOrganizationInput,
 } from "./organizations.schema";
 
-const organizationsProcedure = authedAdminProcedure.use(async ({ next }) => {
-  // Keeps the API dark while ORGANIZATIONS_ENABLED is off in production, so the feature can ship unannounced
-  if (!isOrganizationsEnabled()) throw new TRPCError({ code: "NOT_FOUND" });
-  const result = await next();
-  // tRPC v11 hands resolver errors back as a failed result instead of throwing, so the shared
-  // errorConversionMiddleware never sees them; without this, service errors surface as 500s
-  if (!result.ok && result.error.cause instanceof ErrorWithCode) {
-    throw convertErrorWithCodeToTRPCError(result.error.cause);
-  }
-  return result;
-});
+const organizationsProcedure = authedAdminProcedure.use(organizationsFeatureMiddleware);
 
 const loadService = async () => {
   const { getOrganizationService } = await import(
