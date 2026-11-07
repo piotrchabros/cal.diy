@@ -152,10 +152,7 @@ export class OrganizationService {
     await this.assertSlugAvailable(slug, null);
     await this.assertDomainAvailable(domain, null);
     const owner = await this.resolveOwner(input.owner);
-    const ownerMode =
-      owner.kind === "user"
-        ? await this.assertOwnerEligible(owner.userId, input.confirmMoveOwner ?? false)
-        : "invite";
+    if (owner.kind === "user") await this.assertOwnerEligible(owner.userId, input.confirmMoveOwner ?? false);
     // FR-023: logs carry ids only, so an invited owner is flagged rather than identified by email
     const ownerLogFields = owner.kind === "user" ? { ownerUserId: owner.userId } : { invitedOwner: true };
 
@@ -168,17 +165,11 @@ export class OrganizationService {
           email: owner.email,
           inviterName: actorName?.trim() || name,
         });
-      } else if (ownerMode === "move") {
+      } else {
         await this.deps.organizationMoveService.moveUser(
           { userId: owner.userId, toOrganizationId: record.id, role: "OWNER" },
           actorUserId
         );
-      } else {
-        await this.deps.organizationMembershipService.addMember({
-          organizationId: record.id,
-          userId: owner.userId,
-          role: "OWNER",
-        });
       }
     } catch (error) {
       // Keep an organization from existing without an owner when a race slips past the pre-check
@@ -225,6 +216,7 @@ export class OrganizationService {
       await this.deps.organizationMembershipService.grantOwner({
         organizationId: id,
         userId: input.ownerUserId,
+        actorUserId,
       });
     }
 
@@ -280,7 +272,8 @@ export class OrganizationService {
     return candidate ? { kind: "user", userId: candidate.id } : { kind: "invite", email };
   }
 
-  private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<"add" | "move"> {
+  // Every user already belongs to an organization, so an existing owner is always moved into the new one
+  private async assertOwnerEligible(userId: number, confirmMoveOwner: boolean): Promise<void> {
     const candidate = await this.deps.organizationMembershipService.findMembershipCandidate(userId);
     if (!candidate) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.ownerNotFound);
 
@@ -288,11 +281,10 @@ export class OrganizationService {
       throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerNeedsUsername);
     }
 
-    if (candidate.organizationId === null) return "add";
     // Stable code-like message so the admin UI can recognise it and ask for confirmation
-    if (!confirmMoveOwner)
+    if (!confirmMoveOwner) {
       throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.ownerInAnotherOrganization);
-    return "move";
+    }
   }
 
   private async findByIdOrThrow(id: number): Promise<OrganizationRecord> {
