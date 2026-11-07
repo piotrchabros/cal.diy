@@ -281,7 +281,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/components/getting-started/components/AppConnectionItem.tsx`
   - `apps/web/modules/apps/{components/AppCard,installation/[[...step]]/step-view}.tsx`
   - `packages/app-store/_utils/useAddAppMutation.ts`
-- [ ] T056 [P] [US3] PR 16.7, the rest:
+- [X] T056 [P] [US3] PR 16.7, the rest:
   - `apps/web/components/PageWrapper.tsx` (canonical URL)
   - `apps/web/modules/{onboarding/components/onboarding-browser-view,connect-and-join/connect-and-join-view,videos/views/videos-single-view,maintenance/maintenance-view}.tsx`
   - `apps/web/app/(use-page-wrapper)/{payment/[uid]/PaymentPage,video/[uid]/page}.tsx`
@@ -386,7 +386,8 @@ description: "Task list for Organizations (spec 005)"
   - Shared client-safe `packages/app-store/_utils/getAppReturnToUrl.ts` (`window.location.origin`, `WEBAPP_URL` on the server); `OrgBaseUrlContext` lives in features and is out of reach for app-store
 - [X] T162 [P] [US3] Stripe billing-portal return URL defaults to `${WEBAPP_URL}/settings/billing` in `packages/app-store/stripepayment/api/portal.ts` and `packages/app-store/stripepayment/lib/services/base/BillingPortalService.ts`; pass the request and use `getOAuthAppOrigin` / `getOAuthSafeRedirectOptions`. Add tests
   - `buildReturnUrl(req, returnTo)` in `portal.ts`; the unused protected `BillingPortalService.buildReturnUrl` was removed. A relative `returnTo` now falls back to the billing URL instead of throwing
-- [ ] T163 [US3] Booker-facing payment return URLs use `WEBAPP_URL` in `packages/app-store/paypal/lib/PaymentService.ts` and `packages/app-store/hitpay/lib/PaymentService.ts`; make them follow the booking's organization base URL (webhook URLs stay on `WEBAPP_URL`). Add tests
+- [X] T163 [US3] Booker-facing payment return URLs use `WEBAPP_URL` in `packages/app-store/paypal/lib/PaymentService.ts` and `packages/app-store/hitpay/lib/PaymentService.ts`; make them follow the booking's organization base URL (webhook URLs stay on `WEBAPP_URL`). Add tests
+  - `handlePayment` passes `evt.bookerUrl` (from `OrganizationUrlService`) as an optional trailing `bookerUrl` to `IAbstractPaymentService.create`/`collectCard`. PayPal `collectCard` is unreachable today (`paymentOptionEnum` only allows `ON_BOOKING`)
 - [X] T164 [P] Delete dead `packages/app-store/_utils/paid-apps.ts` (no callers; owner approval for deletions)
 - [ ] T165 [P] [US3] `packages/app-store/{feishucalendar,larkcalendar}/api/callback.ts` catch blocks redirect to `state.returnTo` unvalidated; route it through `getSafeRedirectUrl` with `getOAuthSafeRedirectOptions(req)` (relative fallback kept). Add tests
 - [ ] T230 [US3] With `skipHostOrganizationCheck` (API v2), `loadAndValidateUsers` in `packages/features/bookings/lib/handleNewBooking/loadUsers.ts` still resolves the dynamic-group org slug from the API's own Host (loopback → default organization) when the flag is on, so non-platform API v2 dynamic group bookings only find default-organization users. Decide whether API v2 should scope by `forcedSlug` / the authenticated user's organization instead, and add tests
@@ -400,6 +401,7 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T183 [P] `packages/features/teams/services/TeamProfileService.ts` imports schemas from `@calcom/trpc/server/routers/viewer/teams/teamProfile.schema` (features must not import trpc). Move `ZTeamProfileMetadataSchema`, `TEAM_LOGO_DATA_URL_PATTERN` and the input types into `packages/features/teams/` and re-export from the trpc schema file
 - [ ] T200 [US4] Make `OrganizationMembershipService.removeMember` (FR-011) delegate to `OrganizationMoveService.moveUser` with the default organization as target (covers T180's `newUsername` and, if decided, T181's redirect), and drop `PrismaOrganizationMembershipRepository.moveToOrganization`: it deletes and recreates the `Profile`, so event types lose their `profileId` and the session `upId` breaks, and it leaves `Host` rows on the old organization's team events. Add tests
 - [ ] T201 [US5] Disable move redirects (US5-6) on the remaining username-reuse paths: a user renaming themselves (`packages/trpc/server/routers/viewer/me/updateProfile.handler.ts`) or an admin renaming them (`packages/trpc/server/routers/viewer/users/_router.ts`) to a username freed by a move in their organization. Call `TempOrgRedirectRepository.disableByFrom({ fromOrgId, from: username, types: ["User"] })`. Add tests
+- [ ] T210 [US3] NextAuth Google/Microsoft SSO on organization domains: `apps/web/modules/signup-view.tsx` and `apps/web/modules/auth/login-view.tsx` still start SSO at `NEXT_PUBLIC_WEBAPP_URL/auth/sso/*` (kept in T050), so an organization member signing in on their organization domain gets the session cookie on `WEBAPP_URL`. Decide whether to register per-domain redirect URIs at Google/Microsoft and make the NextAuth provider callbacks host-aware, or to keep SSO on `WEBAPP_URL` and hand off to the organization domain after sign-in
 
 ## Dependencies and execution order
 
