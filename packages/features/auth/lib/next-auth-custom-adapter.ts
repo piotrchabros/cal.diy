@@ -1,10 +1,12 @@
 import { TeamMembersService } from "@calcom/features/membership/services/TeamMembersService";
-import { findDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
 import logger from "@calcom/lib/logger";
+import { safeStringify } from "@calcom/lib/safeStringify";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Account, IdentityProvider, User } from "@calcom/prisma/client";
 import { Prisma } from "@calcom/prisma/client";
 import type { Adapter, AdapterAccount, AdapterUser } from "next-auth/adapters";
+import { findNewUserOrganizationId, type GetRequestHeaders } from "./findNewUserOrganizationId";
+import { usernameSlug } from "./usernameSlug";
 
 const parseIntSafe = (id: string | number): number => {
   if (typeof id === "number") return id;
@@ -39,8 +41,10 @@ const toAdapterAccount = (account: Account): AdapterAccount => ({
 
 const createUserData = (
   data: Omit<AdapterUser, "id">,
-  organizationId: number | null
+  organizationId: number | null,
+  username: string
 ): Prisma.UserCreateInput => ({
+  username,
   name: data.name || null,
   email: data.email,
   emailVerified: data.emailVerified || null,
@@ -66,11 +70,40 @@ const getAccountWhere = (provider: string, providerAccountId: string) => ({
   provider_providerAccountId: { provider, providerAccountId },
 });
 
-export default function CalComAdapter(prismaClient: PrismaClient): Adapter {
+export type CalComAdapterDeps = { getRequestHeaders?: GetRequestHeaders };
+
+export default function CalComAdapter(prismaClient: PrismaClient, deps?: CalComAdapterDeps): Adapter {
   return {
     createUser: async (data: Omit<AdapterUser, "id">) => {
-      const organizationId = await findDefaultOrganizationId();
-      const user = await prismaClient.user.create({ data: createUserData(data, organizationId) });
+      const organizationId = await findNewUserOrganizationId(deps?.getRequestHeaders);
+      // next-auth email sign-ups pass no name, so fall back to the email local part
+      const username = usernameSlug(data.name || data.email.split("@")[0]);
+      const user = await prismaClient.user.create({
+        data: createUserData(data, organizationId, username),
+      });
+      if (organizationId !== null) {
+        // Without a Profile/Membership the user would be stranded outside the org (an org Profile
+        // needs the username set above). next-auth turns the throw into
+        // /auth/error?error=EmailCreateAccount, so the half-created user is removed first.
+        try {
+          const { getOrganizationMembershipService } = await import(
+            "@calcom/features/organizations/di/OrganizationMembershipService.container"
+          );
+          await getOrganizationMembershipService().addMember({
+            organizationId,
+            userId: user.id,
+            role: "MEMBER",
+          });
+        } catch (err) {
+          logger.error("Failed to add sign-up to organization", {
+            userId: user.id,
+            organizationId,
+            error: safeStringify(err),
+          });
+          await prismaClient.user.delete({ where: { id: user.id }, select: { id: true } });
+          throw new Error(`Unable to add magic-link sign-up ${user.id} to organization ${organizationId}`);
+        }
+      }
       if (user.email) {
         try {
           await new TeamMembersService().acceptPendingInvitesOnSignup({
