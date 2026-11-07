@@ -23,6 +23,7 @@ import { meRouter } from "./me/_router";
 import { notetakerRouter } from "./notetaker/_router";
 import { oAuthRouter } from "./oAuth/_router";
 import { oooRouter } from "./ooo/_router";
+import { organizationRouter } from "./organization/_router";
 import { slotsRouter } from "./slots/_router";
 import { teamsRouter } from "./teams/_router";
 import { travelSchedulesRouter } from "./travelSchedules/_router";
@@ -59,4 +60,5 @@ export const viewerRouter = router({
   holidays: holidaysRouter,
   travelSchedules: travelSchedulesRouter,
   notetaker: notetakerRouter,
+  organization: organizationRouter,
 });
