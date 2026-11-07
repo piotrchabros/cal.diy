@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   eventTypeFindUnique: vi.fn(),
   getAdminOrOwnerMembership: vi.fn(),
   findByWebhookId: vi.fn(),
+  listWebhooks: vi.fn(),
   editHandler: vi.fn(),
   deleteHandler: vi.fn(),
   testTriggerHandler: vi.fn(),
@@ -34,7 +35,9 @@ vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => (
 }));
 
 vi.mock("@calcom/features/di/webhooks/containers/webhook", () => ({
-  getWebhookFeature: () => ({ repository: { findByWebhookId: mocks.findByWebhookId } }),
+  getWebhookFeature: () => ({
+    repository: { findByWebhookId: mocks.findByWebhookId, listWebhooks: mocks.listWebhooks },
+  }),
 }));
 
 vi.mock("./edit.handler", () => ({ editHandler: mocks.editHandler }));
@@ -64,6 +67,7 @@ describe("webhook router access control", () => {
     mocks.editHandler.mockResolvedValue({ ok: true });
     mocks.deleteHandler.mockResolvedValue({ id: "wh-team" });
     mocks.testTriggerHandler.mockResolvedValue({ ok: true });
+    mocks.listWebhooks.mockResolvedValue([]);
   });
 
   describe("team-owned webhook (userId null)", () => {
@@ -141,6 +145,111 @@ describe("webhook router access control", () => {
 
       await expect(createCaller(ctx).get({ id: "wh-plat" })).resolves.toEqual({ id: "wh-plat" });
       expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("event-type webhooks", () => {
+    const eventTypeWebhook = { id: "wh-et", userId: null, teamId: null, eventTypeId: 11 };
+
+    describe("by webhook id", () => {
+      beforeEach(() => {
+        mocks.webhookFindUnique.mockResolvedValue(eventTypeWebhook);
+        mocks.findByWebhookId.mockResolvedValue({ ...eventTypeWebhook, secret: "et-secret" });
+      });
+
+      it("lets the event type owner get it without a membership lookup", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 7, teamId: null });
+
+        await expect(createCaller(ctx).get({ id: "wh-et" })).resolves.toMatchObject({ secret: "et-secret" });
+        expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+      });
+
+      it("lets a team admin get, edit and delete a team event type's webhook", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+        mocks.deleteHandler.mockResolvedValue({ id: "wh-et" });
+        const caller = createCaller(ctx);
+
+        await expect(caller.get({ id: "wh-et" })).resolves.toMatchObject({ secret: "et-secret" });
+        await expect(caller.edit({ id: "wh-et", payloadTemplate: null })).resolves.toEqual({ ok: true });
+        await expect(caller.delete({ id: "wh-et" })).resolves.toEqual({ id: "wh-et" });
+        expect(mocks.getAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+      });
+
+      it("forbids a plain team member from getting, editing or deleting it", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.getAdminOrOwnerMembership.mockResolvedValue(null);
+        const caller = createCaller(ctx);
+
+        await expect(caller.get({ id: "wh-et" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(caller.edit({ id: "wh-et", payloadTemplate: null })).rejects.toMatchObject({
+          code: "FORBIDDEN",
+        });
+        await expect(caller.delete({ id: "wh-et" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.findByWebhookId).not.toHaveBeenCalled();
+        expect(mocks.editHandler).not.toHaveBeenCalled();
+        expect(mocks.deleteHandler).not.toHaveBeenCalled();
+      });
+
+      it("forbids access to another user's personal event type webhook", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 99, teamId: null });
+
+        await expect(createCaller(ctx).get({ id: "wh-et" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.findByWebhookId).not.toHaveBeenCalled();
+      });
+
+      it("returns NOT_FOUND when the event type is missing", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue(null);
+
+        await expect(createCaller(ctx).get({ id: "wh-et" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+        expect(mocks.findByWebhookId).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("by event type id only", () => {
+      it("lets the event type owner list its webhooks without a membership lookup", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 7, teamId: null });
+
+        await expect(createCaller(ctx).list({ eventTypeId: 11 })).resolves.toEqual([]);
+        expect(mocks.listWebhooks).toHaveBeenCalledWith(expect.objectContaining({ eventTypeId: 11 }));
+        expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+      });
+
+      it("lets a team admin list a team event type's webhooks", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+
+        await expect(createCaller(ctx).list({ eventTypeId: 11 })).resolves.toEqual([]);
+        expect(mocks.listWebhooks).toHaveBeenCalledWith(expect.objectContaining({ eventTypeId: 11 }));
+      });
+
+      it("forbids a plain team member from listing them", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.getAdminOrOwnerMembership.mockResolvedValue(null);
+
+        await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
+          code: "FORBIDDEN",
+        });
+        expect(mocks.listWebhooks).not.toHaveBeenCalled();
+      });
+
+      it("forbids listing another user's personal event type webhooks", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 99, teamId: null });
+
+        await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
+          code: "FORBIDDEN",
+        });
+        expect(mocks.listWebhooks).not.toHaveBeenCalled();
+      });
+
+      it("returns NOT_FOUND when the event type is missing", async () => {
+        mocks.eventTypeFindUnique.mockResolvedValue(null);
+
+        await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
+          code: "NOT_FOUND",
+        });
+        expect(mocks.listWebhooks).not.toHaveBeenCalled();
+      });
     });
   });
 });

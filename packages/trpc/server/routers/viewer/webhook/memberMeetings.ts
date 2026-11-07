@@ -67,7 +67,7 @@ export const assertCanManageTeamWebhooks = async ({
   await assertTeamAdminForMemberMeetings({ userId, teamId });
 };
 
-export const assertCanListEventTypeWebhooks = async ({
+export const assertCanManageEventTypeWebhooks = async ({
   userId,
   eventTypeId,
 }: {
@@ -85,7 +85,7 @@ export const assertCanListEventTypeWebhooks = async ({
 
   if (eventType.userId === userId) return;
 
-  // Team event types have no owner (userId null) and their webhooks expose secrets, so only team admins may list them.
+  // Team event types have no owner (userId null) and their webhooks expose secrets, so only team admins may manage them.
   if (eventType.teamId != null) {
     await assertTeamAdminForMemberMeetings({ userId, teamId: eventType.teamId });
     return;
