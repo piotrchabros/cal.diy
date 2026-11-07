@@ -1,10 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockGetAdminOrOwnerMembership = vi.fn();
+const mockHasMembership = vi.fn();
 
 vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
-  MembershipRepository: {
-    getAdminOrOwnerMembership: (...args: unknown[]) => mockGetAdminOrOwnerMembership(...args),
+  MembershipRepository: class {
+    static getAdminOrOwnerMembership(...args: unknown[]) {
+      return mockGetAdminOrOwnerMembership(...args);
+    }
+    hasMembership(...args: unknown[]) {
+      return mockHasMembership(...args);
+    }
   },
 }));
 vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
@@ -107,5 +113,49 @@ describe("createHandler includeMemberMeetings", () => {
       createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3, includeMemberMeetings: true } })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(prisma.webhook.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("createHandler cross-organization team isolation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.webhook.create).mockImplementation(
+      (args) => Promise.resolve({ ...args.data, eventTriggers: baseInput.eventTriggers }) as never
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("answers NOT_FOUND for a team the caller is not a member of when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    mockHasMembership.mockResolvedValue(false);
+
+    await expect(createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "Team not found",
+    });
+    expect(mockHasMembership).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
+    expect(prisma.webhook.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the webhook for a team member when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    mockHasMembership.mockResolvedValue(true);
+
+    await createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } });
+
+    expect(mockHasMembership).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
+    expect(createdData().teamId).toBe(3);
+  });
+
+  it("skips the membership check when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    await createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } });
+
+    expect(mockHasMembership).not.toHaveBeenCalled();
+    expect(createdData().user).toEqual({ connect: { id: 7 } });
   });
 });
