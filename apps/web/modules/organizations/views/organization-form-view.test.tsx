@@ -10,6 +10,20 @@ type MutationOptions = {
 type Mutation = { mutate: (input: unknown) => void; isPending: boolean };
 type GetQuery = { data: OrganizationDto | undefined; isPending: boolean; error: { message: string } | null };
 type OwnerRow = { id: number; email: string; username: string | null; name: string | null };
+type TeamRow = {
+  teamId: number;
+  name: string;
+  slug: string | null;
+  memberCount: number;
+  viewerIsMember: boolean;
+};
+type ListTeamsQuery = {
+  data: { pages: { items: TeamRow[] }[] };
+  isPending: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => void;
+};
 
 const mocks = vi.hoisted(() => ({
   createUseMutation: vi.fn<(options: MutationOptions) => Mutation>(),
@@ -19,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   getUseQuery: vi.fn<(input: { id: number }) => GetQuery>(),
   listPaginatedUseQuery:
     vi.fn<(input: unknown, options: unknown) => { data: { rows: OwnerRow[] }; isFetching: boolean }>(),
+  listTeamsUseInfiniteQuery: vi.fn<(input: unknown, options: unknown) => ListTeamsQuery>(),
   invalidateList: vi.fn<() => Promise<void>>(),
   invalidateGet: vi.fn<(input?: unknown) => Promise<void>>(),
   showToast: vi.fn<(message: string, variant: string) => void>(),
@@ -48,6 +63,7 @@ vi.mock("@calcom/trpc/react", () => ({
         listPaginated: { useQuery: mocks.listPaginatedUseQuery },
         organizations: {
           get: { useQuery: mocks.getUseQuery },
+          listTeams: { useInfiniteQuery: mocks.listTeamsUseInfiniteQuery },
           create: { useMutation: mocks.createUseMutation },
           update: { useMutation: mocks.updateUseMutation },
         },
@@ -80,6 +96,17 @@ function setupMocks(getQuery?: GetQuery): void {
   mocks.createUseMutation.mockReturnValue({ mutate: mocks.createMutate, isPending: false });
   mocks.updateUseMutation.mockReturnValue({ mutate: mocks.updateMutate, isPending: false });
   mocks.listPaginatedUseQuery.mockReturnValue({ data: { rows: [OWNER] }, isFetching: false });
+  mocks.listTeamsUseInfiniteQuery.mockReturnValue({
+    data: {
+      pages: [
+        { items: [{ teamId: 5, name: "Sales", slug: "sales", memberCount: 3, viewerIsMember: false }] },
+      ],
+    },
+    isPending: false,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: vi.fn(),
+  });
   mocks.invalidateList.mockResolvedValue(undefined);
   mocks.invalidateGet.mockResolvedValue(undefined);
   if (getQuery) mocks.getUseQuery.mockReturnValue(getQuery);
@@ -157,6 +184,14 @@ describe("OrganizationFormView", () => {
       expect(mocks.push).not.toHaveBeenCalled();
     });
 
+    it("does not render the teams section", () => {
+      setupMocks();
+      render(<OrganizationFormView />);
+
+      expect(screen.queryByTestId("organization-teams-section")).not.toBeInTheDocument();
+      expect(mocks.listTeamsUseInfiniteQuery).not.toHaveBeenCalled();
+    });
+
     it("toasts, invalidates the list and navigates back on success", async () => {
       setupMocks();
       render(<OrganizationFormView />);
@@ -179,6 +214,18 @@ describe("OrganizationFormView", () => {
       expect(screen.getByLabelText("domain")).toHaveValue("acme.com");
       expect(screen.getByText("Jane (jane@acme.com)")).toBeInTheDocument();
       expect(screen.queryByTestId("organization-domain-warning")).not.toBeInTheDocument();
+    });
+
+    it("lists the organization's teams below the form", () => {
+      renderEdit({ data: buildOrg(), isPending: false, error: null });
+
+      expect(screen.getByTestId("organization-teams-section")).toBeInTheDocument();
+      expect(mocks.listTeamsUseInfiniteQuery.mock.calls[0]?.[0]).toEqual({
+        organizationId: 2,
+        search: undefined,
+        limit: 50,
+      });
+      expect(screen.getByTestId("organization-team-row-5")).toHaveTextContent("Sales");
     });
 
     it("warns when the domain changes", () => {
