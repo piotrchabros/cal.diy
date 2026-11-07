@@ -197,12 +197,80 @@ export class OrganizationMembershipService {
     email: string;
     role: OrganizationRoleDto;
   }): Promise<{ invited: true }> {
-    const { organizationId, actorUserId, actorName, role } = params;
+    const { organizationId, actorUserId, role } = params;
     const actorRole = await this.requireManagerRole(organizationId, actorUserId);
     if (role === "OWNER" && actorRole !== "OWNER") {
       throw ErrorWithCode.Factory.Forbidden("Only owners can grant or remove the owner role");
     }
 
+    return this.sendOrganizationInvite(params);
+  }
+
+  // Instance admins aren't members of the org they create, so there is no actor role to check
+  async inviteOwner({
+    organizationId,
+    email,
+    inviterName,
+  }: {
+    organizationId: number;
+    email: string;
+    inviterName: string;
+  }): Promise<{ invited: true }> {
+    return this.sendOrganizationInvite({
+      organizationId,
+      actorUserId: null,
+      actorName: inviterName,
+      email,
+      role: "OWNER",
+    });
+  }
+
+  // Additive: existing owners keep their role, the user just becomes one more owner
+  async grantOwner({
+    organizationId,
+    userId,
+  }: {
+    organizationId: number;
+    userId: number;
+  }): Promise<{ userId: number; role: "OWNER" }> {
+    const repository = this.deps.organizationMembershipRepository;
+    const membership = await repository.findMembership({ organizationId, userId });
+    if (membership?.accepted) {
+      if (membership.role !== "OWNER") await repository.updateRole({ organizationId, userId, role: "OWNER" });
+      this.logOwnerGrant(organizationId, userId);
+      return { userId, role: "OWNER" };
+    }
+
+    const user = await repository.findUserById(userId);
+    if (!user) throw ErrorWithCode.Factory.NotFound("Owner user not found");
+    if (user.username === null) {
+      throw ErrorWithCode.Factory.PreconditionFailed(
+        "The owner needs a username before joining an organization"
+      );
+    }
+    if (user.organizationId !== null && user.organizationId !== organizationId) {
+      throw ErrorWithCode.Factory.PreconditionFailed("owner_in_another_organization");
+    }
+
+    const member = await this.addMember({ organizationId, userId, role: "OWNER" });
+    // Accepting a pending invite keeps the role it was sent with, so it has to be raised separately
+    if (member.role !== "OWNER") await repository.updateRole({ organizationId, userId, role: "OWNER" });
+    this.logOwnerGrant(organizationId, userId);
+    return { userId, role: "OWNER" };
+  }
+
+  private logOwnerGrant(organizationId: number, userId: number): void {
+    log.info("organization.owner.grant", { action: "organization.owner.grant", organizationId, userId });
+  }
+
+  private async sendOrganizationInvite(params: {
+    organizationId: number;
+    actorUserId: number | null;
+    actorName: string;
+    email: string;
+    role: OrganizationRoleDto;
+  }): Promise<{ invited: true }> {
+    const { organizationId, actorUserId, actorName, role } = params;
     const organization = await this.deps.organizationRepository.findById(organizationId);
     if (!organization) throw ErrorWithCode.Factory.NotFound("Organization not found");
 
@@ -275,6 +343,10 @@ export class OrganizationMembershipService {
 
   async findMembershipCandidate(userId: number): Promise<MembershipUserRecord | null> {
     return this.deps.organizationMembershipRepository.findUserById(userId);
+  }
+
+  async findMembershipCandidateByEmail(email: string): Promise<MembershipUserRecord | null> {
+    return this.deps.organizationMembershipRepository.findUserByEmail(email.trim().toLowerCase());
   }
 
   async listMembers(params: {
