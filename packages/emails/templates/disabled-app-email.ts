@@ -1,7 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -12,6 +10,7 @@ export default class DisabledAppEmail extends BaseEmail {
   t: TFunction;
   title?: string;
   eventTypeId?: number;
+  baseUrl?: string;
 
   constructor(
     email: string,
@@ -19,7 +18,8 @@ export default class DisabledAppEmail extends BaseEmail {
     appType: string[],
     t: TFunction,
     title?: string,
-    eventTypeId?: number
+    eventTypeId?: number,
+    baseUrl?: string
   ) {
     super();
     this.email = email;
@@ -28,6 +28,7 @@ export default class DisabledAppEmail extends BaseEmail {
     this.t = t;
     this.title = title;
     this.eventTypeId = eventTypeId;
+    this.baseUrl = baseUrl;
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
@@ -44,6 +45,7 @@ export default class DisabledAppEmail extends BaseEmail {
         eventTypeId: this.eventTypeId,
         appType: this.appType,
         t: this.t,
+        baseUrl: this.baseUrl,
       }),
       text: this.getTextBody(),
     };

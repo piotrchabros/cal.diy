@@ -1,7 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { WEBAPP_URL } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import { BaseEmailHtml, CallToAction } from "../components";
 
 export const DisabledAppEmail = (
@@ -11,9 +9,11 @@ export const DisabledAppEmail = (
     t: TFunction;
     title?: string;
     eventTypeId?: number;
+    baseUrl?: string;
   } & Partial<React.ComponentProps<typeof BaseEmailHtml>>
 ) => {
   const { title, appName, eventTypeId, t, appType } = props;
+  const baseUrl = props.baseUrl ?? WEBAPP_URL;
 
   return (
     <BaseEmailHtml subject={t("app_disabled", { appName: appName })}>
@@ -30,20 +30,20 @@ export const DisabledAppEmail = (
 
           <CallToAction
             label={t("edit_event_type")}
-            href={`${WEBAPP_URL}/event-types/${eventTypeId}?tabName=apps`}
+            href={`${baseUrl}/event-types/${eventTypeId}?tabName=apps`}
           />
         </>
       ) : title && eventTypeId ? (
         <>
           <p>
-            <>{(t("app_disabled_with_event_type"), { appName: appName, title: title })}</>
+            <>{t("app_disabled_with_event_type", { appName: appName, title: title })}</>
           </p>
 
           <hr style={{ marginBottom: "24px" }} />
 
           <CallToAction
             label={t("edit_event_type")}
-            href={`${WEBAPP_URL}/event-types/${eventTypeId}?tabName=apps`}
+            href={`${baseUrl}/event-types/${eventTypeId}?tabName=apps`}
           />
         </>
       ) : appType.some((type) => type === "video") ? (
@@ -54,7 +54,7 @@ export const DisabledAppEmail = (
 
           <hr style={{ marginBottom: "24px" }} />
 
-          <CallToAction label={t("navigate_installed_apps")} href={`${WEBAPP_URL}/apps/installed`} />
+          <CallToAction label={t("navigate_installed_apps")} href={`${baseUrl}/apps/installed`} />
         </>
       ) : appType.some((type) => type === "calendar") ? (
         <>
@@ -67,7 +67,7 @@ export const DisabledAppEmail = (
 
           <hr style={{ marginBottom: "24px" }} />
 
-          <CallToAction label={t("navigate_installed_apps")} href={`${WEBAPP_URL}/apps/installed`} />
+          <CallToAction label={t("navigate_installed_apps")} href={`${baseUrl}/apps/installed`} />
         </>
       ) : (
         <>
@@ -77,7 +77,7 @@ export const DisabledAppEmail = (
 
           <hr style={{ marginBottom: "24px" }} />
 
-          <CallToAction label={t("navigate_installed_apps")} href={`${WEBAPP_URL}/apps/installed`} />
+          <CallToAction label={t("navigate_installed_apps")} href={`${baseUrl}/apps/installed`} />
         </>
       )}
     </BaseEmailHtml>

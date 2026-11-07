@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { sendTeamInviteEmail } from "@calcom/emails/organization-email-service";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
+import type { OrganizationUrlService } from "@calcom/features/organizations/services/OrganizationUrlService";
 import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { getTranslation } from "@calcom/i18n/server";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -48,6 +49,7 @@ export interface ITeamInviteServiceDeps {
     "findTeamInviteTokenByEmail" | "deleteTeamInviteTokens" | "createTeamInviteToken"
   >;
   sendInviteEmail: SendTeamInviteEmail;
+  organizationUrlService?: Pick<OrganizationUrlService, "getBaseUrlForTeam">;
 }
 
 export class TeamInviteService {
@@ -71,10 +73,12 @@ export class TeamInviteService {
     isOrganization?: boolean;
   }) {
     const token = await this.ensureInviteToken({ teamId, email });
+    const organizationUrlService = this.deps.organizationUrlService ?? getOrganizationUrlService();
+    const baseUrl = await organizationUrlService.getBaseUrlForTeam({ teamId });
     await this.deps.sendInviteEmail({
       to: email,
       teamName,
-      joinLink: `${WEBAPP_URL}/auth/team-invite?token=${token}`,
+      joinLink: `${baseUrl}/auth/team-invite?token=${token}`,
       isExistingUser,
       inviterName,
       locale,

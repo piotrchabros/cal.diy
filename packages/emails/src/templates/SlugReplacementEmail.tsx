@@ -1,8 +1,6 @@
-import type { TFunction } from "i18next";
-
 import ServerTrans from "@calcom/lib/components/ServerTrans";
 import { WEBAPP_URL } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import { BaseEmailHtml, CallToAction } from "../components";
 
 export const SlugReplacementEmail = (
@@ -11,6 +9,7 @@ export const SlugReplacementEmail = (
     name: string;
     teamName: string;
     t: TFunction;
+    baseUrl?: string;
   } & Partial<React.ComponentProps<typeof BaseEmailHtml>>
 ) => {
   const { slug, name, teamName, t } = props;
@@ -39,7 +38,7 @@ export const SlugReplacementEmail = (
               <td align="center">
                 <CallToAction
                   label={t("review_event_type")}
-                  href={`${WEBAPP_URL}/event-types`}
+                  href={`${props.baseUrl ?? WEBAPP_URL}/event-types`}
                   endIconName="white-arrow-right"
                 />
               </td>

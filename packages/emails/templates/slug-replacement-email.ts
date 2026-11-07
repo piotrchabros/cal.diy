@@ -1,7 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -11,14 +9,23 @@ export default class SlugReplacementEmail extends BaseEmail {
   teamName: string | null;
   slug: string;
   t: TFunction;
+  baseUrl?: string;
 
-  constructor(email: string, name: string, teamName: string | null, slug: string, t: TFunction) {
+  constructor(
+    email: string,
+    name: string,
+    teamName: string | null,
+    slug: string,
+    t: TFunction,
+    baseUrl?: string
+  ) {
     super();
     this.email = email;
     this.name = name;
     this.teamName = teamName;
     this.slug = slug;
     this.t = t;
+    this.baseUrl = baseUrl;
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
@@ -31,6 +38,7 @@ export default class SlugReplacementEmail extends BaseEmail {
         name: this.name,
         teamName: this.teamName || "",
         t: this.t,
+        baseUrl: this.baseUrl,
       }),
       text: this.getTextBody(),
     };

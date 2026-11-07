@@ -90,4 +90,22 @@ describe("TeamInviteService", () => {
 
     expect(sendInviteEmail).toHaveBeenCalledWith(expect.objectContaining({ isOrganization: true }));
   });
+
+  it("builds the join link on the team's organization base URL", async () => {
+    const teamRepository = makeTeamRepo({ token: "valid-token", expires: new Date(NOW.getTime() + DAY_MS) });
+    const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
+    const getBaseUrlForTeam = vi.fn().mockResolvedValue("https://org.example.com");
+    const service = new TeamInviteService({
+      teamRepository: teamRepository as never,
+      sendInviteEmail,
+      organizationUrlService: { getBaseUrlForTeam },
+    });
+
+    await service.sendInvite(inviteInput);
+
+    expect(getBaseUrlForTeam).toHaveBeenCalledWith({ teamId: 7 });
+    expect(sendInviteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ joinLink: "https://org.example.com/auth/team-invite?token=valid-token" })
+    );
+  });
 });
