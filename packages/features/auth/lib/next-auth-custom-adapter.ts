@@ -41,7 +41,7 @@ const toAdapterAccount = (account: Account): AdapterAccount => ({
 
 const createUserData = (
   data: Omit<AdapterUser, "id">,
-  organizationId: number | null,
+  organizationId: number,
   username: string
 ): Prisma.UserCreateInput => ({
   username,
@@ -49,7 +49,7 @@ const createUserData = (
   email: data.email,
   emailVerified: data.emailVerified || null,
   avatarUrl: data.image || null,
-  ...(organizationId !== null && { organization: { connect: { id: organizationId } } }),
+  organization: { connect: { id: organizationId } },
 });
 
 const createAccountData = (account: AdapterAccount): Prisma.AccountCreateInput => ({
@@ -81,28 +81,26 @@ export default function CalComAdapter(prismaClient: PrismaClient, deps?: CalComA
       const user = await prismaClient.user.create({
         data: createUserData(data, organizationId, username),
       });
-      if (organizationId !== null) {
-        // Without a Profile/Membership the user would be stranded outside the org (an org Profile
-        // needs the username set above). next-auth turns the throw into
-        // /auth/error?error=EmailCreateAccount, so the half-created user is removed first.
-        try {
-          const { getOrganizationMembershipService } = await import(
-            "@calcom/features/organizations/di/OrganizationMembershipService.container"
-          );
-          await getOrganizationMembershipService().addMember({
-            organizationId,
-            userId: user.id,
-            role: "MEMBER",
-          });
-        } catch (err) {
-          logger.error("Failed to add sign-up to organization", {
-            userId: user.id,
-            organizationId,
-            error: safeStringify(err),
-          });
-          await prismaClient.user.delete({ where: { id: user.id }, select: { id: true } });
-          throw new Error(`Unable to add magic-link sign-up ${user.id} to organization ${organizationId}`);
-        }
+      // Without a Profile/Membership the user would be stranded outside the org (an org Profile
+      // needs the username set above). next-auth turns the throw into
+      // /auth/error?error=EmailCreateAccount, so the half-created user is removed first.
+      try {
+        const { getOrganizationMembershipService } = await import(
+          "@calcom/features/organizations/di/OrganizationMembershipService.container"
+        );
+        await getOrganizationMembershipService().addMember({
+          organizationId,
+          userId: user.id,
+          role: "MEMBER",
+        });
+      } catch (err) {
+        logger.error("Failed to add sign-up to organization", {
+          userId: user.id,
+          organizationId,
+          error: safeStringify(err),
+        });
+        await prismaClient.user.delete({ where: { id: user.id }, select: { id: true } });
+        throw new Error(`Unable to add magic-link sign-up ${user.id} to organization ${organizationId}`);
       }
       if (user.email) {
         try {

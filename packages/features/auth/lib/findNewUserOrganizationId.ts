@@ -3,9 +3,7 @@ import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganization
 
 export type GetRequestHeaders = () => Pick<Headers, "get">;
 
-export async function findNewUserOrganizationId(
-  getRequestHeaders?: GetRequestHeaders
-): Promise<number | null> {
+export async function findNewUserOrganizationId(getRequestHeaders?: GetRequestHeaders): Promise<number> {
   if (isOrganizationsEnabled() && getRequestHeaders) {
     const { getOrgFromRequest } = await import("@calcom/features/organizations/lib/getOrgFromRequest");
     const org = await getOrgFromRequest(getRequestHeaders());
