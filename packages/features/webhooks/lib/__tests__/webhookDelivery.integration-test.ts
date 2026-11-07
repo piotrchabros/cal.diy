@@ -1,6 +1,7 @@
 import { prisma } from "@calcom/prisma";
 import type { EventType, User, Webhook } from "@calcom/prisma/client";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { v4 } from "uuid";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { WebhookTaskPayload } from "../types/webhookTask";
@@ -52,6 +53,7 @@ describe("Webhook Producer Integration", () => {
         email: `webhook-producer-test-${testId}@example.com`,
         username: `webhook-producer-test-${testId}`,
         name: "Webhook Producer Test User",
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
       },
     });
 

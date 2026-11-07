@@ -6,6 +6,7 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import { ENABLE_ASYNC_TASKER } from "@calcom/lib/constants";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { expect } from "vitest";
 import { z } from "zod";
 import { FakeBotGateway } from "../bot/FakeBotGateway";
@@ -203,6 +204,7 @@ export async function createQuickstartHarness(label: string): Promise<Quickstart
           name,
           emailVerified: new Date(),
           locale: "en",
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
         },
         select: { id: true, email: true },
       });

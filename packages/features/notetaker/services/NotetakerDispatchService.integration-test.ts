@@ -1,4 +1,5 @@
 import { prisma } from "@calcom/prisma";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { INotetakerBotGateway, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
 import { createNotetakerBotGatewayError } from "../bot/INotetakerBotGateway";
@@ -109,6 +110,7 @@ describe("NotetakerDispatchService (integration)", () => {
       data: {
         email: `notetaker-dispatch-it-${runId}@example.com`,
         username: `notetaker-dispatch-it-${runId}`,
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
       },
       select: { id: true },
     });

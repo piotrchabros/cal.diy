@@ -1,12 +1,12 @@
-import { prisma } from "@calcom/prisma";
-import type { PrismaClient } from "@calcom/prisma";
-import { CancellationReasonRequirement } from "@calcom/prisma/enums";
 import i18nMock from "@calcom/testing/lib/__mocks__/libServerI18n";
+import type { PrismaClient } from "@calcom/prisma";
+import { prisma } from "@calcom/prisma";
+import { CancellationReasonRequirement } from "@calcom/prisma/enums";
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
 
 // import { mockNoTranslations } from "@calcom/testing/lib/bookingScenario/bookingScenario";
 
-import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { getRawEventType } from "./getEventTypeById";
 
 export function mockNoTranslations() {
@@ -32,15 +32,14 @@ describe("getRawEventType", () => {
     users: [],
   };
 
-  const createTestUser = async (overrides?: {
-    username?: string;
-  }) => {
+  const createTestUser = async (overrides?: { username?: string }) => {
     const timestamp = Date.now() + Math.random();
     const username = overrides?.username ?? `testuser-${timestamp}`;
     const user = await prisma.user.create({
       data: {
         username,
         email: `testuser-${timestamp}@example.com`,
+        organizationId: await getOrCreateDefaultOrganizationId(prisma),
       },
     });
     createdResources.users.push(user.id);
@@ -127,9 +126,7 @@ describe("getRawEventType", () => {
         prisma: prisma as unknown as PrismaClient,
       });
 
-      expect(result?.requiresCancellationReason).toBe(
-        CancellationReasonRequirement.MANDATORY_ATTENDEE_ONLY
-      );
+      expect(result?.requiresCancellationReason).toBe(CancellationReasonRequirement.MANDATORY_ATTENDEE_ONLY);
     });
 
     test.skip("should return null when user doesn't have access to event type", async () => {
@@ -138,6 +135,7 @@ describe("getRawEventType", () => {
         data: {
           username: "owner",
           email: "owner1@example.com",
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
         },
       });
 
@@ -145,6 +143,7 @@ describe("getRawEventType", () => {
         data: {
           username: "otheruser",
           email: "otheruser@example.com",
+          organizationId: await getOrCreateDefaultOrganizationId(prisma),
         },
       });
 

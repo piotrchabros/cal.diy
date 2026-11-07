@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
-
 import { prisma } from "@calcom/prisma";
-
+import { getOrCreateDefaultOrganizationId } from "@calcom/testing/lib/defaultOrganization";
+import { afterEach, describe, expect, it } from "vitest";
 import type { FeatureId } from "./config";
 import { FeaturesRepository } from "./features.repository";
 
@@ -39,6 +38,7 @@ async function setup(): Promise<TestEntities> {
     data: {
       email: `test-${id}@example.com`,
       username: `test-${id}`,
+      organizationId: await getOrCreateDefaultOrganizationId(prisma),
     },
   });
 
