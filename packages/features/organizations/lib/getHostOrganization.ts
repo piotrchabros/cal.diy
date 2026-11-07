@@ -10,7 +10,7 @@ function hasGet(headers: Pick<Headers, "get"> | IncomingHttpHeaders): headers is
   return typeof (headers as { get?: unknown }).get === "function";
 }
 
-function toHeadersGetter(headers: Pick<Headers, "get"> | IncomingHttpHeaders): Pick<Headers, "get"> {
+export function toHeadersGetter(headers: Pick<Headers, "get"> | IncomingHttpHeaders): Pick<Headers, "get"> {
   if (hasGet(headers)) return headers;
   return {
     get(name) {

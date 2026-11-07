@@ -7,15 +7,24 @@ import { LRUCache } from "lru-cache";
 import type { GetServerSidePropsContext, NextApiRequest } from "next";
 import type { AuthOptions, Session } from "next-auth";
 import { getToken } from "next-auth/jwt";
+import { isSessionInRequestOrganization } from "./isSessionInRequestOrganization";
 
 class LicenseKeySingleton {
-  static async getInstance(..._args: unknown[]) { return new LicenseKeySingleton(); }
-  async checkLicense() { return true; }
-  async validateLicenseKey() { return true; }
+  static async getInstance(..._args: unknown[]) {
+    return new LicenseKeySingleton();
+  }
+  async checkLicense() {
+    return true;
+  }
+  async validateLicenseKey() {
+    return true;
+  }
 }
 class DeploymentRepository {
   constructor(_prisma?: unknown) {}
-  async findFirst(..._args: unknown[]) { return null; }
+  async findFirst(..._args: unknown[]) {
+    return null;
+  }
 }
 
 const log = logger.getSubLogger({ prefix: ["getServerSession"] });
@@ -54,18 +63,25 @@ export async function getServerSession(options: {
     return null;
   }
 
-  const cachedSession = CACHE.get(JSON.stringify(token));
-
-  if (cachedSession) {
-    log.debug("Returning cached session", safeStringify(cachedSession));
-    return cachedSession;
-  }
-
   const userId = token.sub ? Number(token.sub) : null;
 
   if (!userId || userId <= 0) {
     log.warn("Invalid or missing user ID in token", { sub: token.sub });
     return null;
+  }
+
+  // Runs before the cache lookup so a token copied to another organization's domain
+  // can't be served from a session cached for the user's own organization.
+  if (!(await isSessionInRequestOrganization({ userId, headers: req.headers }))) {
+    log.warn("Session token used outside the user's organization", { userId });
+    return null;
+  }
+
+  const cachedSession = CACHE.get(JSON.stringify(token));
+
+  if (cachedSession) {
+    log.debug("Returning cached session", safeStringify(cachedSession));
+    return cachedSession;
   }
 
   const userFromDb = await prisma.user.findUnique({
