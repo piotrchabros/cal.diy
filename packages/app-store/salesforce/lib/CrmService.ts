@@ -256,6 +256,8 @@ class SalesforceCRMService implements CRM {
       oauth2: {
         clientId: consumer_key,
         clientSecret: consumer_secret,
+        // Only used by jsforce's authorize flows; refresh goes through refreshAccessToken, which sends no
+        // redirect_uri, so credentials connected on an organization domain keep refreshing.
         redirectUri: `${WEBAPP_URL}/api/integrations/salesforce/callback`,
       },
       instanceUrl: credentialKey.instance_url,

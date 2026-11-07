@@ -8,6 +8,8 @@ import type { BasecampToken } from "./types";
 export const refreshAccessToken = async (credential: CredentialPayload) => {
   const { client_id: clientId, client_secret: clientSecret, user_agent: userAgent } = await getBasecampKeys();
   const credentialKey = credential.key as BasecampToken;
+  // Refresh grants don't validate redirect_uri, so the default-domain value stays valid for credentials
+  // connected on an organization domain.
   const tokenInfo = await fetch(
     `https://launchpad.37signals.com/authorization/token?type=refresh&refresh_token=${credentialKey.refresh_token}&client_id=${clientId}&redirect_uri=${WEBAPP_URL}&client_secret=${clientSecret}`,
     { method: "POST", headers: { "User-Agent": userAgent } }

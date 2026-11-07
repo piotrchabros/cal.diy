@@ -380,6 +380,8 @@ class HubspotCalendarService implements CRM {
       try {
         const hubspotRefreshToken: HubspotToken = await refreshOAuthTokens(
           async () =>
+            // Refresh grants don't validate redirect_uri, so the default-domain value stays valid for
+            // credentials connected on an organization domain.
             await this.hubspotClient.oauth.tokensApi.createToken(
               "refresh_token",
               undefined,
