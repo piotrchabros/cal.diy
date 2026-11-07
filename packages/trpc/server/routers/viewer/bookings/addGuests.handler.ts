@@ -9,6 +9,7 @@ import {
   type EventTypeBrandingData,
   getEventTypeService,
 } from "@calcom/features/eventtypes/di/EventTypeService.container";
+import { getBookingOrganizationBaseUrl } from "@calcom/features/organizations/lib/getBookingOrganizationBaseUrl";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getTranslation } from "@calcom/i18n/server";
 import { extractBaseEmail } from "@calcom/lib/extract-base-email";
@@ -304,6 +305,10 @@ export async function buildCalendarEvent(
     seatsShowAttendees: booking.eventType?.seatsShowAttendees,
     customReplyToEmail: booking.eventType?.customReplyToEmail,
     organizationId: booking.user?.profiles?.[0]?.organizationId ?? null,
+    bookerUrl: await getBookingOrganizationBaseUrl({
+      teamId: booking.eventType?.teamId ?? null,
+      organizerUserId: booking.userId,
+    }),
     hideBranding: booking.eventTypeId
       ? await getEventTypeService().shouldHideBrandingForEventType(booking.eventTypeId, {
           team: booking.eventType?.team
