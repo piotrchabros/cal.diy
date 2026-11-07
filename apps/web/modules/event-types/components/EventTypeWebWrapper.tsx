@@ -5,6 +5,7 @@ import { useHandleRouteChange } from "@calcom/atoms/event-types/hooks/useHandleR
 import { useTabsNavigations } from "@calcom/atoms/event-types/hooks/useTabsNavigations";
 import type { ChildrenEventType } from "@calcom/features/eventtypes/components/ChildrenEventTypeSelect";
 import type { EventTypeSetupProps } from "@calcom/features/eventtypes/lib/types";
+import { useOrgBaseUrlOr } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { WEBSITE_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useTypedQuery } from "@calcom/lib/hooks/useTypedQuery";
@@ -110,6 +111,7 @@ const EventTypeWeb = ({
   id: number;
 }) => {
   const { t } = useLocale();
+  const publicBase = useOrgBaseUrlOr(WEBSITE_URL);
   const utils = trpc.useUtils();
   const pathname = usePathname();
   const appRouter = useAppRouter();
@@ -176,7 +178,7 @@ const EventTypeWeb = ({
 
   const orgBranding = null as { id: number; [key: string]: unknown } | null;
 
-  const bookerUrl = orgBranding ? "" : WEBSITE_URL;
+  const bookerUrl = orgBranding ? "" : publicBase;
   const permalink = `${bookerUrl}/${team ? `team/${team.slug}` : eventType.users[0].username}/${
     eventType.slug
   }`;
