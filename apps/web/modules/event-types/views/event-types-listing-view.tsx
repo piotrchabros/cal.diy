@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog } from "@calcom/features/components/controlled-dialog";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import { APP_NAME } from "@calcom/lib/constants";
 import { extractHostTimezone, filterActiveLinks } from "@calcom/lib/hashedLinksUtils";
 import { useCopy } from "@calcom/lib/hooks/useCopy";
@@ -288,6 +289,7 @@ export const InfiniteEventTypeList = ({
   debouncedSearchTerm,
 }: InfiniteEventTypeListProps): JSX.Element => {
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -582,6 +584,7 @@ export const InfiniteEventTypeList = ({
                             size="sm"
                             truncateAfter={4}
                             hideTruncatedAvatarsCount={true}
+                            baseUrl={orgBaseUrl}
                             users={type?.users ?? []}
                           />
                         )}
@@ -591,6 +594,7 @@ export const InfiniteEventTypeList = ({
                             size="sm"
                             truncateAfter={4}
                             hideTruncatedAvatarsCount={true}
+                            baseUrl={orgBaseUrl}
                             users={type?.children.flatMap((ch) => ch.users) ?? []}
                           />
                         )}

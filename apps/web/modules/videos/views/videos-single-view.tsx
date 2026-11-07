@@ -1,12 +1,8 @@
 "use client";
 
 import dayjs from "@calcom/dayjs";
-import {
-  RECORDING_DEFAULT_ICON,
-  TRANSCRIPTION_STOPPED_ICON,
-  WEBAPP_URL,
-  WEBSITE_URL,
-} from "@calcom/lib/constants";
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
+import { RECORDING_DEFAULT_ICON, TRANSCRIPTION_STOPPED_ICON, WEBSITE_URL } from "@calcom/lib/constants";
 import { formatToLocalizedDate, formatToLocalizedTime } from "@calcom/lib/dayjs";
 import { emailRegex } from "@calcom/lib/emailSchema";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
@@ -309,6 +305,7 @@ interface LogInOverlayProps {
 
 export function LogInOverlay(props: LogInOverlayProps) {
   const { t } = useLocale();
+  const orgBaseUrl = useOrgBaseUrl();
   const {
     bookingUid,
     bookingTitle,
@@ -509,7 +506,7 @@ export function LogInOverlay(props: LogInOverlayProps) {
 
           <p className="text-center text-sm text-subtle">
             <a
-              href={`${WEBAPP_URL}/auth/login?callbackUrl=${WEBAPP_URL}/video/${bookingUid}`}
+              href={`${orgBaseUrl}/auth/login?callbackUrl=${orgBaseUrl}/video/${bookingUid}`}
               className="text-emphasis underline">
               {t("sign_in")}
             </a>{" "}

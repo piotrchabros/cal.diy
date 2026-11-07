@@ -281,7 +281,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/components/getting-started/components/AppConnectionItem.tsx`
   - `apps/web/modules/apps/{components/AppCard,installation/[[...step]]/step-view}.tsx`
   - `packages/app-store/_utils/useAddAppMutation.ts`
-- [ ] T056 [P] [US3] PR 16.7, the rest:
+- [X] T056 [P] [US3] PR 16.7, the rest:
   - `apps/web/components/PageWrapper.tsx` (canonical URL)
   - `apps/web/modules/{onboarding/components/onboarding-browser-view,connect-and-join/connect-and-join-view,videos/views/videos-single-view,maintenance/maintenance-view}.tsx`
   - `apps/web/app/(use-page-wrapper)/{payment/[uid]/PaymentPage,video/[uid]/page}.tsx`
