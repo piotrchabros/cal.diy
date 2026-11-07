@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockResolveMemberSharingTeamIds = vi.fn();
 const mockHandleWebhookTrigger = vi.fn();
+const mockGetBaseUrl = vi.fn();
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
+  getOrganizationUrlService: () => ({ getBaseUrl: (...args: unknown[]) => mockGetBaseUrl(...args) }),
+}));
 
 vi.mock("@calcom/features/notetaker/lib/webhookSharingTeam", () => ({
   resolveMemberSharingTeamIds: (...args: unknown[]) => mockResolveMemberSharingTeamIds(...args),
@@ -45,6 +50,7 @@ vi.mock("@calcom/prisma", () => {
   return { default: mockPrisma, prisma: mockPrisma };
 });
 
+import { getEventTypeService } from "@calcom/features/eventtypes/di/EventTypeService.container";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus, WebhookTriggerEvents } from "@calcom/prisma/enums";
 import { confirmHandler } from "./confirm.handler";
@@ -118,5 +124,38 @@ describe("confirmHandler reject member sharing teams", () => {
     await reject();
 
     expect(mockHandleWebhookTrigger.mock.calls[0][0].subscriberOptions.memberSharingTeamIds).toEqual([]);
+  });
+});
+
+describe("confirmHandler bookerUrl", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveMemberSharingTeamIds.mockResolvedValue([]);
+    mockGetBaseUrl.mockResolvedValue("https://org.example.com");
+  });
+
+  it("uses the organizer's organization base URL", async () => {
+    vi.mocked(prisma.booking.findUniqueOrThrow).mockResolvedValue(booking as never);
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ organizationId: 5 } as never);
+
+    await reject();
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 5 });
+    expect(mockHandleWebhookTrigger.mock.calls[0][0].webhookData.bookerUrl).toBe("https://org.example.com");
+  });
+
+  it("prefers the team's parent organization for a team event", async () => {
+    vi.mocked(getEventTypeService).mockReturnValue({
+      shouldHideBrandingForEventType: vi.fn().mockResolvedValue(false),
+    } as never);
+    vi.mocked(prisma.booking.findUniqueOrThrow).mockResolvedValue({
+      ...booking,
+      eventType: { id: 1, title: "Team call", team: { id: 2, name: "Team", parentId: 9 }, metadata: {} },
+    } as never);
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ organizationId: 5 } as never);
+
+    await reject();
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 9 });
   });
 });

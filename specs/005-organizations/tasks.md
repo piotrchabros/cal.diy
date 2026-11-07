@@ -242,7 +242,7 @@ description: "Task list for Organizations (spec 005)"
   - `packages/sms/attendee/*.ts` (7 files): use `CalendarEvent.bookerUrl` or the organizer's base URL
 
   Add tests
-- [ ] T049 [US3] PR 15, bookings and tRPC:
+- [X] T049 [US3] PR 15, bookings and tRPC:
   - `packages/features/bookings/lib/{buildEventUrlFromBooking,handleCancelBooking}.ts`
   - `packages/features/bookings/lib/service/RegularBookingService.ts` (`bookerUrl`)
   - `packages/trpc/server/routers/viewer/bookings/confirm.handler.ts`

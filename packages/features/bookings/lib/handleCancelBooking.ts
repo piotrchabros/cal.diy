@@ -16,6 +16,7 @@ import {
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
 import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type { GetSubscriberOptions } from "@calcom/features/webhooks/lib/getWebhooks";
 import getWebhooks from "@calcom/features/webhooks/lib/getWebhooks";
@@ -251,7 +252,10 @@ async function handler(input: CancelBookingInput, dependencies?: Dependencies) {
   const attendeesList = await Promise.all(attendeesListPromises);
   const tOrganizer = await getTranslation(organizer.locale ?? "en", "common");
 
-  const bookerUrl = process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+    organizationId:
+      bookingToDelete.eventType?.team?.parentId ?? bookingToDelete.user?.profiles?.[0]?.organizationId,
+  });
 
   const evt: CalendarEvent = {
     bookerUrl,

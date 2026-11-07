@@ -16,10 +16,10 @@ import {
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { MembershipRepositoryNotetakerLookup } from "@calcom/features/notetaker/lib/MembershipRepositoryNotetakerLookup";
 import { resolveMemberSharingTeamIds } from "@calcom/features/notetaker/lib/webhookSharingTeam";
+import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import type { GetSubscriberOptions } from "@calcom/features/webhooks/lib/getWebhooks";
 import type { EventPayloadType, EventTypeInfo } from "@calcom/features/webhooks/lib/sendPayload";
 import { getTranslation } from "@calcom/i18n/server";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import getOrgIdFromMemberOrTeamId from "@calcom/lib/getOrgIdFromMemberOrTeamId";
 import { getTeamIdFromEventType } from "@calcom/lib/getTeamIdFromEventType";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
@@ -235,7 +235,9 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
 
   const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
 
-  const bookerUrl = WEBAPP_URL;
+  const bookerUrl = await getOrganizationUrlService().getBaseUrl({
+    organizationId: booking.eventType?.team?.parentId ?? organizerOrganizationId,
+  });
 
   const attendeesList = await Promise.all(attendeesListPromises);
   const tOrganizer = await getTranslation(booking.user?.locale ?? "en", "common");
