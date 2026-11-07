@@ -42,4 +42,22 @@ export class PrismaTempOrgRedirectRepository implements ITempOrgRedirectReposito
     });
     return count;
   }
+
+  async updateToUrl({
+    types,
+    toUrl,
+    newToUrl,
+  }: {
+    types: RedirectTypeDto[];
+    toUrl: string;
+    newToUrl: string;
+  }): Promise<number> {
+    if (types.length === 0 || toUrl === newToUrl) return 0;
+
+    const { count } = await this.prismaClient.tempOrgRedirect.updateMany({
+      where: { toUrl, type: { in: types } },
+      data: { toUrl: newToUrl },
+    });
+    return count;
+  }
 }

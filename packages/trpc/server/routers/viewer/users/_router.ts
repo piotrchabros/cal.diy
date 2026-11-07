@@ -1,6 +1,5 @@
 import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { RedirectType } from "@calcom/prisma/enums";
+import { repointUserRedirectsForRename } from "@calcom/features/organizations/lib/repointUserRedirectsForRename";
 import { authedAdminProcedure } from "@calcom/trpc/server/procedures/authedProcedure";
 import { router } from "@calcom/trpc/server/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -57,7 +56,7 @@ export const userAdminRouter = router({
 
         // If the profile has been moved to an Org -> we can easily access the profile we need to update
         if (requestedUser.movedToProfileId && input.username) {
-          const profile = await tx.profile.update({
+          await tx.profile.update({
             where: {
               id: requestedUser.movedToProfileId,
             },
@@ -65,37 +64,6 @@ export const userAdminRouter = router({
               username: input.username,
             },
           });
-
-          // Update all of this users tempOrgRedirectUrls
-          if (requestedUser.username && profile.organizationId) {
-            const data = await tx.team.findUnique({
-              where: {
-                id: profile.organizationId,
-              },
-              select: {
-                slug: true,
-              },
-            });
-
-            // We should never hit this
-            if (!data?.slug) {
-              throw new Error("Team has no attached slug.");
-            }
-
-            const orgUrlPrefix = WEBAPP_URL;
-
-            const toUrl = `${orgUrlPrefix}/${input.username}`;
-
-            await tx.tempOrgRedirect.updateMany({
-              where: {
-                type: RedirectType.User,
-                from: requestedUser.username, // Old username
-              },
-              data: {
-                toUrl,
-              },
-            });
-          }
 
           return userInternal;
         }
@@ -120,6 +88,11 @@ export const userAdminRouter = router({
         return userInternal;
       });
       if (input.username && input.username !== requestedUser.username) {
+        await repointUserRedirectsForRename({
+          organizationId: requestedUser.organizationId,
+          oldUsername: requestedUser.username,
+          newUsername: input.username,
+        });
         await disableUserRedirectsForReusedUsername({
           organizationId: requestedUser.organizationId,
           username: input.username,
