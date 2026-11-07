@@ -294,6 +294,7 @@ description: "Task list for Organizations (spec 005)"
 
 - [X] T057 [US3] PR 17: create `getOAuthRedirectUri(req, appSlug)` in `packages/app-store/_utils/oauth/getOAuthRedirectUri.ts`. It builds the URL from the request `Host` via `normalizeHost`, refuses unknown hosts, and must not import features: the host is checked against an allow-list passed by the caller or read from `ALLOWED_HOSTNAMES`. Use it in the `api/add.ts` and `api/callback.ts` of `googlecalendar`, `office365calendar`, `office365video` and `zoomvideo`, and let `getSafeRedirectUrl` targets include the org domains. Add tests
 - [ ] T058 [P] [US3] PR 18.1: `basecamp3`, `closecom`, `feishucalendar`, `hubspot`, `intercom`, `larkcalendar`, `pipedrive-crm`, `salesforce` (`packages/app-store/<app>/api/*` and `lib/*` files referencing `WEBAPP_URL_FOR_OAUTH`)
+  - 18.1a done: `basecamp3`, `closecom`, `feishucalendar`, `larkcalendar`. 18.1b (`hubspot`, `intercom`, `pipedrive-crm`, `salesforce`) follows, split for the 10-file PR limit
 - [ ] T059 [P] [US3] PR 18.2: `webex`, `zoho-bigin`, `zohocalendar`, `zohocrm`, `huddle01video`, `tandemvideo`, `nextcloudtalk`, `vital`, `jelly`
 - [ ] T060 [P] [US3] PR 18.3: payment apps `stripepayment`, `paypal`, `hitpay`, `lyra`, plus `packages/app-store/_utils/paid-apps.ts`
 
