@@ -40,7 +40,8 @@ export const getSafeRedirectUrl = (
   return url;
 };
 
-// There is a copy of this fn at packages/embed/embed-core/src/preview.ts as that can't import this function. Keep it in sync
+// There is a copy of this fn at packages/embeds/embed-core/src/lib/previewGuards.ts as the embed preview can't import this function. Keep it in sync
+// This lib copy has no runtime callers
 export function isSafeUrlToLoadResourceFrom(urlString: string) {
   try {
     const url = new URL(urlString);
