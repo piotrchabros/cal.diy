@@ -264,7 +264,7 @@ description: "Task list for Organizations (spec 005)"
   - `apps/web/app/(booking-page-wrapper)/{[user]/page,[user]/[type]/page,booking/[uid]/page,team/[slug]/[type]/page}.tsx`
 - [X] T052 [P] [US3] PR 16.3, event types:
   - `apps/web/modules/event-types/components/{CreateEventTypeDialog,DuplicateDialog,EventTypeWebWrapper,locations/Locations,tabs/setup/EventSetupTabWebWrapper}.tsx`
-- [ ] T053 [P] [US3] PR 16.4, settings and teams:
+- [X] T053 [P] [US3] PR 16.4, settings and teams:
   - `apps/web/modules/settings/my-account/{appearance-view,profile-view}.tsx`
   - `apps/web/modules/settings/teams/team-profile-view.tsx`
   - `apps/web/modules/teams/views/teams-listing-view.tsx`

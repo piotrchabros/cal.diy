@@ -1,4 +1,3 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button } from "@calcom/ui/components/button";
 import { ArrowLeft, ArrowRight, Lock, MoreVertical, RotateCw } from "lucide-react";
@@ -8,9 +7,10 @@ type TeamPublicPreviewProps = {
   name: string;
   bio: string;
   slug: string;
+  host: string;
 };
 
-export function TeamPublicPreview({ name, bio, slug }: TeamPublicPreviewProps) {
+export function TeamPublicPreview({ name, bio, slug, host }: TeamPublicPreviewProps) {
   const { t } = useLocale();
   const displayName = name.trim() || t("your_name");
   const displayBio = bio.trim() || t("add_your_bio_here");
@@ -24,7 +24,7 @@ export function TeamPublicPreview({ name, bio, slug }: TeamPublicPreviewProps) {
         <div className="ml-1 flex min-w-0 flex-1 items-center gap-1.5 rounded-full bg-subtle px-3 py-1 text-xs text-subtle">
           <Lock className="h-3 w-3 shrink-0" aria-hidden />
           <span className="truncate">
-            {WEBAPP_URL.replace(/^https?:\/\//, "")}/team/{slug.trim()}
+            {host}/team/{slug.trim()}
           </span>
         </div>
         <MoreVertical className="h-3.5 w-3.5 shrink-0 text-subtle" aria-hidden />

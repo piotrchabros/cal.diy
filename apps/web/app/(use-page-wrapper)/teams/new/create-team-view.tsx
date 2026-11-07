@@ -1,10 +1,11 @@
 "use client";
 
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import {
   TEAM_LOGO_ACCEPTED_TYPES,
   validateTeamLogoFile,
 } from "@calcom/features/teams/lib/validateTeamLogoFile";
-import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import slugify from "@calcom/lib/slugify";
 import { trpc } from "@calcom/trpc/react";
@@ -33,7 +34,7 @@ export function CreateTeamView() {
   const [logoError, setLogoError] = useState<string | null>(null);
 
   const normalizedSlug = slugify(slug);
-  const teamUrlHost = WEBAPP_URL.replace(/^https?:\/\//, "");
+  const teamUrlHost = useOrgBaseUrl().replace(/^https?:\/\//, "");
   const isSlugValid = normalizedSlug.length > 0 && URL_SAFE_SLUG_PATTERN.test(normalizedSlug);
   const { isAvailable: isSlugAvailable } = useTeamSlugAvailability(slug);
   const slugFieldErrors = isSlugValid && isSlugAvailable === false ? [t("url_taken")] : undefined;
@@ -175,7 +176,7 @@ export function CreateTeamView() {
           </div>
         </div>
 
-        <TeamPublicPreview name={name} bio={bio} slug={normalizedSlug} />
+        <TeamPublicPreview name={name} bio={bio} slug={normalizedSlug} host={teamUrlHost} />
       </form>
     </div>
   );
