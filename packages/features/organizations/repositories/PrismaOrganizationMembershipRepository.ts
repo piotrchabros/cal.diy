@@ -70,7 +70,7 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
     const [, , membership] = await this.prismaClient.$transaction([
       this.prismaClient.user.update({
         where: { id: userId },
-        data: { organizationId },
+        data: { organizationId, username },
         select: { id: true },
       }),
       this.prismaClient.profile.upsert({
