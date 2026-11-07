@@ -24,13 +24,14 @@ const Page = async ({ searchParams: _searchParams }: PageProps) => {
     return <TeamInviteView invite={null} token={token} />;
   }
 
-  const membersPath = `/settings/my-teams/${invite.teamId}/members`;
+  // Organization invitees have no team members page to land on.
+  const landingPath = invite.isOrganization ? "/" : `/settings/my-teams/${invite.teamId}/members`;
   if (!invite.needsPassword) {
     const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
     if (session?.user?.email?.toLowerCase() === invite.email) {
-      redirect(membersPath);
+      redirect(landingPath);
     }
-    const loginParams = new URLSearchParams({ email: invite.email, callbackUrl: membersPath });
+    const loginParams = new URLSearchParams({ email: invite.email, callbackUrl: landingPath });
     redirect(`/auth/login?${loginParams.toString()}`);
   }
 

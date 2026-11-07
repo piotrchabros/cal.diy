@@ -42,7 +42,14 @@ const makeUserRepo = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const team = { id: 7, name: "BlueBee", slug: "bluebee", logoUrl: null, isOrganization: false };
+const team = {
+  id: 7,
+  name: "BlueBee",
+  slug: "bluebee",
+  logoUrl: null,
+  isOrganization: false,
+  parentId: null as number | null,
+};
 const adminMembership = { id: 1, teamId: 7, userId: 9, role: MembershipRole.ADMIN, accepted: true };
 
 describe("TeamMembersService", () => {
@@ -108,7 +115,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -178,7 +185,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -296,7 +303,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -349,7 +356,7 @@ describe("TeamMembersService", () => {
       teamResult = orgTeam,
       invitee,
     }: {
-      teamResult?: typeof team & { parentId: number | null };
+      teamResult?: typeof team;
       invitee: { id: number; organizationId: number | null; username: string | null } | null;
     }) => {
       const membershipRepo = makeMembershipRepo({
@@ -373,7 +380,10 @@ describe("TeamMembersService", () => {
           .fn()
           .mockResolvedValue({ id: 12, email: "ada@example.com", locale: null }),
       });
-      const orgMembership = { addMember: vi.fn().mockResolvedValue(undefined) };
+      const orgMembership = {
+        addMember: vi.fn().mockResolvedValue(undefined),
+        getRole: vi.fn().mockResolvedValue(null),
+      };
       const sendInviteEmail = vi.fn().mockResolvedValue(undefined);
       const service = new TeamMembersService(
         membershipRepo as never,
@@ -510,7 +520,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -533,7 +543,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -553,7 +563,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -839,6 +849,7 @@ describe("TeamMembersService", () => {
         teamId: 7,
         teamName: "BlueBee",
         email: "ada@example.com",
+        isOrganization: false,
         needsPassword: true,
       });
     });
@@ -970,7 +981,7 @@ describe("TeamMembersService", () => {
       });
       const service = new TeamMembersService(
         membershipRepo as never,
-        makeTeamRepo() as never,
+        makeTeamRepo({ findBasicById: vi.fn().mockResolvedValue(team) }) as never,
         makeUserRepo() as never,
         vi.fn()
       );
@@ -978,6 +989,184 @@ describe("TeamMembersService", () => {
       const result = await service.acceptInvite({ teamId: 7, userId: 12 });
 
       expect(result).toEqual({ status: "accepted" });
+    });
+  });
+
+  describe("organization admin access to organization teams", () => {
+    const orgTeam = { ...team, parentId: 3 };
+    const requesterId = 20;
+    const targetUserId = 11;
+
+    const setup = ({
+      orgRole,
+      roleOrganizationId = 3,
+      teamResult = orgTeam,
+    }: {
+      orgRole: "OWNER" | "ADMIN" | "MEMBER" | null;
+      roleOrganizationId?: number;
+      teamResult?: typeof team;
+    }) => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi.fn(async ({ userId }: { userId: number }) =>
+          userId === targetUserId ? { id: 5, role: MembershipRole.MEMBER, accepted: false } : null
+        ),
+        findTeamMembers: vi.fn().mockResolvedValue([]),
+        countTeamMembers: vi.fn().mockResolvedValue(0),
+        updateTeamMembershipRole: vi.fn().mockResolvedValue({ id: 5 }),
+        deleteTeamMembership: vi.fn().mockResolvedValue({ id: 5 }),
+      });
+      const teamRepo = makeTeamRepo({
+        findBasicById: vi.fn().mockResolvedValue(teamResult),
+        findTeamInviteTokenByEmail: vi.fn().mockResolvedValue(null),
+      });
+      const userRepo = makeUserRepo({
+        findInviteeByEmail: vi.fn().mockResolvedValue({
+          id: targetUserId,
+          email: "ada@example.com",
+          locale: "en",
+          hasPassword: true,
+          organizationId: 3,
+          username: "ada",
+        }),
+      });
+      const orgMembership = {
+        addMember: vi.fn(),
+        getRole: vi.fn(async (_userId: number, organizationId: number) =>
+          organizationId === roleOrganizationId ? orgRole : null
+        ),
+      };
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        teamRepo as never,
+        userRepo as never,
+        vi.fn().mockResolvedValue(undefined),
+        () => orgMembership
+      );
+      const calls = {
+        getTeam: () => service.getTeam({ teamId: 7, viewerId: requesterId }),
+        listMembers: () => service.listMembers({ teamId: 7, viewerId: requesterId }),
+        inviteMember: () =>
+          service.inviteMember({
+            teamId: 7,
+            requesterId,
+            requesterName: "Org Admin",
+            email: "ada@example.com",
+            role: MembershipRole.MEMBER,
+          }),
+        updateMemberRole: () =>
+          service.updateMemberRole({
+            teamId: 7,
+            requesterId,
+            userId: targetUserId,
+            role: MembershipRole.ADMIN,
+          }),
+        removeMember: () => service.removeMember({ teamId: 7, requesterId, userId: targetUserId }),
+        resendInvite: () =>
+          service.resendInvite({
+            teamId: 7,
+            requesterId,
+            requesterName: "Org Admin",
+            email: "ada@example.com",
+          }),
+      };
+      return { calls, orgMembership, teamRepo };
+    };
+
+    const guardedMethods = [
+      "getTeam",
+      "listMembers",
+      "inviteMember",
+      "updateMemberRole",
+      "removeMember",
+      "resendInvite",
+    ] as const;
+
+    it.each(
+      guardedMethods
+    )("lets an admin of the parent organization call %s without team membership", async (method) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { calls, orgMembership } = setup({ orgRole: "ADMIN" });
+
+      await expect(calls[method]()).resolves.toBeDefined();
+      expect(orgMembership.getRole).toHaveBeenCalledWith(requesterId, 3);
+    });
+
+    it.each(guardedMethods)("lets an owner of the parent organization call %s", async (method) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { calls } = setup({ orgRole: "OWNER" });
+
+      await expect(calls[method]()).resolves.toBeDefined();
+    });
+
+    it.each(guardedMethods)("hides the team from a plain organization member calling %s", async (method) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { calls } = setup({ orgRole: "MEMBER" });
+
+      await expect(calls[method]()).rejects.toMatchObject({ code: "not_found_error" });
+    });
+
+    it.each(guardedMethods)("hides the team from an admin of another organization calling %s", async (method) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { calls } = setup({ orgRole: "ADMIN", roleOrganizationId: 4 });
+
+      await expect(calls[method]()).rejects.toMatchObject({ code: "not_found_error" });
+    });
+
+    it.each(guardedMethods)("ignores organization roles for %s when the flag is off", async (method) => {
+      const { calls, orgMembership } = setup({ orgRole: "ADMIN" });
+
+      await expect(calls[method]()).rejects.toMatchObject({ code: "forbidden_error" });
+      expect(orgMembership.getRole).not.toHaveBeenCalled();
+    });
+
+    it.each(guardedMethods)("returns NotFound from %s for an organization row", async (method) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      const { calls, orgMembership } = setup({
+        orgRole: "ADMIN",
+        teamResult: { ...team, isOrganization: true, parentId: null },
+      });
+
+      await expect(calls[method]()).rejects.toMatchObject({ code: "not_found_error" });
+      expect(orgMembership.getRole).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      guardedMethods
+    )("returns NotFound from %s for an organization row with the flag off", async (method) => {
+      const { calls } = setup({
+        orgRole: null,
+        teamResult: { ...team, isOrganization: true, parentId: null },
+      });
+
+      await expect(calls[method]()).rejects.toMatchObject({ code: "not_found_error" });
+    });
+  });
+
+  describe("getInviteByToken for organization invites", () => {
+    it("reports that the invite targets an organization", async () => {
+      const service = new TeamMembersService(
+        makeMembershipRepo() as never,
+        makeTeamRepo({
+          findTeamInviteByToken: vi.fn().mockResolvedValue({
+            identifier: "ada@example.com",
+            teamId: 3,
+            expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          }),
+          findBasicById: vi.fn().mockResolvedValue({ ...team, id: 3, isOrganization: true }),
+        }) as never,
+        makeUserRepo({
+          findInviteeByEmail: vi
+            .fn()
+            .mockResolvedValue({ id: 11, email: "ada@example.com", hasPassword: true }),
+        }) as never,
+        vi.fn()
+      );
+
+      await expect(service.getInviteByToken({ token: "t" })).resolves.toMatchObject({
+        teamId: 3,
+        isOrganization: true,
+        needsPassword: false,
+      });
     });
   });
 });
