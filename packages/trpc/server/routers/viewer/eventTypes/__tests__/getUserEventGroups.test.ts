@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { TRPCError } from "@trpc/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getUserEventGroups } from "../getUserEventGroups.handler";
 
 // Mock dependencies
@@ -43,6 +43,13 @@ vi.mock("../teamAccessUseCase", () => ({
 
 vi.mock("@calcom/lib/getAvatarUrl", () => ({
   getUserAvatarUrl: vi.fn().mockReturnValue("https://avatar.com/user.jpg"),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
+  getOrganizationUrlService: () => ({
+    getBaseUrl: async ({ organizationId }: { organizationId: number | null }) =>
+      organizationId ? `https://org${organizationId}.example` : "https://app.example",
+  }),
 }));
 
 vi.mock("@calcom/lib/defaultAvatarImage", () => ({
@@ -244,6 +251,84 @@ describe("getUserEventGroups", () => {
       });
 
       expect(result.eventTypeGroups[0].profile.eventTypesLockedByOrg).toBe(true);
+    });
+  });
+  describe("Teams under the organization", () => {
+    const teamUnderOrg = {
+      id: 1,
+      teamId: 100,
+      userId: 1,
+      accepted: true,
+      role: MembershipRole.MEMBER,
+      team: {
+        id: 100,
+        name: "Test Team",
+        slug: "test-team",
+        logoUrl: null,
+        parentId: 1,
+        parent: { name: "BlueBee", slug: "bluebee", logoUrl: "bluebee.png", metadata: {} },
+        metadata: {},
+      },
+    };
+    const orgOwnership = {
+      id: 2,
+      teamId: 1,
+      userId: 1,
+      accepted: true,
+      role: MembershipRole.OWNER,
+      team: {
+        id: 1,
+        name: "BlueBee",
+        slug: "bluebee",
+        logoUrl: null,
+        parentId: null,
+        parent: null,
+        metadata: {},
+      },
+    };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    async function getTeamGroup() {
+      const { ProfileRepository } = await import("@calcom/features/profile/repositories/ProfileRepository");
+      const { getPlaceholderAvatar } = await import("@calcom/lib/defaultAvatarImage");
+      vi.mocked(ProfileRepository.findByUpIdWithAuth).mockResolvedValue(mockProfile);
+      mockFindAllByUpIdIncludeTeam.mockResolvedValue([teamUnderOrg, orgOwnership]);
+      mockFilterTeamsByEventTypeReadPermission.mockResolvedValue([teamUnderOrg]);
+
+      const result = await getUserEventGroups({ ctx: mockCtx, input: null });
+
+      return { group: result.eventTypeGroups[1], avatarArgs: vi.mocked(getPlaceholderAvatar).mock.calls };
+    }
+
+    it("treats the team as top-level when organizations are disabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+      const { group, avatarArgs } = await getTeamGroup();
+
+      expect(group).toMatchObject({
+        teamId: 100,
+        parentId: null,
+        membershipRole: MembershipRole.MEMBER,
+        profile: { slug: "team/test-team" },
+      });
+      expect(avatarArgs).toEqual([[null, "Test Team"]]);
+    });
+
+    it("uses the organization parent and role when organizations are enabled", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+      const { group, avatarArgs } = await getTeamGroup();
+
+      expect(group).toMatchObject({
+        teamId: 100,
+        parentId: 1,
+        membershipRole: MembershipRole.OWNER,
+        profile: { slug: "test-team" },
+      });
+      expect(avatarArgs).toEqual([["bluebee.png", "BlueBee"]]);
     });
   });
 });

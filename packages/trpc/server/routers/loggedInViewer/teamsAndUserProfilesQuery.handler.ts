@@ -1,5 +1,7 @@
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
@@ -10,9 +12,15 @@ import type { TTeamsAndUserProfilesQueryInputSchema } from "./teamsAndUserProfil
 type PermissionString = string;
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type TeamsAndUserProfileOptions = {
@@ -82,22 +90,24 @@ export const teamsAndUserProfilesQuery = async ({ ctx, input }: TeamsAndUserProf
   if (input?.includeOrg) {
     teamsData = user.teams
       .filter((membership) => membership.team.slug !== null)
+      // The BlueBee organization exists before the flag is on; hide it so the old team list stays intact
+      .filter((membership) => isOrganizationsEnabled() || !membership.team.isOrganization)
       .map((membership) => ({
         ...membership,
-        team: {
+        team: withoutOrganizationParent({
           ...membership.team,
           metadata: teamMetadataSchema.parse(membership.team.metadata),
-        },
+        }),
       }));
   } else {
     teamsData = user.teams
       .filter((membership) => !membership.team.isOrganization)
       .map((membership) => ({
         ...membership,
-        team: {
+        team: withoutOrganizationParent({
           ...membership.team,
           metadata: teamMetadataSchema.parse(membership.team.metadata),
-        },
+        }),
       }));
   }
 

@@ -12,6 +12,7 @@ import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { isRecurringEvent, parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
 import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
+import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma, Team, User as UserType } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -486,6 +487,7 @@ export const getPublicEvent = async (
 
   const eventWithUserProfiles = {
     ...event,
+    team: event.team ? withoutOrganizationParent(event.team) : null,
     owner: event.owner
       ? await new UserRepository(prisma).enrichUserWithItsProfile({
           user: event.owner,
@@ -552,17 +554,17 @@ export const getPublicEvent = async (
       fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
     });
 
-    if (!canViewPrivateTeamMembers && event.team?.parentId) {
+    if (!canViewPrivateTeamMembers && eventWithUserProfiles.team?.parentId) {
       canViewPrivateTeamMembers = await permissionCheckService.checkPermission({
         userId: currentUserId,
-        teamId: event.team.parentId,
+        teamId: eventWithUserProfiles.team.parentId,
         permission: "team.read",
         fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
       });
     }
   }
 
-  if (event.team?.isPrivate && !canViewPrivateTeamMembers) {
+  if (eventWithUserProfiles.team?.isPrivate && !canViewPrivateTeamMembers) {
     users = [];
   }
 
