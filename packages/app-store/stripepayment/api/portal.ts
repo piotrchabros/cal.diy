@@ -1,7 +1,11 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import type { NextApiRequest, NextApiResponse } from "next";
 import type { Session } from "next-auth";
+import {
+  getOAuthAppOrigin,
+  getOAuthSafeRedirectOptions,
+  type OAuthRequest,
+} from "../../_utils/oauth/getOAuthRedirectUri";
 import { BillingPortalServiceFactory } from "../lib/BillingPortalService";
 
 interface AuthenticatedUser {
@@ -18,13 +22,17 @@ export const validateAuthentication = (req: NextApiRequest): AuthenticatedUser |
   return { id: userId };
 };
 
-export const buildReturnUrl = (returnTo?: string): string => {
-  const defaultUrl = `${WEBAPP_URL}/settings/billing`;
+export const buildReturnUrl = (req: OAuthRequest, returnTo?: string): string => {
+  const defaultUrl = `${getOAuthAppOrigin(req)}/settings/billing`;
 
-  if (typeof returnTo !== "string") return defaultUrl;
+  if (typeof returnTo !== "string" || !returnTo) return defaultUrl;
 
-  const safeRedirectUrl = getSafeRedirectUrl(returnTo);
-  return safeRedirectUrl || defaultUrl;
+  try {
+    return getSafeRedirectUrl(returnTo, getOAuthSafeRedirectOptions(req)) || defaultUrl;
+  } catch {
+    // getSafeRedirectUrl rejects relative URLs; send those to the billing page instead of failing the request.
+    return defaultUrl;
+  }
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -37,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ message: "Not authenticated" });
   }
 
-  const returnUrl = buildReturnUrl(req.query.returnTo as string);
+  const returnUrl = buildReturnUrl(req, req.query.returnTo as string);
 
   try {
     const userService = BillingPortalServiceFactory.createUserService();

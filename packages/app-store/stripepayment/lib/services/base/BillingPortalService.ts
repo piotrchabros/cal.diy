@@ -1,5 +1,3 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import logger from "@calcom/lib/logger";
 import prisma from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
@@ -39,18 +37,6 @@ export abstract class BillingPortalService {
       log.error(`Failed to create billing portal session for ${customerId}: ${e}`);
       throw new Error("Failed to create billing portal session");
     }
-  }
-
-  /**
-   * Builds a safe return URL for the billing portal
-   */
-  protected buildReturnUrl(returnTo?: string): string {
-    const defaultUrl = `${WEBAPP_URL}/settings/billing`;
-
-    if (typeof returnTo !== "string") return defaultUrl;
-
-    const safeRedirectUrl = getSafeRedirectUrl(returnTo);
-    return safeRedirectUrl || defaultUrl;
   }
 
   protected getValidatedTeamSubscriptionId(metadata: Prisma.JsonValue) {
