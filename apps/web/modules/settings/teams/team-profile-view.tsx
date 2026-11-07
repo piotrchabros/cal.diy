@@ -1,8 +1,8 @@
 "use client";
 
+import { useOrgBaseUrl } from "@calcom/features/organizations/lib/OrgBaseUrlContext";
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
 import SectionBottomActions from "@calcom/features/settings/SectionBottomActions";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useCopy } from "@calcom/lib/hooks/useCopy";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { md } from "@calcom/lib/markdownIt";
@@ -48,8 +48,6 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
-
-const teamUrlHost = WEBAPP_URL.replace(/^https?:\/\//, "");
 
 type LogoSectionProps = {
   teamName: string;
@@ -143,6 +141,7 @@ const TeamProfileView = ({ team }: { team: TeamProfile }) => {
   const utils = trpc.useUtils();
   const { copyToClipboard } = useCopy();
   const [firstRender, setFirstRender] = useState(true);
+  const teamUrlHost = useOrgBaseUrl().replace(/^https?:\/\//, "");
 
   const updateProfileMutation = trpc.viewer.teams.updateProfile.useMutation({
     onSuccess: async () => {
