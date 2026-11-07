@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import OrganizationFormView from "./organization-form-view";
 
 type MutationOptions = {
-  onSuccess?: () => Promise<void> | void;
+  onSuccess?: (
+    data?: unknown,
+    variables?: { owner: { userId: number } | { email: string } }
+  ) => Promise<void> | void;
   onError?: (error: { message: string; data?: { code: string } }) => void;
 };
 type Mutation = { mutate: (input: unknown) => void; isPending: boolean };
@@ -126,8 +129,9 @@ function setupMocks(getQuery?: GetQuery): void {
   if (getQuery) mocks.getUseQuery.mockReturnValue(getQuery);
 }
 
-function getOptions(useMutation: typeof mocks.createUseMutation): MutationOptions {
-  const options = useMutation.mock.calls[0]?.[0];
+// The edit view renders two update mutations: the form's first, then the add-owner section's.
+function getOptions(useMutation: typeof mocks.createUseMutation, callIndex = 0): MutationOptions {
+  const options = useMutation.mock.calls[callIndex]?.[0];
   if (!options) throw new Error("useMutation was not called with options");
   return options;
 }
@@ -142,7 +146,7 @@ function pickOwner(): void {
   const input = screen.getByLabelText("owner");
   fireEvent.focus(input);
   fireEvent.keyDown(input, { key: "ArrowDown" });
-  fireEvent.click(screen.getByText("Jane (jane@acme.com)"));
+  fireEvent.click(screen.getByRole("option", { name: "Jane (jane@acme.com)" }));
 }
 
 function renderEdit(getQuery: GetQuery): void {
@@ -228,6 +232,54 @@ describe("OrganizationFormView", () => {
         confirmMoveOwner: true,
       });
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("submits an email owner without an owner pick", async () => {
+      setupMocks();
+      render(<OrganizationFormView />);
+
+      fillBasicFields();
+      fireEvent.click(screen.getByText("organization_owner_invite_by_email"));
+      fireEvent.change(screen.getByLabelText("organization_owner_email"), {
+        target: { value: " new@acme.com " },
+      });
+      fireEvent.click(screen.getByText("create"));
+
+      await waitFor(() => expect(mocks.createMutate).toHaveBeenCalledTimes(1));
+      expect(mocks.createMutate).toHaveBeenCalledWith({
+        name: "Acme",
+        slug: "acme",
+        domain: "acme.com",
+        owner: { email: "new@acme.com" },
+      });
+
+      await getOptions(mocks.createUseMutation).onSuccess?.(undefined, { owner: { email: "new@acme.com" } });
+      expect(mocks.showToast).toHaveBeenCalledWith("organization_created_owner_invited", "success");
+    });
+
+    it("requires an email in email mode", async () => {
+      setupMocks();
+      render(<OrganizationFormView />);
+
+      fillBasicFields();
+      fireEvent.click(screen.getByText("organization_owner_invite_by_email"));
+      fireEvent.click(screen.getByText("create"));
+
+      expect(await screen.findByText("organization_owner_email_required")).toBeInTheDocument();
+      expect(mocks.createMutate).not.toHaveBeenCalled();
+    });
+
+    it("requires an owner again after switching back to an existing user", async () => {
+      setupMocks();
+      render(<OrganizationFormView />);
+
+      fillBasicFields();
+      fireEvent.click(screen.getByText("organization_owner_invite_by_email"));
+      fireEvent.click(screen.getByText("organization_owner_existing_user"));
+      fireEvent.click(screen.getByText("create"));
+
+      expect(await screen.findByText("organization_owner_required")).toBeInTheDocument();
+      expect(mocks.createMutate).not.toHaveBeenCalled();
     });
 
     it("does not render the teams section", () => {
@@ -322,6 +374,38 @@ describe("OrganizationFormView", () => {
 
       expect(mocks.showToast).toHaveBeenCalledWith("Domain is already taken", "error");
       expect(mocks.push).not.toHaveBeenCalled();
+    });
+
+    it("adds an owner, toasts and invalidates without navigating", async () => {
+      renderEdit({ data: buildOrg(), isPending: false, error: null });
+
+      const addButton = screen.getByRole("button", { name: "organization_add_owner" });
+      expect(addButton).toBeDisabled();
+      pickOwner();
+      fireEvent.click(addButton);
+
+      expect(mocks.updateMutate).toHaveBeenCalledWith({ id: 2, ownerUserId: 7 });
+
+      await act(async () => {
+        await getOptions(mocks.updateUseMutation, 1).onSuccess?.();
+      });
+
+      expect(mocks.showToast).toHaveBeenCalledWith("organization_owner_added", "success");
+      expect(mocks.invalidateGet).toHaveBeenCalledWith({ id: 2 });
+      expect(mocks.invalidateList).toHaveBeenCalledTimes(1);
+      expect(mocks.push).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "organization_add_owner" })).toBeDisabled();
+    });
+
+    it("maps owner_in_another_organization when adding an owner fails", () => {
+      renderEdit({ data: buildOrg(), isPending: false, error: null });
+
+      const { onError } = getOptions(mocks.updateUseMutation, 1);
+      onError?.({ message: "owner_in_another_organization", data: { code: "CONFLICT" } });
+      onError?.({ message: "User has no username" });
+
+      expect(mocks.showToast).toHaveBeenNthCalledWith(1, "owner_in_another_organization", "error");
+      expect(mocks.showToast).toHaveBeenNthCalledWith(2, "User has no username", "error");
     });
   });
 });

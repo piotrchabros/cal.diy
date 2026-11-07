@@ -7,7 +7,7 @@ import { trpc } from "@calcom/trpc/react";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
-import { Form, Label, Select, TextField } from "@calcom/ui/components/form";
+import { Form, Label, Select, TextField, ToggleGroup } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -18,23 +18,28 @@ import { OrganizationTeamsSection } from "../components/OrganizationTeamsSection
 
 const ORGANIZATIONS_PATH = "/settings/admin/organizations";
 const OWNER_SEARCH_LIMIT = 10;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type OrganizationFormViewProps = { organizationId?: number };
 
 type OwnerOption = { value: number; label: string };
+
+type OwnerMode = "existing" | "email";
 
 type OrganizationFormValues = {
   name: string;
   slug: string;
   domain: string;
   owner: OwnerOption | null;
+  ownerMode: OwnerMode;
+  ownerEmail: string;
 };
 
 type CreateInput = {
   name: string;
   slug: string;
   domain: string;
-  owner: { userId: number };
+  owner: { userId: number } | { email: string };
   confirmMoveOwner?: boolean;
 };
 
@@ -120,14 +125,19 @@ function CreateOrganizationForm() {
   const utils = trpc.useUtils();
 
   const form = useForm<OrganizationFormValues>({
-    defaultValues: { name: "", slug: "", domain: "", owner: null },
+    defaultValues: { name: "", slug: "", domain: "", owner: null, ownerMode: "existing", ownerEmail: "" },
   });
+  const ownerMode = form.watch("ownerMode");
   const [lastInput, setLastInput] = useState<CreateInput | null>(null);
   const [confirmMoveOpen, setConfirmMoveOpen] = useState(false);
 
   const mutation = trpc.viewer.admin.organizations.create.useMutation({
-    onSuccess: async () => {
-      showToast(t("organization_created_successfully"), "success");
+    onSuccess: async (_data, variables) => {
+      const ownerInvited = variables !== undefined && "email" in variables.owner;
+      showToast(
+        t(ownerInvited ? "organization_created_owner_invited" : "organization_created_successfully"),
+        "success"
+      );
       await utils.viewer.admin.organizations.list.invalidate();
       router.push(ORGANIZATIONS_PATH);
     },
@@ -141,13 +151,14 @@ function CreateOrganizationForm() {
   });
 
   const handleSubmit = (values: OrganizationFormValues) => {
-    if (!values.owner) return;
-    const input: CreateInput = {
-      name: values.name,
-      slug: values.slug,
-      domain: values.domain,
-      owner: { userId: values.owner.value },
-    };
+    let owner: CreateInput["owner"];
+    if (values.ownerMode === "email") {
+      owner = { email: values.ownerEmail.trim() };
+    } else {
+      if (!values.owner) return;
+      owner = { userId: values.owner.value };
+    }
+    const input: CreateInput = { name: values.name, slug: values.slug, domain: values.domain, owner };
     setLastInput(input);
     mutation.mutate(input);
   };
@@ -157,16 +168,49 @@ function CreateOrganizationForm() {
       <Form form={form} className="stack-y-4" handleSubmit={handleSubmit}>
         <OrganizationBasicFields form={form} domainDisabled={false} />
         <Controller
-          name="owner"
+          name="ownerMode"
           control={form.control}
-          rules={{ required: t("organization_owner_required") }}
-          render={({ field: { value, onChange }, fieldState: { error } }) => (
-            <div>
-              <OwnerSelect value={value} onChange={onChange} />
-              {error?.message && <p className="mt-1 text-error text-sm">{error.message}</p>}
-            </div>
+          render={({ field: { value, onChange } }) => (
+            <ToggleGroup
+              value={value}
+              onValueChange={(mode) => {
+                if (mode) onChange(mode);
+              }}
+              options={[
+                { value: "existing", label: t("organization_owner_existing_user") },
+                { value: "email", label: t("organization_owner_invite_by_email") },
+              ]}
+            />
           )}
         />
+        {ownerMode === "existing" ? (
+          <Controller
+            name="owner"
+            control={form.control}
+            rules={{
+              validate: (owner, values) =>
+                values.ownerMode !== "existing" || owner !== null || t("organization_owner_required"),
+            }}
+            render={({ field: { value, onChange }, fieldState: { error } }) => (
+              <div>
+                <OwnerSelect value={value} onChange={onChange} />
+                {error?.message && <p className="mt-1 text-error text-sm">{error.message}</p>}
+              </div>
+            )}
+          />
+        ) : (
+          <TextField
+            type="email"
+            label={t("organization_owner_email")}
+            maxLength={254}
+            {...form.register("ownerEmail", {
+              validate: (email, values) =>
+                values.ownerMode !== "email" ||
+                EMAIL_PATTERN.test(email.trim()) ||
+                t("organization_owner_email_required"),
+            })}
+          />
+        )}
         <Button type="submit" loading={mutation.isPending}>
           {t("create")}
         </Button>
@@ -198,6 +242,8 @@ function EditOrganizationFormInner({ organization }: { organization: Organizatio
     slug: organization.slug ?? "",
     domain: organization.domain ?? "",
     owner: null,
+    ownerMode: "existing",
+    ownerEmail: "",
   };
 
   const form = useForm<OrganizationFormValues>({ defaultValues });
@@ -255,6 +301,44 @@ function EditOrganizationFormInner({ organization }: { organization: Organizatio
   );
 }
 
+function AddOwnerSection({ organizationId }: { organizationId: number }) {
+  const { t } = useLocale();
+  const utils = trpc.useUtils();
+  const [owner, setOwner] = useState<OwnerOption | null>(null);
+
+  const mutation = trpc.viewer.admin.organizations.update.useMutation({
+    onSuccess: async () => {
+      showToast(t("organization_owner_added"), "success");
+      setOwner(null);
+      await Promise.all([
+        utils.viewer.admin.organizations.list.invalidate(),
+        utils.viewer.admin.organizations.get.invalidate({ id: organizationId }),
+      ]);
+    },
+    onError: (err) => {
+      showToast(
+        err.message === "owner_in_another_organization" ? t("owner_in_another_organization") : err.message,
+        "error"
+      );
+    },
+  });
+
+  return (
+    <div className="stack-y-2 mt-4" data-testid="organization-add-owner-section">
+      <OwnerSelect value={owner} onChange={setOwner} />
+      <Button
+        type="button"
+        disabled={!owner}
+        loading={mutation.isPending}
+        onClick={() => {
+          if (owner) mutation.mutate({ id: organizationId, ownerUserId: owner.value });
+        }}>
+        {t("organization_add_owner")}
+      </Button>
+    </div>
+  );
+}
+
 function EditOrganizationForm({ organizationId }: { organizationId: number }) {
   const { t } = useLocale();
   const { data, isPending, error } = trpc.viewer.admin.organizations.get.useQuery({ id: organizationId });
@@ -265,6 +349,7 @@ function EditOrganizationForm({ organizationId }: { organizationId: number }) {
   return (
     <>
       <EditOrganizationFormInner key={data.id} organization={data} />
+      <AddOwnerSection organizationId={data.id} />
       <OrganizationTeamsSection organizationId={data.id} />
     </>
   );
