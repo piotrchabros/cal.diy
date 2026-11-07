@@ -14,6 +14,7 @@ import type {
   OrganizationMemberRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
+import type { ITempOrgRedirectRepository } from "../repositories/interfaces/ITempOrgRedirectRepository";
 import type { OrganizationsConfig } from "./OrganizationService";
 
 const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] });
@@ -30,6 +31,7 @@ export interface IOrganizationMembershipServiceDeps {
     "findInviteeByEmail" | "createInvitedWithPendingTeamMembership" | "setOrganizationId"
   >;
   teamInviteService: Pick<TeamInviteService, "sendInvite">;
+  tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom">;
 }
 
 export class OrganizationMembershipService {
@@ -61,12 +63,19 @@ export class OrganizationMembershipService {
     });
     if (usernameTaken) throw ErrorWithCode.Factory.Conflict("Username is already taken in this organization");
 
-    return this.deps.organizationMembershipRepository.addMember({
+    const member = await this.deps.organizationMembershipRepository.addMember({
       organizationId,
       userId,
       username: user.username,
       role,
     });
+    // A username freed by a move may still redirect to the moved user's new org; the new owner wins
+    await this.deps.tempOrgRedirectRepository.disableByFrom({
+      fromOrgId: organizationId,
+      from: user.username,
+      types: ["User"],
+    });
+    return member;
   }
 
   async setRole(params: {
