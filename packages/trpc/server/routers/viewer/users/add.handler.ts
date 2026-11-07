@@ -107,11 +107,9 @@ const createUserWithOrganizationsDisabled = async (
   const { findDefaultOrganizationId } = await import(
     "@calcom/features/organizations/lib/defaultOrganization"
   );
-  const defaultOrganizationId = await findDefaultOrganizationId();
-  // Until the default organization exists (T061 switch-over), users keep a null organization
-  if (defaultOrganizationId === null) {
-    return prisma.user.create({ data: { ...data, creationSource: CreationSource.WEBAPP } });
-  }
+  const defaultOrganizationId = await findDefaultOrganizationId().catch((e: unknown) => {
+    throw convertErrorWithCodeToTRPCError(e);
+  });
   return createOrganizationUser(prisma, data, defaultOrganizationId);
 };
 

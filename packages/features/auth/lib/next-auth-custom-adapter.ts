@@ -37,15 +37,12 @@ const toAdapterAccount = (account: Account): AdapterAccount => ({
   session_state: account.session_state ?? undefined,
 });
 
-const createUserData = (
-  data: Omit<AdapterUser, "id">,
-  organizationId: number | null
-): Prisma.UserCreateInput => ({
+const createUserData = (data: Omit<AdapterUser, "id">, organizationId: number): Prisma.UserCreateInput => ({
   name: data.name || null,
   email: data.email,
   emailVerified: data.emailVerified || null,
   avatarUrl: data.image || null,
-  ...(organizationId !== null && { organization: { connect: { id: organizationId } } }),
+  organization: { connect: { id: organizationId } },
 });
 
 const createAccountData = (account: AdapterAccount): Prisma.AccountCreateInput => ({
