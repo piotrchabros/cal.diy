@@ -317,7 +317,7 @@ function OwnerList({ organization }: { organization: OrganizationDto }) {
   return (
     <div>
       <Label>{t("owner")}</Label>
-      <ul className="text-default stack-y-1 text-sm">
+      <ul className="stack-y-1 text-default text-sm">
         {organization.owners.map((owner) => (
           <li key={owner.userId} className="flex items-center gap-2" data-testid="organization-owner">
             <span>{`${owner.name ?? owner.email} (${owner.email})`}</span>
