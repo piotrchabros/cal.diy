@@ -36,6 +36,13 @@ export class OrganizationUrlService {
     return this.getBaseUrl({ organizationId: user?.organizationId });
   }
 
+  async getBaseUrlForEmail({ email }: { email: string | null | undefined }): Promise<string> {
+    if (!isOrganizationsEnabled()) return WEBAPP_URL;
+    if (!email) return WEBAPP_URL;
+    const user = await this.deps.organizationMembershipRepository.findUserByEmail(email);
+    return this.getBaseUrl({ organizationId: user?.organizationId });
+  }
+
   async getBaseUrlForTeam({ teamId }: { teamId: number | null | undefined }): Promise<string> {
     if (!isOrganizationsEnabled()) return WEBAPP_URL;
     if (teamId === null || teamId === undefined) return WEBAPP_URL;
