@@ -926,22 +926,6 @@ export class ProfileRepository implements IProfileRepository {
     return profile?.organizationId ?? null;
   }
 
-  static async findManyForOrg({ organizationId }: { organizationId: number }) {
-    return await prisma.profile.findMany({
-      where: {
-        organizationId,
-      },
-      include: {
-        user: {
-          select: userSelect,
-        },
-        organization: {
-          select: organizationSelect,
-        },
-      },
-    });
-  }
-
   static async findByUserIdAndProfileId({ userId, profileId }: { userId: number; profileId: number }) {
     const profile = await prisma.profile.findUnique({
       where: {
