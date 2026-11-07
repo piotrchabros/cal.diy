@@ -4,6 +4,7 @@ import { eventTypeAppMetadataOptionalSchema } from "@calcom/app-store/zod-utils"
 import { CalVideoSettingsRepository } from "@calcom/features/calVideoSettings/repositories/CalVideoSettingsRepository";
 import { HashedLinkRepository } from "@calcom/features/hashedLink/lib/repository/HashedLinkRepository";
 import { HashedLinkService } from "@calcom/features/hashedLink/lib/service/HashedLinkService";
+import { EventTypeHostService } from "@calcom/features/host/services/EventTypeHostService";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { ScheduleRepository } from "@calcom/features/schedules/repositories/ScheduleRepository";
 import tasker from "@calcom/features/tasker";
@@ -17,6 +18,7 @@ import { EventTypeAutoTranslatedField, RRTimestampBasis, SchedulingType } from "
 import { eventTypeLocations } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
 import type { GetServerSidePropsContext, NextApiResponse } from "next";
+import { convertErrorWithCodeToTRPCError } from "../../../../lib/toTRPCError";
 import type { TrpcSessionUser } from "../../../../types";
 import { setDestinationCalendarHandler } from "../../../viewer/calendars/setDestinationCalendar.handler";
 import {
@@ -461,6 +463,15 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
       throw new TRPCError({
         code: "FORBIDDEN",
       });
+    }
+
+    try {
+      await new EventTypeHostService(ctx.prisma).assertHostsInTeamOrganization({
+        teamId,
+        hostUserIds: hosts.map((host) => host.userId),
+      });
+    } catch (error) {
+      throw convertErrorWithCodeToTRPCError(error);
     }
 
     const oldHostsSet = new Set(eventType.hosts.map((oldHost) => oldHost.userId));

@@ -1,9 +1,11 @@
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { HostRepository } from "@calcom/features/host/repositories/HostRepository";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
-import type { PrismaClient } from "@calcom/prisma/client";
+import { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { ErrorWithCode } from "@calcom/lib/errors";
-
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import type { PrismaClient } from "@calcom/prisma/client";
 import type {
   AssignmentChild,
   AssignmentHost,
@@ -18,15 +20,39 @@ import type {
   TeamMemberSearchResult,
 } from "./IEventTypeHostService";
 
-export class EventTypeHostService implements IEventTypeHostService {
-  private hostRepository: HostRepository;
-  private membershipRepository: MembershipRepository;
-  private eventTypeRepository: EventTypeRepository;
+export type EventTypeHostServiceDeps = {
+  hostRepository: Pick<
+    HostRepository,
+    | "findHostsPaginatedIncludeUser"
+    | "findHostsPaginatedIncludeUserForAssignment"
+    | "findChildrenForAssignmentPaginated"
+    | "findAllRoundRobinHosts"
+  >;
+  membershipRepository: Pick<
+    MembershipRepository,
+    "hasMembership" | "searchMembers" | "findAcceptedMembersWithUserProfile"
+  >;
+  eventTypeRepository: Pick<EventTypeRepository, "getTeamIdByEventTypeId">;
+  teamRepository: Pick<TeamRepository, "findBasicById">;
+  userRepository: Pick<UserRepository, "findOrganizationIdsByIds">;
+};
 
-  constructor(private prismaClient: PrismaClient) {
-    this.hostRepository = new HostRepository(prismaClient);
-    this.membershipRepository = new MembershipRepository(prismaClient);
-    this.eventTypeRepository = new EventTypeRepository(prismaClient);
+export class EventTypeHostService implements IEventTypeHostService {
+  private hostRepository: EventTypeHostServiceDeps["hostRepository"];
+  private membershipRepository: EventTypeHostServiceDeps["membershipRepository"];
+  private eventTypeRepository: EventTypeHostServiceDeps["eventTypeRepository"];
+  private teamRepository: EventTypeHostServiceDeps["teamRepository"];
+  private userRepository: EventTypeHostServiceDeps["userRepository"];
+
+  constructor(
+    private prismaClient: PrismaClient,
+    deps: Partial<EventTypeHostServiceDeps> = {}
+  ) {
+    this.hostRepository = deps.hostRepository ?? new HostRepository(prismaClient);
+    this.membershipRepository = deps.membershipRepository ?? new MembershipRepository(prismaClient);
+    this.eventTypeRepository = deps.eventTypeRepository ?? new EventTypeRepository(prismaClient);
+    this.teamRepository = deps.teamRepository ?? new TeamRepository(prismaClient);
+    this.userRepository = deps.userRepository ?? new UserRepository(prismaClient);
   }
 
   async getHostsForAvailability({
@@ -109,13 +135,12 @@ export class EventTypeHostService implements IEventTypeHostService {
     limit: number;
     search?: string;
   }): Promise<PaginatedAssignmentChildrenResponse> {
-    const { items, nextCursor, hasMore } =
-      await this.hostRepository.findChildrenForAssignmentPaginated({
-        eventTypeId,
-        cursor,
-        limit,
-        search,
-      });
+    const { items, nextCursor, hasMore } = await this.hostRepository.findChildrenForAssignmentPaginated({
+      eventTypeId,
+      cursor,
+      limit,
+      search,
+    });
 
     const children: AssignmentChild[] = items
       .filter((item) => item.owner !== null)
@@ -152,6 +177,9 @@ export class EventTypeHostService implements IEventTypeHostService {
   }): Promise<PaginatedTeamMembersResponse> {
     const isMember = await this.membershipRepository.hasMembership({ teamId, userId });
     if (!isMember) {
+      if (isOrganizationsEnabled()) {
+        throw ErrorWithCode.Factory.NotFound("Team not found");
+      }
       throw ErrorWithCode.Factory.Forbidden("You are not a member of this team");
     }
 
@@ -174,6 +202,33 @@ export class EventTypeHostService implements IEventTypeHostService {
     }));
 
     return { members, nextCursor, hasMore };
+  }
+
+  async assertHostsInTeamOrganization({
+    teamId,
+    hostUserIds,
+  }: {
+    teamId: number;
+    hostUserIds: number[];
+  }): Promise<void> {
+    if (!isOrganizationsEnabled() || hostUserIds.length === 0) return;
+
+    const team = await this.teamRepository.findBasicById({ teamId });
+    const organizationId = team?.isOrganization ? team.id : (team?.parentId ?? null);
+    // Org teams let any org member be a host (the handler skips the team-membership
+    // check when the team has a parent), so the organization is the isolation boundary.
+    if (organizationId === null) return;
+
+    const uniqueIds = Array.from(new Set(hostUserIds));
+    const users = await this.userRepository.findOrganizationIdsByIds({ ids: uniqueIds });
+    const organizationIdByUserId = new Map(users.map((user) => [user.id, user.organizationId]));
+
+    const badIds = uniqueIds.filter((id) => organizationIdByUserId.get(id) !== organizationId);
+    if (badIds.length > 0) {
+      throw ErrorWithCode.Factory.NotFound(
+        `Unable to assign hosts to team ${teamId}: users ${badIds.join(", ")} are not in organization ${organizationId}`
+      );
+    }
   }
 
   async exportHostsForWeights({
