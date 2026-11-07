@@ -1,10 +1,9 @@
 // TODO: We should find a way to keep App specific email templates within the App itself
-import type { TFunction } from "i18next";
 
 import { getReplyToHeader } from "@calcom/lib/getReplyToHeader";
 import { TimeFormat } from "@calcom/lib/timeFormat";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
-
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -39,6 +38,7 @@ export default class AttendeeDailyVideoDownloadRecordingEmail extends BaseEmail 
         date: this.getFormattedDate(),
         downloadLink: this.downloadLink,
         language: this.t,
+        baseUrl: this.calEvent.bookerUrl,
         name: this.attendee.name,
       }),
     };
