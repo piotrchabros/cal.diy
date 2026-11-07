@@ -49,6 +49,8 @@ export type MoveUserInput = {
   role?: OrganizationRoleDto;
 };
 
+export type MoveUserOptions = { allowMissingUsername?: boolean };
+
 export type MoveTeamInput = {
   teamId: number;
   toOrganizationId: number;
@@ -59,7 +61,11 @@ export type MoveTeamInput = {
 export class OrganizationMoveService {
   constructor(private readonly deps: IOrganizationMoveServiceDeps) {}
 
-  async moveUser(input: MoveUserInput, actorUserId: number): Promise<MoveUserResultDto> {
+  async moveUser(
+    input: MoveUserInput,
+    actorUserId: number,
+    options: MoveUserOptions = {}
+  ): Promise<MoveUserResultDto> {
     const { userId, toOrganizationId } = input;
     const user = await this.deps.organizationMoveRepository.findUserForMove(userId);
     if (!user) throw ErrorWithCode.Factory.NotFound("User not found");
@@ -71,25 +77,33 @@ export class OrganizationMoveService {
     }
 
     const username = input.newUsername !== undefined ? this.parseUsername(input.newUsername) : user.username;
-    // Org profiles are keyed by username, so the move cannot create one without it
-    if (username === null) throw ErrorWithCode.Factory.PreconditionFailed(MOVE_ERRORS.usernameRequired);
+    // Org profiles are keyed by username, so a move normally cannot create one without it. Removing a
+    // profile-less pending invitee from an org still has to move them to the default org, hence the opt-out.
+    if (username === null && !options.allowMissingUsername) {
+      throw ErrorWithCode.Factory.PreconditionFailed(MOVE_ERRORS.usernameRequired);
+    }
 
     const fromOrganizationId = user.organizationId;
     if (fromOrganizationId !== null) await this.assertNotLastOwner(fromOrganizationId, userId);
 
-    const taken = await this.deps.organizationMoveRepository.findTakenUsernames({
-      organizationId: toOrganizationId,
-      usernames: [username],
-      excludeUserIds: [userId],
-    });
-    if (taken.length > 0) throw ErrorWithCode.Factory.Conflict(MOVE_ERRORS.usernameTaken);
+    if (username !== null) {
+      const taken = await this.deps.organizationMoveRepository.findTakenUsernames({
+        organizationId: toOrganizationId,
+        usernames: [username],
+        excludeUserIds: [userId],
+      });
+      if (taken.length > 0) throw ErrorWithCode.Factory.Conflict(MOVE_ERRORS.usernameTaken);
+    }
 
-    const redirect = await this.buildRedirect({
-      fromOrganizationId,
-      toOrganizationId,
-      from: user.username,
-      to: username,
-    });
+    const redirect =
+      username === null
+        ? null
+        : await this.buildRedirect({
+            fromOrganizationId,
+            toOrganizationId,
+            from: user.username,
+            to: username,
+          });
 
     await this.deps.organizationMoveRepository.applyMove({
       users: [

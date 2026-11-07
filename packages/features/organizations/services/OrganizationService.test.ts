@@ -61,6 +61,7 @@ describe("OrganizationService", () => {
         },
         teamInviteService: { sendInvite: vi.fn() },
         tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
+        organizationMoveService: { moveUser },
       }),
       organizationMoveService: { moveUser },
     });
@@ -460,6 +461,81 @@ describe("OrganizationService", () => {
       repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
 
       await expectRejection(service.getDefault(), ErrorCode.NotFound, DEFAULT_NOT_FOUND);
+    });
+  });
+
+  describe("ensureDefault", () => {
+    it("returns the existing default organization without creating one", async () => {
+      const seeded = repository.seed({ name: "Main", slug: "main", domain: DEFAULT_DOMAIN });
+      const create = vi.spyOn(repository, "create");
+
+      const organization = await service.ensureDefault();
+
+      expect(organization).toMatchObject({ id: seeded.id, name: "Main", isDefault: true });
+      expect(create).not.toHaveBeenCalled();
+      expect(repository.all()).toHaveLength(1);
+    });
+
+    it("creates the default organization on the default domain and logs it", async () => {
+      const organization = await service.ensureDefault();
+
+      expect(organization).toMatchObject({
+        name: "Default",
+        slug: "default",
+        domain: DEFAULT_DOMAIN,
+        isDefault: true,
+      });
+      expect(repository.all()).toHaveLength(1);
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.default.create", {
+        action: "organization.default.create",
+        organizationId: organization.id,
+      });
+    });
+
+    it.each(["localhost", "localhost:3000"])("creates it on a %s default domain", async (domain) => {
+      service = buildService({ defaultDomain: domain });
+
+      const organization = await service.ensureDefault();
+
+      expect(organization).toMatchObject({ slug: "default", domain, isDefault: true });
+    });
+
+    it("falls back to another slug when another organization holds 'default'", async () => {
+      repository.seed({ name: "Other", slug: "default", domain: "other.com" });
+
+      const organization = await service.ensureDefault();
+
+      expect(organization).toMatchObject({ slug: "default-organization", domain: DEFAULT_DOMAIN });
+    });
+
+    it("returns the organization a concurrent request created when the insert conflicts", async () => {
+      vi.spyOn(repository, "create").mockImplementationOnce(async () => {
+        repository.seed({ name: "Default", slug: "default", domain: DEFAULT_DOMAIN });
+        throw new Error("Unique constraint failed");
+      });
+
+      const organization = await service.ensureDefault();
+
+      expect(organization).toMatchObject({ slug: "default", domain: DEFAULT_DOMAIN, isDefault: true });
+      expect(repository.all()).toHaveLength(1);
+    });
+
+    it("rethrows a create failure when no default organization exists afterwards", async () => {
+      vi.spyOn(repository, "create").mockRejectedValueOnce(new Error("database unavailable"));
+
+      await expect(service.ensureDefault()).rejects.toThrow("database unavailable");
+    });
+
+    it("throws PreconditionFailed when no default domain is configured", async () => {
+      service = buildService({ defaultDomain: null });
+      const create = vi.spyOn(repository, "create");
+
+      await expectRejection(
+        service.ensureDefault(),
+        ErrorCode.PreconditionFailed,
+        "Cannot create the default organization: NEXT_PUBLIC_WEBAPP_URL has no host"
+      );
+      expect(create).not.toHaveBeenCalled();
     });
   });
 

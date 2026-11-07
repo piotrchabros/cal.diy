@@ -858,7 +858,8 @@ async function handler(
   const _crmRecordId: string | undefined = reqBody.crmRecordId ?? undefined;
 
   const { qualifiedRRUsers, additionalFallbackRRUsers, fixedUsers } = await loadAndValidateUsers({
-    hostname,
+    // API v2 sends its own host, whose resolved organization would override the orgSlug it forces
+    hostname: skipHostOrganizationCheck && forcedSlug ? undefined : hostname,
     forcedSlug,
     isPlatform: isPlatformBooking,
     eventType,

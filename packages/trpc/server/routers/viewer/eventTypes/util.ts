@@ -9,6 +9,7 @@ import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import authedProcedure from "../../../procedures/authedProcedure";
+import { assertTeamEventVisible, teamVisibilitySelect } from "./teamEventVisibility";
 import type { TUpdateInputSchema } from "./types";
 
 type PermissionString = string;
@@ -39,7 +40,8 @@ export const eventOwnerProcedure = authedProcedure
     // Prevent non-owners to update/delete a team event
     const event = await ctx.prisma.eventType.findUnique({
       where: { id },
-      include: {
+      select: {
+        userId: true,
         users: {
           select: {
             id: true,
@@ -51,8 +53,10 @@ export const eventOwnerProcedure = authedProcedure
               select: {
                 userId: true,
                 role: true,
+                accepted: true,
               },
             },
+            ...teamVisibilitySelect(ctx.user.id),
           },
         },
       },
@@ -61,6 +65,8 @@ export const eventOwnerProcedure = authedProcedure
     if (!event) {
       throw new TRPCError({ code: "NOT_FOUND" });
     }
+
+    if (event.team) assertTeamEventVisible(event.team, ctx.user.id);
 
     const isAuthorized = (() => {
       if (event.team) {
@@ -136,8 +142,10 @@ export const createEventPbacProcedure = (
               members: {
                 select: {
                   userId: true,
+                  accepted: true,
                 },
               },
+              ...teamVisibilitySelect(ctx.user.id),
             },
           },
         },
@@ -158,6 +166,7 @@ export const createEventPbacProcedure = (
         }
       } else {
         // Team event - check PBAC/fallback permissions
+        if (event.team) assertTeamEventVisible(event.team, ctx.user.id);
         const permissionCheckService = new PermissionCheckService();
         const hasPermission = await permissionCheckService.checkPermission({
           userId: ctx.user.id,

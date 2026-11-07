@@ -160,6 +160,20 @@ export class PrismaOrganizationMoveRepository implements IOrganizationMoveReposi
       await tx.verificationToken.deleteMany({ where: { identifier: email, teamId: { in: leftTeamIds } } });
     }
 
+    // Org profiles are keyed by username, so a user without one gets no profile, membership or redirect
+    // in the target org; they only drop the old org profile and change organization.
+    if (username === null) {
+      if (fromOrganizationId !== null) {
+        await tx.profile.deleteMany({ where: { userId, organizationId: fromOrganizationId } });
+      }
+      await tx.user.update({
+        where: { id: userId },
+        data: { organizationId: toOrganizationId },
+        select: { id: true },
+      });
+      return;
+    }
+
     await tx.profile.deleteMany({ where: { userId, organizationId: toOrganizationId } });
     const oldProfile = await this.findProfile(tx, userId, fromOrganizationId);
     // Event types reference the profile, so it moves in place instead of being recreated.

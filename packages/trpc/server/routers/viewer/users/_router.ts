@@ -1,3 +1,4 @@
+import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { RedirectType } from "@calcom/prisma/enums";
 import { authedAdminProcedure } from "@calcom/trpc/server/procedures/authedProcedure";
@@ -118,6 +119,12 @@ export const userAdminRouter = router({
 
         return userInternal;
       });
+      if (input.username && input.username !== requestedUser.username) {
+        await disableUserRedirectsForReusedUsername({
+          organizationId: requestedUser.organizationId,
+          username: input.username,
+        });
+      }
       return { user, message: `User with id: ${user.id} updated successfully` };
     }),
   delete: authedAdminProcedureWithRequestedUser.input(userIdSchema).mutation(async ({ ctx }) => {

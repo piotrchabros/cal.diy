@@ -86,6 +86,7 @@ export const organizationRouter = router({
         organizationId: ctx.organizationId,
         actorUserId: ctx.user.id,
         userId: input.userId,
+        newUsername: input.newUsername,
       });
     }),
   listTeams: organizationMemberProcedure

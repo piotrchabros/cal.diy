@@ -8,7 +8,11 @@ import { prisma } from "@calcom/prisma";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import { TRPCError } from "@trpc/server";
 import type { TEditInputSchema } from "./edit.schema";
-import { assertMemberMeetingsScope, assertTeamAdminForMemberMeetings } from "./memberMeetings";
+import {
+  assertCanManageTeamWebhooks,
+  assertMemberMeetingsScope,
+  assertTeamAdminForMemberMeetings,
+} from "./memberMeetings";
 
 type EditOptions = {
   ctx: {
@@ -64,6 +68,11 @@ export const editHandler = async ({ input, ctx }: EditOptions) => {
       code: "BAD_REQUEST",
       message: "The team or event type of a team webhook cannot be changed",
     });
+  }
+
+  if (changesTeam && data.teamId != null && !webhook.platform) {
+    // Without this a personal webhook could be re-pointed at any team and receive its bookings.
+    await assertCanManageTeamWebhooks({ userId: ctx.user.id, teamId: data.teamId });
   }
 
   const enablesMemberMeetings = data.includeMemberMeetings === true && !webhook.includeMemberMeetings;

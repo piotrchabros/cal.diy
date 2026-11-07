@@ -1,9 +1,9 @@
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { TRPCError } from "@trpc/server";
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { authedProcedure } from "../../../procedures/authedProcedure";
-import { createEventPbacProcedure, ensureEmailOrPhoneNumberIsPresent } from "../util";
+import { createEventPbacProcedure, ensureEmailOrPhoneNumberIsPresent, eventOwnerProcedure } from "../util";
 
 describe("createEventPbacProcedure", () => {
   const mockPrisma = {
@@ -170,7 +170,12 @@ describe("createEventPbacProcedure", () => {
       teamId: 10,
       users: [],
       team: {
-        members: [{ userId: 1 }, { userId: 2 }, { userId: 3 }],
+        members: [
+          { userId: 1, accepted: true },
+          { userId: 2, accepted: true },
+          { userId: 3, accepted: true },
+        ],
+        parent: null,
       },
     };
 
@@ -197,7 +202,13 @@ describe("createEventPbacProcedure", () => {
     });
 
     it("should allow org admin without team membership to access team event", async () => {
-      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(teamEvent);
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: {
+          members: [{ userId: 2, accepted: true }],
+          parent: { members: [{ userId: 1 }] },
+        },
+      });
 
       const procedure = createEventPbacProcedure("eventType.update");
       const middleware = getMiddleware(procedure);
@@ -224,7 +235,12 @@ describe("createEventPbacProcedure", () => {
       teamId: 10,
       users: [],
       team: {
-        members: [{ userId: 1 }, { userId: 2 }, { userId: 3 }],
+        members: [
+          { userId: 1, accepted: true },
+          { userId: 2, accepted: true },
+          { userId: 3, accepted: true },
+        ],
+        parent: null,
       },
     };
 
@@ -347,6 +363,79 @@ describe("createEventPbacProcedure", () => {
     });
   });
 
+  describe("with organizations enabled", () => {
+    const teamEvent = {
+      id: 2,
+      userId: null,
+      teamId: 10,
+      users: [],
+      team: {
+        members: [{ userId: 2, accepted: true }],
+        parent: null,
+      },
+    };
+
+    const runMiddleware = () =>
+      getMiddleware(createEventPbacProcedure("eventType.update"))({
+        ctx: mockCtx,
+        input: { id: 2 },
+        next: mockNext,
+        path: "test",
+        type: "mutation",
+        getRawInput: async () => ({}),
+        meta: undefined,
+      });
+
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should throw NOT_FOUND for a non-member of the team", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(teamEvent);
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("should throw NOT_FOUND for a pending member of the team", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: { members: [{ userId: 1, accepted: false }], parent: null },
+      });
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("should allow an accepted member of the team", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: { members: [{ userId: 1, accepted: true }], parent: null },
+      });
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+    });
+
+    it("should allow an admin of the parent organization without team membership", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: { members: [{ userId: 2, accepted: true }], parent: { members: [{ userId: 1 }] } },
+      });
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+    });
+
+    it("should still throw FORBIDDEN for a non-owner of a personal event", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue({ id: 1, userId: 2, teamId: null, users: [{ id: 2 }], team: null });
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+  });
+
   describe("event not found", () => {
     it("should throw NOT_FOUND when event does not exist", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(null);
@@ -409,7 +498,8 @@ describe("createEventPbacProcedure", () => {
       teamId: 10,
       users: [],
       team: {
-        members: [{ userId: 1 }],
+        members: [{ userId: 1, accepted: true }],
+        parent: null,
       },
     };
 
@@ -610,6 +700,134 @@ describe("createEventPbacProcedure", () => {
       ];
 
       expect(() => ensureEmailOrPhoneNumberIsPresent(fields)).not.toThrow();
+    });
+  });
+});
+
+describe("eventOwnerProcedure", () => {
+  const mockPrisma = {
+    eventType: {
+      findUnique: vi.fn(),
+    },
+  } as unknown as PrismaClient;
+
+  const mockCtx = {
+    user: { id: 1, profile: { upId: "user-1" } },
+    session: { user: { id: 1 } },
+    prisma: mockPrisma,
+  };
+
+  const mockNext = vi.fn().mockResolvedValue({ ctx: mockCtx });
+
+  const middleware = eventOwnerProcedure._def.middlewares[eventOwnerProcedure._def.middlewares.length - 1];
+
+  const runMiddleware = (users: number[] = []) =>
+    middleware({
+      ctx: mockCtx,
+      input: { id: 2, users },
+      next: mockNext,
+      path: "test",
+      type: "mutation",
+      getRawInput: async () => ({}),
+      meta: undefined,
+    });
+
+  const teamEventWithMembers = (
+    members: { userId: number; role: MembershipRole; accepted: boolean }[],
+    parent: { members: { userId: number }[] } | null = null
+  ) => ({ userId: null, users: [], team: { members, parent } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("should query the event with select and no include", async () => {
+    mockPrisma.eventType.findUnique = vi
+      .fn()
+      .mockResolvedValue(teamEventWithMembers([{ userId: 1, role: MembershipRole.ADMIN, accepted: true }]));
+
+    await runMiddleware();
+
+    expect(mockPrisma.eventType.findUnique).toHaveBeenCalledWith({
+      where: { id: 2 },
+      select: expect.any(Object),
+    });
+    expect(vi.mocked(mockPrisma.eventType.findUnique).mock.calls[0][0]).not.toHaveProperty("include");
+  });
+
+  describe("with organizations disabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    });
+
+    it("should throw FORBIDDEN for a non-member of the team", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWithMembers([{ userId: 2, role: MembershipRole.ADMIN, accepted: true }]));
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("should throw FORBIDDEN for an accepted member who is not an admin", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(
+          teamEventWithMembers([{ userId: 1, role: MembershipRole.MEMBER, accepted: true }])
+        );
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("should allow a team admin", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWithMembers([{ userId: 1, role: MembershipRole.ADMIN, accepted: true }]));
+
+      await expect(runMiddleware()).resolves.not.toThrow();
+    });
+
+    it("should throw FORBIDDEN when assigning users outside the team", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWithMembers([{ userId: 1, role: MembershipRole.ADMIN, accepted: true }]));
+
+      await expect(runMiddleware([1, 99])).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+  });
+
+  describe("with organizations enabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    });
+
+    it("should throw NOT_FOUND for a non-member of the team", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWithMembers([{ userId: 2, role: MembershipRole.ADMIN, accepted: true }]));
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("should throw FORBIDDEN for an accepted member who is not an admin", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(
+          teamEventWithMembers([{ userId: 1, role: MembershipRole.MEMBER, accepted: true }])
+        );
+
+      await expect(runMiddleware()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("should allow a team admin", async () => {
+      mockPrisma.eventType.findUnique = vi
+        .fn()
+        .mockResolvedValue(teamEventWithMembers([{ userId: 1, role: MembershipRole.ADMIN, accepted: true }]));
+
+      await expect(runMiddleware()).resolves.not.toThrow();
     });
   });
 });

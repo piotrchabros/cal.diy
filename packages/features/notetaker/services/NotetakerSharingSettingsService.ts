@@ -9,6 +9,7 @@ import type {
 } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { NOTETAKER_SHARING_MAX_PEOPLE } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
@@ -336,7 +337,10 @@ export class NotetakerSharingSettingsService {
   // eventOwnerProcedure does not check that the membership was accepted.
   private async assertActorIsMember(userId: number, teamId: number): Promise<void> {
     const isMember = await this.deps.membershipLookup.isAcceptedMember({ userId, teamId });
-    if (!isMember) throw ErrorWithCode.Factory.Forbidden("NOT_ALLOWED");
+    if (isMember) return;
+    // Another organization's team must look nonexistent rather than confirm it exists.
+    if (isOrganizationsEnabled()) throw ErrorWithCode.Factory.NotFound("Team not found");
+    throw ErrorWithCode.Factory.Forbidden("NOT_ALLOWED");
   }
 
   private buildUnavailableDto(

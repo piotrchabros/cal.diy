@@ -301,6 +301,75 @@ describe("OrganizationMoveService", () => {
 
       expect(moveRepository.applyMove.mock.calls[0][0].users[0].redirect).toEqual(redirect);
     });
+
+    describe("with allowMissingUsername", () => {
+      it("moves a user without a username, skipping the conflict check and redirect", async () => {
+        seedUser({ username: null });
+
+        const result = await service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID }, ACTOR_ID, {
+          allowMissingUsername: true,
+        });
+
+        expect(result).toEqual({ userId: USER_ID, organizationId: TO_ORG_ID, username: null });
+        expect(moveRepository.findTakenUsernames).not.toHaveBeenCalled();
+        expect(getBaseUrl).not.toHaveBeenCalled();
+        const move = moveRepository.applyMove.mock.calls[0][0].users[0];
+        expect(move.username).toBeNull();
+        expect(move.redirect).toBeNull();
+      });
+
+      it("still rejects a user without a username when the option is not given", async () => {
+        seedUser({ username: null });
+
+        await expectRejection(
+          service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID }, ACTOR_ID, {}),
+          ErrorCode.PreconditionFailed,
+          MOVE_ERRORS.usernameRequired
+        );
+        expect(moveRepository.applyMove).not.toHaveBeenCalled();
+      });
+
+      it("uses a given new username and points the redirect at it", async () => {
+        seedUser();
+
+        const result = await service.moveUser(
+          { userId: USER_ID, toOrganizationId: TO_ORG_ID, newUsername: "alice-2" },
+          ACTOR_ID,
+          { allowMissingUsername: true }
+        );
+
+        expect(result.username).toBe("alice-2");
+        expect(moveRepository.findTakenUsernames).toHaveBeenCalledWith({
+          organizationId: TO_ORG_ID,
+          usernames: ["alice-2"],
+          excludeUserIds: [USER_ID],
+        });
+        const move = moveRepository.applyMove.mock.calls[0][0].users[0];
+        expect(move.username).toBe("alice-2");
+        expect(move.redirect).toEqual({
+          fromOrgId: FROM_ORG_ID,
+          from: "alice",
+          toUrl: "https://globex.example.com/alice-2",
+        });
+      });
+
+      // T181: removing a member moves them to the default org, so their old org URL must keep resolving
+      it("writes a redirect from the old org base URL to the target org base URL", async () => {
+        seedUser();
+
+        await service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID }, ACTOR_ID, {
+          allowMissingUsername: true,
+        });
+
+        expect(moveRepository.applyMove.mock.calls[0][0].users[0].redirect).toEqual({
+          fromOrgId: FROM_ORG_ID,
+          from: "alice",
+          toUrl: `${BASE_URLS[TO_ORG_ID]}/alice`,
+        });
+        expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: FROM_ORG_ID });
+        expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: TO_ORG_ID });
+      });
+    });
   });
 
   it.each([

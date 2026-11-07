@@ -2,6 +2,7 @@ import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calc
 import { moduleLoader as userRepositoryModuleLoader } from "@calcom/features/di/modules/User";
 import { moduleLoader as teamInviteServiceModuleLoader } from "@calcom/features/membership/di/TeamInviteService.module";
 import { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
+import { moduleLoader as organizationMoveServiceModuleLoader } from "./OrganizationMoveService.module";
 import { moduleLoader as organizationsConfigModuleLoader } from "./OrganizationsConfig.module";
 import { moduleLoader as organizationMembershipRepositoryModuleLoader } from "./PrismaOrganizationMembershipRepository.module";
 import { moduleLoader as organizationRepositoryModuleLoader } from "./PrismaOrganizationRepository.module";
@@ -24,6 +25,7 @@ const loadModule = bindModuleToClassOnToken({
     userRepository: userRepositoryModuleLoader,
     teamInviteService: teamInviteServiceModuleLoader,
     tempOrgRedirectRepository: tempOrgRedirectRepositoryModuleLoader,
+    organizationMoveService: organizationMoveServiceModuleLoader,
   },
 });
 
