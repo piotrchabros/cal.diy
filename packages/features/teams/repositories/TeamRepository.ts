@@ -84,6 +84,7 @@ export class TeamRepository {
         teamId: true,
         token: true,
         expires: true,
+        team: { select: { id: true, parentId: true } },
       },
     });
   }
