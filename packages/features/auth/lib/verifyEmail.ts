@@ -23,6 +23,7 @@ interface VerifyEmailType {
   email: string;
   language?: string;
   secondaryEmailId?: number;
+  userId?: number;
   isVerifyingEmail?: boolean;
   isPlatform?: boolean;
   extraParams?: Record<string, string>;
@@ -34,6 +35,7 @@ export const sendEmailVerification = async ({
   language,
   username,
   secondaryEmailId,
+  userId,
   isPlatform = false,
   extraParams,
 }: VerifyEmailType) => {
@@ -76,9 +78,15 @@ export const sendEmailVerification = async ({
     ...extraParams,
   });
 
+  // Secondary addresses aren't on a user record, so the email lookup can't find their organization.
+  const baseUrl =
+    userId !== undefined
+      ? await getOrganizationUrlService().getBaseUrlForUser({ userId })
+      : await getOrganizationUrlService().getBaseUrlForEmail({ email });
+
   await sendEmailVerificationLink({
     language: translation,
-    verificationEmailLink: `${await getOrganizationUrlService().getBaseUrlForEmail({ email })}/api/auth/verify-email?${params.toString()}`,
+    verificationEmailLink: `${baseUrl}/api/auth/verify-email?${params.toString()}`,
     user: {
       email,
       name: username,

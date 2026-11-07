@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sendChangeOfEmailVerification, sendEmailVerification } from "./verifyEmail";
 
-const { prismaMock, getBaseUrlForEmail, emails } = vi.hoisted(() => ({
+const { prismaMock, getBaseUrlForEmail, getBaseUrlForUser, emails } = vi.hoisted(() => ({
   prismaMock: { verificationToken: { create: vi.fn() } },
   getBaseUrlForEmail: vi.fn(),
+  getBaseUrlForUser: vi.fn(),
   emails: {
     sendEmailVerificationLink: vi.fn(),
     sendChangeOfEmailVerificationLink: vi.fn(),
@@ -13,7 +14,7 @@ const { prismaMock, getBaseUrlForEmail, emails } = vi.hoisted(() => ({
 
 vi.mock("@calcom/prisma", () => ({ default: prismaMock, prisma: prismaMock }));
 vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
-  getOrganizationUrlService: () => ({ getBaseUrlForEmail }),
+  getOrganizationUrlService: () => ({ getBaseUrlForEmail, getBaseUrlForUser }),
 }));
 vi.mock("@calcom/emails/auth-email-service", () => emails);
 vi.mock("@calcom/i18n/server", () => ({ getTranslation: vi.fn(async () => (key: string) => key) }));
@@ -41,11 +42,34 @@ describe("verifyEmail links", () => {
     });
 
     expect(getBaseUrlForEmail).toHaveBeenCalledWith({ email: "ada@example.com" });
+    expect(getBaseUrlForUser).not.toHaveBeenCalled();
     expect(emails.sendEmailVerificationLink).toHaveBeenCalledWith(
       expect.objectContaining({
         verificationEmailLink: expect.stringMatching(
           /^https:\/\/org\.example\.com\/api\/auth\/verify-email\?token=/
         ),
+      })
+    );
+  });
+
+  it("sends a secondary email's verification link on the owning user's organization base URL", async () => {
+    getBaseUrlForUser.mockResolvedValue("https://user-org.example.com");
+
+    await sendEmailVerification({
+      email: "ada+work@example.com",
+      username: "ada",
+      userId: 42,
+      secondaryEmailId: 9,
+    });
+
+    expect(getBaseUrlForUser).toHaveBeenCalledWith({ userId: 42 });
+    expect(getBaseUrlForEmail).not.toHaveBeenCalled();
+    expect(emails.sendEmailVerificationLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verificationEmailLink: expect.stringMatching(
+          /^https:\/\/user-org\.example\.com\/api\/auth\/verify-email\?token=/
+        ),
+        isSecondaryEmailVerification: true,
       })
     );
   });
