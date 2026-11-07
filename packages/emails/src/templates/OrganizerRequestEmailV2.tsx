@@ -1,14 +1,12 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
-
-import { CallToAction, Separator, CallToActionTable, BookingConfirmationForm } from "../components";
+import { BookingConfirmationForm, CallToAction, CallToActionTable, Separator } from "../components";
 import { OrganizerScheduledEmail } from "./OrganizerScheduledEmail";
 
 export const OrganizerRequestEmailV2 = (props: React.ComponentProps<typeof OrganizerScheduledEmail>) => {
   const { uid } = props.calEvent;
   const userId = props.calEvent.organizer.id;
   const token = props.calEvent.oneTimePassword;
-  //TODO: We should switch to using org domain if available
-  const actionHref = `${WEBAPP_URL}/api/verify-booking-token/?token=${token}&userId=${userId}&bookingUid=${uid}`;
+  const actionHref = `${props.calEvent.bookerUrl ?? WEBAPP_URL}/api/verify-booking-token/?token=${token}&userId=${userId}&bookingUid=${uid}`;
   return (
     <OrganizerScheduledEmail
       title={
