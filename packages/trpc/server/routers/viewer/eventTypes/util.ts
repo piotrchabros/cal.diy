@@ -9,6 +9,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import authedProcedure from "../../../procedures/authedProcedure";
 import {
+  acceptedTeamMemberIds,
   assertPersonalEventVisible,
   assertTeamEventVisible,
   hasTeamEventRole,
@@ -79,8 +80,8 @@ export const eventOwnerProcedure = authedProcedure
 
     const isAllowed = (() => {
       if (event.team) {
-        const allTeamMembers = event.team.members.map((member) => member.userId);
-        return input.users.every((userId: number) => allTeamMembers.includes(userId));
+        const acceptedMemberIds = acceptedTeamMemberIds(event.team);
+        return input.users.every((userId: number) => acceptedMemberIds.has(userId));
       }
       return input.users.every((userId: number) => userId === ctx.user.id);
     })();
@@ -185,8 +186,8 @@ export const createEventPbacProcedure = (
       if (input.users && input.users.length > 0) {
         const isAllowed = (() => {
           if (event.team) {
-            const allTeamMembers = event.team.members.map((member) => member.userId);
-            return input.users?.every((userId: number) => allTeamMembers.includes(userId)) ?? true;
+            const acceptedMemberIds = acceptedTeamMemberIds(event.team);
+            return input.users?.every((userId: number) => acceptedMemberIds.has(userId)) ?? true;
           }
           return input.users?.every((userId: number) => userId === ctx.user.id) ?? true;
         })();
