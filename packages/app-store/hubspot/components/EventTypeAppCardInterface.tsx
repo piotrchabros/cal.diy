@@ -3,10 +3,10 @@ import WriteToObjectSettings, {
   BookingActionEnum,
 } from "@calcom/app-store/_components/crm/WriteToObjectSettings";
 import { CrmFieldType } from "@calcom/app-store/_lib/crm-enums";
+import { getAppReturnToUrl } from "@calcom/app-store/_utils/getAppReturnToUrl";
 import useIsAppEnabled from "@calcom/app-store/_utils/useIsAppEnabled";
 import { useAppContextWithSchema } from "@calcom/app-store/EventTypeAppContext";
 import type { EventTypeAppCardComponent } from "@calcom/app-store/types";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { SchedulingType } from "@calcom/prisma/enums";
 import { Alert } from "@calcom/ui/components/alert";
@@ -38,7 +38,7 @@ const EventTypeAppCard: EventTypeAppCardComponent = function EventTypeAppCard({
   return (
     <AppCard
       onAppInstallSuccess={onAppInstallSuccess}
-      returnTo={`${WEBAPP_URL}${pathname}?tabName=apps`}
+      returnTo={getAppReturnToUrl(`${pathname}?tabName=apps`)}
       app={app}
       teamId={eventType.team?.id || undefined}
       switchOnClick={(e: boolean): void => {

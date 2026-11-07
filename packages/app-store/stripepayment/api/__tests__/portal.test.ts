@@ -1,14 +1,25 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import type { NextApiRequest } from "next";
+import type { NextApiRequest, NextApiResponse } from "next";
 import type { Session } from "next-auth";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const constants = vi.hoisted(() => ({
+  WEBAPP_URL: "https://app.example.com",
+  WEBAPP_URL_FOR_OAUTH: "https://app.example.com",
+  ALLOWED_HOSTNAMES: ["acme.example.org"] as string[],
+}));
+
+vi.mock("@calcom/lib/constants", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@calcom/lib/constants")>()),
+  ...constants,
+}));
+
 import {
   BillingPortalServiceFactory,
   TeamBillingPortalService,
   UserBillingPortalService,
 } from "../../lib/BillingPortalService";
 import * as customerModule from "../../lib/customer";
-import { buildReturnUrl, validateAuthentication } from "../portal";
+import handler, { buildReturnUrl, validateAuthentication } from "../portal";
 
 // Mock dependencies
 vi.mock("../../lib/customer");
@@ -23,6 +34,11 @@ const mockCustomerModule = vi.mocked(customerModule);
 interface RequestWithSession extends NextApiRequest {
   session?: Session | null;
 }
+
+const APP_DEFAULT = "https://app.example.com/settings/billing";
+const ORG_DEFAULT = "https://acme.example.org/settings/billing";
+
+const reqOnHost = (host: string) => ({ headers: { host } });
 
 describe("Portal API - Service-Based Architecture", () => {
   beforeEach(() => {
@@ -70,32 +86,126 @@ describe("Portal API - Service-Based Architecture", () => {
   });
 
   describe("buildReturnUrl", () => {
-    it("should return default URL when returnTo is not provided", () => {
-      const result = buildReturnUrl();
-
-      expect(result).toBe(`${WEBAPP_URL}/settings/billing`);
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
-    it("should return default URL when returnTo is not a string", () => {
-      const result = buildReturnUrl(123 as unknown as string);
+    describe("with organizations disabled", () => {
+      beforeEach(() => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "false");
+      });
 
-      expect(result).toBe(`${WEBAPP_URL}/settings/billing`);
+      it("should return the app default URL when returnTo is not provided", () => {
+        expect(buildReturnUrl(reqOnHost("app.example.com"))).toBe(APP_DEFAULT);
+      });
+
+      it("should ignore an organization host", () => {
+        expect(buildReturnUrl(reqOnHost("acme.example.org"))).toBe(APP_DEFAULT);
+      });
+
+      it("should return the default URL when returnTo is not a string", () => {
+        expect(buildReturnUrl(reqOnHost("app.example.com"), 123 as unknown as string)).toBe(APP_DEFAULT);
+      });
+
+      it("should return the default URL when returnTo is empty", () => {
+        expect(buildReturnUrl(reqOnHost("app.example.com"), "")).toBe(APP_DEFAULT);
+      });
+
+      it("should return the default URL when returnTo is relative", () => {
+        expect(buildReturnUrl(reqOnHost("app.example.com"), "/settings/teams")).toBe(APP_DEFAULT);
+      });
+
+      it("should keep a returnTo on the app domain", () => {
+        const returnTo = "https://app.example.com/settings/teams";
+        expect(buildReturnUrl(reqOnHost("app.example.com"), returnTo)).toBe(returnTo);
+      });
+
+      it("should return the app root when returnTo is unsafe", () => {
+        expect(buildReturnUrl(reqOnHost("app.example.com"), "http://malicious-site.com")).toBe(
+          "https://app.example.com/"
+        );
+      });
     });
 
-    it("should return safe redirect URL when valid returnTo is provided", () => {
-      const returnTo = `${WEBAPP_URL}/settings/teams`;
+    describe("with organizations enabled", () => {
+      beforeEach(() => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+      });
 
-      const result = buildReturnUrl(returnTo);
+      it("should default to the organization domain", () => {
+        expect(buildReturnUrl(reqOnHost("acme.example.org"))).toBe(ORG_DEFAULT);
+      });
 
-      expect(result).toBe(`${WEBAPP_URL}/settings/teams`);
+      it("should keep a returnTo on the organization domain", () => {
+        const returnTo = "https://acme.example.org/settings/teams";
+        expect(buildReturnUrl(reqOnHost("acme.example.org"), returnTo)).toBe(returnTo);
+      });
+
+      it("should keep a returnTo on the app domain", () => {
+        const returnTo = "https://app.example.com/settings/teams";
+        expect(buildReturnUrl(reqOnHost("acme.example.org"), returnTo)).toBe(returnTo);
+      });
+
+      it("should return the organization root when returnTo is unsafe", () => {
+        expect(buildReturnUrl(reqOnHost("acme.example.org"), "http://malicious-site.com")).toBe(
+          "https://acme.example.org/"
+        );
+      });
+
+      it("should use the app default on a host that is not in ALLOWED_HOSTNAMES", () => {
+        expect(buildReturnUrl(reqOnHost("other.example.net"))).toBe(APP_DEFAULT);
+      });
+    });
+  });
+
+  describe("handler", () => {
+    const buildRes = () => {
+      const res = { status: vi.fn(), json: vi.fn() };
+      res.status.mockReturnValue(res);
+      return res;
+    };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
     });
 
-    it("should return WEBAPP_URL root when unsafe redirect URL is provided", () => {
-      const returnTo = "http://malicious-site.com";
+    it("should return 405 for unsupported methods", async () => {
+      const res = buildRes();
+      await handler({ method: "DELETE" } as NextApiRequest, res as unknown as NextApiResponse);
 
-      const result = buildReturnUrl(returnTo);
+      expect(res.status).toHaveBeenCalledWith(405);
+    });
 
-      expect(result).toBe(`${WEBAPP_URL}/`);
+    it("should return 401 when not authenticated", async () => {
+      const res = buildRes();
+      await handler(
+        { method: "GET", headers: {}, query: {} } as unknown as NextApiRequest,
+        res as unknown as NextApiResponse
+      );
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it("should pass the organization billing URL to the billing portal", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+      const processBillingPortal = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(BillingPortalServiceFactory, "createUserService").mockReturnValue({
+        processBillingPortal,
+      } as unknown as UserBillingPortalService);
+      const res = buildRes();
+
+      await handler(
+        {
+          method: "GET",
+          headers: { host: "acme.example.org" },
+          query: {},
+          session: { user: { id: 123 } },
+        } as unknown as NextApiRequest,
+        res as unknown as NextApiResponse
+      );
+
+      expect(processBillingPortal).toHaveBeenCalledWith(123, ORG_DEFAULT, res);
     });
   });
 

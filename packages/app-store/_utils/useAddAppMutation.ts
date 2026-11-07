@@ -1,10 +1,8 @@
+import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
+import type { App } from "@calcom/types/App";
 import type { UseMutationOptions } from "@tanstack/react-query";
 import { useMutation } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
-
-import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import type { App } from "@calcom/types/App";
 
 function gotoUrl(url: string, newTab?: boolean) {
   if (newTab) {
@@ -27,7 +25,6 @@ export type UseAddAppMutationOptions = CustomUseMutationOptions & {
 
 function useAddAppMutation(_type: App["type"] | null, options?: UseAddAppMutationOptions) {
   const pathname = usePathname();
-  const onErrorReturnTo = `${WEBAPP_URL}${pathname}`;
 
   const mutation = useMutation<
     AddAppMutationData,
@@ -50,8 +47,8 @@ function useAddAppMutation(_type: App["type"] | null, options?: UseAddAppMutatio
       const returnTo = options?.returnTo
         ? options.returnTo
         : variables && variables.returnTo
-        ? variables.returnTo
-        : undefined;
+          ? variables.returnTo
+          : undefined;
       if (variables === "") {
         type = _type;
       } else {
@@ -64,6 +61,8 @@ function useAddAppMutation(_type: App["type"] | null, options?: UseAddAppMutatio
       if (options?.installGoogleVideo && type !== "google_calendar")
         throw new Error("Could not install Google Meet");
 
+      // window.location.origin keeps an org-domain user on their own host; read at click time so it never runs during SSR.
+      const onErrorReturnTo = `${window.location.origin}${pathname}`;
       const state: IntegrationOAuthCallbackState = {
         onErrorReturnTo,
         fromApp: true,
