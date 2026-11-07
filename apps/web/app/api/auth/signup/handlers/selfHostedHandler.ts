@@ -28,11 +28,15 @@ import { CreationSource, IdentityProvider } from "@calcom/prisma/enums";
 import { signupSchema } from "@calcom/prisma/zod-utils";
 import { NextResponse } from "next/server";
 
-async function respondConflictAs409(writeMembership: () => Promise<void>): Promise<NextResponse | null> {
+async function respondConflictAs409(
+  writeMembership: () => Promise<void>,
+  onFailure?: () => Promise<void>
+): Promise<NextResponse | null> {
   try {
     await writeMembership();
     return null;
   } catch (error) {
+    await onFailure?.();
     if (error instanceof ErrorWithCode && error.code === ErrorCode.Conflict) {
       return NextResponse.json({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS }, { status: 409 });
     }
@@ -232,19 +236,33 @@ export default async function handler(body: Record<string, string>, requestHeade
     }
     if (hostOrgId !== null) {
       const organizationId = hostOrgId;
-      const conflictResponse = await respondConflictAs409(async () => {
-        await getOrganizationMembershipService().addMember({
-          organizationId,
-          userId: createdUser.id,
-          role: "MEMBER",
-        });
-      });
+      const conflictResponse = await respondConflictAs409(
+        async () => {
+          await getOrganizationMembershipService().addMember({
+            organizationId,
+            userId: createdUser.id,
+            role: "MEMBER",
+          });
+        },
+        // Without the membership the user would keep the org id (and maybe a profile) yet not belong to it
+        async () => {
+          try {
+            await userRepository.deleteMany({ userIds: [createdUser.id] });
+          } catch {
+            logger.error("Failed to remove a user whose organization membership could not be created", {
+              userId: createdUser.id,
+              organizationId,
+            });
+          }
+        }
+      );
       if (conflictResponse) return conflictResponse;
     }
     try {
       await new TeamMembersService().acceptPendingInvitesOnSignup({
         userId: createdUser.id,
         email: userEmail,
+        organizationId: hostOrgId ?? undefined,
       });
     } catch {
       logger.error("Failed to materialize pending team invites on signup", { userId: createdUser.id });

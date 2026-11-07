@@ -1,6 +1,4 @@
-import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { updateTriggerForExistingBookings } from "@calcom/features/webhooks/lib/scheduleTrigger";
-import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
 import { prisma } from "@calcom/prisma";
 import type { Prisma, Webhook } from "@calcom/prisma/client";
@@ -9,7 +7,7 @@ import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import { TRPCError } from "@trpc/server";
 import { v4 } from "uuid";
 import type { TCreateInputSchema } from "./create.schema";
-import { assertMemberMeetingsScope, assertTeamAdminForMemberMeetings } from "./memberMeetings";
+import { assertCanManageTeamWebhooks, assertMemberMeetingsScope } from "./memberMeetings";
 
 type CreateOptions = {
   ctx: {
@@ -29,34 +27,28 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
     });
   }
 
-  const { webhookId: _webhookId, ...inputWithoutWebhookId } = input;
-  const webhookData: Prisma.WebhookCreateInput = {
-    id: v4(),
-    ...inputWithoutWebhookId,
-  };
   if (input.platform && user.role !== "ADMIN") {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 
-  // FR-008: another organization's team must look nonexistent, not merely forbidden.
-  if (input.teamId && isOrganizationsEnabled()) {
-    const isMember = await new MembershipRepository().hasMembership({
-      userId: user.id,
-      teamId: input.teamId,
-    });
-    if (!isMember) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
-    }
+  if (input.teamId && !input.platform) {
+    await assertCanManageTeamWebhooks({ userId: user.id, teamId: input.teamId });
   }
 
   if (input.includeMemberMeetings) {
-    const teamId = await assertMemberMeetingsScope(input);
-    await assertTeamAdminForMemberMeetings({ userId: user.id, teamId });
+    await assertMemberMeetingsScope(input);
   }
 
-  // Member-meeting webhooks belong to the team, not their creator, so they keep firing if the creator leaves.
-  if (!input.platform && !input.eventTypeId && !input.includeMemberMeetings) {
-    webhookData.user = { connect: { id: user.id } };
+  const { webhookId: _webhookId, ...inputWithoutWebhookId } = input;
+  const webhookData: Prisma.WebhookUncheckedCreateInput = {
+    id: v4(),
+    ...inputWithoutWebhookId,
+  };
+
+  // Team webhooks belong to the team (userId null) so edit/delete stay team-admin-only and
+  // delivery never mixes in the creator's personal bookings.
+  if (!input.platform && !input.eventTypeId && !input.teamId) {
+    webhookData.userId = user.id;
   }
 
   if (input.eventTypeId) {

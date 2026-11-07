@@ -88,6 +88,7 @@ import { runP2002TestSuite } from "@calcom/features/auth/signup/handlers/__tests
 import { createOrUpdateMemberships } from "@calcom/features/auth/signup/utils/createOrUpdateMemberships";
 import { validateAndGetCorrectedUsernameAndEmail } from "@calcom/features/auth/signup/utils/validateUsername";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import logger from "@calcom/lib/logger";
 import { isUsernameReservedDueToMigration } from "@calcom/lib/server/username";
 // Import after mocks
 import { beforeEach, describe, expect, it } from "vitest";
@@ -125,6 +126,7 @@ describe("selfHostedHandler – team invite materialization", () => {
     expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
       userId: 42,
       email: "invited@example.com",
+      organizationId: undefined,
     });
   });
 
@@ -287,6 +289,12 @@ describe("selfHostedHandler – organizations", () => {
     );
     expect(isUsernameReservedDueToMigration).not.toHaveBeenCalled();
     expect(mockFindDefaultOrganizationId).not.toHaveBeenCalled();
+    expect(mockAcceptPendingInvitesOnSignup).toHaveBeenCalledWith({
+      userId: 42,
+      email: "new@example.com",
+      organizationId: hostOrg.id,
+    });
+    expect(prismaMock.user.deleteMany).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the request has no organization", async () => {
@@ -308,12 +316,41 @@ describe("selfHostedHandler – organizations", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ message: SIGNUP_ERROR_CODES.USER_ALREADY_EXISTS });
+    expect(prismaMock.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [42] } } });
+    expect(mockAcceptPendingInvitesOnSignup).not.toHaveBeenCalled();
+  });
+
+  it("still returns 409 and logs when removing the user after a membership conflict fails", async () => {
+    mockAddMember.mockRejectedValue(
+      ErrorWithCode.Factory.Conflict("Username is already taken in this organization")
+    );
+    prismaMock.user.deleteMany.mockRejectedValue(new Error("db down"));
+
+    const response = await callHandler(signupBody);
+
+    expect(response.status).toBe(409);
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to remove a user whose organization membership could not be created",
+      { userId: 42, organizationId: hostOrg.id }
+    );
   });
 
   it("rethrows membership errors other than conflicts", async () => {
     mockAddMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("Organization not found"));
 
     await expect(callHandler(signupBody)).rejects.toThrow("Organization not found");
+    expect(prismaMock.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [42] } } });
+  });
+
+  it("rethrows the original membership error when removing the user also fails", async () => {
+    mockAddMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("Organization not found"));
+    prismaMock.user.deleteMany.mockRejectedValue(new Error("db down"));
+
+    await expect(callHandler(signupBody)).rejects.toThrow("Organization not found");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to remove a user whose organization membership could not be created",
+      { userId: 42, organizationId: hostOrg.id }
+    );
   });
 
   it("joins the parent org of an invited sub-team", async () => {
