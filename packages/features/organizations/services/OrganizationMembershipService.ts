@@ -1,10 +1,21 @@
-import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
+import type {
+  OrganizationMemberDto,
+  OrganizationMemberListDto,
+  OrganizationRoleDto,
+} from "@calcom/lib/dto/OrganizationDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import logger from "@calcom/lib/logger";
 import type {
   IOrganizationMembershipRepository,
   MembershipUserRecord,
+  OrganizationMemberRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import type { IOrganizationRepository } from "../repositories/interfaces/IOrganizationRepository";
+
+const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] });
+
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 100;
 
 export interface IOrganizationMembershipServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
@@ -82,6 +93,51 @@ export class OrganizationMembershipService {
 
   async findMembershipCandidate(userId: number): Promise<MembershipUserRecord | null> {
     return this.deps.organizationMembershipRepository.findUserById(userId);
+  }
+
+  async listMembers(params: {
+    organizationId: number;
+    actorUserId: number;
+    search?: string;
+    cursor?: number;
+    limit?: number;
+  }): Promise<OrganizationMemberListDto> {
+    const { organizationId, actorUserId } = params;
+    await this.requireMemberRole(organizationId, actorUserId);
+
+    const page = await this.deps.organizationMembershipRepository.listMembers({
+      organizationId,
+      search: params.search,
+      cursor: params.cursor,
+      limit: this.clampLimit(params.limit),
+    });
+
+    log.debug("organization.member.list", {
+      action: "organization.member.list",
+      actorUserId,
+      organizationId,
+    });
+
+    return { items: page.items.map((record) => this.toMemberDto(record)), nextCursor: page.nextCursor };
+  }
+
+  // Pending invitees have no accepted membership, so they are treated like outsiders and the org stays hidden
+  private async requireMemberRole(organizationId: number, actorUserId: number): Promise<OrganizationRoleDto> {
+    const role = await this.deps.organizationMembershipRepository.findRole({
+      organizationId,
+      userId: actorUserId,
+    });
+    if (role === null) throw ErrorWithCode.Factory.NotFound("Organization not found");
+    return role;
+  }
+
+  private clampLimit(limit: number | undefined): number {
+    return Math.min(Math.max(limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+  }
+
+  private toMemberDto(record: OrganizationMemberRecord): OrganizationMemberDto {
+    const { membershipId: _membershipId, ...member } = record;
+    return member;
   }
 
   // newRole is null when the member is being removed rather than demoted

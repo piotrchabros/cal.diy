@@ -34,6 +34,29 @@ export const OrganizationRoleDtoSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
 
 export type OrganizationRoleDto = z.infer<typeof OrganizationRoleDtoSchema>;
 
+export const CurrentOrganizationDtoSchema = OrganizationDtoSchema.omit({
+  memberCount: true,
+  teamCount: true,
+}).extend({ viewerRole: OrganizationRoleDtoSchema });
+
+export const OrganizationMemberDtoSchema = z.object({
+  userId: z.number(),
+  name: z.string().nullable(),
+  email: z.string(),
+  username: z.string().nullable(),
+  role: OrganizationRoleDtoSchema,
+  accepted: z.boolean(),
+});
+
+export const OrganizationMemberListDtoSchema = z.object({
+  items: z.array(OrganizationMemberDtoSchema),
+  nextCursor: z.number().optional(),
+});
+
+export type CurrentOrganizationDto = z.infer<typeof CurrentOrganizationDtoSchema>;
+export type OrganizationMemberDto = z.infer<typeof OrganizationMemberDtoSchema>;
+export type OrganizationMemberListDto = z.infer<typeof OrganizationMemberListDtoSchema>;
+
 export const RequestOrganizationDtoSchema = OrganizationListItemDtoSchema.pick({
   id: true,
   slug: true,

@@ -3,9 +3,10 @@ import type {
   AddMemberInput,
   IOrganizationMembershipRepository,
   MembershipUserRecord,
+  OrganizationMemberRecord,
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 
-type StoredUser = MembershipUserRecord;
+type StoredUser = MembershipUserRecord & { name: string | null };
 
 type StoredProfile = { userId: number; organizationId: number; username: string };
 
@@ -16,15 +17,19 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
   profiles: StoredProfile[] = [];
   memberships: StoredMembership[] = [];
   updateRoleCalls = 0;
+  private membershipIds = new Map<StoredMembership, number>();
+  private nextMembershipId = 1;
 
   seedUser(params: {
     id: number;
     username?: string | null;
+    name?: string | null;
     email?: string;
     organizationId?: number | null;
   }): StoredUser {
     const user: StoredUser = {
       id: params.id,
+      name: params.name ?? null,
       username: params.username === undefined ? `user${params.id}` : params.username,
       email: params.email ?? `user${params.id}@example.com`,
       organizationId: params.organizationId ?? null,
@@ -44,7 +49,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     this.memberships = this.memberships.filter(
       (existing) => !(existing.userId === params.userId && existing.teamId === params.teamId)
     );
-    this.memberships.push(membership);
+    this.pushMembership(membership);
     return { ...membership };
   }
 
@@ -58,13 +63,13 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
 
   async findUserById(userId: number): Promise<MembershipUserRecord | null> {
     const user = this.users.find((existing) => existing.id === userId);
-    return user ? { ...user } : null;
+    return user ? this.toUserRecord(user) : null;
   }
 
   async findUserByEmail(email: string): Promise<MembershipUserRecord | null> {
     const normalizedEmail = email.toLowerCase();
     const user = this.users.find((existing) => existing.email.toLowerCase() === normalizedEmail);
-    return user ? { ...user } : null;
+    return user ? this.toUserRecord(user) : null;
   }
 
   async isUsernameTaken(params: {
@@ -108,20 +113,56 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
         role: input.role,
         accepted: true,
       };
-      this.memberships.push(membership);
+      this.pushMembership(membership);
     }
 
     return { userId: input.userId, organizationId: input.organizationId, role: membership.role };
   }
 
   async findRole(params: { organizationId: number; userId: number }): Promise<OrganizationRoleDto | null> {
-    return this.findMembership(params.organizationId, params.userId)?.role ?? null;
+    const membership = this.findMembership(params.organizationId, params.userId);
+    return membership?.accepted ? membership.role : null;
   }
 
   async countOwners(organizationId: number): Promise<number> {
     return this.memberships.filter(
-      (membership) => membership.teamId === organizationId && membership.role === "OWNER"
+      (membership) =>
+        membership.teamId === organizationId && membership.role === "OWNER" && membership.accepted
     ).length;
+  }
+
+  async listMembers(params: {
+    organizationId: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationMemberRecord[]; nextCursor?: number }> {
+    const search = params.search?.toLowerCase();
+    const records: OrganizationMemberRecord[] = [];
+    for (const membership of this.memberships) {
+      if (membership.teamId !== params.organizationId) continue;
+      const membershipId = this.membershipIds.get(membership) ?? 0;
+      if (params.cursor !== undefined && membershipId <= params.cursor) continue;
+      const user = this.users.find((existing) => existing.id === membership.userId);
+      if (!user) continue;
+      if (search && ![user.name, user.email, user.username].some((v) => v?.toLowerCase().includes(search))) {
+        continue;
+      }
+      records.push({
+        membershipId,
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        role: membership.role,
+        accepted: membership.accepted,
+      });
+    }
+    records.sort((a, b) => a.membershipId - b.membershipId);
+
+    const items = records.slice(0, params.limit);
+    const nextCursor = records.length > params.limit ? items[items.length - 1].membershipId : undefined;
+    return { items, nextCursor };
   }
 
   async updateRole(params: {
@@ -138,6 +179,16 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     }
     membership.role = params.role;
     return { userId: params.userId, role: membership.role };
+  }
+
+  private pushMembership(membership: StoredMembership): void {
+    this.membershipIds.set(membership, this.nextMembershipId++);
+    this.memberships.push(membership);
+  }
+
+  private toUserRecord(user: StoredUser): MembershipUserRecord {
+    const { name: _name, ...record } = user;
+    return record;
   }
 
   private findProfile(organizationId: number, userId: number): StoredProfile | undefined {

@@ -1,7 +1,7 @@
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryOrganizationMembershipRepository } from "../tests/InMemoryOrganizationMembershipRepository";
 import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRepository";
 import { OrganizationMembershipService } from "./OrganizationMembershipService";
@@ -213,6 +213,145 @@ describe("OrganizationMembershipService", () => {
 
       expect(await service.getRole(1, ORG_ID)).toBe("ADMIN");
       expect(await service.getRole(2, ORG_ID)).toBeNull();
+    });
+  });
+
+  describe("listMembers", () => {
+    const ACTOR_ID = 1;
+
+    function seedMember(params: {
+      id: number;
+      name?: string | null;
+      username?: string | null;
+      email?: string;
+      role?: OrganizationRoleDto;
+      accepted?: boolean;
+      organizationId?: number;
+    }) {
+      const organizationId = params.organizationId ?? ORG_ID;
+      membershipRepository.seedUser({
+        id: params.id,
+        name: params.name,
+        username: params.username,
+        email: params.email,
+        organizationId,
+      });
+      membershipRepository.seedMembership({
+        userId: params.id,
+        teamId: organizationId,
+        role: params.role ?? "MEMBER",
+        accepted: params.accepted,
+      });
+    }
+
+    beforeEach(() => {
+      seedMember({ id: ACTOR_ID, name: "Alice", username: "alice", email: "alice@acme.com", role: "OWNER" });
+    });
+
+    it("lets any accepted member list members, including pending invitees", async () => {
+      seedMember({
+        id: 2,
+        name: null,
+        username: null,
+        email: "bob@acme.com",
+        role: "ADMIN",
+        accepted: false,
+      });
+      seedMember({ id: 3, organizationId: OTHER_ORG_ID });
+
+      const result = await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID });
+
+      expect(result).toEqual({
+        items: [
+          {
+            userId: ACTOR_ID,
+            name: "Alice",
+            email: "alice@acme.com",
+            username: "alice",
+            role: "OWNER",
+            accepted: true,
+          },
+          { userId: 2, name: null, email: "bob@acme.com", username: null, role: "ADMIN", accepted: false },
+        ],
+        nextCursor: undefined,
+      });
+    });
+
+    it("allows a plain member to list members", async () => {
+      seedMember({ id: 2, role: "MEMBER" });
+
+      const result = await service.listMembers({ organizationId: ORG_ID, actorUserId: 2 });
+
+      expect(result.items.map((item) => item.userId)).toEqual([ACTOR_ID, 2]);
+    });
+
+    it("searches name, email and username case-insensitively", async () => {
+      seedMember({ id: 2, name: "Bobby Tables", username: "bt", email: "b@acme.com" });
+      seedMember({ id: 3, name: "Carol", username: "ROBERTA", email: "c@acme.com" });
+      seedMember({ id: 4, name: "Dave", username: "dave", email: "BOB@globex.com" });
+      seedMember({ id: 5, name: "Eve", username: "eve", email: "eve@acme.com" });
+
+      const byName = await service.listMembers({
+        organizationId: ORG_ID,
+        actorUserId: ACTOR_ID,
+        search: "BOB",
+      });
+      const byUsername = await service.listMembers({
+        organizationId: ORG_ID,
+        actorUserId: ACTOR_ID,
+        search: "robert",
+      });
+
+      expect(byName.items.map((item) => item.userId)).toEqual([2, 4]);
+      expect(byUsername.items.map((item) => item.userId)).toEqual([3]);
+    });
+
+    it("pages through members with a cursor", async () => {
+      seedMember({ id: 2 });
+      seedMember({ id: 3 });
+
+      const first = await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID, limit: 2 });
+      expect(first.items.map((item) => item.userId)).toEqual([ACTOR_ID, 2]);
+      expect(first.nextCursor).toBeDefined();
+
+      const second = await service.listMembers({
+        organizationId: ORG_ID,
+        actorUserId: ACTOR_ID,
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      expect(second.items.map((item) => item.userId)).toEqual([3]);
+      expect(second.nextCursor).toBeUndefined();
+    });
+
+    it("clamps the limit to between 1 and 100, defaulting to 50", async () => {
+      const listMembers = vi.spyOn(membershipRepository, "listMembers");
+
+      await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID });
+      await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID, limit: 500 });
+      await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID, limit: 0 });
+
+      expect(listMembers.mock.calls.map(([params]) => params.limit)).toEqual([50, 100, 1]);
+    });
+
+    it("hides the organization from non-members", async () => {
+      seedMember({ id: 2, organizationId: OTHER_ORG_ID });
+
+      await expectRejection(
+        service.listMembers({ organizationId: ORG_ID, actorUserId: 2 }),
+        ErrorCode.NotFound,
+        "Organization not found"
+      );
+    });
+
+    it("hides the organization from pending invitees", async () => {
+      seedMember({ id: 2, role: "ADMIN", accepted: false });
+
+      await expectRejection(
+        service.listMembers({ organizationId: ORG_ID, actorUserId: 2 }),
+        ErrorCode.NotFound,
+        "Organization not found"
+      );
     });
   });
 

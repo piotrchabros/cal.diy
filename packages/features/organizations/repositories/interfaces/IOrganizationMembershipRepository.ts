@@ -14,6 +14,16 @@ export type AddMemberInput = {
   role: OrganizationRoleDto;
 };
 
+export type OrganizationMemberRecord = {
+  membershipId: number;
+  userId: number;
+  name: string | null;
+  email: string;
+  username: string | null;
+  role: OrganizationRoleDto;
+  accepted: boolean;
+};
+
 export interface IOrganizationMembershipRepository {
   findUserById(userId: number): Promise<MembershipUserRecord | null>;
   findUserByEmail(email: string): Promise<MembershipUserRecord | null>;
@@ -28,4 +38,10 @@ export interface IOrganizationMembershipRepository {
     userId: number;
     role: OrganizationRoleDto;
   }): Promise<{ userId: number; role: OrganizationRoleDto }>;
+  listMembers(p: {
+    organizationId: number;
+    search?: string;
+    cursor?: number;
+    limit: number;
+  }): Promise<{ items: OrganizationMemberRecord[]; nextCursor?: number }>;
 }
