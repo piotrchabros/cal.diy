@@ -10,6 +10,7 @@ import { organizationsRouter } from "./organizations/_router";
 import { ZAdminRemoveTwoFactor } from "./removeTwoFactor.schema";
 import { ZAdminPasswordResetSchema } from "./sendPasswordReset.schema";
 import { ZSetSMSLockState } from "./setSMSLockState.schema";
+import { teamsRouter } from "./teams/_router";
 import { toggleFeatureFlag } from "./toggleFeatureFlag.procedure";
 import { ZAdminUnassignFeatureFromTeamSchema } from "./unassignFeatureFromTeam.schema";
 import { watchlistRouter } from "./watchlist/_router";
@@ -70,4 +71,5 @@ export const adminRouter = router({
     }),
   watchlist: watchlistRouter,
   organizations: organizationsRouter,
+  teams: teamsRouter,
 });
