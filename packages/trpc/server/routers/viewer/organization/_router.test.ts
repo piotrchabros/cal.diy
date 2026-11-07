@@ -177,6 +177,13 @@ describe("viewer organization router", () => {
       expect(mocks.removeMember).not.toHaveBeenCalled();
     });
 
+    it("rejects a whitespace-only newUsername", async () => {
+      await expect(createCaller(ctx).removeMember({ userId: 11, newUsername: "   " })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.removeMember).not.toHaveBeenCalled();
+    });
+
     it.each([0, 101])("rejects list limit %s", async (limit) => {
       const caller = createCaller(ctx);
 
@@ -248,7 +255,22 @@ describe("viewer organization router", () => {
 
     it("removes a member", async () => {
       await expect(createCaller(ctx).removeMember({ userId: 11 })).resolves.toEqual({ userId: 11 });
-      expect(mocks.removeMember).toHaveBeenCalledWith({ organizationId: 5, actorUserId: 7, userId: 11 });
+      expect(mocks.removeMember).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        userId: 11,
+        newUsername: undefined,
+      });
+    });
+
+    it("passes a trimmed newUsername to the service", async () => {
+      await createCaller(ctx).removeMember({ userId: 11, newUsername: " jane-new " });
+      expect(mocks.removeMember).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        userId: 11,
+        newUsername: "jane-new",
+      });
     });
 
     it("ignores an organizationId sent in the input", async () => {
