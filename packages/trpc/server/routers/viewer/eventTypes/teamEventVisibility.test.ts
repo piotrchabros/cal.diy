@@ -1,6 +1,7 @@
 import { MembershipRole } from "@calcom/prisma/enums";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  acceptedTeamMemberIds,
   assertPersonalEventVisible,
   assertTeamEventVisible,
   hasTeamEventRole,
@@ -183,5 +184,20 @@ describe("assertPersonalEventVisible", () => {
     it("passes when the owner is undefined", () => {
       expect(() => assertPersonalEventVisible(undefined, 1)).not.toThrow();
     });
+  });
+});
+
+describe("acceptedTeamMemberIds", () => {
+  it("includes accepted members and excludes pending invitees", () => {
+    const ids = acceptedTeamMemberIds({
+      members: [
+        { userId: 1, accepted: true },
+        { userId: 2, accepted: false },
+        { userId: 3, accepted: true },
+      ],
+    });
+
+    expect(ids).toEqual(new Set([1, 3]));
+    expect(ids.has(2)).toBe(false);
   });
 });

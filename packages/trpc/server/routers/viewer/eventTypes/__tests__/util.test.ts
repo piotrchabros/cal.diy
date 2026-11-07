@@ -334,6 +334,52 @@ describe("createEventPbacProcedure", () => {
       await expect(result).rejects.toThrow("Cannot assign event to users outside of team membership");
     });
 
+    it("should deny assigning a pending (invited, not accepted) member", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: {
+          ...teamEvent.team,
+          members: [...teamEvent.team.members, { userId: 4, accepted: false, role: MembershipRole.MEMBER }],
+        },
+      });
+
+      const result = getMiddleware(createEventPbacProcedure("eventType.update"))({
+        ctx: mockCtx,
+        input: { id: 2, users: [1, 4] },
+        next: mockNext,
+        path: "test",
+        type: "mutation",
+        getRawInput: async () => ({}),
+        meta: undefined,
+      });
+
+      await expect(result).rejects.toThrow("Cannot assign event to users outside of team membership");
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow assigning only accepted members when a pending member exists", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: {
+          ...teamEvent.team,
+          members: [...teamEvent.team.members, { userId: 4, accepted: false, role: MembershipRole.MEMBER }],
+        },
+      });
+
+      await expect(
+        getMiddleware(createEventPbacProcedure("eventType.update"))({
+          ctx: mockCtx,
+          input: { id: 2, users: [1, 2] },
+          next: mockNext,
+          path: "test",
+          type: "mutation",
+          getRawInput: async () => ({}),
+          meta: undefined,
+        })
+      ).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
     it("should allow empty users array", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(teamEvent);
 
@@ -448,6 +494,32 @@ describe("createEventPbacProcedure", () => {
       });
 
       await expect(runMiddleware()).resolves.not.toThrow();
+    });
+
+    it("should deny an admin of the parent organization assigning a pending member", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue({
+        ...teamEvent,
+        team: {
+          members: [
+            { userId: 2, accepted: true, role: MembershipRole.MEMBER },
+            { userId: 4, accepted: false, role: MembershipRole.MEMBER },
+          ],
+          parent: { members: [{ userId: 1 }] },
+        },
+      });
+
+      const result = getMiddleware(createEventPbacProcedure("eventType.update"))({
+        ctx: mockCtx,
+        input: { id: 2, users: [2, 4] },
+        next: mockNext,
+        path: "test",
+        type: "mutation",
+        getRawInput: async () => ({}),
+        meta: undefined,
+      });
+
+      await expect(result).rejects.toThrow("Cannot assign event to users outside of team membership");
+      expect(mockNext).not.toHaveBeenCalled();
     });
 
     it("should still throw FORBIDDEN for a non-owner of a personal event", async () => {
@@ -1084,6 +1156,31 @@ describe("eventOwnerProcedure", () => {
       await expect(runMiddleware([1, 99])).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
 
+    it("should throw FORBIDDEN when an accepted admin assigns a pending member", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWithMembers([
+          { userId: 1, role: MembershipRole.ADMIN, accepted: true },
+          { userId: 4, role: MembershipRole.MEMBER, accepted: false },
+        ])
+      );
+
+      await expect(runMiddleware([1, 4])).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow an accepted admin to assign accepted members", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWithMembers([
+          { userId: 1, role: MembershipRole.ADMIN, accepted: true },
+          { userId: 2, role: MembershipRole.MEMBER, accepted: true },
+          { userId: 4, role: MembershipRole.MEMBER, accepted: false },
+        ])
+      );
+
+      await expect(runMiddleware([1, 2])).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
+    });
+
     it("should throw FORBIDDEN for a personal event owned by another organization's user", async () => {
       mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(personalEventOwnedBy(200));
 
@@ -1138,6 +1235,31 @@ describe("eventOwnerProcedure", () => {
 
       await expect(runMiddleware()).rejects.toMatchObject({ code: "NOT_FOUND" });
       expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should throw FORBIDDEN when an accepted admin assigns a pending member", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWithMembers([
+          { userId: 1, role: MembershipRole.ADMIN, accepted: true },
+          { userId: 4, role: MembershipRole.MEMBER, accepted: false },
+        ])
+      );
+
+      await expect(runMiddleware([1, 4])).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("should allow an accepted admin to assign accepted members", async () => {
+      mockPrisma.eventType.findUnique = vi.fn().mockResolvedValue(
+        teamEventWithMembers([
+          { userId: 1, role: MembershipRole.ADMIN, accepted: true },
+          { userId: 2, role: MembershipRole.MEMBER, accepted: true },
+          { userId: 4, role: MembershipRole.MEMBER, accepted: false },
+        ])
+      );
+
+      await expect(runMiddleware([1, 2])).resolves.not.toThrow();
+      expect(mockNext).toHaveBeenCalled();
     });
 
     it("should allow an admin of the parent organization who is not a team member", async () => {

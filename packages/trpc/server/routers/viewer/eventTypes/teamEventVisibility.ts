@@ -45,6 +45,13 @@ export function hasTeamEventRole(
   return team.parent?.members.some((member) => member.userId === userId) ?? false;
 }
 
+// Pending invitees have not joined the team yet, so events must not be assigned to them.
+export function acceptedTeamMemberIds(team: {
+  members: { userId: number; accepted: boolean }[];
+}): Set<number> {
+  return new Set(team.members.filter((member) => member.accepted).map((member) => member.userId));
+}
+
 export function assertTeamEventVisible(team: TeamVisibilitySource, userId: number): void {
   if (!isOrganizationsEnabled()) return;
   if (team.members.some((member) => member.userId === userId && member.accepted)) return;
