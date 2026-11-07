@@ -1,3 +1,5 @@
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
+import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
@@ -9,20 +11,6 @@ import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import { TRPCError } from "@trpc/server";
 import type { TTeamsAndUserProfilesQueryInputSchema } from "./teamsAndUserProfilesQuery.schema";
 
-type PermissionString = string;
-class PermissionCheckService {
-  constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) {
-    return true;
-  }
-  async hasPermission(..._args: unknown[]) {
-    return true;
-  }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
-    return [];
-  }
-}
-
 type TeamsAndUserProfileOptions = {
   ctx: {
     user: NonNullable<TrpcSessionUser>;
@@ -30,6 +18,9 @@ type TeamsAndUserProfileOptions = {
   };
   input: TTeamsAndUserProfilesQueryInputSchema;
 };
+
+const isMembershipRole = (role: string): role is MembershipRole =>
+  (Object.values(MembershipRole) as string[]).includes(role);
 
 export const teamsAndUserProfilesQuery = async ({ ctx, input }: TeamsAndUserProfileOptions) => {
   const { prisma } = ctx;
@@ -111,26 +102,16 @@ export const teamsAndUserProfilesQuery = async ({ ctx, input }: TeamsAndUserProf
       }));
   }
 
-  // Filter teams based on permission if provided
-  let hasPermissionForFiltered: boolean[] = [];
   if (input?.withPermission) {
-    const permissionService = new PermissionCheckService();
     const { permission, fallbackRoles } = input.withPermission;
-
-    const permissionChecks = await Promise.all(
-      teamsData.map((membership) =>
-        permissionService.checkPermission({
-          userId: ctx.user.id,
-          teamId: membership.team.id,
-          permission: permission as PermissionString,
-          fallbackRoles: fallbackRoles ? (fallbackRoles as MembershipRole[]) : [],
-        })
-      )
+    const teamIdsWithPermission = new Set(
+      await new TeamRolePermissionService(new MembershipRepository(prisma)).getTeamIdsWithPermission({
+        userId: ctx.user.id,
+        permission,
+        fallbackRoles: (fallbackRoles ?? []).filter(isMembershipRole),
+      })
     );
-
-    // Store permission results for teams that passed the filter
-    hasPermissionForFiltered = permissionChecks.filter((hasPermission) => hasPermission);
-    teamsData = teamsData.filter((_, index) => permissionChecks[index]);
+    teamsData = teamsData.filter((membership) => teamIdsWithPermission.has(membership.team.id));
   }
 
   // Sort teams so organizations come first, followed by other teams
@@ -152,7 +133,7 @@ export const teamsAndUserProfilesQuery = async ({ ctx, input }: TeamsAndUserProf
       }),
       readOnly: false,
     },
-    ...teamsData.map((membership, index) => ({
+    ...teamsData.map((membership) => ({
       teamId: membership.team.id,
       name: membership.team.name,
       slug: membership.team.slug ? `team/${membership.team.slug}` : null,
@@ -160,9 +141,8 @@ export const teamsAndUserProfilesQuery = async ({ ctx, input }: TeamsAndUserProf
         ? getPlaceholderAvatar(membership.team.parent.logoUrl, membership.team.parent.name)
         : getPlaceholderAvatar(membership.team.logoUrl, membership.team.name),
       role: membership.role,
-      readOnly: input?.withPermission
-        ? !hasPermissionForFiltered[index]
-        : !rolesWithWriteAccess.includes(membership.role),
+      // Teams without the requested permission were filtered out above
+      readOnly: input?.withPermission ? false : !rolesWithWriteAccess.includes(membership.role),
     })),
   ];
 };

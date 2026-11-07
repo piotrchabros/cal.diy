@@ -28,7 +28,15 @@ const teamUnderOrg = {
   members: [],
 };
 
-async function query(includeOrg: boolean) {
+const { mockFindTeamIdsByAcceptedRole } = vi.hoisted(() => ({ mockFindTeamIdsByAcceptedRole: vi.fn() }));
+
+vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
+  MembershipRepository: class {
+    findTeamIdsByAcceptedRole = mockFindTeamIdsByAcceptedRole;
+  },
+}));
+
+async function query(includeOrg: boolean, withPermission?: { permission: string; fallbackRoles?: string[] }) {
   const findUnique = vi.fn().mockResolvedValue({
     avatarUrl: null,
     id: 1,
@@ -42,9 +50,16 @@ async function query(includeOrg: boolean) {
   const prisma = { user: { findUnique } } as unknown as PrismaClient;
   const user = { id: 1 } as NonNullable<TrpcSessionUser>;
 
-  const result = await teamsAndUserProfilesQuery({ ctx: { user, prisma }, input: { includeOrg } });
+  const result = await teamsAndUserProfilesQuery({
+    ctx: { user, prisma },
+    input: { includeOrg, withPermission },
+  });
 
-  return result.slice(1).map(({ teamId, slug, image }) => ({ teamId, slug, image }));
+  return result
+    .slice(1)
+    .map(({ teamId, slug, image, readOnly }) =>
+      withPermission ? { teamId, readOnly } : { teamId, slug, image }
+    );
 }
 
 describe("teamsAndUserProfilesQuery", () => {
@@ -77,5 +92,37 @@ describe("teamsAndUserProfilesQuery", () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
 
     expect(await query(false)).toEqual([{ teamId: 2, slug: "team/sales", image: "bluebee.png" }]);
+  });
+
+  describe("withPermission", () => {
+    it("lists only teams where the user holds one of the requested roles", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([2]);
+
+      expect(await query(true, { permission: "webhook.create", fallbackRoles: ["ADMIN", "OWNER"] })).toEqual([
+        { teamId: 2, readOnly: false },
+      ]);
+      expect(mockFindTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 1, teamRoles: [MembershipRole.ADMIN, MembershipRole.OWNER] })
+      );
+    });
+
+    it("lists no team when the user holds none of the requested roles", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([]);
+
+      expect(await query(true, { permission: "webhook.create", fallbackRoles: ["ADMIN"] })).toEqual([]);
+    });
+
+    it("drops roles that are not membership roles", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+      mockFindTeamIdsByAcceptedRole.mockResolvedValue([]);
+
+      await query(true, { permission: "webhook.create", fallbackRoles: ["ADMIN", "SUPERUSER"] });
+
+      expect(mockFindTeamIdsByAcceptedRole).toHaveBeenCalledWith(
+        expect.objectContaining({ teamRoles: [MembershipRole.ADMIN] })
+      );
+    });
   });
 });
