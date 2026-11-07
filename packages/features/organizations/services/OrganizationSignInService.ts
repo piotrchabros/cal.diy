@@ -66,4 +66,20 @@ export class OrganizationSignInService {
     });
     return { kind: "redirect", loginUrl: buildOrganizationLoginUrl(baseUrl) };
   }
+
+  async isUserInOrganization({
+    userId,
+    organizationId,
+  }: {
+    userId: number;
+    organizationId: number | null;
+  }): Promise<boolean> {
+    if (!isOrganizationsEnabled()) return true;
+
+    const user = await this.deps.organizationMembershipRepository.findUserById(userId);
+    if (!user) return false;
+    // null === null matches checkSignInDomain: a user without an organization may sign in on a
+    // host without an organization, so their session must stay valid there too.
+    return user.organizationId === organizationId;
+  }
 }

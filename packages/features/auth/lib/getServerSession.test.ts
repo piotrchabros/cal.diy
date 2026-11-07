@@ -26,6 +26,14 @@ vi.mock("@calcom/lib/getAvatarUrl", createAvatarUrlMock);
 vi.mock("@calcom/lib/safeStringify", createSafeStringifyMock);
 vi.mock("next-auth/jwt", createGetTokenMock);
 
+const { isSessionInRequestOrganizationMock } = vi.hoisted(() => ({
+  isSessionInRequestOrganizationMock: vi.fn(),
+}));
+
+vi.mock("./isSessionInRequestOrganization", () => ({
+  isSessionInRequestOrganization: isSessionInRequestOrganizationMock,
+}));
+
 import { getToken } from "next-auth/jwt";
 import { getServerSession } from "./getServerSession";
 
@@ -44,6 +52,7 @@ describe("getServerSession", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetPrismaMock();
+    isSessionInRequestOrganizationMock.mockResolvedValue(true);
   });
 
   describe("Token Validation", () => {
@@ -157,6 +166,51 @@ describe("getServerSession", () => {
         expect(whereClause).toHaveProperty("id");
         expect(whereClause).not.toHaveProperty("email");
       }
+    });
+  });
+
+  describe("Organization check", () => {
+    it("returns null without querying the user when the session is outside the request organization", async () => {
+      setupGetTokenMock(createMockToken({ sub: "321" }));
+      isSessionInRequestOrganizationMock.mockResolvedValue(false);
+
+      const result = await getServerSession({ req: createMockRequest() });
+
+      expect(result).toBeNull();
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("passes the user ID and request headers to the organization check", async () => {
+      const req = createMockRequest();
+      setupGetTokenMock(createMockToken({ sub: "322" }));
+      prismaMock.user.findUnique.mockResolvedValue(createMockUser({ id: 322 }));
+
+      await getServerSession({ req });
+
+      expect(isSessionInRequestOrganizationMock).toHaveBeenCalledWith({ userId: 322, headers: req.headers });
+    });
+
+    it("does not serve a cached session when the token is reused outside the user's organization", async () => {
+      const token = createMockToken({ sub: "323" });
+      setupGetTokenMock(token);
+      prismaMock.user.findUnique.mockResolvedValue(createMockUser({ id: 323 }));
+
+      const first = await getServerSession({ req: createMockRequest() });
+      expect(first).not.toBeNull();
+
+      isSessionInRequestOrganizationMock.mockResolvedValue(false);
+      const second = await getServerSession({ req: createMockRequest() });
+
+      expect(second).toBeNull();
+    });
+
+    it("does not run the organization check for an invalid token subject", async () => {
+      setupGetTokenMock(createMockToken({ sub: "invalid" }));
+
+      const result = await getServerSession({ req: createMockRequest() });
+
+      expect(result).toBeNull();
+      expect(isSessionInRequestOrganizationMock).not.toHaveBeenCalled();
     });
   });
 });

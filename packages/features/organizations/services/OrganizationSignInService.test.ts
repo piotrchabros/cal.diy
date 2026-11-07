@@ -53,8 +53,9 @@ function setup() {
     organizationsConfig: { defaultDomain: DEFAULT_DOMAIN },
   });
   const findUserByEmail = vi.spyOn(organizationMembershipRepository, "findUserByEmail");
+  const findUserById = vi.spyOn(organizationMembershipRepository, "findUserById");
   const service = new OrganizationSignInService({ organizationMembershipRepository, organizationUrlService });
-  return { service, findUserByEmail };
+  return { service, findUserByEmail, findUserById };
 }
 
 describe("OrganizationSignInService.checkSignInDomain", () => {
@@ -204,5 +205,59 @@ describe("OrganizationSignInService.checkSignInDomain", () => {
     });
     const logged = JSON.stringify([...mockLogInfo.mock.calls, ...mockLogWarn.mock.calls]);
     expect(logged).not.toContain("@");
+  });
+});
+
+describe("OrganizationSignInService.isUserInOrganization", () => {
+  beforeEach(() => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns true without touching the repository when the flag is off", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+    const { service, findUserById } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 101, organizationId: ORG_A_ID })).resolves.toBe(true);
+    expect(findUserById).not.toHaveBeenCalled();
+  });
+
+  it("returns true for a user of the same organization", async () => {
+    const { service } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 100, organizationId: ORG_A_ID })).resolves.toBe(true);
+  });
+
+  it("returns false for a user of another organization", async () => {
+    const { service } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 101, organizationId: ORG_A_ID })).resolves.toBe(
+      false
+    );
+  });
+
+  it("returns true for a user without an organization on a host without an organization", async () => {
+    const { service } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 102, organizationId: null })).resolves.toBe(true);
+  });
+
+  it("returns false for a user without an organization on an organization host", async () => {
+    const { service } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 102, organizationId: ORG_A_ID })).resolves.toBe(
+      false
+    );
+  });
+
+  it("returns false for an unknown user", async () => {
+    const { service } = setup();
+
+    await expect(service.isUserInOrganization({ userId: 999, organizationId: ORG_A_ID })).resolves.toBe(
+      false
+    );
   });
 });
