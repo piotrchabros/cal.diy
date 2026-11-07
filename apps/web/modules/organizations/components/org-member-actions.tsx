@@ -4,7 +4,13 @@ import type { OrganizationMemberDto, OrganizationRoleDto } from "@calcom/lib/dto
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
-import { ConfirmationDialogContent, Dialog } from "@calcom/ui/components/dialog";
+import {
+  ConfirmationDialogContent,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+} from "@calcom/ui/components/dialog";
 import {
   Dropdown,
   DropdownItem,
@@ -14,8 +20,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@calcom/ui/components/dropdown";
+import { TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { useState } from "react";
+
+const USERNAME_TAKEN = "username_taken_in_default_organization";
 
 type OrgMemberActionsProps = {
   member: Pick<OrganizationMemberDto, "userId" | "name" | "email" | "role" | "accepted">;
@@ -28,6 +37,8 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
   const utils = trpc.useUtils();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+  const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
 
   const onError = (error: { message: string }) => showToast(t(error.message), "error");
 
@@ -41,11 +52,23 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
 
   const removeMember = trpc.viewer.organization.removeMember.useMutation({
     onSuccess: async () => {
+      setUsernameDialogOpen(false);
+      setNewUsername("");
       showToast(t("organization_member_removed"), "success");
       await utils.viewer.organization.listMembers.invalidate();
     },
-    onError,
+    onError: (error) => {
+      // The member's username is already used in the default organization, so they must pick a new one before leaving.
+      if (error.message === USERNAME_TAKEN && !usernameDialogOpen) {
+        setRemoveDialogOpen(false);
+        setUsernameDialogOpen(true);
+        return;
+      }
+      onError(error);
+    },
   });
+
+  const trimmedUsername = newUsername.trim();
 
   // Mirrors the server rules so the menu never offers an action the router would reject.
   const canManage =
@@ -113,6 +136,32 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
           }}>
           {t("remove_organization_member_confirmation", { name: member.name ?? member.email })}
         </ConfirmationDialogContent>
+      </Dialog>
+
+      <Dialog open={usernameDialogOpen} onOpenChange={setUsernameDialogOpen}>
+        <DialogContent
+          title={t("remove_organization_member")}
+          description={t("remove_member_username_taken_description", { name: member.name ?? member.email })}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!trimmedUsername) return;
+              removeMember.mutate({ userId: member.userId, newUsername: trimmedUsername });
+            }}>
+            <TextField
+              required
+              label={t("new_username")}
+              value={newUsername}
+              onChange={(event) => setNewUsername(event.target.value)}
+            />
+            <DialogFooter>
+              <DialogClose>{t("cancel")}</DialogClose>
+              <Button type="submit" disabled={!trimmedUsername} loading={removeMember.isPending}>
+                {t("remove")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
       </Dialog>
     </>
   );

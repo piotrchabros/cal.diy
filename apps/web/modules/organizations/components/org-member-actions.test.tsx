@@ -1,6 +1,6 @@
 import type { OrganizationMemberDto, OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrgMemberActions } from "./org-member-actions";
 
@@ -43,7 +43,29 @@ vi.mock("@calcom/trpc/react", () => ({
 }));
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
-vi.mock("@calcom/ui/components/button", () => ({ Button: () => <button type="button" /> }));
+vi.mock("@calcom/ui/components/button", () => ({
+  Button: ({ children, type, disabled }: { children?: ReactNode; type?: "submit"; disabled?: boolean }) => (
+    <button type={type ?? "button"} disabled={disabled}>
+      {children}
+    </button>
+  ),
+}));
+vi.mock("@calcom/ui/components/form", () => ({
+  TextField: ({
+    label,
+    value,
+    onChange,
+  }: {
+    label: string;
+    value: string;
+    onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  }) => (
+    <label>
+      {label}
+      <input value={value} onChange={onChange} />
+    </label>
+  ),
+}));
 vi.mock("@calcom/ui/components/dropdown", () => {
   const Wrap = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   return {
@@ -63,6 +85,22 @@ vi.mock("@calcom/ui/components/dropdown", () => {
 vi.mock("@calcom/ui/components/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div>{children}</div> : null,
+  DialogContent: ({
+    title,
+    description,
+    children,
+  }: {
+    title: string;
+    description: string;
+    children: ReactNode;
+  }) => (
+    <div role="dialog" aria-label={title}>
+      <p>{description}</p>
+      {children}
+    </div>
+  ),
+  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogClose: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
   ConfirmationDialogContent: ({ children, onConfirm }: { children: ReactNode; onConfirm: () => void }) => (
     <div role="dialog">
       {children}
@@ -149,5 +187,58 @@ describe("OrgMemberActions", () => {
     renderActions("OWNER");
     act(() => mocks.options.updateRole.onError({ message: "user_is_already_a_member" }));
     expect(mocks.showToast).toHaveBeenCalledWith("user_is_already_a_member", "error");
+  });
+
+  describe("when the username is taken in the default organization", () => {
+    function openUsernameDialog(): void {
+      renderActions("OWNER");
+      fireEvent.click(screen.getByRole("button", { name: "remove_organization_member" }));
+      fireEvent.click(screen.getByRole("button", { name: "confirm" }));
+      act(() => mocks.options.removeMember.onError({ message: "username_taken_in_default_organization" }));
+    }
+
+    it("opens the username dialog instead of toasting", () => {
+      openUsernameDialog();
+      expect(mocks.showToast).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "remove_organization_member" })).toHaveTextContent(
+        "remove_member_username_taken_description:Ada"
+      );
+      expect(screen.queryByRole("button", { name: "confirm" })).not.toBeInTheDocument();
+    });
+
+    it("disables submit while the new username is empty", () => {
+      openUsernameDialog();
+      expect(screen.getByRole("button", { name: "remove" })).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("new_username"), { target: { value: "   " } });
+      expect(screen.getByRole("button", { name: "remove" })).toBeDisabled();
+    });
+
+    it("retries the removal with the trimmed new username", () => {
+      openUsernameDialog();
+      mocks.removeMemberMutate.mockClear();
+      fireEvent.change(screen.getByLabelText("new_username"), { target: { value: "jane-new " } });
+      fireEvent.click(screen.getByRole("button", { name: "remove" }));
+      expect(mocks.removeMemberMutate).toHaveBeenCalledWith({ userId: 11, newUsername: "jane-new" });
+    });
+
+    it("toasts a retry error and keeps the dialog open", () => {
+      openUsernameDialog();
+      act(() => mocks.options.removeMember.onError({ message: "invalid_username" }));
+      expect(mocks.showToast).toHaveBeenCalledWith("invalid_username", "error");
+      expect(screen.getByRole("dialog", { name: "remove_organization_member" })).toBeInTheDocument();
+    });
+
+    it("closes the dialog on success", async () => {
+      openUsernameDialog();
+      await act(() => mocks.options.removeMember.onSuccess());
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(mocks.showToast).toHaveBeenCalledWith("organization_member_removed", "success");
+    });
+  });
+
+  it("toasts other removal errors", () => {
+    renderActions("OWNER");
+    act(() => mocks.options.removeMember.onError({ message: "forbidden" }));
+    expect(mocks.showToast).toHaveBeenCalledWith("forbidden", "error");
   });
 });
