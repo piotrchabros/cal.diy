@@ -1,5 +1,8 @@
+import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { disableUserRedirectsForReusedUsername } from "@calcom/features/organizations/lib/disableUserRedirectsForReusedUsername";
 import { repointUserRedirectsForRename } from "@calcom/features/organizations/lib/repointUserRedirectsForRename";
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 import { authedAdminProcedure } from "@calcom/trpc/server/procedures/authedProcedure";
 import { router } from "@calcom/trpc/server/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -10,6 +13,17 @@ import { isImageDataUrl, storeAdminUserAvatar } from "./adminUserAvatar";
 
 export type UserAdminRouter = typeof userAdminRouter;
 export type UserAdminRouterOutputs = inferRouterOutputs<UserAdminRouter>;
+
+const changeUsernameOrThrow = async (userId: number, username: string): Promise<void> => {
+  try {
+    await getOrganizationMembershipService().changeUsername({ userId, username });
+  } catch (error) {
+    if (error instanceof ErrorWithCode && error.code === ErrorCode.Conflict) {
+      throw new TRPCError({ code: "CONFLICT", message: error.message });
+    }
+    throw error;
+  }
+};
 
 const userIdSchema = z.object({ userId: z.coerce.number() });
 
@@ -47,46 +61,17 @@ export const userAdminRouter = router({
     .input(userBodySchema.partial())
     .mutation(async ({ ctx, input }) => {
       const { prisma, requestedUser } = ctx;
-      const data = isImageDataUrl(input.avatarUrl)
-        ? { ...input, avatarUrl: await storeAdminUserAvatar(requestedUser.id, input.avatarUrl) }
-        : input;
+      const { username, ...rest } = input;
+      const fields = username === null ? { ...rest, username } : rest;
+      const data = isImageDataUrl(fields.avatarUrl)
+        ? { ...fields, avatarUrl: await storeAdminUserAvatar(requestedUser.id, fields.avatarUrl) }
+        : fields;
 
-      const user = await prisma.$transaction(async (tx) => {
-        const userInternal = await tx.user.update({ where: { id: requestedUser.id }, data });
+      // Written before any other change so a username conflict aborts the whole update. Called even for an
+      // unchanged username so an accepted org member missing their org profile gets it (T220).
+      if (username) await changeUsernameOrThrow(requestedUser.id, username);
 
-        // If the profile has been moved to an Org -> we can easily access the profile we need to update
-        if (requestedUser.movedToProfileId && input.username) {
-          await tx.profile.update({
-            where: {
-              id: requestedUser.movedToProfileId,
-            },
-            data: {
-              username: input.username,
-            },
-          });
-
-          return userInternal;
-        }
-
-        /**
-         * TODO (Sean/Hariom): Change this to profile specific when we have a way for a user to have > 1 orgs
-         * If the user wasnt a CAL account before being moved to an org they dont have the movedToProfileId value
-         * So we update all of their profiles to this new username - this tx will rollback if there is a username
-         * conflict here somehow (Note for now users only have ONE profile.)
-         **/
-        if (input.username) {
-          await tx.profile.updateMany({
-            where: {
-              userId: requestedUser.id,
-            },
-            data: {
-              username: input.username,
-            },
-          });
-        }
-
-        return userInternal;
-      });
+      const user = await prisma.user.update({ where: { id: requestedUser.id }, data });
       if (input.username && input.username !== requestedUser.username) {
         await repointUserRedirectsForRename({
           organizationId: requestedUser.organizationId,
