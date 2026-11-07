@@ -1,7 +1,9 @@
 import { getLocationGroupedOptions } from "@calcom/app-store/server";
+import { getTeamAccessService } from "@calcom/features/teams/di/TeamAccessService.container";
 import { getTranslation } from "@calcom/i18n/server";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
+import { TRPCError } from "@trpc/server";
 import type { TLocationOptionsInputSchema } from "./locationOptions.schema";
 
 type LocationOptionsOptions = {
@@ -13,6 +15,16 @@ type LocationOptionsOptions = {
 
 export const locationOptionsHandler = async ({ ctx, input }: LocationOptionsOptions) => {
   const { teamId } = input;
+
+  // FR-008: another organization's team, and the conferencing apps installed on it or its
+  // organization, must look nonexistent.
+  if (
+    teamId &&
+    isOrganizationsEnabled() &&
+    !(await getTeamAccessService().canViewTeam({ userId: ctx.user.id, teamId }))
+  ) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+  }
 
   const t = await getTranslation(ctx.user.locale ?? "en", "common");
 
