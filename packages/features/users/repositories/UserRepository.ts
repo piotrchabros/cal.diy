@@ -1100,28 +1100,6 @@ export class UserRepository {
       },
     });
   }
-  async isAdminOfTeamOrParentOrg({ userId, teamId }: { userId: number; teamId: number }) {
-    const membershipQuery = {
-      members: {
-        some: {
-          userId,
-          role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
-        },
-      },
-    };
-    const teams = await this.prismaClient.team.findMany({
-      where: {
-        id: teamId,
-        // Every team sits under BlueBee after the switch-over, so with organizations off its admins
-        // would otherwise administer all teams (spec 005)
-        OR: [membershipQuery, ...(isOrganizationsEnabled() ? [{ parent: { ...membershipQuery } }] : [])],
-      },
-      select: {
-        id: true,
-      },
-    });
-    return !!teams.length;
-  }
   async isAdminOrOwnerOfTeam({ userId, teamId }: { userId: number; teamId: number }) {
     const isAdminOrOwnerOfTeam = await this.prismaClient.membership.findUnique({
       where: {

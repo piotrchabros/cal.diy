@@ -1,3 +1,4 @@
+import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -7,6 +8,7 @@ import { BookingAccessService } from "./BookingAccessService";
 
 vi.mock("../repositories/BookingRepository");
 vi.mock("@calcom/features/users/repositories/UserRepository");
+vi.mock("@calcom/features/membership/repositories/MembershipRepository");
 
 vi.mock("@calcom/prisma", () => ({
   default: {},
@@ -381,6 +383,96 @@ describe("BookingAccessService", () => {
         expect(result).toBe(false);
         expect(mockPermissionCheckService.checkPermission).toHaveBeenCalledTimes(2);
       });
+    });
+  });
+  describe("real team role checks (no PBAC stub)", () => {
+    let findTeamIdsByAcceptedRole: ReturnType<typeof vi.fn>;
+    let realService: BookingAccessService;
+
+    beforeEach(() => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+      findTeamIdsByAcceptedRole = vi.fn().mockResolvedValue([]);
+      vi.mocked(MembershipRepository).mockImplementation(function () {
+        return { findTeamIdsByAcceptedRole } as unknown as MembershipRepository;
+      });
+      realService = new BookingAccessService(mockPrismaClient);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const teamBooking = { userId: 456, eventType: { teamId: 100 }, attendees: [] };
+    const managedBooking = {
+      userId: 456,
+      eventType: { teamId: null, parent: { teamId: 500 } },
+      attendees: [],
+    };
+    const personalBooking = { userId: 456, eventType: null, attendees: [] };
+    const adminRoles = [MembershipRole.OWNER, MembershipRole.ADMIN];
+    const parentRoles = [MembershipRole.ADMIN, MembershipRole.OWNER];
+
+    it("denies a team booking to a user without an accepted admin/owner role", async () => {
+      mockBookingRepo.findByUidIncludeEventType.mockResolvedValue(teamBooking);
+
+      const result = await realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" });
+
+      expect(result).toBe(false);
+      expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith({
+        userId: 123,
+        teamId: 100,
+        teamRoles: adminRoles,
+        parentRoles,
+      });
+    });
+
+    it("allows a team booking to an accepted team admin or parent org admin", async () => {
+      mockBookingRepo.findByUidIncludeEventType.mockResolvedValue(teamBooking);
+      findTeamIdsByAcceptedRole.mockResolvedValue([100]);
+
+      await expect(
+        realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" })
+      ).resolves.toBe(true);
+    });
+
+    it("checks the parent team of a managed event type with accepted roles", async () => {
+      mockBookingRepo.findByUidIncludeEventType.mockResolvedValue(managedBooking);
+
+      await expect(
+        realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" })
+      ).resolves.toBe(false);
+      expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith({
+        userId: 123,
+        teamId: 500,
+        teamRoles: adminRoles,
+        parentRoles,
+      });
+
+      findTeamIdsByAcceptedRole.mockResolvedValue([500]);
+      await expect(
+        realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" })
+      ).resolves.toBe(true);
+    });
+
+    it("denies a personal booking unless the user administers the owner's org or one of their teams", async () => {
+      mockBookingRepo.findByUidIncludeEventType.mockResolvedValue(personalBooking);
+      mockUserRepo.getUserOrganizationAndTeams.mockResolvedValue({
+        organizationId: 200,
+        teams: [{ teamId: 300 }],
+      });
+
+      await expect(
+        realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" })
+      ).resolves.toBe(false);
+      expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith(expect.objectContaining({ teamId: 200 }));
+      expect(findTeamIdsByAcceptedRole).toHaveBeenCalledWith(expect.objectContaining({ teamId: 300 }));
+
+      findTeamIdsByAcceptedRole.mockImplementation(async ({ teamId }: { teamId: number }) =>
+        teamId === 300 ? [300] : []
+      );
+      await expect(
+        realService.doesUserIdHaveAccessToBooking({ userId: 123, bookingUid: "uid" })
+      ).resolves.toBe(true);
     });
   });
 });
