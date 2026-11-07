@@ -122,6 +122,30 @@ export class MembershipRepository {
     return teamMemberIds;
   }
 
+  async findTeamIdsByAcceptedRole({
+    userId,
+    teamRoles,
+    parentRoles,
+    teamId,
+  }: {
+    userId: number;
+    teamRoles: readonly MembershipRole[];
+    parentRoles: readonly MembershipRole[];
+    teamId?: number;
+  }): Promise<number[]> {
+    const teams = await this.prismaClient.team.findMany({
+      where: {
+        ...(teamId !== undefined ? { id: teamId } : {}),
+        OR: [
+          { members: { some: { userId, accepted: true, role: { in: [...teamRoles] } } } },
+          { parent: { members: { some: { userId, accepted: true, role: { in: [...parentRoles] } } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    return teams.map((team) => team.id);
+  }
+
   static async create(data: IMembership) {
     return await prisma.membership.create({
       data: {
