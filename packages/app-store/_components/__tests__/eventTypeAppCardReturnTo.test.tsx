@@ -1,7 +1,10 @@
 import CloseComCard from "@calcom/app-store/closecom/components/EventTypeAppCardInterface";
+import HitpayCard from "@calcom/app-store/hitpay/components/EventTypeAppCardInterface";
 import HubspotCard from "@calcom/app-store/hubspot/components/EventTypeAppCardInterface";
+import PaypalCard from "@calcom/app-store/paypal/components/EventTypeAppCardInterface";
 import PipedriveCard from "@calcom/app-store/pipedrive-crm/components/EventTypeAppCardInterface";
 import SalesforceCard from "@calcom/app-store/salesforce/components/EventTypeAppCardInterface";
+import StripeCard from "@calcom/app-store/stripepayment/components/EventTypeAppCardInterface";
 import type { EventTypeAppCardComponent, EventTypeAppCardComponentProps } from "@calcom/app-store/types";
 import ZohoBiginCard from "@calcom/app-store/zoho-bigin/components/EventTypeAppCardInterface";
 import ZohoCrmCard from "@calcom/app-store/zohocrm/components/EventTypeAppCardInterface";
@@ -32,6 +35,10 @@ vi.mock("@calcom/app-store/EventTypeAppContext", () => ({
   useAppContextWithSchema: () => ({ getAppData: () => undefined, setAppData: vi.fn(), disabled: false }),
 }));
 
+vi.mock("@calcom/app-store/_utils/payments/checkForMultiplePaymentApps", () => ({
+  default: () => false,
+}));
+
 const cards: [string, EventTypeAppCardComponent][] = [
   ["closecom", CloseComCard],
   ["hubspot", HubspotCard],
@@ -39,6 +46,9 @@ const cards: [string, EventTypeAppCardComponent][] = [
   ["salesforce", SalesforceCard],
   ["zoho-bigin", ZohoBiginCard],
   ["zohocrm", ZohoCrmCard],
+  ["stripepayment", StripeCard],
+  ["hitpay", HitpayCard],
+  ["paypal", PaypalCard],
 ];
 
 describe("EventTypeAppCard returnTo", () => {
