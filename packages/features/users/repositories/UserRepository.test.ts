@@ -518,3 +518,45 @@ describe("booking access lookups", () => {
     });
   });
 });
+
+describe("getUserAdminTeams", () => {
+  const findUnique = vi.fn();
+  const fakePrismaClient = { user: { findUnique } } as unknown as PrismaClient;
+  const adminRoles = [MembershipRole.ADMIN, MembershipRole.OWNER];
+
+  beforeEach(() => {
+    findUnique.mockReset().mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const teamsWhere = () => findUnique.mock.calls[0][0].select.teams.where;
+
+  test("includes sub-teams of organizations the user accepted as admin when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+    await new UserRepository(fakePrismaClient).getUserAdminTeams({ userId: 7 });
+
+    expect(teamsWhere()).toEqual({
+      accepted: true,
+      OR: [
+        { role: { in: adminRoles } },
+        { team: { parent: { members: { some: { userId: 7, accepted: true, role: { in: adminRoles } } } } } },
+      ],
+    });
+  });
+
+  test("only returns non-organization teams the user administers when organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+    await new UserRepository(fakePrismaClient).getUserAdminTeams({ userId: 7 });
+
+    expect(teamsWhere()).toEqual({
+      accepted: true,
+      role: { in: adminRoles },
+      team: { isOrganization: false },
+    });
+  });
+});
