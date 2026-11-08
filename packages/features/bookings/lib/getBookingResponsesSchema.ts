@@ -165,10 +165,9 @@ async function superRefineField({
   const fieldTypeSchema = fieldTypesSchemaMap[field.type as keyof typeof fieldTypesSchemaMap];
   if (fieldTypeSchema) {
     fieldTypeSchema.superRefine({
-      // We use `unknown` here because the response type is not trivial to know here
-      // We know for sure that the value here is preprocessed(considering how we have called z.preprocess())
-      // and thus the fieldTypeSchema implementation could rely on having the correct type as per its preprocess fn return value
-      response: value as unknown as any,
+      // The value is preprocessed (considering how we have called z.preprocess()) so it already
+      // matches the unknown response type the field schema validates.
+      response: value,
       ctx: zodCtx,
       m,
       field,
