@@ -1,5 +1,5 @@
+import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import type { PrismaClient } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
 import { CreationSource } from "@calcom/prisma/enums";
 import { UserSchema } from "@calcom/prisma/zod/modelSchema/UserSchema";
@@ -34,9 +34,6 @@ export const addUserInputSchema = userBodySchema.extend({
 export type TAddUserInput = z.infer<typeof addUserInputSchema>;
 
 type AddUserOptions = {
-  ctx: {
-    prisma: PrismaClient;
-  };
   input: TAddUserInput;
 };
 
@@ -52,7 +49,6 @@ const resolveOrganizationId = async (requestedId: number | undefined): Promise<n
 };
 
 const createOrganizationUser = async (
-  prisma: PrismaClient,
   data: Omit<TAddUserInput, "organizationId" | "avatarUrl"> & { avatarUrl: string | null | undefined },
   requestedOrganizationId: number | undefined
 ) => {
@@ -66,9 +62,10 @@ const createOrganizationUser = async (
 
   try {
     const organizationId = await resolveOrganizationId(requestedOrganizationId);
+    const userRepository = getUserRepository();
 
-    const created = await prisma.user
-      .create({ data: { ...data, organizationId, creationSource: CreationSource.WEBAPP } })
+    const created = await userRepository
+      .createBare({ ...data, organizationId, creationSource: CreationSource.WEBAPP })
       .catch((e: unknown) => {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
           throw new TRPCError({
@@ -90,7 +87,7 @@ const createOrganizationUser = async (
       });
     } catch (e) {
       // User creation and membership run in separate transactions, so undo the user to avoid a half-joined org member
-      await prisma.user.delete({ where: { id: created.id }, select: { id: true } });
+      await userRepository.deleteById({ id: created.id });
       throw e;
     }
     return created;
@@ -101,7 +98,6 @@ const createOrganizationUser = async (
 };
 
 const createUserWithOrganizationsDisabled = async (
-  prisma: PrismaClient,
   data: Omit<TAddUserInput, "organizationId" | "avatarUrl"> & { avatarUrl: string | null | undefined }
 ) => {
   const { requireDefaultOrganizationId } = await import(
@@ -110,22 +106,21 @@ const createUserWithOrganizationsDisabled = async (
   const defaultOrganizationId = await requireDefaultOrganizationId().catch((e: unknown) => {
     throw convertErrorWithCodeToTRPCError(e);
   });
-  return createOrganizationUser(prisma, data, defaultOrganizationId);
+  return createOrganizationUser(data, defaultOrganizationId);
 };
 
-export const addUserHandler = async ({ ctx, input }: AddUserOptions) => {
-  const { prisma } = ctx;
+export const addUserHandler = async ({ input }: AddUserOptions) => {
   const { avatarUrl, organizationId: requestedOrganizationId, ...rest } = input;
   const hasUploadedAvatar = isImageDataUrl(avatarUrl);
   const data = { ...rest, avatarUrl: hasUploadedAvatar ? null : avatarUrl };
 
   const created = isOrganizationsEnabled()
-    ? await createOrganizationUser(prisma, data, requestedOrganizationId)
-    : await createUserWithOrganizationsDisabled(prisma, data);
+    ? await createOrganizationUser(data, requestedOrganizationId)
+    : await createUserWithOrganizationsDisabled(data);
 
   const user = hasUploadedAvatar
-    ? await prisma.user.update({
-        where: { id: created.id },
+    ? await getUserRepository().updateById({
+        id: created.id,
         data: { avatarUrl: await storeAdminUserAvatar(created.id, avatarUrl) },
       })
     : created;
