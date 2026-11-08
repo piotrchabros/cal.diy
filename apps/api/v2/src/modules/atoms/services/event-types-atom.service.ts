@@ -25,8 +25,6 @@ import {
 } from "@calcom/platform-libraries/event-types";
 import type { PrismaClient } from "@calcom/prisma";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
-import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 import { AtomsRepository } from "@/modules/atoms/atoms.repository";
 import { CredentialsRepository } from "@/modules/credentials/credentials.repository";
 import { MembershipsRepository } from "@/modules/memberships/memberships.repository";
@@ -34,6 +32,8 @@ import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { UsersService } from "@/modules/users/services/users.service";
 import { UsersRepository, UserWithProfile } from "@/modules/users/users.repository";
+import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
+import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 
 type EnabledAppType = App & {
   credential: CredentialDataWithTeamName;
@@ -99,7 +99,6 @@ export class EventTypesAtomService {
       userLocale: user.locale ?? "en",
       prisma: this.dbRead.prisma as unknown as PrismaClient,
       isUserOrganizationAdmin,
-      isTrpcCall: true,
     });
 
     if (!eventType) {

@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { TeamRepository } from "./TeamRepository";
 
 function buildRepository() {
-  const team = { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) };
+  const team = {
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    findUnique: vi.fn().mockResolvedValue(null),
+  };
   const prismaClient = { team } as unknown as PrismaClient;
   return { repository: new TeamRepository(prismaClient), team };
 }
@@ -230,5 +234,24 @@ describe("TeamRepository team profile queries", () => {
 
     await expect(repository.deleteById({ teamId: 3 })).resolves.toEqual({ id: 3 });
     expect(team.delete).toHaveBeenCalledWith({ where: { id: 3 }, select: { id: true } });
+  });
+});
+
+describe("TeamRepository.findIsPlatformById", () => {
+  it("selects only the platform flag", async () => {
+    const { repository, team } = buildRepository();
+    team.findUnique.mockResolvedValue({ isPlatform: true });
+
+    await expect(repository.findIsPlatformById({ teamId: 7 })).resolves.toEqual({ isPlatform: true });
+    expect(team.findUnique).toHaveBeenCalledWith({
+      where: { id: 7 },
+      select: { isPlatform: true },
+    });
+  });
+
+  it("returns null for an unknown team", async () => {
+    const { repository } = buildRepository();
+
+    await expect(repository.findIsPlatformById({ teamId: 999 })).resolves.toBeNull();
   });
 });

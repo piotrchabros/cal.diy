@@ -33,12 +33,12 @@ const teamUserOwned = { ...baseWebhook, id: "wh-team-user", teamId: 3, userId: 9
 
 const prismaMock = {
   user: { findUnique: vi.fn() },
-  membership: { findMany: vi.fn() },
+  membership: { findMany: vi.fn(), findFirst: vi.fn() },
   webhook: { findMany: vi.fn() },
 };
 
 const userRepository = { findUserTeams: vi.fn() };
-const eventTypeRepository = { findParentEventTypeId: vi.fn() };
+const eventTypeRepository = { findParentEventTypeId: vi.fn(), findByIdWithUserIdAndTeamId: vi.fn() };
 
 const repository = new WebhookRepository(
   prismaMock as unknown as PrismaClient,
@@ -159,6 +159,8 @@ describe("WebhookRepository team-owned webhook visibility", () => {
     beforeEach(() => {
       userRepository.findUserTeams.mockResolvedValue({ teams: [{ teamId: 3 }] });
       prismaMock.webhook.findMany.mockResolvedValue([]);
+      // Default: the viewer owns the queried event type, so no membership check runs.
+      eventTypeRepository.findByIdWithUserIdAndTeamId.mockResolvedValue({ userId: 7, teamId: null });
     });
 
     afterEach(() => {
@@ -285,6 +287,94 @@ describe("WebhookRepository team-owned webhook visibility", () => {
       const flagOnWhere = prismaMock.webhook.findMany.mock.calls[1][0].where;
 
       expect(flagOnWhere).toEqual(flagOffWhere);
+    });
+
+    it("returns no webhooks for an unknown event type without querying webhooks", async () => {
+      eventTypeRepository.findByIdWithUserIdAndTeamId.mockResolvedValue(null);
+
+      await expect(repository.listWebhooks({ userId: 7, eventTypeId: 11 })).resolves.toEqual([]);
+
+      expect(prismaMock.webhook.findMany).not.toHaveBeenCalled();
+    });
+
+    it("returns no webhooks when the viewer neither owns the event type nor administers its team", async () => {
+      eventTypeRepository.findByIdWithUserIdAndTeamId.mockResolvedValue({ userId: 99, teamId: 3 });
+      prismaMock.membership.findFirst.mockResolvedValue(null);
+
+      await expect(repository.listWebhooks({ userId: 7, eventTypeId: 11 })).resolves.toEqual([]);
+
+      expect(prismaMock.membership.findFirst).toHaveBeenCalledWith({
+        where: {
+          userId: 7,
+          teamId: 3,
+          accepted: true,
+          role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
+        },
+        select: { id: true },
+      });
+      expect(prismaMock.webhook.findMany).not.toHaveBeenCalled();
+    });
+
+    it("lists team event type webhooks for an accepted team admin", async () => {
+      eventTypeRepository.findByIdWithUserIdAndTeamId.mockResolvedValue({ userId: 99, teamId: 3 });
+      prismaMock.membership.findFirst.mockResolvedValue({ id: 1 });
+
+      await repository.listWebhooks({ userId: 7, eventTypeId: 11 });
+
+      expect(prismaMock.webhook.findMany).toHaveBeenCalled();
+    });
+
+    it("lists personal event type webhooks for the owner without a membership check", async () => {
+      eventTypeRepository.findByIdWithUserIdAndTeamId.mockResolvedValue({ userId: 7, teamId: null });
+
+      await repository.listWebhooks({ userId: 7, eventTypeId: 11 });
+
+      expect(prismaMock.membership.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.webhook.findMany).toHaveBeenCalled();
+    });
+
+    it.each([
+      "",
+      "1",
+    ])("excludes child-team webhooks for a parent-org admin with ORGANIZATIONS_ENABLED=%s", async (flag) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", flag);
+      // Admin of the parent organization (team 1) but no membership in the child team (team 3).
+      prismaMock.membership.findMany.mockResolvedValue([{ teamId: 1 }]);
+
+      await repository.listWebhooks({ userId: 7 });
+
+      expect(JSON.stringify(whereConditions())).not.toContain('"teamId":{"in":[3]}');
+      expect(whereConditions()).toContainEqual({ OR: [{ userId: 7 }, { teamId: { in: [1] } }] });
+    });
+  });
+
+  describe("getFilteredWebhooksForUser parent-org alignment", () => {
+    const orgAdminWithoutTeamMembership = () => ({
+      id: 7,
+      username: "viewer",
+      name: "Viewer",
+      avatarUrl: null,
+      webhooks: [],
+      teams: [
+        {
+          role: MembershipRole.ADMIN,
+          team: { id: 1, name: "Org", slug: "org", logoUrl: null, webhooks: [] },
+        },
+      ],
+    });
+
+    it.each([
+      "",
+      "1",
+    ])("shows no child-team webhooks to a parent-org admin with ORGANIZATIONS_ENABLED=%s, matching listWebhooks", async (flag) => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", flag);
+      prismaMock.user.findUnique.mockResolvedValue(orgAdminWithoutTeamMembership());
+
+      const { webhookGroups } = await repository.getFilteredWebhooksForUser({ userId: 7 });
+      const ids = webhookGroups.flatMap((group) => group.webhooks.map((webhook) => webhook.id));
+
+      expect(ids).not.toContain("wh-team");
+      expect(ids).not.toContain("wh-team-user");
     });
   });
 });

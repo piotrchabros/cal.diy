@@ -1,10 +1,10 @@
 import { getPremiumMonthlyPlanPriceId } from "@calcom/app-store/stripepayment/lib/utils";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { usernameCheck } from "@calcom/lib/server/username";
 import prisma from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import type { NextApiRequest, NextApiResponse } from "next";
 import type Stripe from "stripe";
+import { getOAuthAppOrigin } from "../../_utils/oauth/getOAuthRedirectUri";
 import { getStripeCustomerIdFromUserId } from "../lib/customer";
 import stripe from "../lib/server";
 
@@ -37,7 +37,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return;
     }
 
-    const return_url = `${WEBAPP_URL}/api/integrations/stripepayment/paymentCallback?checkoutSessionId={CHECKOUT_SESSION_ID}&callbackUrl=${callbackUrl}`;
+    // Stay on the domain the buyer started checkout from: Stripe redirects the
+    // browser back here, and the session cookie belongs to that domain.
+    const return_url = `${getOAuthAppOrigin(
+      req
+    )}/api/integrations/stripepayment/paymentCallback?checkoutSessionId={CHECKOUT_SESSION_ID}&callbackUrl=${callbackUrl}`;
     const createSessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: "subscription",
       line_items: [
