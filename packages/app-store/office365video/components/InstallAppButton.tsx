@@ -1,9 +1,7 @@
-import { useState } from "react";
-
 import { AppOnboardingSteps } from "@calcom/lib/apps/appOnboardingSteps";
 import { getAppOnboardingUrl } from "@calcom/lib/apps/getAppOnboardingUrl";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-
+import { useState } from "react";
+import { getAppReturnToUrl } from "../../_utils/getAppReturnToUrl";
 import useAddAppMutation from "../../_utils/useAddAppMutation";
 import type { InstallAppButtonProps } from "../../types";
 import AccountDialog from "./AccountDialog";
@@ -16,12 +14,12 @@ export default function InstallAppButton(props: InstallAppButtonProps) {
       type: "office365_video",
       variant: "conferencing",
       slug: "msteams",
-      returnTo:
-        WEBAPP_URL +
+      returnTo: getAppReturnToUrl(
         getAppOnboardingUrl({
           slug: "msteams",
           step: AppOnboardingSteps.EVENT_TYPES_STEP,
-        }),
+        })
+      ),
     });
   };
 

@@ -558,6 +558,43 @@ describe("getUserAdminTeams", () => {
   });
 });
 
+describe("findFallbackById", () => {
+  const findUnique = vi.fn();
+  const fakePrismaClient = { user: { findUnique } } as unknown as PrismaClient;
+
+  beforeEach(() => {
+    findUnique.mockReset();
+  });
+
+  test("selects only the fields the event type assembly needs", async () => {
+    findUnique.mockResolvedValue({ id: 7, username: "jan" });
+
+    const result = await new UserRepository(fakePrismaClient).findFallbackById({ id: 7 });
+
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 7 },
+      select: {
+        name: true,
+        avatarUrl: true,
+        username: true,
+        id: true,
+        email: true,
+        locale: true,
+        defaultScheduleId: true,
+        isPlatformManaged: true,
+        timeZone: true,
+      },
+    });
+    expect(result).toEqual({ id: 7, username: "jan" });
+  });
+
+  test("returns null for an unknown user", async () => {
+    findUnique.mockResolvedValue(null);
+
+    await expect(new UserRepository(fakePrismaClient).findFallbackById({ id: 999 })).resolves.toBeNull();
+  });
+});
+
 describe("findForAvailabilityCheck", () => {
   const findFirst = vi.fn();
   const fakePrismaClient = { user: { findFirst } } as unknown as PrismaClient;

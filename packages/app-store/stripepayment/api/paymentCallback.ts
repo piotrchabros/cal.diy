@@ -11,12 +11,7 @@ import z from "zod";
 import { VerificationTokenService } from "../lib/VerificationTokenService";
 
 const querySchema = z.object({
-  callbackUrl: z.string().transform((url) => {
-    if (url.search(/^https?:\/\//) === -1) {
-      url = `${WEBAPP_URL}${url}`;
-    }
-    return new URL(url);
-  }),
+  callbackUrl: z.string(),
   checkoutSessionId: z.string(),
 });
 
@@ -28,10 +23,23 @@ export type AssignPremiumUsername = (params: {
 
 export type SendVerificationRequest = (params: { identifier: string; url: string }) => Promise<void>;
 
+// Resolves the domain the buyer checks out on. app-store must not import
+// @calcom/features, so the apps/web caller injects OrganizationUrlService here;
+// without it the default host is used (and OrganizationUrlService itself falls
+// back to WEBAPP_URL while organizations are disabled).
+export type GetPaymentCallbackBaseUrl = (params: {
+  organizationId: number | null | undefined;
+}) => Promise<string>;
+
 export type PaymentCallbackDeps = {
   sendVerificationRequest: SendVerificationRequest;
   assignUsername?: AssignPremiumUsername;
+  getBaseUrl?: GetPaymentCallbackBaseUrl;
 };
+
+async function getDefaultBaseUrl(): Promise<string> {
+  return WEBAPP_URL;
+}
 
 async function assignUsernameDirectly({
   userId,
@@ -48,9 +56,10 @@ async function assignUsernameDirectly({
 export function createPaymentCallbackHandler({
   sendVerificationRequest,
   assignUsername = assignUsernameDirectly,
+  getBaseUrl = getDefaultBaseUrl,
 }: PaymentCallbackDeps) {
   async function getHandler(req: NextApiRequest, res: NextApiResponse) {
-    const { callbackUrl, checkoutSessionId } = querySchema.parse(req.query);
+    const { callbackUrl: rawCallbackUrl, checkoutSessionId } = querySchema.parse(req.query);
     const log = logger.getSubLogger({
       prefix: [`[paymentCallback] checkoutSessionId: ${checkoutSessionId}`],
     });
@@ -111,6 +120,14 @@ export function createPaymentCallbackHandler({
     const username = stripeCustomer.metadata.username;
     const email = user.email ?? stripeCustomer.email;
 
+    // Stay on the purchasing user's organization domain: the session cookie the
+    // magic link signs into belongs to that host, not the default WEBAPP_URL.
+    const baseUrl = await getBaseUrl({ organizationId: user.organizationId });
+    const callbackUrl =
+      rawCallbackUrl.search(/^https?:\/\//) === -1
+        ? new URL(rawCallbackUrl, baseUrl)
+        : new URL(rawCallbackUrl);
+
     // If payment hasn't been completed, redirect to verify page with failure status
     if (checkoutSession.payment_status !== "paid") {
       log.warn("Payment not completed", { paymentStatus: checkoutSession.payment_status });
@@ -151,11 +168,11 @@ export function createPaymentCallbackHandler({
 
     // Generate the callback URL with token
     const params = new URLSearchParams({
-      callbackUrl: WEBAPP_URL || "https://app.cal.com",
+      callbackUrl: baseUrl,
       token,
       email,
     });
-    const url = `${WEBAPP_URL}/api/auth/callback/email?${params.toString()}`;
+    const url = `${baseUrl}/api/auth/callback/email?${params.toString()}`;
 
     await sendVerificationRequest({
       identifier: email,
