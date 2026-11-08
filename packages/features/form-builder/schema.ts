@@ -221,13 +221,14 @@ export const fieldTypesSchemaMap = {
       });
     },
   }),
-  textarea: defineFieldSchema<unknown, string>({
+  textarea: defineFieldSchema<unknown, unknown>({
     preprocess: ({ response }) => {
       return stringifyResponse(response).trim();
     },
     superRefine: ({ field, response, ctx, m }) => {
       const fieldTypeConfig = fieldTypesConfigMap[field.type];
-      const value = response ?? "";
+      // Preprocess always yields a string; the guard keeps the unknown input type-safe.
+      const value = typeof response === "string" ? response : "";
       const maxLength = field.maxLength ?? fieldTypeConfig.supportsLengthCheck?.maxLength;
       const minLength = field.minLength ?? 0;
       if (!maxLength) {
@@ -253,12 +254,13 @@ export const fieldTypesSchemaMap = {
       }
     },
   }),
-  url: defineFieldSchema<unknown, string>({
+  url: defineFieldSchema<unknown, unknown>({
     preprocess: ({ response }) => {
       return stringifyResponse(response).trim();
     },
     superRefine: ({ response, ctx, m }) => {
-      const value = response ?? "";
+      // Preprocess always yields a string; the guard keeps the unknown input type-safe.
+      const value = typeof response === "string" ? response : "";
       const urlSchema = z.string().url();
 
       // Check for malformed protocols (missing second slash test case)
