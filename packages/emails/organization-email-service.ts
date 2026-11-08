@@ -1,7 +1,5 @@
 import type BaseEmail from "@calcom/emails/templates/_base-email";
 import type { OrganizationAdminNoSlotsEmailInput } from "./src/templates/OrganizationAdminNoSlots";
-import type { OrganizationNotification } from "./templates/admin-organization-notification";
-import AdminOrganizationNotification from "./templates/admin-organization-notification";
 import OrganizationAdminNoSlotsEmail from "./templates/organization-admin-no-slots-email";
 import type { OrganizationCreation } from "./templates/organization-creation-email";
 import OrganizationCreationEmail from "./templates/organization-creation-email";
@@ -37,9 +35,4 @@ export const sendOrganizationAdminNoSlotsNotification = async (
 
 export const sendOrganizationEmailVerification = async (sendOrgInput: OrganizationEmailVerify) => {
   await sendEmail(() => new OrganizationEmailVerification(sendOrgInput));
-};
-
-// No callers yet; deletion with its template is pending owner approval (T520).
-export const sendAdminOrganizationNotification = async (input: OrganizationNotification) => {
-  await sendEmail(() => new AdminOrganizationNotification(input));
 };
