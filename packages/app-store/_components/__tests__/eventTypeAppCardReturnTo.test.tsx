@@ -1,6 +1,9 @@
+import AlbyCard from "@calcom/app-store/alby/components/EventTypeAppCardInterface";
+import BtcpayserverCard from "@calcom/app-store/btcpayserver/components/EventTypeAppCardInterface";
 import CloseComCard from "@calcom/app-store/closecom/components/EventTypeAppCardInterface";
 import HitpayCard from "@calcom/app-store/hitpay/components/EventTypeAppCardInterface";
 import HubspotCard from "@calcom/app-store/hubspot/components/EventTypeAppCardInterface";
+import MockPaymentAppCard from "@calcom/app-store/mock-payment-app/components/EventTypeAppCardInterface";
 import PaypalCard from "@calcom/app-store/paypal/components/EventTypeAppCardInterface";
 import PipedriveCard from "@calcom/app-store/pipedrive-crm/components/EventTypeAppCardInterface";
 import SalesforceCard from "@calcom/app-store/salesforce/components/EventTypeAppCardInterface";
@@ -42,6 +45,9 @@ vi.mock("@calcom/app-store/_utils/payments/checkForMultiplePaymentApps", () => (
 const cards: [string, EventTypeAppCardComponent][] = [
   ["closecom", CloseComCard],
   ["hubspot", HubspotCard],
+  ["alby", AlbyCard],
+  ["btcpayserver", BtcpayserverCard],
+  ["mock-payment-app", MockPaymentAppCard],
   ["pipedrive-crm", PipedriveCard],
   ["salesforce", SalesforceCard],
   ["zoho-bigin", ZohoBiginCard],

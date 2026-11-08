@@ -218,6 +218,13 @@ export class MembershipRepository {
       })
     );
 
+    // Audit (T527): the outer `include` is kept deliberately. getEventTypesByViewer consumes the
+    // whole membership row plus team members (membershipCount, host assignment), the team tree
+    // (parent/logoUrl/name for profiles), and the full event-type subtree (users/hosts/children for
+    // enrichment, metadata/description for mapping), so a narrow select would just restate `*`.
+    // The nested children/hosts `include`s match EventTypeRepository.findAllByUpId: both queries feed
+    // the same mapEventType, and the full child/host rows are spread into the EventTypeGroup payload.
+    // The nested event-type relations below stay select-only.
     return await prisma.membership.findMany({
       where: prismaWhere,
       include: {
@@ -345,9 +352,20 @@ export class MembershipRepository {
 
     return await prisma.membership.findMany({
       where: prismaWhere,
-      include: {
+      // Select-only: callers (EventGroupBuilder, TeamAccessUseCase) read just the membership
+      // scalars below plus team id/name/slug/logoUrl/parentId/isOrganization/metadata/parent.
+      // The full Team row (bio, brandColor, theme, ...) is never consumed here.
+      select: {
+        ...membershipSelect,
         team: {
-          include: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logoUrl: true,
+            parentId: true,
+            isOrganization: true,
+            metadata: true,
             parent: {
               select: teamParentSelect,
             },
@@ -668,7 +686,10 @@ export class MembershipRepository {
   static async findByTeamIdForAvailability({ teamId }: { teamId: number }) {
     const memberships = await prisma.membership.findMany({
       where: { teamId },
-      include: {
+      // Select-only: only the membership scalars plus the availability user subtree are read
+      // (credentials for getUserAvailability, availabilityUserSelect for scheduling).
+      select: {
+        ...membershipSelect,
         user: {
           select: {
             credentials: {
@@ -738,7 +759,9 @@ export class MembershipRepository {
         createdAt: { gt: time },
         accepted: true,
       },
-      include: {
+      // Select-only: callers read the membership scalars plus the user's id/name/email.
+      select: {
+        ...membershipSelect,
         user: {
           select: {
             email: true,

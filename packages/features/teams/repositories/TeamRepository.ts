@@ -55,6 +55,17 @@ export class TeamRepository {
     });
   }
 
+  async findIsPlatformById({ teamId }: { teamId: number }) {
+    return await this.prismaClient.team.findUnique({
+      where: {
+        id: teamId,
+      },
+      select: {
+        isPlatform: true,
+      },
+    });
+  }
+
   async findProfileById({ teamId }: { teamId: number }) {
     return await this.prismaClient.team.findUnique({
       where: { id: teamId },

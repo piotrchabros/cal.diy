@@ -13,6 +13,29 @@ export class DestinationCalendarRepository {
     this.prismaClient = prismaClient ?? prisma;
   }
 
+  // The caller's default destination calendar: the row not attached to any event type.
+  async findDefaultByUserId({ userId }: { userId: number }) {
+    return await this.prismaClient.destinationCalendar.findFirst({
+      where: {
+        userId,
+        eventTypeId: null,
+      },
+      select: {
+        id: true,
+        integration: true,
+        externalId: true,
+        primaryEmail: true,
+        userId: true,
+        eventTypeId: true,
+        credentialId: true,
+        createdAt: true,
+        updatedAt: true,
+        delegationCredentialId: true,
+        customCalendarReminder: true,
+      },
+    });
+  }
+
   async getCustomReminderByCredentialId(credentialId: number): Promise<number | null> {
     const destinationCalendar = await this.prismaClient.destinationCalendar.findFirst({
       where: { credentialId },

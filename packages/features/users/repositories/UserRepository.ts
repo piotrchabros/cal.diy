@@ -81,6 +81,27 @@ const teamSelect = {
   isPlatform: true,
 } satisfies Prisma.TeamSelect;
 
+const adminUserSelect = {
+  id: true,
+  locked: true,
+  email: true,
+  username: true,
+  name: true,
+  bio: true,
+  timeZone: true,
+  weekStart: true,
+  theme: true,
+  defaultScheduleId: true,
+  locale: true,
+  timeFormat: true,
+  allowDynamicBooking: true,
+  identityProvider: true,
+  role: true,
+  avatarUrl: true,
+  organizationId: true,
+  createdDate: true,
+} satisfies Prisma.UserSelect;
+
 const userSelect = {
   id: true,
   uuid: true,
@@ -462,6 +483,27 @@ export class UserRepository {
       ...user,
       metadata: userMetadata.parse(user.metadata),
     };
+  }
+
+  // Fields getEventTypeById needs when an event type has no owner or team users and the
+  // caller stands in as the fallback user.
+  async findFallbackById({ id }: { id: number }) {
+    return await this.prismaClient.user.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        name: true,
+        avatarUrl: true,
+        username: true,
+        id: true,
+        email: true,
+        locale: true,
+        defaultScheduleId: true,
+        isPlatformManaged: true,
+        timeZone: true,
+      },
+    });
   }
 
   async findSecondaryEmailByUserIdAndEmail({ userId, email }: { userId: number; email: string }) {
@@ -1143,6 +1185,39 @@ export class UserRepository {
       where: {
         id: userId,
       },
+    });
+  }
+
+  async findByIdWithOrganizationId({ id }: { id: number }) {
+    return this.prismaClient.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        username: true,
+        organizationId: true,
+      },
+    });
+  }
+
+  async findAll() {
+    return this.prismaClient.user.findMany({
+      orderBy: { id: "asc" },
+      select: adminUserSelect,
+    });
+  }
+
+  async updateById({ id, data }: { id: number; data: Prisma.UserUpdateInput }) {
+    return this.prismaClient.user.update({
+      where: { id },
+      data,
+      select: adminUserSelect,
+    });
+  }
+
+  async createBare(data: Prisma.UserUncheckedCreateInput) {
+    return this.prismaClient.user.create({
+      data,
+      select: adminUserSelect,
     });
   }
 
