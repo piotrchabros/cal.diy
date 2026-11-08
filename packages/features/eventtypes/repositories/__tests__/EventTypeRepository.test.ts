@@ -87,6 +87,34 @@ describe("EventTypeRepository", () => {
     });
   });
 
+  describe("findByIdWithUserIdAndTeamId", () => {
+    const buildRepository = (result: { userId: number | null; teamId: number | null } | null) => {
+      const findUnique = vi.fn().mockResolvedValue(result);
+      const repository = new EventTypeRepository({ eventType: { findUnique } } as unknown as PrismaClient);
+      return { findUnique, repository };
+    };
+
+    it("selects only userId and teamId for the given id", async () => {
+      const { findUnique, repository } = buildRepository({ userId: 7, teamId: 3 });
+
+      const result = await repository.findByIdWithUserIdAndTeamId({ id: 42 });
+
+      expect(result).toEqual({ userId: 7, teamId: 3 });
+      expect(findUnique).toHaveBeenCalledWith({
+        where: { id: 42 },
+        select: { userId: true, teamId: true },
+      });
+    });
+
+    it("returns null when the event type does not exist", async () => {
+      const { repository } = buildRepository(null);
+
+      const result = await repository.findByIdWithUserIdAndTeamId({ id: 999 });
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe("getEventTypeList", () => {
     describe("Early return scenarios", () => {
       it("should return empty array when no teamId, userId, or isAll provided", async () => {

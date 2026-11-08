@@ -7,8 +7,10 @@ import { webhookRouter } from "./_router";
 const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   webhookFindUnique: vi.fn(),
-  eventTypeFindUnique: vi.fn(),
-  getAdminOrOwnerMembership: vi.fn(),
+  findEventTypeById: vi.fn(),
+  findAdminOrOwner: vi.fn(),
+  hasMembership: vi.fn(),
+  findTeamById: vi.fn(),
   findByWebhookId: vi.fn(),
   listWebhooks: vi.fn(),
   editHandler: vi.fn(),
@@ -23,15 +25,25 @@ vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
 vi.mock("@calcom/prisma", () => {
   const fake = {
     webhook: { findUnique: mocks.webhookFindUnique },
-    eventType: { findUnique: mocks.eventTypeFindUnique },
   };
   return { default: fake, prisma: fake, readonlyPrisma: fake, availabilityUserSelect: {}, userSelect: {} };
 });
 
 vi.mock("@sentry/nextjs", () => ({ setUser: vi.fn() }));
 
-vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
-  MembershipRepository: { getAdminOrOwnerMembership: mocks.getAdminOrOwnerMembership },
+vi.mock("@calcom/features/users/di/MembershipRepository.container", () => ({
+  getMembershipRepository: () => ({
+    findAcceptedAdminOrOwnerByUserIdAndTeamId: mocks.findAdminOrOwner,
+    hasMembership: mocks.hasMembership,
+  }),
+}));
+
+vi.mock("@calcom/features/eventtypes/di/EventTypeRepository.container", () => ({
+  getEventTypeRepository: () => ({ findByIdWithUserIdAndTeamId: mocks.findEventTypeById }),
+}));
+
+vi.mock("@calcom/features/teams/di/TeamRepository.container", () => ({
+  getTeamRepository: () => ({ findBasicById: mocks.findTeamById }),
 }));
 
 vi.mock("@calcom/features/di/webhooks/containers/webhook", () => ({
@@ -79,7 +91,7 @@ describe("webhook router access control", () => {
       ["a non-member", null],
       ["a plain member", null],
     ])("forbids %s from reading it and does not return the secret", async (_label, membership) => {
-      mocks.getAdminOrOwnerMembership.mockResolvedValue(membership);
+      mocks.findAdminOrOwner.mockResolvedValue(membership);
 
       const result = await createCaller(ctx)
         .get({ id: "wh-team" })
@@ -87,12 +99,12 @@ describe("webhook router access control", () => {
 
       expect(result).toMatchObject({ code: "FORBIDDEN" });
       expect(JSON.stringify(result)).not.toContain("s3cret");
-      expect(mocks.getAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+      expect(mocks.findAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
       expect(mocks.findByWebhookId).not.toHaveBeenCalled();
     });
 
     it("forbids a non-admin from editing, deleting or test-triggering it", async () => {
-      mocks.getAdminOrOwnerMembership.mockResolvedValue(null);
+      mocks.findAdminOrOwner.mockResolvedValue(null);
       const caller = createCaller(ctx);
 
       await expect(caller.edit({ id: "wh-team", payloadTemplate: null })).rejects.toMatchObject({
@@ -108,7 +120,7 @@ describe("webhook router access control", () => {
     });
 
     it("lets a team admin get, edit and delete it", async () => {
-      mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+      mocks.findAdminOrOwner.mockResolvedValue({ id: 1 });
       const caller = createCaller(ctx);
 
       await expect(caller.get({ id: "wh-team" })).resolves.toMatchObject({ secret: "s3cret" });
@@ -123,12 +135,12 @@ describe("webhook router access control", () => {
       mocks.findByWebhookId.mockResolvedValue({ id: "wh-own", userId: 7, secret: "mine" });
 
       await expect(createCaller(ctx).get({ id: "wh-own" })).resolves.toMatchObject({ secret: "mine" });
-      expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+      expect(mocks.findAdminOrOwner).not.toHaveBeenCalled();
     });
 
     it("forbids another user regardless of team role", async () => {
       mocks.webhookFindUnique.mockResolvedValue({ id: "wh-other", userId: 99, teamId: 3, eventTypeId: null });
-      mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+      mocks.findAdminOrOwner.mockResolvedValue({ id: 1 });
 
       await expect(createCaller(ctx).get({ id: "wh-other" })).rejects.toMatchObject({ code: "FORBIDDEN" });
       expect(mocks.findByWebhookId).not.toHaveBeenCalled();
@@ -144,7 +156,7 @@ describe("webhook router access control", () => {
       mocks.findByWebhookId.mockResolvedValue({ id: "wh-plat" });
 
       await expect(createCaller(ctx).get({ id: "wh-plat" })).resolves.toEqual({ id: "wh-plat" });
-      expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+      expect(mocks.findAdminOrOwner).not.toHaveBeenCalled();
     });
   });
 
@@ -158,27 +170,27 @@ describe("webhook router access control", () => {
       });
 
       it("lets the event type owner get it without a membership lookup", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 7, teamId: null });
+        mocks.findEventTypeById.mockResolvedValue({ userId: 7, teamId: null });
 
         await expect(createCaller(ctx).get({ id: "wh-et" })).resolves.toMatchObject({ secret: "et-secret" });
-        expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+        expect(mocks.findAdminOrOwner).not.toHaveBeenCalled();
       });
 
       it("lets a team admin get, edit and delete a team event type's webhook", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
-        mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+        mocks.findEventTypeById.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.findAdminOrOwner.mockResolvedValue({ id: 1 });
         mocks.deleteHandler.mockResolvedValue({ id: "wh-et" });
         const caller = createCaller(ctx);
 
         await expect(caller.get({ id: "wh-et" })).resolves.toMatchObject({ secret: "et-secret" });
         await expect(caller.edit({ id: "wh-et", payloadTemplate: null })).resolves.toEqual({ ok: true });
         await expect(caller.delete({ id: "wh-et" })).resolves.toEqual({ id: "wh-et" });
-        expect(mocks.getAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+        expect(mocks.findAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
       });
 
       it("forbids a plain team member from getting, editing or deleting it", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
-        mocks.getAdminOrOwnerMembership.mockResolvedValue(null);
+        mocks.findEventTypeById.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.findAdminOrOwner.mockResolvedValue(null);
         const caller = createCaller(ctx);
 
         await expect(caller.get({ id: "wh-et" })).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -192,14 +204,14 @@ describe("webhook router access control", () => {
       });
 
       it("forbids access to another user's personal event type webhook", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 99, teamId: null });
+        mocks.findEventTypeById.mockResolvedValue({ userId: 99, teamId: null });
 
         await expect(createCaller(ctx).get({ id: "wh-et" })).rejects.toMatchObject({ code: "FORBIDDEN" });
         expect(mocks.findByWebhookId).not.toHaveBeenCalled();
       });
 
       it("returns NOT_FOUND when the event type is missing", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue(null);
+        mocks.findEventTypeById.mockResolvedValue(null);
 
         await expect(createCaller(ctx).get({ id: "wh-et" })).rejects.toMatchObject({ code: "NOT_FOUND" });
         expect(mocks.findByWebhookId).not.toHaveBeenCalled();
@@ -208,24 +220,24 @@ describe("webhook router access control", () => {
 
     describe("by event type id only", () => {
       it("lets the event type owner list its webhooks without a membership lookup", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 7, teamId: null });
+        mocks.findEventTypeById.mockResolvedValue({ userId: 7, teamId: null });
 
         await expect(createCaller(ctx).list({ eventTypeId: 11 })).resolves.toEqual([]);
         expect(mocks.listWebhooks).toHaveBeenCalledWith(expect.objectContaining({ eventTypeId: 11 }));
-        expect(mocks.getAdminOrOwnerMembership).not.toHaveBeenCalled();
+        expect(mocks.findAdminOrOwner).not.toHaveBeenCalled();
       });
 
       it("lets a team admin list a team event type's webhooks", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
-        mocks.getAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+        mocks.findEventTypeById.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.findAdminOrOwner.mockResolvedValue({ id: 1 });
 
         await expect(createCaller(ctx).list({ eventTypeId: 11 })).resolves.toEqual([]);
         expect(mocks.listWebhooks).toHaveBeenCalledWith(expect.objectContaining({ eventTypeId: 11 }));
       });
 
       it("forbids a plain team member from listing them", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: null, teamId: 3 });
-        mocks.getAdminOrOwnerMembership.mockResolvedValue(null);
+        mocks.findEventTypeById.mockResolvedValue({ userId: null, teamId: 3 });
+        mocks.findAdminOrOwner.mockResolvedValue(null);
 
         await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
           code: "FORBIDDEN",
@@ -234,7 +246,7 @@ describe("webhook router access control", () => {
       });
 
       it("forbids listing another user's personal event type webhooks", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue({ userId: 99, teamId: null });
+        mocks.findEventTypeById.mockResolvedValue({ userId: 99, teamId: null });
 
         await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
           code: "FORBIDDEN",
@@ -243,7 +255,7 @@ describe("webhook router access control", () => {
       });
 
       it("returns NOT_FOUND when the event type is missing", async () => {
-        mocks.eventTypeFindUnique.mockResolvedValue(null);
+        mocks.findEventTypeById.mockResolvedValue(null);
 
         await expect(createCaller(ctx).list({ eventTypeId: 11 })).rejects.toMatchObject({
           code: "NOT_FOUND",

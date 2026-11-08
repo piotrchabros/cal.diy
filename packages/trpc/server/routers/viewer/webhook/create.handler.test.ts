@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockGetAdminOrOwnerMembership = vi.fn();
+const mockFindAcceptedAdminOrOwner = vi.fn();
 const mockHasMembership = vi.fn();
+const mockFindBasicById = vi.fn();
+const mockFindEventTypeByIdWithUserIdAndTeamId = vi.fn();
 
-vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
-  MembershipRepository: class {
-    static getAdminOrOwnerMembership(...args: unknown[]) {
-      return mockGetAdminOrOwnerMembership(...args);
-    }
-    hasMembership(...args: unknown[]) {
-      return mockHasMembership(...args);
-    }
-  },
+vi.mock("@calcom/features/users/di/MembershipRepository.container", () => ({
+  getMembershipRepository: () => ({
+    findAcceptedAdminOrOwnerByUserIdAndTeamId: mockFindAcceptedAdminOrOwner,
+    hasMembership: mockHasMembership,
+  }),
+}));
+vi.mock("@calcom/features/teams/di/TeamRepository.container", () => ({
+  getTeamRepository: () => ({ findBasicById: mockFindBasicById }),
+}));
+vi.mock("@calcom/features/eventtypes/di/EventTypeRepository.container", () => ({
+  getEventTypeRepository: () => ({ findByIdWithUserIdAndTeamId: mockFindEventTypeByIdWithUserIdAndTeamId }),
 }));
 vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
   updateTriggerForExistingBookings: vi.fn(),
@@ -19,7 +23,6 @@ vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
 vi.mock("@calcom/prisma", () => {
   const mockPrisma = {
     webhook: { create: vi.fn() },
-    team: { findUnique: vi.fn() },
     eventType: { findFirst: vi.fn() },
   };
   return { default: mockPrisma, prisma: mockPrisma };
@@ -48,15 +51,15 @@ describe("createHandler includeMemberMeetings", () => {
     vi.mocked(prisma.webhook.create).mockImplementation(
       (args) => Promise.resolve({ ...args.data, eventTriggers: baseInput.eventTriggers }) as never
     );
-    vi.mocked(prisma.team.findUnique).mockResolvedValue({ isOrganization: false } as never);
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindBasicById.mockResolvedValue({ isOrganization: false });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
   });
 
   it("creates a flagged team webhook without a user for a team admin", async () => {
     await createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3, includeMemberMeetings: true } });
 
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledTimes(1);
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledTimes(1);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
     expect(createdData().user).toBeUndefined();
     expect(createdData().userId).toBeUndefined();
     expect(createdData().includeMemberMeetings).toBe(true);
@@ -93,7 +96,7 @@ describe("createHandler includeMemberMeetings", () => {
   });
 
   it("rejects organizations", async () => {
-    vi.mocked(prisma.team.findUnique).mockResolvedValue({ isOrganization: true } as never);
+    mockFindBasicById.mockResolvedValue({ isOrganization: true });
 
     await expect(
       createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3, includeMemberMeetings: true } })
@@ -101,7 +104,7 @@ describe("createHandler includeMemberMeetings", () => {
   });
 
   it("forbids non-admin members", async () => {
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(
       createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3, includeMemberMeetings: true } })
@@ -116,7 +119,7 @@ describe("createHandler team webhook authorization", () => {
     vi.mocked(prisma.webhook.create).mockImplementation(
       (args) => Promise.resolve({ ...args.data, eventTriggers: baseInput.eventTriggers }) as never
     );
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
   });
 
   afterEach(() => {
@@ -129,7 +132,7 @@ describe("createHandler team webhook authorization", () => {
     await createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } });
 
     expect(mockHasMembership).not.toHaveBeenCalled();
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
     expect(createdData().userId).toBeUndefined();
     expect(createdData().user).toBeUndefined();
     expect(createdData().teamId).toBe(3);
@@ -137,7 +140,7 @@ describe("createHandler team webhook authorization", () => {
 
   it("forbids a non-admin team member when organizations are disabled", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "");
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } })).rejects.toMatchObject({
       code: "FORBIDDEN",
@@ -154,14 +157,14 @@ describe("createHandler team webhook authorization", () => {
       message: "Team not found",
     });
     expect(mockHasMembership).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
     expect(prisma.webhook.create).not.toHaveBeenCalled();
   });
 
   it("forbids a team member who is not an admin when organizations are enabled", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     mockHasMembership.mockResolvedValue(true);
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } })).rejects.toMatchObject({
       code: "FORBIDDEN",
@@ -176,7 +179,7 @@ describe("createHandler team webhook authorization", () => {
     await createHandler({ ctx: { user }, input: { ...baseInput, teamId: 3 } });
 
     expect(mockHasMembership).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
     expect(createdData().teamId).toBe(3);
     expect(createdData().userId).toBeUndefined();
   });
@@ -186,7 +189,7 @@ describe("createHandler team webhook authorization", () => {
 
     expect(createdData().userId).toBe(7);
     expect(createdData().user).toBeUndefined();
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
   });
 
   it("does not set a user on event type webhooks", async () => {
@@ -204,7 +207,7 @@ describe("createHandler team webhook authorization", () => {
       input: { ...baseInput, teamId: 3, platform: true },
     });
 
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
     expect(createdData().userId).toBeUndefined();
   });
 
