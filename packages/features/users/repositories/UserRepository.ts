@@ -464,6 +464,27 @@ export class UserRepository {
     };
   }
 
+  // Fields getEventTypeById needs when an event type has no owner or team users and the
+  // caller stands in as the fallback user.
+  async findFallbackById({ id }: { id: number }) {
+    return await this.prismaClient.user.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        name: true,
+        avatarUrl: true,
+        username: true,
+        id: true,
+        email: true,
+        locale: true,
+        defaultScheduleId: true,
+        isPlatformManaged: true,
+        timeZone: true,
+      },
+    });
+  }
+
   async findSecondaryEmailByUserIdAndEmail({ userId, email }: { userId: number; email: string }) {
     return this.prismaClient.secondaryEmail.findUnique({
       where: {
