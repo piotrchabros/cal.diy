@@ -71,7 +71,7 @@ export class EventGroupBuilder {
     }));
 
     // Build permissions map
-    const teamPermissionsMap = await buildTeamPermissionsMap(memberships, teamMemberships, userId);
+    const teamPermissionsMap = buildTeamPermissionsMap(memberships, teamMemberships);
 
     // Build event type groups
     const eventTypeGroups: EventTypeGroup[] = [];
