@@ -9,8 +9,9 @@ const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   disableByFrom: vi.fn(),
   repointUserRedirectsForRename: vi.fn(),
-  findUnique: vi.fn(),
-  userUpdate: vi.fn(),
+  findByIdWithOrganizationId: vi.fn(),
+  findAll: vi.fn(),
+  updateById: vi.fn(),
   changeUsername: vi.fn(),
   assertUserCanBeDeleted: vi.fn(),
   deleteById: vi.fn(),
@@ -44,35 +45,91 @@ vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.contain
 }));
 
 vi.mock("@calcom/features/di/containers/UserRepository", () => ({
-  getUserRepository: () => ({ deleteById: mocks.deleteById }),
+  getUserRepository: () => ({
+    findByIdWithOrganizationId: mocks.findByIdWithOrganizationId,
+    findAll: mocks.findAll,
+    updateById: mocks.updateById,
+    deleteById: mocks.deleteById,
+  }),
 }));
 
-const ctx = {
-  prisma: { user: { findUnique: mocks.findUnique, update: mocks.userUpdate } },
-  insightsDb: {},
-  locale: "en",
-  traceContext: { traceId: "trace_test", spanId: "span_test", operation: "test" },
-} as unknown as TRPCContextInner;
+const ctx = {} as unknown as TRPCContextInner;
 
 const createCaller = createCallerFactory(userAdminRouter);
 
-const requestedUser = { id: 11, username: "old-name", organizationId: 5, movedToProfileId: null };
+const requestedUser = { id: 11, username: "old-name", organizationId: 5 };
+
+const mockAdminSession = () =>
+  mocks.getUserSession.mockResolvedValue({
+    user: { id: 1, role: "ADMIN" },
+    session: { upId: "usr-1", expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } },
+  });
+
+describe("admin users router get", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdminSession();
+    mocks.findByIdWithOrganizationId.mockResolvedValue(requestedUser);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns the requested user from the repository", async () => {
+    await expect(createCaller(ctx).get({ userId: 11 })).resolves.toEqual({ user: requestedUser });
+
+    expect(mocks.findByIdWithOrganizationId).toHaveBeenCalledWith({ id: 11 });
+  });
+
+  it("answers NOT_FOUND when the repository has no such user", async () => {
+    mocks.findByIdWithOrganizationId.mockResolvedValue(null);
+
+    await expect(createCaller(ctx).get({ userId: 404 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "User not found",
+    });
+  });
+
+  it("answers BAD_REQUEST without a user id", async () => {
+    await expect(createCaller(ctx).get({} as { userId: number })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "User id is required",
+    });
+    expect(mocks.findByIdWithOrganizationId).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin users router list", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdminSession();
+    mocks.findAll.mockResolvedValue([requestedUser]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns the repository rows without full prisma rows", async () => {
+    await expect(createCaller(ctx).list()).resolves.toEqual([requestedUser]);
+
+    expect(mocks.findAll).toHaveBeenCalledOnce();
+  });
+});
 
 describe("admin users router update", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.calls.length = 0;
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
-    mocks.getUserSession.mockResolvedValue({
-      user: { id: 1, role: "ADMIN" },
-      session: { upId: "usr-1", expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } },
-    });
-    mocks.findUnique.mockResolvedValue(requestedUser);
+    mockAdminSession();
+    mocks.findByIdWithOrganizationId.mockResolvedValue(requestedUser);
     mocks.changeUsername.mockImplementation(async () => {
       mocks.calls.push("changeUsername");
     });
-    mocks.userUpdate.mockImplementation(async () => {
-      mocks.calls.push("userUpdate");
+    mocks.updateById.mockImplementation(async () => {
+      mocks.calls.push("updateById");
       return { id: 11 };
     });
     mocks.repointUserRedirectsForRename.mockImplementation(async () => {
@@ -92,7 +149,7 @@ describe("admin users router update", () => {
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
     expect(mocks.disableByFrom).toHaveBeenCalledWith({ fromOrgId: 5, from: "new-name", types: ["User"] });
-    expect(mocks.calls).toEqual(["changeUsername", "userUpdate", "repoint", "disableByFrom"]);
+    expect(mocks.calls).toEqual(["changeUsername", "updateById", "repoint", "disableByFrom"]);
   });
 
   it("repoints move redirects in the user's organization from the old to the new username", async () => {
@@ -109,16 +166,16 @@ describe("admin users router update", () => {
     await createCaller(ctx).update({ userId: 11, username: "new-name", name: "Renamed" });
 
     expect(mocks.changeUsername).toHaveBeenCalledWith({ userId: 11, username: "new-name" });
-    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { name: "Renamed" } });
+    expect(mocks.updateById).toHaveBeenCalledWith({ id: 11, data: { name: "Renamed" } });
   });
 
   it("routes a legacy moved-to user through changeUsername instead of renaming the profile directly", async () => {
-    mocks.findUnique.mockResolvedValue({ ...requestedUser, movedToProfileId: 77 });
+    mocks.findByIdWithOrganizationId.mockResolvedValue({ ...requestedUser, movedToProfileId: 77 });
 
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
     expect(mocks.changeUsername).toHaveBeenCalledWith({ userId: 11, username: "new-name" });
-    expect(mocks.calls).toEqual(["changeUsername", "userUpdate", "repoint", "disableByFrom"]);
+    expect(mocks.calls).toEqual(["changeUsername", "updateById", "repoint", "disableByFrom"]);
   });
 
   it("calls changeUsername for an unchanged username so a missing org profile is created", async () => {
@@ -131,14 +188,14 @@ describe("admin users router update", () => {
     await createCaller(ctx).update({ userId: 11, name: "Renamed" });
 
     expect(mocks.changeUsername).not.toHaveBeenCalled();
-    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { name: "Renamed" } });
+    expect(mocks.updateById).toHaveBeenCalledWith({ id: 11, data: { name: "Renamed" } });
   });
 
   it("clears the username directly when it is set to null", async () => {
     await createCaller(ctx).update({ userId: 11, username: null });
 
     expect(mocks.changeUsername).not.toHaveBeenCalled();
-    expect(mocks.userUpdate).toHaveBeenCalledWith({ where: { id: 11 }, data: { username: null } });
+    expect(mocks.updateById).toHaveBeenCalledWith({ id: 11, data: { username: null } });
   });
 
   it("maps a username conflict to a CONFLICT error and skips the other changes", async () => {
@@ -149,7 +206,7 @@ describe("admin users router update", () => {
     await expect(
       createCaller(ctx).update({ userId: 11, username: "taken", name: "Renamed" })
     ).rejects.toMatchObject({ code: "CONFLICT", message: "username_taken_in_organization" });
-    expect(mocks.userUpdate).not.toHaveBeenCalled();
+    expect(mocks.updateById).not.toHaveBeenCalled();
     expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
   });
 
@@ -160,7 +217,7 @@ describe("admin users router update", () => {
     await expect(createCaller(ctx).update({ userId: 11, username: "new-name" })).rejects.toMatchObject({
       cause: failure,
     });
-    expect(mocks.userUpdate).not.toHaveBeenCalled();
+    expect(mocks.updateById).not.toHaveBeenCalled();
   });
 
   it("does not disable redirects when ORGANIZATIONS_ENABLED is off", async () => {
@@ -172,7 +229,7 @@ describe("admin users router update", () => {
   });
 
   it("does not disable redirects for a user without an organization", async () => {
-    mocks.findUnique.mockResolvedValue({ ...requestedUser, organizationId: null });
+    mocks.findByIdWithOrganizationId.mockResolvedValue({ ...requestedUser, organizationId: null });
 
     await createCaller(ctx).update({ userId: 11, username: "new-name" });
 
@@ -185,7 +242,7 @@ describe("admin users router update", () => {
   ])("does not disable redirects with $name", async ({ input }) => {
     await createCaller(ctx).update(input);
 
-    expect(mocks.userUpdate).toHaveBeenCalled();
+    expect(mocks.updateById).toHaveBeenCalled();
     expect(mocks.repointUserRedirectsForRename).not.toHaveBeenCalled();
     expect(mocks.disableByFrom).not.toHaveBeenCalled();
   });
@@ -194,11 +251,8 @@ describe("admin users router update", () => {
 describe("admin users router delete", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getUserSession.mockResolvedValue({
-      user: { id: 1, role: "ADMIN" },
-      session: { upId: "usr-1", expires: "2099-01-01T00:00:00.000Z", user: { id: 1 } },
-    });
-    mocks.findUnique.mockResolvedValue(requestedUser);
+    mockAdminSession();
+    mocks.findByIdWithOrganizationId.mockResolvedValue(requestedUser);
     mocks.assertUserCanBeDeleted.mockResolvedValue(undefined);
     mocks.deleteById.mockResolvedValue(undefined);
   });
