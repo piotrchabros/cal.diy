@@ -1,6 +1,18 @@
+import { WEBAPP_URL } from "@calcom/lib/constants";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
+import prisma from "@calcom/prisma";
 import type { NextApiRequest, NextApiResponse } from "next";
 
-import { WEBAPP_URL } from "@calcom/lib/constants";
+// Organization custom domains (OrganizationSettings.customDomain, stored as a lowercase host)
+// are accepted the same way link.ts builds org booking links. Inert while organizations are off.
+async function isKnownOrganizationDomain(hostname: string): Promise<boolean> {
+  if (!isOrganizationsEnabled()) return false;
+  const settings = await prisma.organizationSettings.findFirst({
+    where: { customDomain: hostname },
+    select: { organizationId: true },
+  });
+  return !!settings;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "POST") {
@@ -20,8 +32,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const parsedUrl = new URL(url);
         const hostname = parsedUrl.hostname.toLowerCase();
-        
+
         if (hostname === "cal.com" || hostname.endsWith(".cal.com")) {
+          origin = parsedUrl.origin;
+          calLink = parsedUrl.pathname + parsedUrl.search;
+          if (calLink.startsWith("/")) {
+            calLink = calLink.substring(1);
+          }
+        } else if (await isKnownOrganizationDomain(hostname)) {
           origin = parsedUrl.origin;
           calLink = parsedUrl.pathname + parsedUrl.search;
           if (calLink.startsWith("/")) {
