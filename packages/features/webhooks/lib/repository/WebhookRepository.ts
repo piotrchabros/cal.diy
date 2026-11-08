@@ -242,6 +242,34 @@ export class WebhookRepository implements IWebhookRepository {
     return Array.from(uniqueWebhooks.values());
   }
 
+  /**
+   * Mirrors the list.handler asserts (assertCanManageEventTypeWebhooks) inside the repository so
+   * direct repository callers get the same fail-closed answer. The handler keeps its own asserts
+   * to preserve the NOT_FOUND/FORBIDDEN codes; here unauthorized simply means no rows.
+   */
+  private async hasEventTypeWebhookAccess({
+    userId,
+    eventTypeId,
+  }: {
+    userId: number;
+    eventTypeId: number;
+  }): Promise<boolean> {
+    const eventType = await this.eventTypeRepository.findByIdWithUserIdAndTeamId({ id: eventTypeId });
+    if (!eventType) return false;
+    if (eventType.userId === userId) return true;
+    if (eventType.teamId == null) return false;
+    const membership = await this.prisma.membership.findFirst({
+      where: {
+        userId,
+        teamId: eventType.teamId,
+        accepted: true,
+        role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
+      },
+      select: { id: true },
+    });
+    return !!membership;
+  }
+
   async getWebhookById(id: string): Promise<WebhookSubscriber | null> {
     const webhook = await this.prisma.webhook.findUnique({
       where: { id },
@@ -520,6 +548,9 @@ export class WebhookRepository implements IWebhookRepository {
     let managedParentId: number | null = null;
 
     if (eventTypeId) {
+      // No ownership/admin check here would leak webhook secrets to any direct repository caller;
+      // the tRPC handler asserts first, but the repository must also be safe on its own.
+      if (!(await this.hasEventTypeWebhookAccess({ userId, eventTypeId }))) return [];
       managedParentId = await this.eventTypeRepository.findParentEventTypeId(eventTypeId);
 
       if (managedParentId) {
