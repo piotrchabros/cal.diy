@@ -1,5 +1,4 @@
 export { AdminOAuthClientNotificationEmail } from "./AdminOAuthClientNotificationEmail";
-export { AdminOrganizationNotificationEmail } from "./AdminOrganizationNotificationEmail";
 export { AttendeeAddGuestsEmail } from "./AttendeeAddGuestsEmail";
 export { AttendeeAwaitingPaymentEmail } from "./AttendeeAwaitingPaymentEmail";
 export { AttendeeCancelledEmail } from "./AttendeeCancelledEmail";
@@ -26,8 +25,6 @@ export { NotetakerFailedEmail } from "./NotetakerFailedEmail";
 export { NotetakerResultsReadyEmail } from "./NotetakerResultsReadyEmail";
 export { NotetakerSharedEmail } from "./NotetakerSharedEmail";
 export { NotetakerTurnedOffEmail } from "./NotetakerTurnedOffEmail";
-export { OAuthClientApprovedNotificationEmail } from "./OAuthClientApprovedNotificationEmail";
-export { OAuthClientRejectedNotificationEmail } from "./OAuthClientRejectedNotificationEmail";
 export { OrgAutoInviteEmail } from "./OrgAutoInviteEmail";
 export { OrganisationAccountVerifyEmail } from "./OrganizationAccountVerifyEmail";
 export { OrganizationAdminNoSlotsEmail } from "./OrganizationAdminNoSlots";
