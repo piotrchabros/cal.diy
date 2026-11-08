@@ -34,11 +34,10 @@ const userIdSchema = z.object({ userId: z.coerce.number() });
 //const authedAdminWithUserMiddleware = middleware();
 
 const authedAdminProcedureWithRequestedUser = authedAdminProcedure.use(async ({ ctx, next, getRawInput }) => {
-  const { prisma } = ctx;
   const parsed = userIdSchema.safeParse(await getRawInput());
   if (!parsed.success) throw new TRPCError({ code: "BAD_REQUEST", message: "User id is required" });
   const { userId: id } = parsed.data;
-  const user = await prisma.user.findUnique({ where: { id } });
+  const user = await getUserRepository().findByIdWithOrganizationId({ id });
   if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
   return next({
     ctx: {
@@ -53,17 +52,15 @@ export const userAdminRouter = router({
     const { requestedUser } = ctx;
     return { user: requestedUser };
   }),
-  list: authedAdminProcedure.query(async ({ ctx }) => {
-    const { prisma } = ctx;
+  list: authedAdminProcedure.query(async () => {
     // TODO: Add search, pagination, etc.
-    const users = await prisma.user.findMany();
-    return users;
+    return getUserRepository().findAll();
   }),
   add: authedAdminProcedure.input(addUserInputSchema).mutation(addUserHandler),
   update: authedAdminProcedureWithRequestedUser
     .input(userBodySchema.partial())
     .mutation(async ({ ctx, input }) => {
-      const { prisma, requestedUser } = ctx;
+      const { requestedUser } = ctx;
       const { username, ...rest } = input;
       const fields = username === null ? { ...rest, username } : rest;
       const data = isImageDataUrl(fields.avatarUrl)
@@ -74,7 +71,7 @@ export const userAdminRouter = router({
       // unchanged username so an accepted org member missing their org profile gets it (T220).
       if (username) await changeUsernameOrThrow(requestedUser.id, username);
 
-      const user = await prisma.user.update({ where: { id: requestedUser.id }, data });
+      const user = await getUserRepository().updateById({ id: requestedUser.id, data });
       if (input.username && input.username !== requestedUser.username) {
         await repointUserRedirectsForRename({
           organizationId: requestedUser.organizationId,

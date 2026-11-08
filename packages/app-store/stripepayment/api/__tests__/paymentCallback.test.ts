@@ -1,9 +1,14 @@
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import { prisma } from "@calcom/prisma";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getCustomerAndCheckoutSession } from "../../lib/getCustomerAndCheckoutSession";
 import { VerificationTokenService } from "../../lib/VerificationTokenService";
-import type { AssignPremiumUsername, SendVerificationRequest } from "../paymentCallback";
+import type {
+  AssignPremiumUsername,
+  GetPaymentCallbackBaseUrl,
+  SendVerificationRequest,
+} from "../paymentCallback";
 
 // Mock dependencies
 vi.mock("@calcom/prisma", () => ({
@@ -34,11 +39,12 @@ const mockPrisma = prisma as unknown as {
   };
 };
 
-async function buildHandler(assignUsername?: AssignPremiumUsername) {
+async function buildHandler(assignUsername?: AssignPremiumUsername, getBaseUrl?: GetPaymentCallbackBaseUrl) {
   const { createPaymentCallbackHandler } = await import("../paymentCallback");
   return createPaymentCallbackHandler({
     sendVerificationRequest: mockSendVerificationRequest,
     assignUsername,
+    getBaseUrl,
   });
 }
 
@@ -339,6 +345,67 @@ describe("paymentCallback", () => {
 
       expect(assignUsername).not.toHaveBeenCalled();
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("organization base URL", () => {
+    const orgBaseUrl = "https://acme.example.org";
+
+    it("resolves a relative callbackUrl and the magic-login link on the buyer's organization domain", async () => {
+      const getBaseUrl = vi.fn(async () => orgBaseUrl);
+      const handler = await buildHandler(undefined, getBaseUrl);
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: 5 });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const redirectUrl = (mockRes.redirect as any).mock.calls[0][0] as string;
+      expect(redirectUrl.startsWith(`${orgBaseUrl}/premium-username-checkout`)).toBe(true);
+
+      expect(mockSendVerificationRequest).toHaveBeenCalledWith({
+        identifier: "test@example.com",
+        url: expect.stringMatching(
+          new RegExp(
+            `^${orgBaseUrl.replace(/\./g, "\\.")}/api/auth/callback/email\\?.*callbackUrl=${encodeURIComponent(
+              orgBaseUrl
+            )}`
+          )
+        ),
+      });
+    });
+
+    it("keeps an absolute callbackUrl while the magic link still uses the organization domain", async () => {
+      const getBaseUrl = vi.fn(async () => orgBaseUrl);
+      const handler = await buildHandler(undefined, getBaseUrl);
+      mockReq.query = {
+        callbackUrl: "https://app.example.com/premium-username-checkout",
+        checkoutSessionId: "cs_test_123",
+      };
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const redirectUrl = (mockRes.redirect as any).mock.calls[0][0] as string;
+      expect(redirectUrl.startsWith("https://app.example.com/premium-username-checkout")).toBe(true);
+      expect(mockSendVerificationRequest).toHaveBeenCalledWith({
+        identifier: "test@example.com",
+        url: expect.stringContaining(`${orgBaseUrl}/api/auth/callback/email?`),
+      });
+    });
+
+    it("falls back to WEBAPP_URL without an injected base URL", async () => {
+      const handler = await buildHandler();
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const redirectUrl = (mockRes.redirect as any).mock.calls[0][0] as string;
+      expect(redirectUrl.startsWith(`${WEBAPP_URL}/premium-username-checkout`)).toBe(true);
+      expect(mockSendVerificationRequest).toHaveBeenCalledWith({
+        identifier: "test@example.com",
+        url: expect.stringContaining(`${WEBAPP_URL}/api/auth/callback/email?`),
+      });
     });
   });
 });
