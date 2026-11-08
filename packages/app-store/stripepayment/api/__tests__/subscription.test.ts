@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@calcom/lib/constants", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@calcom/lib/constants")>()),
   WEBAPP_URL: "https://app.example.com",
+  WEBAPP_URL_FOR_OAUTH: "https://app.example.com",
+  ALLOWED_HOSTNAMES: ["acme.example.org"],
 }));
 
 vi.mock("../../lib/server", () => ({
@@ -47,6 +49,7 @@ const buildReq = (overrides: Record<string, unknown> = {}) =>
     method: "GET",
     query: { intentUsername: "premium", callbackUrl: "/settings" },
     session: { user: { id: 42 } },
+    headers: {},
     ...overrides,
   }) as unknown as NextApiRequest;
 
@@ -127,5 +130,58 @@ describe("stripepayment subscription handler", () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.redirect).not.toHaveBeenCalled();
     expect(mockCustomerModule.getStripeCustomerIdFromUserId).not.toHaveBeenCalled();
+  });
+
+  it("builds the Stripe return URL on the default domain", async () => {
+    const res = buildRes();
+    await handler(buildReq(), res as unknown as NextApiResponse);
+
+    expect(mocks.checkoutSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success_url: expect.stringMatching(
+          /^https:\/\/app\.example\.com\/api\/integrations\/stripepayment\/paymentCallback\?/
+        ),
+        cancel_url: expect.stringMatching(
+          /^https:\/\/app\.example\.com\/api\/integrations\/stripepayment\/paymentCallback\?/
+        ),
+      })
+    );
+  });
+
+  it("builds the Stripe return URL on the organization domain when organizations are enabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "true");
+    try {
+      const res = buildRes();
+      await handler(buildReq({ headers: { host: "acme.example.org" } }), res as unknown as NextApiResponse);
+
+      expect(mocks.checkoutSessionsCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success_url: expect.stringMatching(
+            /^https:\/\/acme\.example\.org\/api\/integrations\/stripepayment\/paymentCallback\?/
+          ),
+          cancel_url: expect.stringMatching(
+            /^https:\/\/acme\.example\.org\/api\/integrations\/stripepayment\/paymentCallback\?/
+          ),
+        })
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("ignores the organization host while organizations are disabled", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "false");
+    try {
+      const res = buildRes();
+      await handler(buildReq({ headers: { host: "acme.example.org" } }), res as unknown as NextApiResponse);
+
+      expect(mocks.checkoutSessionsCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success_url: expect.stringMatching(/^https:\/\/app\.example\.com\//),
+        })
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
