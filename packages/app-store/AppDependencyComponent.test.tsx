@@ -27,9 +27,10 @@ vi.mock("@calcom/lib/hooks/useLocale", () => ({
   }),
 }));
 
-// Mock constants
+// Mock constants to a host that differs from the jsdom window origin, so the
+// org-origin test below can tell the two apart.
 vi.mock("@calcom/lib/constants", () => ({
-  WEBAPP_URL: "http://localhost:3000",
+  WEBAPP_URL: "https://app.example.com",
 }));
 
 describe("AppDependencyComponent", () => {
@@ -131,6 +132,16 @@ describe("AppDependencyComponent", () => {
     expect(container.firstChild).toHaveClass("bg-subtle");
     expect(screen.getByTestId("check-icon")).toBeInTheDocument();
     expect(screen.getByText("Google Calendar is connected")).toBeInTheDocument();
+  });
+
+  it("links the missing dependency on the current origin so org-domain users stay on their domain", () => {
+    const dependency = createMockDependency({ installed: false });
+
+    render(<AppDependencyComponent appName="Google Meet" dependencyData={[dependency]} />);
+
+    const link = screen.getByRole("link", { name: /connect google calendar/i });
+    expect(link).toHaveAttribute("href", `${window.location.origin}/apps/google-calendar`);
+    expect(link.getAttribute("href")).not.toContain("app.example.com");
   });
 
   it("displays requirement message consistently", () => {
