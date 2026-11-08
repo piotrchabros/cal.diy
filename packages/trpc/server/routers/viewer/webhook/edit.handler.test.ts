@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockGetAdminOrOwnerMembership = vi.fn();
+const mockFindAcceptedAdminOrOwner = vi.fn();
 const mockHasMembership = vi.fn();
+const mockFindBasicTeamById = vi.fn();
 
-vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
-  MembershipRepository: class {
-    static getAdminOrOwnerMembership(...args: unknown[]) {
-      return mockGetAdminOrOwnerMembership(...args);
-    }
-    hasMembership(...args: unknown[]) {
-      return mockHasMembership(...args);
-    }
-  },
+vi.mock("@calcom/features/users/di/MembershipRepository.container", () => ({
+  getMembershipRepository: () => ({
+    findAcceptedAdminOrOwnerByUserIdAndTeamId: mockFindAcceptedAdminOrOwner,
+    hasMembership: mockHasMembership,
+  }),
+}));
+vi.mock("@calcom/features/teams/di/TeamRepository.container", () => ({
+  getTeamRepository: () => ({ findBasicById: mockFindBasicTeamById }),
+}));
+vi.mock("@calcom/features/eventtypes/di/EventTypeRepository.container", () => ({
+  getEventTypeRepository: () => ({ findByIdWithUserIdAndTeamId: vi.fn() }),
 }));
 vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
   updateTriggerForExistingBookings: vi.fn(),
@@ -21,7 +24,6 @@ vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
 vi.mock("@calcom/prisma", () => {
   const mockPrisma = {
     webhook: { findUnique: vi.fn(), update: vi.fn() },
-    team: { findUnique: vi.fn() },
   };
   return { default: mockPrisma, prisma: mockPrisma };
 });
@@ -54,14 +56,14 @@ describe("editHandler includeMemberMeetings", () => {
     vi.mocked(prisma.webhook.update).mockImplementation(
       (args) => Promise.resolve({ ...existingWebhook, ...args.data }) as never
     );
-    vi.mocked(prisma.team.findUnique).mockResolvedValue({ isOrganization: false } as never);
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindBasicTeamById.mockResolvedValue({ isOrganization: false });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
   });
 
   it("leaves unflagged webhook edits unchanged", async () => {
     await editHandler({ ctx: { user }, input: { id: "wh-1", payloadTemplate: null, active: false } });
 
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
     expect(updatedData()).not.toHaveProperty("userId");
   });
 
@@ -121,12 +123,12 @@ describe("editHandler includeMemberMeetings", () => {
       input: { id: "wh-1", payloadTemplate: null, includeMemberMeetings: true },
     });
 
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
     expect(updatedData()).toMatchObject({ includeMemberMeetings: true, userId: null });
   });
 
   it("forbids a non-admin member from enabling the flag", async () => {
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(
       editHandler({
@@ -143,7 +145,7 @@ describe("editHandler includeMemberMeetings", () => {
       userId: null,
       includeMemberMeetings: true,
     } as never);
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(
       editHandler({ ctx: { user }, input: { id: "wh-1", payloadTemplate: null, active: false } })
@@ -190,7 +192,7 @@ describe("editHandler includeMemberMeetings", () => {
   });
 
   it("rejects enabling the flag for an organization", async () => {
-    vi.mocked(prisma.team.findUnique).mockResolvedValue({ isOrganization: true } as never);
+    mockFindBasicTeamById.mockResolvedValue({ isOrganization: true });
 
     await expect(
       editHandler({
@@ -210,8 +212,8 @@ describe("editHandler team-owned webhook scope", () => {
     vi.mocked(prisma.webhook.update).mockImplementation(
       (args) => Promise.resolve({ ...teamOwnedWebhook, ...args.data }) as never
     );
-    vi.mocked(prisma.team.findUnique).mockResolvedValue({ isOrganization: false } as never);
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindBasicTeamById.mockResolvedValue({ isOrganization: false });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
     mockHasMembership.mockResolvedValue(true);
   });
 
@@ -281,7 +283,7 @@ describe("editHandler moving a personal webhook onto a team", () => {
     vi.mocked(prisma.webhook.update).mockImplementation(
       (args) => Promise.resolve({ ...personalWebhook, ...args.data }) as never
     );
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
     mockHasMembership.mockResolvedValue(true);
   });
 
@@ -291,13 +293,13 @@ describe("editHandler moving a personal webhook onto a team", () => {
 
   it("forbids moving it to a team the caller does not administer when organizations are off", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "");
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
 
     await expect(
       editHandler({ ctx: { user }, input: { id: "wh-1", payloadTemplate: null, teamId: 9 } })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(mockHasMembership).not.toHaveBeenCalled();
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 9);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 9 });
     expect(prisma.webhook.update).not.toHaveBeenCalled();
   });
 
@@ -309,7 +311,7 @@ describe("editHandler moving a personal webhook onto a team", () => {
       editHandler({ ctx: { user }, input: { id: "wh-1", payloadTemplate: null, teamId: 9 } })
     ).rejects.toMatchObject({ code: "NOT_FOUND", message: "Team not found" });
     expect(mockHasMembership).toHaveBeenCalledWith({ userId: 7, teamId: 9 });
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
     expect(prisma.webhook.update).not.toHaveBeenCalled();
   });
 
@@ -318,7 +320,7 @@ describe("editHandler moving a personal webhook onto a team", () => {
 
     await editHandler({ ctx: { user }, input: { id: "wh-1", payloadTemplate: null, teamId: 9 } });
 
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 9);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 9 });
     expect(updatedData()).toMatchObject({ teamId: 9 });
   });
 
@@ -332,7 +334,7 @@ describe("editHandler moving a personal webhook onto a team", () => {
     });
 
     expect(mockHasMembership).not.toHaveBeenCalled();
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
     expect(updatedData()).toMatchObject({ teamId: 3, active: false });
   });
 });

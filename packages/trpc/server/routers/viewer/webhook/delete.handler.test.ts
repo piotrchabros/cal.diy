@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockGetAdminOrOwnerMembership = vi.fn();
+const mockFindAcceptedAdminOrOwner = vi.fn();
 const mockUpdateTriggerForExistingBookings = vi.fn();
 
-vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
-  MembershipRepository: {
-    getAdminOrOwnerMembership: (...args: unknown[]) => mockGetAdminOrOwnerMembership(...args),
-  },
+vi.mock("@calcom/features/users/di/MembershipRepository.container", () => ({
+  getMembershipRepository: () => ({
+    findAcceptedAdminOrOwnerByUserIdAndTeamId: (...args: unknown[]) => mockFindAcceptedAdminOrOwner(...args),
+  }),
 }));
 vi.mock("@calcom/features/webhooks/lib/scheduleTrigger", () => ({
   updateTriggerForExistingBookings: (...args: unknown[]) => mockUpdateTriggerForExistingBookings(...args),
@@ -37,7 +37,7 @@ const ownedWebhook = { ...teamOwnedWebhook, id: "wh-own", userId: 7 };
 describe("deleteHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetAdminOrOwnerMembership.mockResolvedValue({ id: 1 });
+    mockFindAcceptedAdminOrOwner.mockResolvedValue({ id: 1 });
   });
 
   it("deletes a user-owned webhook without a team membership check", async () => {
@@ -56,7 +56,7 @@ describe("deleteHandler", () => {
       ownedWebhook.eventTriggers,
       []
     );
-    expect(mockGetAdminOrOwnerMembership).not.toHaveBeenCalled();
+    expect(mockFindAcceptedAdminOrOwner).not.toHaveBeenCalled();
   });
 
   it("lets a team admin delete a team-owned webhook and clears its scheduled triggers", async () => {
@@ -71,7 +71,7 @@ describe("deleteHandler", () => {
     expect(vi.mocked(prisma.webhook.findFirst).mock.calls[1][0]).toEqual({
       where: { id: "wh-team", userId: null, teamId: { not: null }, eventTypeId: null },
     });
-    expect(mockGetAdminOrOwnerMembership).toHaveBeenCalledWith(7, 3);
+    expect(mockFindAcceptedAdminOrOwner).toHaveBeenCalledWith({ userId: 7, teamId: 3 });
     expect(prisma.webhook.delete).toHaveBeenCalledWith({ where: { id: "wh-team" } });
     expect(mockUpdateTriggerForExistingBookings).toHaveBeenCalledWith(
       teamOwnedWebhook,
@@ -81,7 +81,7 @@ describe("deleteHandler", () => {
   });
 
   it("forbids a non-admin member from deleting a team-owned webhook", async () => {
-    mockGetAdminOrOwnerMembership.mockResolvedValue(null);
+    mockFindAcceptedAdminOrOwner.mockResolvedValue(null);
     vi.mocked(prisma.webhook.findFirst)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(teamOwnedWebhook as never);

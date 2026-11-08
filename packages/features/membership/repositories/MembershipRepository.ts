@@ -368,6 +368,22 @@ export class MembershipRepository {
     });
   }
 
+  async findAcceptedAdminOrOwnerByUserIdAndTeamId({ userId, teamId }: { userId: number; teamId: number }) {
+    return await this.prismaClient.membership.findFirst({
+      where: {
+        userId,
+        teamId,
+        accepted: true,
+        role: {
+          in: [MembershipRole.ADMIN, MembershipRole.OWNER],
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
   async findRoleAndAcceptedByUserIdAndTeamId({ userId, teamId }: { userId: number; teamId: number }) {
     return await this.prismaClient.membership.findUnique({
       where: {
@@ -672,22 +688,6 @@ export class MembershipRepository {
     });
 
     return membershipsWithSelectedCalendars;
-  }
-
-  static async getAdminOrOwnerMembership(userId: number, teamId: number) {
-    return prisma.membership.findFirst({
-      where: {
-        userId,
-        teamId,
-        accepted: true,
-        role: {
-          in: [MembershipRole.ADMIN, MembershipRole.OWNER],
-        },
-      },
-      select: {
-        id: true,
-      },
-    });
   }
 
   static async findAllAcceptedPublishedTeamMemberships(userId: number, tx?: PrismaTransaction) {

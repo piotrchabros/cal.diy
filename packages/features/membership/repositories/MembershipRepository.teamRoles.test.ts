@@ -76,3 +76,32 @@ describe("MembershipRepository.findRoleAndAcceptedByUserIdAndTeamId", () => {
     });
   });
 });
+
+describe("MembershipRepository.findAcceptedAdminOrOwnerByUserIdAndTeamId", () => {
+  it("finds an accepted admin or owner membership and selects only its id", async () => {
+    const findFirst = vi.fn().mockResolvedValue({ id: 3 });
+    const repo = new MembershipRepository({ membership: { findFirst } } as unknown as PrismaClient);
+
+    const result = await repo.findAcceptedAdminOrOwnerByUserIdAndTeamId({ userId: 5, teamId: 9 });
+
+    expect(result).toEqual({ id: 3 });
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 5,
+        teamId: 9,
+        accepted: true,
+        role: { in: [MembershipRole.ADMIN, MembershipRole.OWNER] },
+      },
+      select: { id: true },
+    });
+  });
+
+  it("returns null when the user is not an accepted admin or owner", async () => {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const repo = new MembershipRepository({ membership: { findFirst } } as unknown as PrismaClient);
+
+    const result = await repo.findAcceptedAdminOrOwnerByUserIdAndTeamId({ userId: 5, teamId: 9 });
+
+    expect(result).toBeNull();
+  });
+});
