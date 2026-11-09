@@ -1,13 +1,11 @@
 import { LookupTarget, ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
-import { withSelectedCalendars } from "@calcom/features/users/repositories/UserRepository";
 import logger from "@calcom/lib/logger";
 import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { eventTypeSelect } from "@calcom/lib/server/eventTypeSelect";
-import { availabilityUserSelect, type PrismaTransaction, prisma } from "@calcom/prisma";
+import { type PrismaTransaction, prisma } from "@calcom/prisma";
 import type { Membership, Prisma, PrismaClient } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
-import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 
 const log = logger.getSubLogger({ prefix: ["features/membership/repositories/MembershipRepository"] });
 type IMembership = {
@@ -683,34 +681,6 @@ export class MembershipRepository {
     });
   }
 
-  static async findByTeamIdForAvailability({ teamId }: { teamId: number }) {
-    const memberships = await prisma.membership.findMany({
-      where: { teamId },
-      // Select-only: only the membership scalars plus the availability user subtree are read
-      // (credentials for getUserAvailability, availabilityUserSelect for scheduling).
-      select: {
-        ...membershipSelect,
-        user: {
-          select: {
-            credentials: {
-              select: credentialForCalendarServiceSelect,
-            }, // needed for getUserAvailability
-            ...availabilityUserSelect,
-          },
-        },
-      },
-    });
-
-    const membershipsWithSelectedCalendars = memberships.map((m) => {
-      return {
-        ...m,
-        user: withSelectedCalendars(m.user),
-      };
-    });
-
-    return membershipsWithSelectedCalendars;
-  }
-
   static async findAllAcceptedPublishedTeamMemberships(userId: number, tx?: PrismaTransaction) {
     return (tx ?? prisma).membership.findMany({
       where: {
@@ -741,36 +711,6 @@ export class MembershipRepository {
     });
 
     return memberships.map((membership) => membership.teamId);
-  }
-
-  /**
-   * Returns members who joined after the given time
-   */
-  static async findMembershipsCreatedAfterTimeIncludeUser({
-    organizationId,
-    time,
-  }: {
-    organizationId: number;
-    time: Date;
-  }) {
-    return prisma.membership.findMany({
-      where: {
-        teamId: organizationId,
-        createdAt: { gt: time },
-        accepted: true,
-      },
-      // Select-only: callers read the membership scalars plus the user's id/name/email.
-      select: {
-        ...membershipSelect,
-        user: {
-          select: {
-            email: true,
-            name: true,
-            id: true,
-          },
-        },
-      },
-    });
   }
 
   static async findAllByTeamIds<TSelect extends MembershipPartialSelect = { userId: true }>({
