@@ -1185,6 +1185,7 @@ export class UserRepository {
       where: {
         id: userId,
       },
+      select: adminUserSelect,
     });
   }
 
