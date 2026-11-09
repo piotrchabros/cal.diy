@@ -537,7 +537,7 @@ export class WebhookRepository implements IWebhookRepository {
    * - Team filtering to teams the user administers
    */
   async listWebhooks(options: ListWebhooksOptions): Promise<Webhook[]> {
-    const { userId, appId, eventTypeId, eventTriggers } = options;
+    const { userId, userRole, appId, eventTypeId, eventTriggers } = options;
 
     // Build WHERE conditions
     const whereConditions: NonNullable<Prisma.WebhookWhereInput["AND"]> = [
@@ -563,6 +563,9 @@ export class WebhookRepository implements IWebhookRepository {
       }
     } else {
       // Team webhooks expose their secret, so only teams the viewer administers (accepted ADMIN/OWNER) are in scope.
+      // Platform webhooks are admin-managed (create/edit/delete/getByViewer all admit instance admins),
+      // so list shows them to admins too. The role must be passed explicitly; without it the view stays closed.
+      const isInstanceAdmin = userRole === UserPermissionRole.ADMIN;
       const adminTeamIds = (
         await this.prisma.membership.findMany({
           where: {
@@ -575,7 +578,13 @@ export class WebhookRepository implements IWebhookRepository {
       ).map((membership) => membership.teamId);
 
       whereConditions.push({
-        OR: [{ userId }, ...(adminTeamIds.length ? [{ teamId: { in: adminTeamIds } }] : [])],
+        OR: [
+          { userId },
+          ...(adminTeamIds.length ? [{ teamId: { in: adminTeamIds } }] : []),
+          // A platform webhook may carry a teamId the viewer does not administer, so the platform
+          // scope must not depend on team membership; admins already manage these via edit/delete.
+          ...(isInstanceAdmin ? [{ platform: true }] : []),
+        ],
       });
 
       whereConditions.push({
@@ -584,6 +593,7 @@ export class WebhookRepository implements IWebhookRepository {
           { teamId: null },
           { eventTypeId: { not: null } },
           ...(adminTeamIds.length ? [{ teamId: { in: adminTeamIds } }] : []),
+          ...(isInstanceAdmin ? [{ platform: true }] : []),
         ],
       });
     }

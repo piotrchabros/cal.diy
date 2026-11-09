@@ -48,6 +48,8 @@ export interface GetSubscribersOptions {
 
 export interface ListWebhooksOptions {
   userId: number;
+  /** Instance admins also see platform webhooks (mirrors getFilteredWebhooksForUser). Omit to fail closed. */
+  userRole?: UserPermissionRole;
   appId?: string | null;
   eventTypeId?: number | null;
   eventTriggers?: WebhookTriggerEvents[];

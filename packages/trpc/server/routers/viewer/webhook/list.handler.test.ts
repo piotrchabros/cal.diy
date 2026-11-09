@@ -37,11 +37,20 @@ describe("listHandler event type access", () => {
     expect(mockFindEventType).not.toHaveBeenCalled();
     expect(mockListWebhooks).toHaveBeenCalledWith({
       userId: 7,
+      userRole: "USER",
       appId: "zapier",
       eventTypeId: undefined,
       eventTriggers: undefined,
     });
     expect(result).toEqual([{ id: "wh-1", secret: "s" }]);
+  });
+
+  it("passes the admin role through so platform webhooks stay visible to instance admins", async () => {
+    const admin = { id: 7, role: "ADMIN" } as never;
+
+    await listHandler({ ctx: { user: admin }, input: { appId: "zapier" } });
+
+    expect(mockListWebhooks).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, userRole: "ADMIN" }));
   });
 
   it("lists webhooks of the viewer's own event type", async () => {
