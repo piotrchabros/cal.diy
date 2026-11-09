@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
+  findUniqueOrThrow: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
   create: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 const prismaClient = {
   user: {
     findUnique: mocks.findUnique,
+    findUniqueOrThrow: mocks.findUniqueOrThrow,
     findMany: mocks.findMany,
     update: mocks.update,
     create: mocks.create,
@@ -27,6 +29,29 @@ const assertSelectOnly = (args: unknown) => {
 };
 
 describe("UserRepository admin users reads and writes", () => {
+  it("adminFindById selects explicit admin fields and never full rows", async () => {
+    const user = { id: 11, username: "ada", email: "ada@example.com" };
+    mocks.findUniqueOrThrow.mockResolvedValue(user);
+
+    await expect(repository.adminFindById(11)).resolves.toEqual(user);
+
+    const args = mocks.findUniqueOrThrow.mock.calls[0][0];
+    expect(args.where).toEqual({ id: 11 });
+    assertSelectOnly(args);
+    expect(args.select).toEqual(
+      expect.objectContaining({
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        organizationId: true,
+      })
+    );
+    expect(args.select).not.toHaveProperty("twoFactorSecret");
+    expect(args.select).not.toHaveProperty("backupCodes");
+    expect(args.select).not.toHaveProperty("password");
+  });
+
   it("findByIdWithOrganizationId selects only id, username and organizationId", async () => {
     const user = { id: 11, username: "ada", organizationId: 5 };
     mocks.findUnique.mockResolvedValue(user);
