@@ -21,6 +21,7 @@ export const listHandler = async ({ ctx, input }: ListOptions): Promise<Webhook[
 
   return repository.listWebhooks({
     userId: ctx.user.id,
+    userRole: ctx.user.role,
     appId: input?.appId,
     eventTypeId: input?.eventTypeId,
     eventTriggers: input?.eventTriggers,
