@@ -1,7 +1,6 @@
+import { getUserRepository } from "@calcom/features/di/containers/UserRepository";
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
-import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import { prisma } from "@calcom/prisma";
 import type { Params } from "app/_types";
 import { _generateMetadata, getTranslate } from "app/_utils";
 import { z } from "zod";
@@ -21,8 +20,7 @@ export const generateMetadata = async ({ params }: { params: Params }) => {
     );
   }
 
-  const userRepo = new UserRepository(prisma);
-  const user = await userRepo.adminFindById(input.data.id);
+  const user = await getUserRepository().adminFindById(input.data.id);
 
   return await _generateMetadata(
     (t) => `${t("editing_user")}: ${user.username}`,
@@ -38,8 +36,7 @@ const Page = async ({ params }: { params: Params }) => {
 
   if (!input.success) throw new Error("Invalid access");
 
-  const userRepo = new UserRepository(prisma);
-  const user = await userRepo.adminFindById(input.data.id);
+  const user = await getUserRepository().adminFindById(input.data.id);
 
   const t = await getTranslate();
 
