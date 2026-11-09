@@ -71,7 +71,11 @@ vi.mock("@calcom/lib/logger", () => ({
   },
 }));
 vi.mock("@calcom/lib/auth/hashPassword", () => ({ hashPassword: vi.fn().mockResolvedValue("hashed") }));
-vi.mock("@calcom/lib/constants", () => ({ WEBAPP_URL: "http://localhost:3000" }));
+vi.mock("@calcom/lib/constants", () => ({
+  WEBAPP_URL: "http://localhost:3000",
+  WEBAPP_URL_FOR_OAUTH: "http://localhost:3000",
+  ALLOWED_HOSTNAMES: [],
+}));
 vi.mock("@calcom/lib/tracking", () => ({ getTrackingFromCookies: vi.fn().mockReturnValue({}) }));
 vi.mock("@calcom/app-store/stripepayment/lib/utils", () => ({ getPremiumMonthlyPlanPriceId: vi.fn() }));
 vi.mock("@calcom/features/auth/lib/getLocaleFromRequest", () => ({
