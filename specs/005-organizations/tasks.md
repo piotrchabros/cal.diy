@@ -578,3 +578,9 @@ description: "Task list for Organizations (spec 005)"
 - [ ] T561 [US3] Intercom `isValidCalURL` still only accepts cal.com URLs, so org-custom-domain users always get the manual-input canvas with a validation error even though `api/get.ts` now embeds their domain (found in T529). Accept org customDomains there too.
 - [ ] T562 [P] [US2] `listWebhooks` (non-eventType branch) returns no platform webhooks while `getFilteredWebhooksForUser` shows them to instance admins — remaining fail-closed view difference to align or document (found in T532).
 - [ ] T563 [P] [US2] Verify org-scoping parity between the legacy `getWebhooks.ts` subscriber path (`teamId in [...teamIds, orgId]`) and `WebhookRepository.getSubscribers` (found in T532).
+
+---
+
+## Phase 12: Convergence
+
+- [ ] T564 HIGH [US3]: `packages/app-store/intercom/api/get.ts` (`isKnownOrganizationDomain`, ~10) queries `prisma.organizationSettings` directly instead of going through a repository. Route it through the existing `PrismaOrganizationRepository.findByDomain` (which already matches `organizationSettings.customDomain`), following the T522/T526 precedent. Add tests per Constitution II (contradicts)
