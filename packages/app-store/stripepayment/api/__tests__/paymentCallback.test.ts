@@ -62,6 +62,7 @@ describe("paymentCallback", () => {
       },
       url: "/api/payment/callback",
       method: "GET",
+      headers: {},
     };
 
     mockRes = {
@@ -375,11 +376,11 @@ describe("paymentCallback", () => {
       });
     });
 
-    it("keeps an absolute callbackUrl while the magic link still uses the organization domain", async () => {
+    it("keeps an absolute callbackUrl on the buyer's organization domain", async () => {
       const getBaseUrl = vi.fn(async () => orgBaseUrl);
       const handler = await buildHandler(undefined, getBaseUrl);
       mockReq.query = {
-        callbackUrl: "https://app.example.com/premium-username-checkout",
+        callbackUrl: `${orgBaseUrl}/premium-username-checkout?ref=stripe&plan=premium`,
         checkoutSessionId: "cs_test_123",
       };
 
@@ -387,11 +388,30 @@ describe("paymentCallback", () => {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const redirectUrl = (mockRes.redirect as any).mock.calls[0][0] as string;
-      expect(redirectUrl.startsWith("https://app.example.com/premium-username-checkout")).toBe(true);
+      expect(redirectUrl.startsWith(`${orgBaseUrl}/premium-username-checkout?`)).toBe(true);
+      expect(redirectUrl).toContain("ref=stripe");
+      expect(redirectUrl).toContain("email=test%40example.com");
       expect(mockSendVerificationRequest).toHaveBeenCalledWith({
         identifier: "test@example.com",
         url: expect.stringContaining(`${orgBaseUrl}/api/auth/callback/email?`),
       });
+    });
+
+    it("fails closed to the organization domain for an absolute callbackUrl on an unknown host", async () => {
+      const getBaseUrl = vi.fn(async () => orgBaseUrl);
+      const handler = await buildHandler(undefined, getBaseUrl);
+      mockReq.query = {
+        callbackUrl: "https://malicious.example.net/phish",
+        checkoutSessionId: "cs_test_123",
+      };
+
+      await handler(mockReq as NextApiRequest, mockRes as NextApiResponse);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const redirectUrl = (mockRes.redirect as any).mock.calls[0][0] as string;
+      expect(redirectUrl.startsWith(`${orgBaseUrl}/`)).toBe(true);
+      expect(redirectUrl).not.toContain("malicious.example.net");
+      expect(redirectUrl).toContain("paymentStatus=paid");
     });
 
     it("falls back to WEBAPP_URL without an injected base URL", async () => {

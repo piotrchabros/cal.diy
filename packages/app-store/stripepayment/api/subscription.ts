@@ -39,9 +39,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Stay on the domain the buyer started checkout from: Stripe redirects the
     // browser back here, and the session cookie belongs to that domain.
+    // Encode the callback URL so an absolute value carrying its own query string
+    // survives as a single return_url param (Next.js decodes req.query, so
+    // paymentCallback sees the original). The {CHECKOUT_SESSION_ID} placeholder
+    // must stay literal for Stripe to substitute it.
+    const rawCallbackUrl = Array.isArray(callbackUrl) ? (callbackUrl[0] ?? "") : (callbackUrl ?? "");
     const return_url = `${getOAuthAppOrigin(
       req
-    )}/api/integrations/stripepayment/paymentCallback?checkoutSessionId={CHECKOUT_SESSION_ID}&callbackUrl=${callbackUrl}`;
+    )}/api/integrations/stripepayment/paymentCallback?checkoutSessionId={CHECKOUT_SESSION_ID}&callbackUrl=${encodeURIComponent(
+      rawCallbackUrl
+    )}`;
     const createSessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: "subscription",
       line_items: [

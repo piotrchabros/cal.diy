@@ -169,6 +169,32 @@ describe("stripepayment subscription handler", () => {
     }
   });
 
+  it("URL-encodes an absolute callbackUrl carrying its own query string", async () => {
+    const res = buildRes();
+    const callbackUrl = "https://acme.example.org/settings?tab=billing&ref=premium";
+    await handler(
+      buildReq({ query: { intentUsername: "premium", callbackUrl } }),
+      res as unknown as NextApiResponse
+    );
+
+    const successUrl = mocks.checkoutSessionsCreate.mock.calls[0][0].success_url as string;
+    // The whole callbackUrl must survive as one query param of the Stripe return URL.
+    expect(new URL(successUrl).searchParams.get("callbackUrl")).toBe(callbackUrl);
+    expect(successUrl).toContain(`callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    expect(successUrl).toContain("checkoutSessionId={CHECKOUT_SESSION_ID}");
+  });
+
+  it("uses the first callbackUrl when the query param repeats", async () => {
+    const res = buildRes();
+    await handler(
+      buildReq({ query: { intentUsername: "premium", callbackUrl: ["/first", "/second"] } }),
+      res as unknown as NextApiResponse
+    );
+
+    const successUrl = mocks.checkoutSessionsCreate.mock.calls[0][0].success_url as string;
+    expect(new URL(successUrl).searchParams.get("callbackUrl")).toBe("/first");
+  });
+
   it("ignores the organization host while organizations are disabled", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "false");
     try {
