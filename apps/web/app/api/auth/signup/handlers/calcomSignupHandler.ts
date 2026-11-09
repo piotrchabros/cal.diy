@@ -21,7 +21,6 @@ import { sentrySpan } from "@calcom/features/watchlist/lib/telemetry";
 import { normalizeEmail } from "@calcom/features/watchlist/lib/utils/normalization";
 import { checkIfEmailIsBlockedInWatchlistController } from "@calcom/features/watchlist/operations/check-if-email-in-watchlist.controller";
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
-import { WEBAPP_URL } from "@calcom/lib/constants";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
@@ -44,6 +43,7 @@ import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { resolveHostOrganizationId } from "./resolveHostOrganizationId";
 import { respondConflictAs409 } from "./respondConflictAs409";
+import { buildStripeSignupReturnUrl, resolveStripeSignupBaseUrl } from "./stripeSignupReturnUrl";
 
 const log = logger.getSubLogger({ prefix: ["signupCalcomHandler"] });
 
@@ -167,7 +167,9 @@ const handler: CustomNextApiHandler = async (body, usernameStatus, query) => {
     },
   });
 
-  const returnUrl = `${WEBAPP_URL}/api/integrations/stripepayment/paymentCallback?checkoutSessionId={CHECKOUT_SESSION_ID}&callbackUrl=/auth/verify?sessionId={CHECKOUT_SESSION_ID}`;
+  // Stay on the domain the buyer started checkout from: Stripe redirects the
+  // browser back here, and the session cookie belongs to that domain.
+  const returnUrl = buildStripeSignupReturnUrl(resolveStripeSignupBaseUrl((await headers()).get("host")));
 
   // Pro username, must be purchased
   if (usernameStatus.statusCode === 402) {
