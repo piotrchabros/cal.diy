@@ -1,9 +1,3 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import {
-  getDefaultOrganizationDomain,
-  getOrganizationBaseUrlFromDomain,
-} from "@calcom/lib/organizations/getOrganizationBaseUrlFromDomain";
-import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import prisma from "@calcom/prisma";
 import type { NextApiRequest } from "next";
 import type {
@@ -15,20 +9,7 @@ import type {
   TextComponent,
 } from "../../lib";
 import { isValidCalURL } from "../../lib/isValidCalURL";
-
-// app-store cannot depend on @calcom/features, so the org domain is read here with the same query
-// as PrismaOrganizationRepository.findDomainById.
-async function getOrganizationBaseUrl(organizationId: number | null): Promise<string> {
-  if (!isOrganizationsEnabled() || organizationId === null) return WEBAPP_URL;
-  const organization = await prisma.team.findFirst({
-    where: { id: organizationId, isOrganization: true, parentId: null },
-    select: { organizationSettings: { select: { customDomain: true } } },
-  });
-  return getOrganizationBaseUrlFromDomain(
-    organization?.organizationSettings?.customDomain,
-    getDefaultOrganizationDomain()
-  );
-}
+import { getOrganizationBaseUrl } from "../../lib/organizationDomain";
 
 export async function handleLinkStep(req: NextApiRequest): Promise<NewCanvas | string> {
   const { admin, component_id, input_values } = req.body;
