@@ -26,6 +26,7 @@ export const ORGANIZATION_ERRORS = {
   memberNotFound: "organization_member_not_found",
   onlyManagersCanChangeRoles: "organization_only_managers_can_change_roles",
   onlyManagersCanManageMembers: "organization_only_managers_can_manage_members",
+  onlyManagersCanUpdateOrganization: "organization_only_managers_can_update_organization",
   onlyOwnersCanManageOwnerRole: "organization_only_owners_can_manage_owner_role",
   onlyOwnersCanRemoveOwner: "organization_only_owners_can_remove_owner",
   cannotRemoveFromDefault: "organization_cannot_remove_from_default",

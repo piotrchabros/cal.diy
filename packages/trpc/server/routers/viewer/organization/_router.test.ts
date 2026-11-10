@@ -8,6 +8,7 @@ import { organizationRouter } from "./_router";
 const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   getForMember: vi.fn(),
+  updateName: vi.fn(),
   listMembers: vi.fn(),
   inviteMember: vi.fn(),
   setRole: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock("@calcom/prisma", () => {
 vi.mock("@sentry/nextjs", () => ({ setUser: vi.fn() }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationService.container", () => ({
-  getOrganizationService: () => ({ getForMember: mocks.getForMember }),
+  getOrganizationService: () => ({ getForMember: mocks.getForMember, updateName: mocks.updateName }),
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
@@ -84,6 +85,7 @@ const sessionFor = (overrides: { organizationId?: number | null; name?: string |
 
 const serviceMocks = () => [
   mocks.getForMember,
+  mocks.updateName,
   mocks.listMembers,
   mocks.inviteMember,
   mocks.setRole,
@@ -93,6 +95,7 @@ const serviceMocks = () => [
 
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.current(),
+  caller.updateName({ name: "Acme Inc" }),
   caller.listMembers({}),
   caller.inviteMember({ email: "new@acme.example.com", role: "MEMBER" }),
   caller.updateRole({ userId: 11, role: "ADMIN" }),
@@ -108,6 +111,16 @@ describe("viewer organization router", () => {
     mocks.getForMember.mockResolvedValue(currentOrganization);
     mocks.listMembers.mockResolvedValue({ items: [member], nextCursor: undefined });
     mocks.inviteMember.mockResolvedValue({ invited: true });
+    mocks.updateName.mockResolvedValue({
+      id: 5,
+      name: "Acme Inc",
+      slug: "acme",
+      domain: "acme.example.com",
+      isDefault: false,
+      memberCount: 3,
+      teamCount: 1,
+      owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
+    });
     mocks.setRole.mockResolvedValue({ userId: 11, role: "ADMIN" });
     mocks.removeMember.mockResolvedValue({ userId: 11 });
     mocks.listTeams.mockResolvedValue({ items: [team], nextCursor: undefined });
@@ -184,6 +197,13 @@ describe("viewer organization router", () => {
       expect(mocks.removeMember).not.toHaveBeenCalled();
     });
 
+    it("rejects a name over 100 characters", async () => {
+      await expect(createCaller(ctx).updateName({ name: "a".repeat(101) })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateName).not.toHaveBeenCalled();
+    });
+
     it.each([0, 101])("rejects list limit %s", async (limit) => {
       const caller = createCaller(ctx);
 
@@ -198,6 +218,18 @@ describe("viewer organization router", () => {
     it("loads the current organization for the session's org and user", async () => {
       await expect(createCaller(ctx).current()).resolves.toEqual(currentOrganization);
       expect(mocks.getForMember).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("renames the session's organization", async () => {
+      await expect(createCaller(ctx).updateName({ name: "Acme Inc" })).resolves.toMatchObject({
+        id: 5,
+        name: "Acme Inc",
+      });
+      expect(mocks.updateName).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        name: "Acme Inc",
+      });
     });
 
     it("lists members with the session's org and user and the list params", async () => {
@@ -278,6 +310,7 @@ describe("viewer organization router", () => {
       const foreign = { organizationId: 99 };
 
       await caller.listMembers({ ...foreign } as Parameters<typeof caller.listMembers>[0]);
+      await caller.updateName({ name: "Acme Inc", ...foreign } as Parameters<typeof caller.updateName>[0]);
       await caller.listTeams({ ...foreign } as Parameters<typeof caller.listTeams>[0]);
       await caller.inviteMember({
         email: "new@acme.example.com",
@@ -295,6 +328,7 @@ describe("viewer organization router", () => {
         mocks.inviteMember,
         mocks.setRole,
         mocks.removeMember,
+        mocks.updateName,
       ]) {
         expect(fn).toHaveBeenCalledWith(expect.objectContaining({ organizationId: 5, actorUserId: 7 }));
         expect(fn).not.toHaveBeenCalledWith(expect.objectContaining({ organizationId: 99 }));
@@ -323,6 +357,17 @@ describe("viewer organization router", () => {
       await expect(
         createCaller(ctx).inviteMember({ email: "new@acme.example.com", role: "MEMBER" })
       ).rejects.toMatchObject({ code: "CONFLICT", message: "user_is_already_a_member" });
+    });
+
+    it("maps a Forbidden from updateName", async () => {
+      mocks.updateName.mockRejectedValue(
+        ErrorWithCode.Factory.Forbidden("organization_only_managers_can_update_organization")
+      );
+
+      await expect(createCaller(ctx).updateName({ name: "Acme Inc" })).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: "organization_only_managers_can_update_organization",
+      });
     });
 
     it("maps a NotFound from current", async () => {

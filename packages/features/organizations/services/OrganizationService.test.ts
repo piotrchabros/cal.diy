@@ -876,6 +876,107 @@ describe("OrganizationService", () => {
     });
   });
 
+  describe("updateName", () => {
+    const ACTOR = 42;
+
+    function seedOrgWith(actorRole: "OWNER" | "ADMIN" | "MEMBER") {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      membershipRepo.seedMembership({ userId: ACTOR, teamId: seeded.id, role: actorRole });
+      return seeded;
+    }
+
+    it("renames the organization for an OWNER and trims the name", async () => {
+      const seeded = seedOrgWith("OWNER");
+
+      const renamed = await service.updateName({
+        organizationId: seeded.id,
+        actorUserId: ACTOR,
+        name: "  Acme Inc  ",
+      });
+
+      expect(renamed).toMatchObject({ id: seeded.id, name: "Acme Inc", slug: "acme" });
+      expect((await repository.findById(seeded.id))?.name).toBe("Acme Inc");
+    });
+
+    it("renames the organization for an ADMIN", async () => {
+      const seeded = seedOrgWith("ADMIN");
+
+      const renamed = await service.updateName({
+        organizationId: seeded.id,
+        actorUserId: ACTOR,
+        name: "Acme Inc",
+      });
+
+      expect(renamed.name).toBe("Acme Inc");
+    });
+
+    it("leaves slug and domain untouched", async () => {
+      const seeded = seedOrgWith("OWNER");
+
+      await service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name: "Renamed" });
+
+      expect(await repository.findById(seeded.id)).toMatchObject({
+        name: "Renamed",
+        slug: "acme",
+        domain: "acme.com",
+      });
+    });
+
+    it("throws Forbidden for an accepted MEMBER", async () => {
+      const seeded = seedOrgWith("MEMBER");
+
+      await expectRejection(
+        service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name: "Renamed" }),
+        ErrorCode.Forbidden,
+        "organization_only_managers_can_update_organization"
+      );
+      expect((await repository.findById(seeded.id))?.name).toBe("Acme");
+    });
+
+    it("throws NotFound for a viewer who is not a member", async () => {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+
+      await expectRejection(
+        service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name: "Renamed" }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+
+    it("throws NotFound for a viewer whose invitation is still pending", async () => {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      membershipRepo.seedMembership({ userId: ACTOR, teamId: seeded.id, role: "OWNER", accepted: false });
+
+      await expectRejection(
+        service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name: "Renamed" }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+
+    it.each(["", "   ", "a".repeat(101)])("throws BadRequest for an invalid name %j", async (name) => {
+      const seeded = seedOrgWith("OWNER");
+
+      await expectRejection(
+        service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name }),
+        ErrorCode.BadRequest,
+        NAME_INVALID
+      );
+      expect((await repository.findById(seeded.id))?.name).toBe("Acme");
+    });
+
+    it("throws NotFound when the organization disappears before the write", async () => {
+      const seeded = seedOrgWith("OWNER");
+      repository.update = async () => null;
+
+      await expectRejection(
+        service.updateName({ organizationId: seeded.id, actorUserId: ACTOR, name: "Gone" }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+  });
+
   describe("demoteOwner", () => {
     it("demotes the owner through the membership service and returns the organization", async () => {
       const { id } = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });

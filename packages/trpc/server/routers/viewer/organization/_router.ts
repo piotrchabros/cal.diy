@@ -1,5 +1,6 @@
 import {
   CurrentOrganizationDtoSchema,
+  OrganizationDtoSchema,
   OrganizationMemberListDtoSchema,
   OrganizationTeamListDtoSchema,
 } from "@calcom/lib/dto/OrganizationDto";
@@ -16,6 +17,7 @@ import {
   ZRemoveOrganizationMemberOutput,
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
+  ZUpdateOrganizationNameInput,
 } from "./organization.schema";
 
 // The organization always comes from the session, never from input, so a member can only reach their own org
@@ -45,6 +47,17 @@ export const organizationRouter = router({
     const service = await loadOrganizationService();
     return service.getForMember({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
   }),
+  updateName: organizationMemberProcedure
+    .input(ZUpdateOrganizationNameInput)
+    .output(OrganizationDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadOrganizationService();
+      return service.updateName({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        name: input.name,
+      });
+    }),
   listMembers: organizationMemberProcedure
     .input(ZListOrganizationMembersInput)
     .output(OrganizationMemberListDtoSchema)

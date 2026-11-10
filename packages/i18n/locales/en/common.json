@@ -5215,6 +5215,7 @@
   "organization_member_not_found": "Member not found",
   "organization_only_managers_can_change_roles": "Only organization owners and admins can change roles",
   "organization_only_managers_can_manage_members": "Only organization owners and admins can manage members",
+  "organization_only_managers_can_update_organization": "Only organization owners and admins can update the organization",
   "organization_only_owners_can_manage_owner_role": "Only owners can grant or remove the owner role",
   "organization_only_owners_can_remove_owner": "Only owners can remove an owner",
   "organization_cannot_remove_from_default": "Members cannot be removed from the default organization",

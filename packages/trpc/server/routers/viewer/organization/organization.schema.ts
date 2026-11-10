@@ -22,6 +22,8 @@ export const ZUpdateOrganizationMemberRoleInput = z.object({ userId: id, role: O
 
 export const ZUpdateOrganizationMemberRoleOutput = ZUpdateOrganizationMemberRoleInput;
 
+export const ZUpdateOrganizationNameInput = z.object({ name: z.string().max(100) });
+
 export const ZRemoveOrganizationMemberInput = z.object({
   userId: id,
   newUsername: z.string().trim().min(1).max(255).optional(),
@@ -35,5 +37,6 @@ export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationM
 export type TInviteOrganizationMemberOutput = z.infer<typeof ZInviteOrganizationMemberOutput>;
 export type TUpdateOrganizationMemberRoleInput = z.infer<typeof ZUpdateOrganizationMemberRoleInput>;
 export type TUpdateOrganizationMemberRoleOutput = z.infer<typeof ZUpdateOrganizationMemberRoleOutput>;
+export type TUpdateOrganizationNameInput = z.infer<typeof ZUpdateOrganizationNameInput>;
 export type TRemoveOrganizationMemberInput = z.infer<typeof ZRemoveOrganizationMemberInput>;
 export type TRemoveOrganizationMemberOutput = z.infer<typeof ZRemoveOrganizationMemberOutput>;

@@ -239,6 +239,32 @@ export class OrganizationService {
     return this.toDto(updated);
   }
 
+  // Org owners/admins rename their own organization from the settings panel. Slug, domain, owner
+  // and deletion stay instance-admin-only, so the name is the only field writable here (FR-024)
+  async updateName(params: {
+    organizationId: number;
+    actorUserId: number;
+    name: string;
+  }): Promise<OrganizationDto> {
+    const { organizationId, actorUserId } = params;
+    const role = await this.deps.organizationMembershipService.getRole(actorUserId, organizationId);
+    if (role === null) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
+    if (role === "MEMBER") {
+      throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyManagersCanUpdateOrganization);
+    }
+
+    const name = this.parseName(params.name);
+    const updated = await this.deps.organizationRepository.update(organizationId, { name });
+    if (!updated) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
+
+    log.info("organization.updateName", {
+      action: "organization.updateName",
+      actorUserId,
+      organizationId,
+    });
+    return this.toDto(updated);
+  }
+
   // Removing an owner keeps them in the organization with a lesser role; the last owner cannot be demoted
   async demoteOwner(
     id: number,
