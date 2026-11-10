@@ -12,7 +12,7 @@ describe("getOwnOrganizationTab", () => {
     expect(getOwnOrganizationTab({ enabled: true, organizationId: undefined })).toBeNull();
   });
 
-  it("returns the organization tab with members and teams links", () => {
+  it("returns the organization tab with general, members and teams links", () => {
     const tab = getOwnOrganizationTab({ enabled: true, organizationId: 5 });
 
     expect(tab).toEqual({
@@ -20,6 +20,11 @@ describe("getOwnOrganizationTab", () => {
       href: "/settings/organization",
       icon: "building",
       children: [
+        {
+          name: "general",
+          href: "/settings/organization/general",
+          trackingMetadata: { section: "organization", page: "general" },
+        },
         {
           name: "members",
           href: "/settings/organization/members",

@@ -15,6 +15,11 @@ export const getOwnOrganizationTab = ({
     icon: "building",
     children: [
       {
+        name: "general",
+        href: "/settings/organization/general",
+        trackingMetadata: { section: "organization", page: "general" },
+      },
+      {
         name: "members",
         href: "/settings/organization/members",
         trackingMetadata: { section: "organization", page: "members" },
