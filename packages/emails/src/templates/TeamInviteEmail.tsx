@@ -1,10 +1,8 @@
-import type { TFunction } from "i18next";
-
 import ServerTrans from "@calcom/lib/components/ServerTrans";
-import { APP_NAME, WEBAPP_URL, IS_PRODUCTION } from "@calcom/lib/constants";
-
+import { APP_NAME, IS_PRODUCTION, WEBAPP_URL } from "@calcom/lib/constants";
+import type { TFunction } from "i18next";
 import { getSubject, getTypeOfInvite } from "../../lib/utils/team-invite-utils";
-import { V2BaseEmailHtml, CallToAction } from "../components";
+import { CallToAction, V2BaseEmailHtml } from "../components";
 
 type TeamInvite = {
   language: TFunction;
@@ -29,7 +27,7 @@ export const TeamInviteEmail = (
   const heading = getHeading();
   const content = getContent();
   return (
-    <V2BaseEmailHtml subject={getSubject(props)}>
+    <V2BaseEmailHtml subject={getSubject(props)} logoHref={props.logoHref}>
       <p style={{ fontSize: "24px", marginBottom: "16px", textAlign: "center" }}>
         <>{heading}</>
       </p>
