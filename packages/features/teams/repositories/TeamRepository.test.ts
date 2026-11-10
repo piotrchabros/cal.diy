@@ -255,3 +255,18 @@ describe("TeamRepository.findIsPlatformById", () => {
     await expect(repository.findIsPlatformById({ teamId: 999 })).resolves.toBeNull();
   });
 });
+
+describe("TeamRepository.updateLogoUrl", () => {
+  it("writes only the logo URL", async () => {
+    const team = { update: vi.fn().mockResolvedValue({ id: 7 }) };
+    const repository = new TeamRepository({ team } as unknown as PrismaClient);
+
+    await repository.updateLogoUrl({ teamId: 7, logoUrl: "https://cdn.example.com/logo.png" });
+
+    expect(team.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { logoUrl: "https://cdn.example.com/logo.png" },
+      select: { id: true },
+    });
+  });
+});

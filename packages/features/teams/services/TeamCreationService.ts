@@ -1,12 +1,14 @@
 import type { PrismaTempOrgRedirectRepository } from "@calcom/features/organizations/repositories/PrismaTempOrgRedirectRepository";
+import { TEAM_LOGO_DATA_URL_PATTERN } from "@calcom/features/teams/lib/teamProfileSchema";
 import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import slugify from "@calcom/lib/slugify";
+import type { UploadTeamLogo } from "./TeamProfileService";
+import { defaultUploadTeamLogo } from "./TeamProfileService";
 
 export const TEAM_NAME_MAX_LENGTH = 100;
 export const TEAM_SLUG_MAX_LENGTH = 50;
 export const TEAM_BIO_MAX_LENGTH = 500;
-export const TEAM_LOGO_URL_MAX_LENGTH = 2048;
 
 const URL_SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
@@ -32,12 +34,15 @@ function isSupportedLogoUrl(value: string): boolean {
 }
 
 export interface ITeamCreationServiceDeps {
-  teamRepo: Pick<TeamRepository, "findIdBySlug" | "createWithOwner">;
+  teamRepo: Pick<TeamRepository, "findIdBySlug" | "createWithOwner" | "updateLogoUrl">;
   tempOrgRedirectRepo: Pick<PrismaTempOrgRedirectRepository, "disableByFrom">;
 }
 
 export class TeamCreationService {
-  constructor(private readonly deps: ITeamCreationServiceDeps) {}
+  constructor(
+    private readonly deps: ITeamCreationServiceDeps,
+    private readonly uploadTeamLogo: UploadTeamLogo = defaultUploadTeamLogo
+  ) {}
 
   static normalizeSlug(rawSlug: string): string {
     return slugify(rawSlug);
@@ -91,9 +96,9 @@ export class TeamCreationService {
         `Unable to create team: team bio must be ${TEAM_BIO_MAX_LENGTH} characters or fewer`
       );
     }
-    if (logoUrl && (logoUrl.length > TEAM_LOGO_URL_MAX_LENGTH || !isSupportedLogoUrl(logoUrl))) {
+    if (logoUrl && !TEAM_LOGO_DATA_URL_PATTERN.test(logoUrl) && !isSupportedLogoUrl(logoUrl)) {
       throw ErrorWithCode.Factory.BadRequest(
-        "Unable to create team: team logo must be an https:// URL or an absolute path"
+        "Unable to create team: team logo must be an https:// URL, an absolute path, or an uploaded image"
       );
     }
 
@@ -101,14 +106,23 @@ export class TeamCreationService {
       throw ErrorWithCode.Factory.BadRequest(`Unable to create team: team URL "${slug}" is already taken`);
     }
 
+    const logoIsDataUrl = !!logoUrl && TEAM_LOGO_DATA_URL_PATTERN.test(logoUrl);
+
     const team = await this.deps.teamRepo.createWithOwner({
       name,
       slug,
       bio,
-      logoUrl,
+      logoUrl: logoIsDataUrl ? null : logoUrl,
       parentId: input.organizationId ?? null,
       ownerUserId: userId,
     });
+
+    if (logoIsDataUrl && logoUrl) {
+      // Mirror the team-profile update flow: data URLs are uploaded and only the hosted URL is stored.
+      const storedUrl = await this.uploadTeamLogo({ teamId: team.id, logo: logoUrl });
+      await this.deps.teamRepo.updateLogoUrl({ teamId: team.id, logoUrl: storedUrl });
+      return { ...team, logoUrl: storedUrl };
+    }
 
     // A slug freed by a team move may still redirect to the moved team; the new team wins
     if (input.organizationId != null) {

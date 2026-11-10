@@ -93,6 +93,14 @@ export class TeamRepository {
     });
   }
 
+  async updateLogoUrl({ teamId, logoUrl }: { teamId: number; logoUrl: string | null }) {
+    return await this.prismaClient.team.update({
+      where: { id: teamId },
+      data: { logoUrl },
+      select: { id: true },
+    });
+  }
+
   // Omit `parentId` rather than pass null when organizations are off: null adds an IS NULL filter.
   async findPublicBySlugIncludeEventTypes({ slug, parentId }: { slug: string; parentId?: number }) {
     return await this.prismaClient.team.findFirst({
