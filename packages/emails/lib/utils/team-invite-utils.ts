@@ -1,6 +1,5 @@
-import type { TFunction } from "i18next";
-
 import { APP_NAME } from "@calcom/lib/constants";
+import type { TFunction } from "i18next";
 
 export type TeamInvite = {
   language: TFunction;
@@ -8,6 +7,7 @@ export type TeamInvite = {
   to: string;
   teamName: string;
   joinLink: string;
+  logoHref?: string | null;
   isCalcomMember: boolean;
   /**
    * We ideally should have a separate email for auto-join(when a user is automatically accepted into a team/org), but we don't have one yet.

@@ -43,6 +43,7 @@ describe("TeamInviteService", () => {
       to: "ada@example.com",
       teamName: "BlueBee",
       joinLink: `${WEBAPP_URL}/auth/team-invite?token=valid-token`,
+      logoHref: WEBAPP_URL,
       isExistingUser: true,
       inviterName: "Owner",
       locale: "pl",
@@ -105,7 +106,10 @@ describe("TeamInviteService", () => {
 
     expect(getBaseUrlForTeam).toHaveBeenCalledWith({ teamId: 7 });
     expect(sendInviteEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ joinLink: "https://org.example.com/auth/team-invite?token=valid-token" })
+      expect.objectContaining({
+        joinLink: "https://org.example.com/auth/team-invite?token=valid-token",
+        logoHref: "https://org.example.com",
+      })
     );
   });
 });

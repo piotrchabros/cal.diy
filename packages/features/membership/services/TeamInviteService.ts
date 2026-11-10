@@ -11,6 +11,7 @@ export type SendTeamInviteEmail = (input: {
   to: string;
   teamName: string;
   joinLink: string;
+  logoHref: string;
   isExistingUser: boolean;
   inviterName: string;
   locale: string;
@@ -21,6 +22,7 @@ export const defaultSendTeamInviteEmail: SendTeamInviteEmail = async ({
   to,
   teamName,
   joinLink,
+  logoHref,
   isExistingUser,
   inviterName,
   locale,
@@ -33,6 +35,7 @@ export const defaultSendTeamInviteEmail: SendTeamInviteEmail = async ({
     to,
     teamName,
     joinLink,
+    logoHref,
     isCalcomMember: isExistingUser,
     isAutoJoin: false,
     isOrg: !!isOrganization,
@@ -79,6 +82,7 @@ export class TeamInviteService {
       to: email,
       teamName,
       joinLink: `${baseUrl}/auth/team-invite?token=${token}`,
+      logoHref: baseUrl,
       isExistingUser,
       inviterName,
       locale,
