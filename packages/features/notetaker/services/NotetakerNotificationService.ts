@@ -14,6 +14,7 @@ import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDt
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { z } from "zod";
 import { isCalendarMeetingBookingMetadata } from "../lib/calendarMeeting";
+import type { NotetakerConfig } from "../lib/config";
 import { getNotetakerHostName } from "../lib/hostName";
 import type { NotetakerSendNotificationPayload } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
@@ -60,6 +61,7 @@ export interface INotetakerNotificationServiceDeps {
   calendarMeetingRepository: Pick<INotetakerCalendarMeetingRepository, "listActiveParticipantUserIds">;
   organizationUrlService: Pick<OrganizationUrlService, "getBaseUrl" | "getBaseUrlForUser">;
   logger: ISimpleLogger;
+  config: Pick<NotetakerConfig, "admitPromptEmailsEnabled">;
 }
 
 // Log lines and error messages in this file carry ids and codes only: never an email
@@ -150,6 +152,16 @@ export class NotetakerNotificationService {
     const notetakerUrl = `${baseUrl}/booking/${booking.uid}/notetaker`;
     const translators = new Map<number, NotetakerTranslator>();
     let failureCount = 0;
+    const admitPromptEmailsEnabled = this.deps.config.admitPromptEmailsEnabled;
+    if (!admitPromptEmailsEnabled) {
+      logger.info(
+        "Notetaker admit prompt emails skipped: disabled by NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED",
+        {
+          bookingId,
+          sessionId,
+        }
+      );
+    }
     for (let i = 0; i < recipients.length; i++) {
       const user = recipients[i];
       try {
@@ -157,6 +169,7 @@ export class NotetakerNotificationService {
         const t = await getTranslation(locale, "common");
         // Stored before the send so a host whose email fails still gets the push.
         translators.set(user.id, t);
+        if (!admitPromptEmailsEnabled) continue;
         await sendNotetakerAdmitPromptEmail({
           t,
           locale,

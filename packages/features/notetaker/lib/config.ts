@@ -53,6 +53,8 @@ type NotetakerConfig = {
   googleAccountEmail: string | null;
   // null means unset: the bot is then named after the app and the booking organizer
   botName: string | null;
+  // true unless explicitly disabled: the "waiting to be let in" email still fires
+  admitPromptEmailsEnabled: boolean;
   // null means neither RECALL_API_KEY nor RECALL_WEBHOOK_VERIFICATION_SECRET is set
   recall: NotetakerRecallConfig | null;
 };
@@ -192,6 +194,10 @@ const configObjectSchema = z.object({
     .max(100, "must be at most 100 characters")
     .optional()
     .transform((value) => value ?? null),
+  NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED: z
+    .enum(["0", "1", "false", "true", ""])
+    .optional()
+    .transform((value) => value === undefined || value === "" || value === "1" || value === "true"),
   RECALL_API_KEY: z.string().optional(),
   RECALL_REGION: z
     .enum(RECALL_REGIONS, { errorMap: () => ({ message: `must be one of ${RECALL_REGIONS.join(", ")}` }) })
@@ -261,6 +267,7 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
     fakeScenario: parsed.NOTETAKER_FAKE_SCENARIO,
     googleAccountEmail: parsed.NOTETAKER_GOOGLE_ACCOUNT_EMAIL,
     botName: parsed.NOTETAKER_BOT_NAME,
+    admitPromptEmailsEnabled: parsed.NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED,
     recall:
       parsed.RECALL_API_KEY !== undefined && parsed.RECALL_WEBHOOK_VERIFICATION_SECRET !== undefined
         ? {

@@ -274,6 +274,7 @@ describe("NotetakerNotificationService", () => {
       calendarMeetingRepository,
       organizationUrlService,
       logger,
+      config: { admitPromptEmailsEnabled: true },
     });
     repositories.store.addBooking(buildBooking());
   });
@@ -1178,6 +1179,31 @@ describe("NotetakerNotificationService", () => {
         expect(sendMock).not.toHaveBeenCalled();
         expect(noticeMock).not.toHaveBeenCalled();
         expect(failedMock).not.toHaveBeenCalled();
+      });
+
+      it("skips the emails but still sends the pushes when admit prompt emails are disabled", async () => {
+        const disabledService = new NotetakerNotificationService({
+          bookingNotetakerRepository: repositories.bookingNotetakerRepository,
+          activityRepository: repositories.activityRepository,
+          sessionRepository: repositories.sessionRepository,
+          transcriptRepository: repositories.transcriptRepository,
+          summaryRepository: repositories.summaryRepository,
+          userRepository: userLookup,
+          calendarMeetingRepository,
+          organizationUrlService,
+          logger,
+          config: { admitPromptEmailsEnabled: false },
+        });
+        userLookup.users = [buildUser(1), buildUser(2)];
+        await seedEnabled(1);
+        await seedEnabled(2);
+        setSubscription(1, storedSubscription("1"));
+        const sessionId = await seedWaitingSession();
+
+        await disabledService.send({ kind: "ADMIT_PROMPT", bookingId: BOOKING_ID, sessionId });
+
+        expect(admitMock).not.toHaveBeenCalled();
+        expect(pushMock).toHaveBeenCalledTimes(1);
       });
 
       it("sends an inherited choice to the organizer", async () => {
@@ -2370,6 +2396,7 @@ describe("NotetakerNotificationService", () => {
           userRepository: userLookup,
           calendarMeetingRepository,
           logger,
+          config: { admitPromptEmailsEnabled: true },
         });
         await seedSession();
 

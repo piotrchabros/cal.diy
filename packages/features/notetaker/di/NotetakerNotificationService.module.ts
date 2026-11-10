@@ -3,6 +3,7 @@ import { moduleLoader as userRepositoryModuleLoader } from "@calcom/features/di/
 import { moduleLoader as loggerModuleLoader } from "@calcom/features/di/shared/services/logger.service";
 import { NotetakerNotificationService } from "@calcom/features/notetaker/services/NotetakerNotificationService";
 import { moduleLoader as organizationUrlServiceModuleLoader } from "@calcom/features/organizations/di/OrganizationUrlService.module";
+import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
 import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as activityRepositoryModuleLoader } from "./PrismaNotetakerActivityRepository.module";
 import { moduleLoader as calendarMeetingRepositoryModuleLoader } from "./PrismaNotetakerCalendarMeetingRepository.module";
@@ -30,6 +31,7 @@ const loadModule = bindModuleToClassOnToken({
     calendarMeetingRepository: calendarMeetingRepositoryModuleLoader,
     organizationUrlService: organizationUrlServiceModuleLoader,
     logger: loggerModuleLoader,
+    config: configModuleLoader,
   },
 });
 

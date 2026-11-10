@@ -495,3 +495,24 @@ describe("getNotetakerConfig recall", () => {
     expect(error.message).not.toContain("bad-secret-value");
   });
 });
+
+describe("getNotetakerConfig admit prompt emails", () => {
+  it.each([["1"], ["true"]])("stays enabled for %s", (value) => {
+    expect(
+      getNotetakerConfig(env({ NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED: value })).admitPromptEmailsEnabled
+    ).toBe(true);
+  });
+
+  it("stays enabled when unset or empty", () => {
+    expect(getNotetakerConfig(env()).admitPromptEmailsEnabled).toBe(true);
+    expect(
+      getNotetakerConfig(env({ NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED: "" })).admitPromptEmailsEnabled
+    ).toBe(true);
+  });
+
+  it.each([["0"], ["false"]])("is disabled for %s", (value) => {
+    expect(
+      getNotetakerConfig(env({ NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED: value })).admitPromptEmailsEnabled
+    ).toBe(false);
+  });
+});
