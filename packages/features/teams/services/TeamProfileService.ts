@@ -63,7 +63,7 @@ const parseProfileMetadata = (metadata: unknown): TTeamProfileMetadata => {
 
 export type UploadTeamLogo = (input: { teamId: number; logo: string }) => Promise<string>;
 
-const defaultUploadTeamLogo: UploadTeamLogo = async ({ teamId, logo }) => {
+export const defaultUploadTeamLogo: UploadTeamLogo = async ({ teamId, logo }) => {
   // SVGs skip resizing: uploadLogo rasterises them to PNG itself.
   const resized = isBase64Image(logo) ? await resizeBase64Image(logo) : logo;
   return await uploadLogo({ teamId, logo: resized });

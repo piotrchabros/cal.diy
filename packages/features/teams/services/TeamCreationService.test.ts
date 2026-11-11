@@ -229,4 +229,89 @@ describe("TeamCreationService", () => {
       expect(disableByFrom).not.toHaveBeenCalled();
     });
   });
+
+  describe("createTeam logo upload", () => {
+    const dataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const hostedUrl = "https://cdn.example.com/logos/team-1.png";
+
+    function serviceWithUploadMock(uploadTeamLogo = vi.fn(async () => hostedUrl)) {
+      return {
+        service: new TeamCreationService(
+          {
+            teamRepo: new TeamRepository(prismock as unknown as PrismaClient),
+            tempOrgRedirectRepo: { disableByFrom },
+          },
+          uploadTeamLogo
+        ),
+        uploadTeamLogo,
+      };
+    }
+
+    it("uploads a data-URL logo and stores the hosted URL", async () => {
+      const user = await prismock.user.create({
+        data: { email: "logo@example.com", username: "logo" },
+      });
+      const { service: logoService, uploadTeamLogo } = serviceWithUploadMock();
+
+      const team = await logoService.createTeam({
+        userId: user.id,
+        name: "Logo Team",
+        slug: "logo-team",
+        logoUrl: dataUrl,
+      });
+
+      expect(uploadTeamLogo).toHaveBeenCalledWith({ teamId: team.id, logo: dataUrl });
+      expect(team.logoUrl).toBe(hostedUrl);
+      const stored = await prismock.team.findUnique({ where: { id: team.id } });
+      expect(stored?.logoUrl).toBe(hostedUrl);
+    });
+
+    it("stores a plain https logo URL as-is without uploading", async () => {
+      const user = await prismock.user.create({
+        data: { email: "plain-logo@example.com", username: "plain-logo" },
+      });
+      const { service: logoService, uploadTeamLogo } = serviceWithUploadMock();
+
+      const team = await logoService.createTeam({
+        userId: user.id,
+        name: "Plain Logo Team",
+        slug: "plain-logo-team",
+        logoUrl: "https://example.com/logo.png",
+      });
+
+      expect(uploadTeamLogo).not.toHaveBeenCalled();
+      expect(team.logoUrl).toBe("https://example.com/logo.png");
+    });
+
+    it("rejects an unsupported logo URL scheme", async () => {
+      const user = await prismock.user.create({
+        data: { email: "bad-logo@example.com", username: "bad-logo" },
+      });
+
+      await expect(
+        service.createTeam({
+          userId: user.id,
+          name: "Bad Logo Team",
+          slug: "bad-logo-team",
+          logoUrl: "ftp://example.com/logo.png",
+        })
+      ).rejects.toMatchObject({ code: ErrorCode.BadRequest });
+    });
+
+    it("rejects a data URL that is not a supported image", async () => {
+      const user = await prismock.user.create({
+        data: { email: "bad-data-url@example.com", username: "bad-data-url" },
+      });
+
+      await expect(
+        service.createTeam({
+          userId: user.id,
+          name: "Bad Data URL Team",
+          slug: "bad-data-url-team",
+          logoUrl: "data:text/plain;base64,aGVsbG8=",
+        })
+      ).rejects.toMatchObject({ code: ErrorCode.BadRequest });
+    });
+  });
 });
