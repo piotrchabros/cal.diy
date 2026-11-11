@@ -213,6 +213,33 @@ describe("getPublicEvent organization filters without an org slug", () => {
   });
 });
 
+describe("getPublicEvent organization filters with an org slug", () => {
+  async function getFirstWhere(teamSlug: string) {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const fakePrisma = { eventType: { findFirst } } as unknown as PrismaClient;
+
+    const event = await getPublicEvent(teamSlug, "30min", true, "bluebee", fakePrisma, false);
+
+    expect(event).toBeNull();
+    return findFirst.mock.calls[0][0].where;
+  }
+
+  it("matches the organization's own team row when the team slug is the org slug", async () => {
+    const where = await getFirstWhere("bluebee");
+
+    expect(where).toEqual({
+      slug: "30min",
+      team: { slug: "bluebee", parentId: null, isOrganization: true },
+    });
+  });
+
+  it("requires a sub-team to sit under the organization", async () => {
+    const where = await getFirstWhere("sales");
+
+    expect(where).toEqual({ slug: "30min", team: { slug: "sales", parent: { slug: "bluebee" } } });
+  });
+});
+
 describe("getPublicEvent entity of a team under the organization", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
