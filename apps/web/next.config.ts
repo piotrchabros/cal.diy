@@ -348,7 +348,7 @@ const nextConfig = (): NextConfig => {
       const redirects = [
         {
           source: "/settings/organizations",
-          destination: "/settings/organizations/profile",
+          destination: "/settings/organization",
           permanent: false,
         },
         {

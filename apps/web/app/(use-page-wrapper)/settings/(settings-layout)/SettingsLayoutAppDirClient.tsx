@@ -137,7 +137,7 @@ const getTabs = (
       children: [
         {
           name: "profile",
-          href: "/settings/organizations/profile",
+          href: "/settings/organization/general",
           trackingMetadata: { section: "organization", page: "profile" },
         },
         {

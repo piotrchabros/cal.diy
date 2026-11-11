@@ -69,7 +69,7 @@ export function SideBar({ bannersHeight, user }: SideBarProps) {
           <header className="todesktop:-mt-3 todesktop:flex-col-reverse items-center justify-between todesktop:[-webkit-app-region:drag] md:hidden lg:flex">
             {user?.org ? (
               !ENABLE_PROFILE_SWITCHER ? (
-                <Link href="/settings/organizations/profile" className="w-full px-1.5">
+                <Link href="/settings/organization" className="w-full px-1.5">
                   <div className="flex items-center gap-2 font-medium">
                     <Avatar
                       alt={`${user.org.name} logo`}
