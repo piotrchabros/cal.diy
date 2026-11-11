@@ -27,9 +27,9 @@ describe("TeamAccessUseCase.filterTeamsByEventTypeReadPermission", () => {
     ).resolves.toEqual([]);
   });
 
-  it("drops organization memberships", async () => {
+  it("keeps organization memberships so the organization renders as its own tab", async () => {
     await expect(
       new TeamAccessUseCase().filterTeamsByEventTypeReadPermission([membership(1, true, true)])
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([membership(1, true, true)]);
   });
 });
