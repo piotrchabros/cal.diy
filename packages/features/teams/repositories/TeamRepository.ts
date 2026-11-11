@@ -109,6 +109,13 @@ export class TeamRepository {
     });
   }
 
+  async findPublicOrganizationByIdIncludeEventTypes({ organizationId }: { organizationId: number }) {
+    return await this.prismaClient.team.findFirst({
+      where: { id: organizationId, isOrganization: true, isPrivate: false },
+      select: publicTeamProfileSelect,
+    });
+  }
+
   async deleteById({ teamId }: { teamId: number }) {
     return await this.prismaClient.team.delete({ where: { id: teamId }, select: { id: true } });
   }

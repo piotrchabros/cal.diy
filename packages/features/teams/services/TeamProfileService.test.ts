@@ -298,6 +298,55 @@ describe("TeamProfileService", () => {
     });
   });
 
+  describe("getPublicOrganizationById", () => {
+    const publicOrganization = {
+      ...baseTeam,
+      id: 100,
+      name: "Acme",
+      slug: "acme",
+      logoUrl: "/api/avatar/acme.png",
+      bio: "We build things",
+      isPrivate: false,
+      hideBookATeamMember: true,
+      metadata: {
+        location: "Warsaw, PL",
+        showMap: true,
+        socialLinks: [{ platform: "linkedin", url: "https://linkedin.com/company/acme" }],
+      },
+      eventTypes: [{ id: 5, title: "Intro", slug: "intro", description: null, length: 30 }],
+    };
+
+    it("looks up only the public organization row", async () => {
+      db.team.findFirst.mockResolvedValue(publicOrganization);
+      await service.getPublicOrganizationById({ organizationId: 100 });
+      expect(db.team.findFirst.mock.calls[0][0].where).toEqual({
+        id: 100,
+        isOrganization: true,
+        isPrivate: false,
+      });
+    });
+
+    it("maps the organization row to a public profile", async () => {
+      db.team.findFirst.mockResolvedValue(publicOrganization);
+      await expect(service.getPublicOrganizationById({ organizationId: 100 })).resolves.toEqual({
+        id: 100,
+        name: "Acme",
+        slug: "acme",
+        logoUrl: "/api/avatar/acme.png",
+        bio: "We build things",
+        location: "Warsaw, PL",
+        socialLinks: [{ platform: "linkedin", url: "https://linkedin.com/company/acme" }],
+        hideBookATeamMember: true,
+        eventTypes: [{ id: 5, title: "Intro", slug: "intro", description: null, length: 30 }],
+      });
+    });
+
+    it("returns null when no public organization matches", async () => {
+      db.team.findFirst.mockResolvedValue(null);
+      await expect(service.getPublicOrganizationById({ organizationId: 100 })).resolves.toBeNull();
+    });
+  });
+
   describe("disbandTeam", () => {
     it("rejects admins: only owners can disband", async () => {
       db.team.findUnique.mockResolvedValue(baseTeam);

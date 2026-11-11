@@ -18,7 +18,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@calcom/features/organizations/lib/getHostOrganization", () => ({ getHostOrganization: vi.fn() }));
 vi.mock("@calcom/features/teams/di/TeamProfileService.container", () => ({
-  getTeamProfileService: () => ({ getPublicTeamBySlug }),
+  getTeamProfileService: () => ({ getPublicTeamBySlug, getPublicOrganizationById }),
 }));
 vi.mock("@calcom/features/teams/di/TeamPublicMembersService.container", () => ({
   getTeamPublicMembersService: () => ({ listByTeamId: vi.fn(async () => []) }),
@@ -38,7 +38,17 @@ const resolvedHost = {
 } as HostOrganization;
 
 const team = { id: 3, name: "BlueBee", slug: "bluebee", bio: null, hideBookATeamMember: true };
-const { getPublicTeamBySlug } = vi.hoisted(() => ({ getPublicTeamBySlug: vi.fn() }));
+const organization = {
+  id: 7,
+  name: "BespokeSoft",
+  slug: "bespokesoft",
+  bio: null,
+  hideBookATeamMember: true,
+};
+const { getPublicTeamBySlug, getPublicOrganizationById } = vi.hoisted(() => ({
+  getPublicTeamBySlug: vi.fn(),
+  getPublicOrganizationById: vi.fn(),
+}));
 
 const renderPage = (slug: string, query: Record<string, string> = {}) =>
   Page({ params: Promise.resolve({ slug }), searchParams: Promise.resolve(query) });
@@ -47,6 +57,7 @@ describe("team/[slug] page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getPublicTeamBySlug.mockResolvedValue(team);
+    getPublicOrganizationById.mockResolvedValue(organization);
     vi.mocked(handleOrgRedirect).mockResolvedValue(null);
     vi.mocked(getHostOrganization).mockResolvedValue({ status: "disabled" });
   });
@@ -101,5 +112,33 @@ describe("team/[slug] page", () => {
     });
     expect(getPublicTeamBySlug).toHaveBeenCalledWith({ slug: "bluebee", parentId: 7 });
     expect(handleOrgRedirect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "bespokesoft",
+    "BespokeSoft",
+  ])("looks up the host organization itself by id when the slug is its own (%s)", async (slug) => {
+    vi.mocked(getHostOrganization).mockResolvedValue(resolvedHost);
+    await expect(renderPage(slug)).resolves.toBeTruthy();
+    expect(getPublicOrganizationById).toHaveBeenCalledWith({ organizationId: 7 });
+    expect(getPublicTeamBySlug).not.toHaveBeenCalled();
+  });
+
+  it("does not treat the org slug specially when organizations are disabled", async () => {
+    await renderPage("bespokesoft");
+    expect(getPublicTeamBySlug).toHaveBeenCalledWith({ slug: "bespokesoft", parentId: undefined });
+    expect(getPublicOrganizationById).not.toHaveBeenCalled();
+  });
+
+  it("builds metadata from the host organization when the slug is its own", async () => {
+    vi.mocked(getHostOrganization).mockResolvedValue(resolvedHost);
+    await expect(
+      generateMetadata({
+        params: Promise.resolve({ slug: "BespokeSoft" }),
+        searchParams: Promise.resolve({}),
+      })
+    ).resolves.toEqual({ title: "BespokeSoft" });
+    expect(getPublicOrganizationById).toHaveBeenCalledWith({ organizationId: 7 });
+    expect(getPublicTeamBySlug).not.toHaveBeenCalled();
   });
 });

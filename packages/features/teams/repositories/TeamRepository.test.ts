@@ -229,6 +229,19 @@ describe("TeamRepository team profile queries", () => {
     expect(team.findFirst.mock.calls[0][0].select.eventTypes.where).toEqual({ hidden: false });
   });
 
+  it("findPublicOrganizationByIdIncludeEventTypes only matches the public organization row", async () => {
+    const { repository, team } = buildProfileRepository();
+
+    await repository.findPublicOrganizationByIdIncludeEventTypes({ organizationId: 100 });
+    await repository.findPublicBySlugIncludeEventTypes({ slug: "sales" });
+
+    const args = team.findFirst.mock.calls[0][0];
+    expect(args.where).toEqual({ id: 100, isOrganization: true, isPrivate: false });
+    expect(args.select).toEqual(team.findFirst.mock.calls[1][0].select);
+    expect(args.select).not.toHaveProperty("members");
+    expect(args.select.eventTypes.where).toEqual({ hidden: false });
+  });
+
   it("deleteById deletes one team and returns only its id", async () => {
     const { repository, team } = buildProfileRepository();
 

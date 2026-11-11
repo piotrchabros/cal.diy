@@ -22,7 +22,12 @@ import { MembershipRole } from "@calcom/prisma/enums";
 export interface ITeamProfileServiceRepositories {
   teamRepo: Pick<
     TeamRepository,
-    "findProfileById" | "findIdBySlug" | "updateProfile" | "findPublicBySlugIncludeEventTypes" | "deleteById"
+    | "findProfileById"
+    | "findIdBySlug"
+    | "updateProfile"
+    | "findPublicBySlugIncludeEventTypes"
+    | "findPublicOrganizationByIdIncludeEventTypes"
+    | "deleteById"
   >;
   membershipRepo: Pick<MembershipRepository, "findRoleAndAcceptedByUserIdAndTeamId">;
 }
@@ -42,6 +47,8 @@ export type PublicTeamProfile = Pick<Team, "id" | "name" | "slug" | "logoUrl" | 
   hideBookATeamMember: boolean;
   eventTypes: PublicTeamEventType[];
 };
+
+type PublicTeamRow = NonNullable<Awaited<ReturnType<TeamRepository["findPublicBySlugIncludeEventTypes"]>>>;
 
 type TeamAccess = {
   team: NonNullable<Awaited<ReturnType<TeamRepository["findProfileById"]>>>;
@@ -241,6 +248,22 @@ export class TeamProfileService {
       parentId,
     });
     if (!team) return null;
+    return this.toPublicTeamProfile(team);
+  }
+
+  async getPublicOrganizationById({
+    organizationId,
+  }: {
+    organizationId: number;
+  }): Promise<PublicTeamProfile | null> {
+    const organization = await this.repositories.teamRepo.findPublicOrganizationByIdIncludeEventTypes({
+      organizationId,
+    });
+    if (!organization) return null;
+    return this.toPublicTeamProfile(organization);
+  }
+
+  private toPublicTeamProfile(team: PublicTeamRow): PublicTeamProfile {
     const profileMeta = parseProfileMetadata(team.metadata);
     return {
       id: team.id,

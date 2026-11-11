@@ -1,6 +1,5 @@
 import { LookupTarget, ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import logger from "@calcom/lib/logger";
-import { outsideOrganizationsFilter } from "@calcom/lib/organizations/outsideOrganizationsFilter";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { eventTypeSelect } from "@calcom/lib/server/eventTypeSelect";
 import { type PrismaTransaction, prisma } from "@calcom/prisma";
@@ -943,8 +942,6 @@ export class MembershipRepository {
           username: { not: null },
           locked: false,
           isPlatformManaged: false,
-          // Every user belongs to an organization, so "users outside any organization" matches nobody.
-          ...outsideOrganizationsFilter({ id: { in: [] as number[] } }),
         },
       },
       select: {

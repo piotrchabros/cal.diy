@@ -403,7 +403,13 @@ export const getPublicEvent = async (
     ? {
         team: {
           ...getSlugOrRequestedSlug(username),
-          ...(orgQuery ? { parent: orgQuery } : outsideOrganizationsFilter({ parent: null })),
+          // The organization's own event types hang off the org row itself, which has no parent;
+          // a sub-team sharing the org's slug loses to the org.
+          ...(orgQuery
+            ? username === org
+              ? { parentId: null, isOrganization: true }
+              : { parent: orgQuery }
+            : outsideOrganizationsFilter({ parent: null })),
         },
       }
     : {

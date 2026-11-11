@@ -22,11 +22,17 @@ const safeDecodeSlug = (slug: string): string | null => {
 
 const getHost = cache(async () => getHostOrganization(await headers()));
 
-const getPublicTeam = cache(async (slug: string, parentId: number | undefined) => {
-  const decoded = safeDecodeSlug(slug);
-  if (!decoded) return null;
-  return getTeamProfileService().getPublicTeamBySlug({ slug: decoded, parentId });
-});
+const getPublicTeam = cache(
+  async (slug: string, hostOrgId: number | undefined, hostOrgSlug: string | undefined) => {
+    const decoded = safeDecodeSlug(slug);
+    if (!decoded) return null;
+    // The org row itself has no parent, so a parentId-scoped lookup never finds it; resolve its own slug by id.
+    if (hostOrgId !== undefined && slugify(decoded) === hostOrgSlug) {
+      return getTeamProfileService().getPublicOrganizationById({ organizationId: hostOrgId });
+    }
+    return getTeamProfileService().getPublicTeamBySlug({ slug: decoded, parentId: hostOrgId });
+  }
+);
 
 const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> => {
   const { slug } = await params;
@@ -54,7 +60,7 @@ const Page = async ({ params, searchParams }: PageProps): Promise<ReactElement> 
   if (redirect) {
     permanentRedirect(redirect.redirect.destination);
   }
-  const team = await getPublicTeam(slug, hostOrg?.id);
+  const team = await getPublicTeam(slug, hostOrg?.id, hostOrg?.slug);
   if (!team) {
     return notFound();
   }
@@ -81,7 +87,7 @@ export const generateMetadata = async ({ params }: PageProps) => {
     return {};
   }
   const hostOrg = host.status === "resolved" ? host.org : null;
-  const team = await getPublicTeam(slug, hostOrg?.id);
+  const team = await getPublicTeam(slug, hostOrg?.id, hostOrg?.slug);
   if (!team) {
     return {};
   }

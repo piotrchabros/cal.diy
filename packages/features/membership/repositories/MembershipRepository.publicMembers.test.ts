@@ -7,7 +7,7 @@ describe("MembershipRepository.findAcceptedPublicMembersByTeamId", () => {
     vi.unstubAllEnvs();
   });
 
-  it("queries only accepted, listable members, matching nobody outside an organization, and selects no email", async () => {
+  it("queries only accepted, listable members and selects no email", async () => {
     vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
     const findMany = vi.fn().mockResolvedValue([]);
     const repo = new MembershipRepository({ membership: { findMany } } as unknown as PrismaClient);
@@ -19,12 +19,13 @@ describe("MembershipRepository.findAcceptedPublicMembersByTeamId", () => {
     expect(args.where).toEqual({
       teamId: 10,
       accepted: true,
-      user: { username: { not: null }, locked: false, isPlatformManaged: false, id: { in: [] } },
+      user: { username: { not: null }, locked: false, isPlatformManaged: false },
     });
     expect(args.select).toEqual({
       user: { select: { id: true, username: true, name: true, avatarUrl: true } },
     });
     expect(args.select.user.select).not.toHaveProperty("email");
+    expect(args.where.user).not.toHaveProperty("id");
     expect(args.orderBy).toEqual({ user: { id: "asc" } });
   });
 
