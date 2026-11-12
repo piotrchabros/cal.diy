@@ -23,11 +23,15 @@ import {
 import { TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { useState } from "react";
+import { OrgMemberEditDialog } from "./org-member-edit-dialog";
 
 const USERNAME_TAKEN = "username_taken_in_default_organization";
 
 type OrgMemberActionsProps = {
-  member: Pick<OrganizationMemberDto, "userId" | "name" | "email" | "role" | "accepted">;
+  member: Pick<
+    OrganizationMemberDto,
+    "userId" | "name" | "email" | "username" | "bio" | "avatarUrl" | "role" | "accepted"
+  >;
   viewerRole: OrganizationRoleDto;
   viewerUserId: number;
 };
@@ -36,6 +40,7 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
   const [newUsername, setNewUsername] = useState("");
@@ -94,6 +99,22 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent>
+          {member.accepted && (
+            <>
+              <DropdownMenuItem className="outline-none">
+                <DropdownItem
+                  type="button"
+                  StartIcon="pencil"
+                  onClick={() => {
+                    setEditDialogOpen(true);
+                    setDropdownOpen(false);
+                  }}>
+                  {t("edit")}
+                </DropdownItem>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuLabel>{t("change_role")}</DropdownMenuLabel>
           {otherRoles.map((role) => (
             <DropdownMenuItem key={role} className="outline-none">
@@ -123,6 +144,11 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
           </DropdownMenuItem>
         </DropdownMenuContent>
       </Dropdown>
+
+      {/* Mounted only while open so the form starts from the member's latest data each time */}
+      {editDialogOpen && (
+        <OrgMemberEditDialog member={member} open={editDialogOpen} onOpenChange={setEditDialogOpen} />
+      )}
 
       <Dialog open={removeDialogOpen} onOpenChange={setRemoveDialogOpen}>
         <ConfirmationDialogContent

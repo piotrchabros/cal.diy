@@ -43,6 +43,10 @@ vi.mock("@calcom/trpc/react", () => ({
 }));
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
+vi.mock("./org-member-edit-dialog", () => ({
+  OrgMemberEditDialog: ({ member, open }: { member: { userId: number }; open: boolean }) =>
+    open ? <div role="dialog" aria-label={`edit-member:${member.userId}`} /> : null,
+}));
 vi.mock("@calcom/ui/components/button", () => ({
   Button: ({ children, type, disabled }: { children?: ReactNode; type?: "submit"; disabled?: boolean }) => (
     <button type={type ?? "button"} disabled={disabled}>
@@ -111,12 +115,18 @@ vi.mock("@calcom/ui/components/dialog", () => ({
   ),
 }));
 
-type Member = Pick<OrganizationMemberDto, "userId" | "name" | "email" | "role" | "accepted">;
+type Member = Pick<
+  OrganizationMemberDto,
+  "userId" | "name" | "email" | "username" | "bio" | "avatarUrl" | "role" | "accepted"
+>;
 
 const MEMBER: Member = {
   userId: 11,
   name: "Ada",
   email: "ada@acme.example.com",
+  username: "ada",
+  bio: null,
+  avatarUrl: null,
   role: "MEMBER",
   accepted: true,
 };
@@ -137,6 +147,32 @@ describe("OrgMemberActions", () => {
   ])("renders nothing for the %s", (_label, viewerRole, member) => {
     const { container } = renderActions(viewerRole, member);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  describe("edit", () => {
+    it.each<[string, OrganizationRoleDto, Member]>([
+      ["an OWNER viewer on an ADMIN row", "OWNER", { ...MEMBER, role: "ADMIN" }],
+      ["an ADMIN viewer on a MEMBER row", "ADMIN", MEMBER],
+    ])("is offered to %s", (_label, viewerRole, member) => {
+      renderActions(viewerRole, member);
+      expect(screen.getByRole("button", { name: "edit" })).toBeInTheDocument();
+    });
+
+    it.each<[string, OrganizationRoleDto, Member]>([
+      ["an ADMIN viewer on an OWNER row", "ADMIN", { ...MEMBER, role: "OWNER" }],
+      ["the viewer's own row", "OWNER", { ...MEMBER, userId: 1 }],
+      ["a pending member", "OWNER", { ...MEMBER, accepted: false }],
+    ])("is hidden from %s", (_label, viewerRole, member) => {
+      renderActions(viewerRole, member);
+      expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
+    });
+
+    it("opens the edit dialog for the member", () => {
+      renderActions("OWNER");
+      expect(screen.queryByRole("dialog", { name: "edit-member:11" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "edit" }));
+      expect(screen.getByRole("dialog", { name: "edit-member:11" })).toBeInTheDocument();
+    });
   });
 
   it("offers every other role, including owner, to an OWNER viewer", () => {
