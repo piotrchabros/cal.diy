@@ -11,6 +11,7 @@ import { useState } from "react";
 import { OrganizationEmailSenderSection } from "../components/OrganizationEmailSenderSection";
 import { OrganizationLogoSection } from "../components/OrganizationLogoSection";
 import { OrganizationNotetakerBotSection } from "../components/OrganizationNotetakerBotSection";
+import { OrganizationSmtpSection } from "../components/OrganizationSmtpSection";
 
 const EMPTY_VALUE = "—";
 
@@ -100,6 +101,7 @@ export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGe
         {t("organization_profile_locked_note")}
       </p>
       <OrganizationEmailSenderSection />
+      <OrganizationSmtpSection />
       {notetakerEnabled && <OrganizationNotetakerBotSection />}
     </div>
   );
