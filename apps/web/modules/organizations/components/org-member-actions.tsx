@@ -30,7 +30,7 @@ const USERNAME_TAKEN = "username_taken_in_default_organization";
 type OrgMemberActionsProps = {
   member: Pick<
     OrganizationMemberDto,
-    "userId" | "name" | "email" | "username" | "bio" | "avatarUrl" | "role" | "accepted"
+    "userId" | "name" | "email" | "username" | "bio" | "avatarUrl" | "role"
   >;
   viewerRole: OrganizationRoleDto;
   viewerUserId: number;
@@ -99,22 +99,18 @@ export function OrgMemberActions({ member, viewerRole, viewerUserId }: OrgMember
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent>
-          {member.accepted && (
-            <>
-              <DropdownMenuItem className="outline-none">
-                <DropdownItem
-                  type="button"
-                  StartIcon="pencil"
-                  onClick={() => {
-                    setEditDialogOpen(true);
-                    setDropdownOpen(false);
-                  }}>
-                  {t("edit")}
-                </DropdownItem>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </>
-          )}
+          <DropdownMenuItem className="outline-none">
+            <DropdownItem
+              type="button"
+              StartIcon="pencil"
+              onClick={() => {
+                setEditDialogOpen(true);
+                setDropdownOpen(false);
+              }}>
+              {t("edit")}
+            </DropdownItem>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuLabel>{t("change_role")}</DropdownMenuLabel>
           {otherRoles.map((role) => (
             <DropdownMenuItem key={role} className="outline-none">
