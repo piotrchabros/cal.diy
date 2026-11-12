@@ -24,6 +24,10 @@ export const ZUpdateOrganizationMemberRoleOutput = ZUpdateOrganizationMemberRole
 
 export const ZUpdateOrganizationNameInput = z.object({ name: z.string().max(100) });
 
+export const ZUpdateOrganizationLogoInput = z.object({ logo: z.string().max(8_000_000).nullable() });
+
+export type TUpdateOrganizationLogoInput = z.infer<typeof ZUpdateOrganizationLogoInput>;
+
 export const ZRemoveOrganizationMemberInput = z.object({
   userId: id,
   newUsername: z.string().trim().min(1).max(255).optional(),

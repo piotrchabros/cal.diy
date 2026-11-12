@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   getForMember: vi.fn(),
   updateName: vi.fn(),
+  updateLogo: vi.fn(),
   listMembers: vi.fn(),
   inviteMember: vi.fn(),
   setRole: vi.fn(),
@@ -30,7 +31,11 @@ vi.mock("@calcom/prisma", () => {
 vi.mock("@sentry/nextjs", () => ({ setUser: vi.fn() }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationService.container", () => ({
-  getOrganizationService: () => ({ getForMember: mocks.getForMember, updateName: mocks.updateName }),
+  getOrganizationService: () => ({
+    getForMember: mocks.getForMember,
+    updateName: mocks.updateName,
+    updateLogo: mocks.updateLogo,
+  }),
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
@@ -103,6 +108,7 @@ const sessionFor = (overrides: { organizationId?: number | null; name?: string |
 const serviceMocks = () => [
   mocks.getForMember,
   mocks.updateName,
+  mocks.updateLogo,
   mocks.listMembers,
   mocks.inviteMember,
   mocks.setRole,
@@ -115,6 +121,7 @@ const serviceMocks = () => [
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.current(),
   caller.updateName({ name: "Acme Inc" }),
+  caller.updateLogo({ logo: null }),
   caller.listMembers({}),
   caller.inviteMember({ email: "new@acme.example.com", role: "MEMBER" }),
   caller.updateRole({ userId: 11, role: "ADMIN" }),
@@ -141,6 +148,17 @@ describe("viewer organization router", () => {
       memberCount: 3,
       teamCount: 1,
       logoUrl: null,
+      owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
+    });
+    mocks.updateLogo.mockResolvedValue({
+      id: 5,
+      name: "Acme",
+      slug: "acme",
+      domain: "acme.example.com",
+      isDefault: false,
+      memberCount: 3,
+      teamCount: 1,
+      logoUrl: "/api/avatar/logo.png",
       owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
     });
     mocks.setRole.mockResolvedValue({ userId: 11, role: "ADMIN" });
@@ -228,6 +246,21 @@ describe("viewer organization router", () => {
       expect(mocks.updateName).not.toHaveBeenCalled();
     });
 
+    it("rejects a logo over 8,000,000 characters", async () => {
+      await expect(createCaller(ctx).updateLogo({ logo: "a".repeat(8_000_001) })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateLogo).not.toHaveBeenCalled();
+    });
+
+    it("rejects an updateLogo call without a logo field", async () => {
+      const caller = createCaller(ctx);
+      await expect(caller.updateLogo({} as Parameters<typeof caller.updateLogo>[0])).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateLogo).not.toHaveBeenCalled();
+    });
+
     it("rejects a notetaker settings update without any field", async () => {
       await expect(createCaller(ctx).updateNotetakerSettings({})).rejects.toMatchObject({
         code: "BAD_REQUEST",
@@ -270,6 +303,20 @@ describe("viewer organization router", () => {
         organizationId: 5,
         actorUserId: 7,
         name: "Acme Inc",
+      });
+    });
+
+    it("updates the session's organization logo", async () => {
+      await expect(
+        createCaller(ctx).updateLogo({ logo: "data:image/png;base64,AAAA" })
+      ).resolves.toMatchObject({
+        id: 5,
+        logoUrl: "/api/avatar/logo.png",
+      });
+      expect(mocks.updateLogo).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        logo: "data:image/png;base64,AAAA",
       });
     });
 
@@ -443,6 +490,15 @@ describe("viewer organization router", () => {
       await expect(
         createCaller(ctx).inviteMember({ email: "new@acme.example.com", role: "MEMBER" })
       ).rejects.toMatchObject({ code: "CONFLICT", message: "user_is_already_a_member" });
+    });
+
+    it("maps a BadRequest from updateLogo", async () => {
+      mocks.updateLogo.mockRejectedValue(ErrorWithCode.Factory.BadRequest("organization_logo_invalid"));
+
+      await expect(createCaller(ctx).updateLogo({ logo: "nope" })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message: "organization_logo_invalid",
+      });
     });
 
     it("maps a Forbidden from updateName", async () => {
