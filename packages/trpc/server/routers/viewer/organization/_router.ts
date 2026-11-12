@@ -4,6 +4,7 @@ import {
   OrganizationMemberListDtoSchema,
   OrganizationTeamListDtoSchema,
 } from "@calcom/lib/dto/OrganizationDto";
+import { OrganizationEmailSenderSettingsDtoSchema } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import { OrganizationNotetakerSettingsDtoSchema } from "@calcom/lib/dto/OrganizationNotetakerSettingsDto";
 import { TRPCError } from "@trpc/server";
 import { organizationsFeatureMiddleware } from "../../../middlewares/organizationsFeatureMiddleware";
@@ -16,6 +17,7 @@ import {
   ZListOrganizationTeamsInput,
   ZRemoveOrganizationMemberInput,
   ZRemoveOrganizationMemberOutput,
+  ZUpdateOrganizationEmailSenderInput,
   ZUpdateOrganizationLogoInput,
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
@@ -50,6 +52,13 @@ const loadNotetakerSettingsService = async () => {
     "@calcom/features/notetaker/di/OrganizationNotetakerSettingsService.container"
   );
   return getOrganizationNotetakerSettingsService();
+};
+
+const loadEmailSenderService = async () => {
+  const { getOrganizationEmailSenderService } = await import(
+    "@calcom/features/organizations/di/OrganizationEmailSenderService.container"
+  );
+  return getOrganizationEmailSenderService();
 };
 
 export const organizationRouter = router({
@@ -147,5 +156,24 @@ export const organizationRouter = router({
         botName: input.botName,
         botImage: input.botImage,
       });
+    }),
+  emailSender: organizationMemberProcedure
+    .output(OrganizationEmailSenderSettingsDtoSchema)
+    .query(async ({ ctx }) => {
+      const service = await loadEmailSenderService();
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  updateEmailSender: organizationMemberProcedure
+    .input(ZUpdateOrganizationEmailSenderInput)
+    .output(OrganizationEmailSenderSettingsDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadEmailSenderService();
+      await service.update({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        senderName: input.senderName,
+        senderAddress: input.senderAddress,
+      });
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
     }),
 });

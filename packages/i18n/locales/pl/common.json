@@ -4879,5 +4879,18 @@
   "notetaker_bot_image_too_large": "Obraz jest za duży.",
   "organization_logo_updated": "Zaktualizowano logo organizacji",
   "organization_logo_invalid": "Nieobsługiwany plik logo.",
+  "organization_email_sender": "Nadawca e-maili",
+  "organization_email_sender_description": "Nazwa i adres używane w e-mailach wysyłanych w imieniu tej organizacji: zaproszeniach, e-mailach o rezerwacjach i od notetakera.",
+  "organization_email_sender_name": "Nazwa nadawcy",
+  "organization_email_sender_address": "Adres e-mail nadawcy",
+  "organization_email_sender_domain_hint": "Musi to być adres w domenie {{domain}}. Domena musi być zweryfikowana u dostawcy poczty, inaczej e-maile wyjdą z domyślnego adresu.",
+  "organization_email_sender_no_domain_hint": "Ustaw własną domenę organizacji, aby używać własnego adresu nadawcy.",
+  "organization_email_sender_inactive": "Zapisany adres nie należy do domeny organizacji i nie jest używany.",
+  "organization_email_sender_updated": "Zapisano nadawcę e-maili",
+  "organization_email_sender_name_invalid": "Nazwa nadawcy zawiera niedozwolone znaki.",
+  "organization_email_sender_name_too_long": "Nazwa nadawcy może mieć maksymalnie 100 znaków.",
+  "organization_email_sender_address_invalid": "Podaj poprawny adres e-mail.",
+  "organization_email_sender_no_domain": "Organizacja nie ma własnej domeny, więc nie może używać własnego adresu nadawcy.",
+  "organization_email_sender_domain_not_allowed": "Adres musi należeć do domeny organizacji.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

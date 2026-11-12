@@ -45,6 +45,16 @@ export const ZUpdateOrganizationNotetakerSettingsInput = z
     message: "Provide botName or botImage",
   });
 
+export const ZUpdateOrganizationEmailSenderInput = z
+  .object({
+    // Loose caps only bound the payload; the service owns the real name and address rules
+    senderName: z.string().max(300).nullable().optional(),
+    senderAddress: z.string().max(300).nullable().optional(),
+  })
+  .refine((value) => value.senderName !== undefined || value.senderAddress !== undefined, {
+    message: "Provide senderName or senderAddress",
+  });
+
 export type TListOrganizationMembersInput = z.infer<typeof ZListOrganizationMembersInput>;
 export type TListOrganizationTeamsInput = z.infer<typeof ZListOrganizationTeamsInput>;
 export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationMemberInput>;
@@ -54,6 +64,7 @@ export type TUpdateOrganizationMemberRoleOutput = z.infer<typeof ZUpdateOrganiza
 export type TUpdateOrganizationNameInput = z.infer<typeof ZUpdateOrganizationNameInput>;
 export type TRemoveOrganizationMemberInput = z.infer<typeof ZRemoveOrganizationMemberInput>;
 export type TRemoveOrganizationMemberOutput = z.infer<typeof ZRemoveOrganizationMemberOutput>;
+export type TUpdateOrganizationEmailSenderInput = z.infer<typeof ZUpdateOrganizationEmailSenderInput>;
 export type TUpdateOrganizationNotetakerSettingsInput = z.infer<
   typeof ZUpdateOrganizationNotetakerSettingsInput
 >;

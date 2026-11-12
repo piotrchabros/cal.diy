@@ -8,6 +8,7 @@ import { TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { useSession } from "next-auth/react";
 import { useState } from "react";
+import { OrganizationEmailSenderSection } from "../components/OrganizationEmailSenderSection";
 import { OrganizationLogoSection } from "../components/OrganizationLogoSection";
 import { OrganizationNotetakerBotSection } from "../components/OrganizationNotetakerBotSection";
 
@@ -98,6 +99,7 @@ export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGe
       <p className="text-sm text-subtle" data-testid="org-general-locked-note">
         {t("organization_profile_locked_note")}
       </p>
+      <OrganizationEmailSenderSection />
       {notetakerEnabled && <OrganizationNotetakerBotSection />}
     </div>
   );

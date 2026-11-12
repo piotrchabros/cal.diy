@@ -5249,5 +5249,18 @@
   "notetaker_bot_settings_saved": "Notetaker bot settings saved",
   "organization_logo_updated": "Organization logo updated",
   "organization_logo_invalid": "Unsupported logo image.",
+  "organization_email_sender": "Email sender",
+  "organization_email_sender_description": "Name and address used for emails sent on behalf of this organization: invitations, booking and notetaker emails.",
+  "organization_email_sender_name": "Sender name",
+  "organization_email_sender_address": "Sender email address",
+  "organization_email_sender_domain_hint": "Must be an address in {{domain}}. The domain must be verified with the email provider, otherwise emails are sent from the default address.",
+  "organization_email_sender_no_domain_hint": "Set a custom domain for the organization to use its own sender address.",
+  "organization_email_sender_inactive": "The saved address is not in the organization's domain and is not used.",
+  "organization_email_sender_updated": "Email sender saved",
+  "organization_email_sender_name_invalid": "Sender name contains characters that are not allowed.",
+  "organization_email_sender_name_too_long": "Sender name can be at most 100 characters.",
+  "organization_email_sender_address_invalid": "Enter a valid email address.",
+  "organization_email_sender_no_domain": "The organization has no custom domain, so it cannot use its own sender address.",
+  "organization_email_sender_domain_not_allowed": "The address must be in the organization's domain.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
