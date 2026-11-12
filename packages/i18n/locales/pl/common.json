@@ -4877,5 +4877,7 @@
   "notetaker_bot_name_too_long": "Nazwa bota może mieć maksymalnie 100 znaków.",
   "notetaker_bot_image_invalid": "Nieobsługiwany lub uszkodzony plik obrazu. Użyj JPEG, PNG lub WEBP.",
   "notetaker_bot_image_too_large": "Obraz jest za duży.",
+  "organization_logo_updated": "Zaktualizowano logo organizacji",
+  "organization_logo_invalid": "Nieobsługiwany plik logo.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

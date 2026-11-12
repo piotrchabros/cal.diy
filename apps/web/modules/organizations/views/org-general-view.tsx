@@ -6,7 +6,9 @@ import { trpc } from "@calcom/trpc/react";
 import { Button } from "@calcom/ui/components/button";
 import { TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
+import { useSession } from "next-auth/react";
 import { useState } from "react";
+import { OrganizationLogoSection } from "../components/OrganizationLogoSection";
 import { OrganizationNotetakerBotSection } from "../components/OrganizationNotetakerBotSection";
 
 const EMPTY_VALUE = "—";
@@ -19,6 +21,7 @@ export type OrgGeneralViewProps = {
 export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGeneralViewProps) {
   const { t } = useLocale();
   const utils = trpc.useUtils();
+  const { update } = useSession();
   const canEdit = organization.viewerRole !== "MEMBER";
   const [name, setName] = useState(organization.name);
 
@@ -27,6 +30,7 @@ export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGe
       setName(updated.name);
       showToast(t("organization_name_updated"), "success");
       await utils.viewer.organization.current.invalidate();
+      await update({ refreshOrganization: true });
     },
     onError: (error) => {
       showToast(t(error.message), "error");
@@ -35,6 +39,11 @@ export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGe
 
   return (
     <div className="flex flex-col gap-4">
+      <OrganizationLogoSection
+        organizationName={organization.name}
+        logoUrl={organization.logoUrl}
+        canEdit={canEdit}
+      />
       {canEdit ? (
         <form
           data-testid="org-general-name-form"

@@ -5247,5 +5247,7 @@
   "notetaker_bot_image_remove": "Remove image",
   "notetaker_bot_image_empty": "No image — the bot joins with its camera off.",
   "notetaker_bot_settings_saved": "Notetaker bot settings saved",
+  "organization_logo_updated": "Organization logo updated",
+  "organization_logo_invalid": "Unsupported logo image.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

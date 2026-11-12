@@ -29,10 +29,12 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 const mockRequireDefaultOrganizationId = vi.fn();
 const mockAddMember = vi.fn();
 const mockFindIdByVerifiedAutoAcceptEmailDomain = vi.fn();
+const mockFindOrganizationById = vi.fn();
 
 vi.mock("@calcom/features/organizations/di/OrganizationRepository.container", () => ({
   getOrganizationRepository: () => ({
     findIdByVerifiedAutoAcceptEmailDomain: mockFindIdByVerifiedAutoAcceptEmailDomain,
+    findById: mockFindOrganizationById,
   }),
 }));
 
@@ -567,6 +569,54 @@ describe("next-auth options with organizations", () => {
 
       expect(token.org?.fullDomain).toBe("https://acme.example.org");
       expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 42 });
+    });
+  });
+
+  describe("jwt update organization refresh", () => {
+    const tokenOrg = {
+      id: 42,
+      name: "Old name",
+      slug: "acme",
+      logoUrl: null,
+      fullDomain: "https://acme.example.org",
+      domainSuffix: "",
+      role: "ADMIN" as const,
+    };
+    const updateParams = (session: Record<string, unknown>) =>
+      ({
+        token: { sub: "1", email: "user@example.com", org: tokenOrg },
+        trigger: "update",
+        session,
+      }) as unknown as JwtParams;
+
+    it("reloads the organization name and logo from the database", async () => {
+      mockFindOrganizationById.mockResolvedValue({ id: 42, name: "New name", logoUrl: "/api/logo?x=1" });
+      const { jwt } = await getCallbacks();
+
+      const token = await jwt(
+        updateParams({ refreshOrganization: true, org: { name: "Spoofed", logoUrl: "evil" } })
+      );
+
+      expect(mockFindOrganizationById).toHaveBeenCalledWith(42);
+      expect(token.org).toEqual({ ...tokenOrg, name: "New name", logoUrl: "/api/logo?x=1" });
+    });
+
+    it("keeps the token organization when no refresh is requested", async () => {
+      const { jwt } = await getCallbacks();
+
+      const token = await jwt(updateParams({ org: { name: "Spoofed" } }));
+
+      expect(mockFindOrganizationById).not.toHaveBeenCalled();
+      expect(token.org).toEqual(tokenOrg);
+    });
+
+    it("keeps the token organization when it no longer exists", async () => {
+      mockFindOrganizationById.mockResolvedValue(null);
+      const { jwt } = await getCallbacks();
+
+      const token = await jwt(updateParams({ refreshOrganization: true }));
+
+      expect(token.org).toEqual(tokenOrg);
     });
   });
 
