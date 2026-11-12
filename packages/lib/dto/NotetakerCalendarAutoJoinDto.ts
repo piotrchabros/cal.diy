@@ -1,4 +1,4 @@
-import type { NotetakerSharingTeamOptionDto } from "./NotetakerEventTypeSharingDto";
+import type { NotetakerEventTypeSharingTeamOptionDto } from "./NotetakerEventTypeSharingDto";
 
 export type NotetakerCalendarAutoJoinSettingDto = {
   selectedCalendarId: string;
@@ -15,6 +15,6 @@ export type NotetakerCalendarAutoJoinSettingDto = {
 
 export type NotetakerCalendarAutoJoinSettingsDto = {
   available: boolean;
-  teamOptions: NotetakerSharingTeamOptionDto[];
+  teamOptions: NotetakerEventTypeSharingTeamOptionDto[];
   calendars: NotetakerCalendarAutoJoinSettingDto[];
 };

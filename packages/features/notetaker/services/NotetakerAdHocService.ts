@@ -1,9 +1,10 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import { getTranslation } from "@calcom/i18n/server";
-import type { NotetakerSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
+import type { NotetakerEventTypeSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import type { NotetakerPlatformDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import short from "short-uuid";
 import {
   buildAdHocBookingMetadata,
@@ -67,7 +68,7 @@ export type NotetakerAdHocErrorCode =
 
 export type NotetakerAdHocOptions = {
   featureEnabled: boolean;
-  teamOptions: NotetakerSharingTeamOptionDto[];
+  teamOptions: NotetakerEventTypeSharingTeamOptionDto[];
   enabledPlatforms: NotetakerPlatformDto[];
   defaultDurationMinutes: number;
   maxDurationMinutes: number;
@@ -81,7 +82,10 @@ export interface INotetakerAdHocServiceDeps {
     | "findAcceptedAdHocByUserIdIncludeLatestSession"
     | "findVerifiedEmailsByUserId"
   >;
-  eventTypeNotetakerSettingsRepository: Pick<IEventTypeNotetakerSettingsRepository, "findTeamsByIds">;
+  eventTypeNotetakerSettingsRepository: Pick<
+    IEventTypeNotetakerSettingsRepository,
+    "findTeamsAndOrganizationsByIds"
+  >;
   membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
   choiceService: Pick<NotetakerChoiceService, "setEnabled">;
@@ -247,10 +251,15 @@ export class NotetakerAdHocService {
     return this.deps.featuresRepository.checkIfUserHasFeature(userId, NOTETAKER_FEATURE_SLUG);
   }
 
-  private async listTeamOptions(userId: number): Promise<NotetakerSharingTeamOptionDto[]> {
+  private async listTeamOptions(userId: number): Promise<NotetakerEventTypeSharingTeamOptionDto[]> {
     const teamIds = await this.deps.membershipLookup.listAcceptedTeamIds({ userId });
-    const teams = await this.deps.eventTypeNotetakerSettingsRepository.findTeamsByIds({ teamIds });
-    return teams.map(({ teamId, teamName }) => ({ teamId, name: teamName }));
+    const teams = await this.deps.eventTypeNotetakerSettingsRepository.findTeamsAndOrganizationsByIds({
+      teamIds,
+    });
+    const organizationsEnabled = isOrganizationsEnabled();
+    return teams
+      .filter((team) => organizationsEnabled || !team.isOrganization)
+      .map(({ teamId, teamName, isOrganization }) => ({ teamId, name: teamName, isOrganization }));
   }
 
   // The bot leaves at the configured limit regardless of the booking, so a longer booking would end empty.

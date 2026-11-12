@@ -60,7 +60,12 @@ export function NotetakerCalendarAutoJoinSwitch({
             <option value="">{t("notetaker_calendar_auto_join_share_only_me")}</option>
             {teamOptions.map((option) => (
               <option key={option.teamId} value={String(option.teamId)}>
-                {option.name}
+                {option.isOrganization
+                  ? t("notetaker_sharing_team_option_organization", {
+                      name: option.name,
+                      interpolation: { escapeValue: false },
+                    })
+                  : option.name}
               </option>
             ))}
           </select>

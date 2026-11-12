@@ -1,6 +1,6 @@
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   INotetakerCalendarAutoJoinRepository,
   NotetakerUserLevelSelectedCalendarWithAutoJoinRecord,
@@ -13,6 +13,7 @@ const OTHER_USER_ID = 2;
 const TEAM_ID = 20;
 const OTHER_TEAM_ID = 21;
 const PENDING_TEAM_ID = 22;
+const ORG_ID = 30;
 const GOOGLE = "google_calendar";
 const OFFICE = "office365_calendar";
 
@@ -137,8 +138,14 @@ describe("NotetakerCalendarAutoJoinSettingsService", () => {
       autoJoinRepository: repository,
       calendarEventsGatewayResolver: { supportedIntegrations: () => supportedIntegrations },
       eventTypeNotetakerSettingsRepository: {
-        findTeamsByIds: async ({ teamIds }) =>
-          teamIds.map((teamId) => ({ teamId, teamName: TEAM_NAMES[teamId] ?? `Team ${teamId}` })),
+        findTeamsAndOrganizationsByIds: async ({ teamIds }) =>
+          teamIds
+            .map((teamId) => ({
+              teamId,
+              teamName: TEAM_NAMES[teamId] ?? `Team ${teamId}`,
+              isOrganization: teamId === ORG_ID,
+            }))
+            .sort((a, b) => Number(b.isOrganization) - Number(a.isOrganization)),
       },
       membershipLookup,
       featuresRepository: { checkIfUserHasFeature: async (_userId, slug) => flags.has(slug) },
@@ -163,9 +170,47 @@ describe("NotetakerCalendarAutoJoinSettingsService", () => {
       const { teamOptions } = await service.list({ userId: USER_ID });
 
       expect(teamOptions).toEqual([
-        { teamId: TEAM_ID, name: "Sales" },
-        { teamId: OTHER_TEAM_ID, name: "Support" },
+        { teamId: TEAM_ID, name: "Sales", isOrganization: false },
+        { teamId: OTHER_TEAM_ID, name: "Support", isOrganization: false },
       ]);
+    });
+
+    describe("organization option", () => {
+      beforeEach(() => {
+        membershipLookup.addMember({ teamId: ORG_ID, userId: USER_ID });
+      });
+
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
+      it("offers the organization first when organizations are enabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+        const { teamOptions } = await service.list({ userId: USER_ID });
+
+        expect(teamOptions[0]).toEqual({ teamId: ORG_ID, name: `Team ${ORG_ID}`, isOrganization: true });
+        expect(teamOptions).toHaveLength(3);
+      });
+
+      it("hides the organization when organizations are disabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+
+        const { teamOptions } = await service.list({ userId: USER_ID });
+
+        expect(teamOptions.map((option) => option.teamId)).toEqual([TEAM_ID, OTHER_TEAM_ID]);
+      });
+
+      it("accepts the organization id as the sharing team", async () => {
+        await service.set({
+          userId: USER_ID,
+          selectedCalendarId: "sc-google",
+          enabled: true,
+          sharingTeamId: ORG_ID,
+        });
+
+        expect(repository.rows.get("sc-google")?.sharingTeamId).toBe(ORG_ID);
+      });
     });
 
     it("lists only the user's user-level calendars, off by default", async () => {

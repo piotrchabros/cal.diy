@@ -1,7 +1,8 @@
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import type { NotetakerCalendarAutoJoinSettingsDto } from "@calcom/lib/dto/NotetakerCalendarAutoJoinDto";
-import type { NotetakerSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
+import type { NotetakerEventTypeSharingTeamOptionDto } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import type { INotetakerCalendarEventsGatewayResolver } from "../calendar/INotetakerCalendarEventsGateway";
 import type { INotetakerMembershipLookup } from "../lib/membershipLookup";
 import type { IEventTypeNotetakerSettingsRepository } from "../repositories/interfaces/IEventTypeNotetakerSettingsRepository";
@@ -16,7 +17,10 @@ export interface INotetakerCalendarAutoJoinSettingsServiceDeps {
     "findUserLevelSelectedCalendarsIncludeAutoJoin" | "findUserLevelSelectedCalendar" | "upsert"
   >;
   calendarEventsGatewayResolver: Pick<INotetakerCalendarEventsGatewayResolver, "supportedIntegrations">;
-  eventTypeNotetakerSettingsRepository: Pick<IEventTypeNotetakerSettingsRepository, "findTeamsByIds">;
+  eventTypeNotetakerSettingsRepository: Pick<
+    IEventTypeNotetakerSettingsRepository,
+    "findTeamsAndOrganizationsByIds"
+  >;
   membershipLookup: Pick<INotetakerMembershipLookup, "listAcceptedTeamIds">;
   featuresRepository: Pick<IFeaturesRepository, "checkIfUserHasFeature">;
 }
@@ -90,9 +94,14 @@ export class NotetakerCalendarAutoJoinSettingsService {
     return notetaker && calendarAutoJoin;
   }
 
-  private async listTeamOptions(userId: number): Promise<NotetakerSharingTeamOptionDto[]> {
+  private async listTeamOptions(userId: number): Promise<NotetakerEventTypeSharingTeamOptionDto[]> {
     const teamIds = await this.deps.membershipLookup.listAcceptedTeamIds({ userId });
-    const teams = await this.deps.eventTypeNotetakerSettingsRepository.findTeamsByIds({ teamIds });
-    return teams.map(({ teamId, teamName }) => ({ teamId, name: teamName }));
+    const teams = await this.deps.eventTypeNotetakerSettingsRepository.findTeamsAndOrganizationsByIds({
+      teamIds,
+    });
+    const organizationsEnabled = isOrganizationsEnabled();
+    return teams
+      .filter((team) => organizationsEnabled || !team.isOrganization)
+      .map(({ teamId, teamName, isOrganization }) => ({ teamId, name: teamName, isOrganization }));
   }
 }

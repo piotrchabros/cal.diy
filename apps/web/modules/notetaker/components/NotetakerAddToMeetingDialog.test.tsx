@@ -41,7 +41,7 @@ const TEAMS_LINK = "https://teams.microsoft.com/meet/123456789012?p=AbCdEf";
 
 const OPTIONS: Options = {
   featureEnabled: true,
-  teamOptions: [{ teamId: 7, name: "Sales" }],
+  teamOptions: [{ teamId: 7, name: "Sales", isOrganization: false }],
   enabledPlatforms: ["GOOGLE_MEET"],
   defaultDurationMinutes: 60,
   maxDurationMinutes: 120,
@@ -106,6 +106,22 @@ describe("NotetakerAddToMeetingDialog", () => {
       "120",
     ]);
     expect(select.value).toBe("60");
+  });
+
+  it("labels an organization option as the whole organization", () => {
+    openDialog({
+      ...OPTIONS,
+      teamOptions: [
+        { teamId: 1, name: "Acme", isOrganization: true },
+        { teamId: 7, name: "Sales", isOrganization: false },
+      ],
+    });
+
+    const labels = Array.from(screen.getByTestId<HTMLSelectElement>("notetaker-ad-hoc-team").options).map(
+      (option) => option.textContent
+    );
+    expect(labels).toContain("notetaker_sharing_team_option_organization");
+    expect(labels).toContain("Sales");
   });
 
   it("hides the team select when there are no teams", () => {
