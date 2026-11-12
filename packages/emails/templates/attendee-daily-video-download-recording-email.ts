@@ -1,5 +1,6 @@
 // TODO: We should find a way to keep App specific email templates within the App itself
 
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import { getReplyToHeader } from "@calcom/lib/getReplyToHeader";
 import { TimeFormat } from "@calcom/lib/timeFormat";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
