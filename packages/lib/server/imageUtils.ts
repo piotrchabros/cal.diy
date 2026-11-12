@@ -1,3 +1,4 @@
+import { ErrorWithCode } from "@calcom/lib/errors";
 import sharp from "sharp";
 
 // Maximum allowed size for SVG data (5MB)
@@ -9,6 +10,11 @@ const WEBP = "image/webp";
 const AVIF = "image/avif";
 const GIF = "image/gif";
 const SVG = "image/svg+xml";
+
+const COVER_INPUT_TYPES = new Set([JPEG, PNG, WEBP]);
+const COVER_JPEG_QUALITIES = [90, 80, 70, 60, 50];
+// Guards against decompression bombs from user uploads; ~7k x 7k is far beyond any real photo
+const COVER_MAX_INPUT_PIXELS = 50_000_000;
 
 /**
  * Converts an SVG image to PNG format
@@ -142,4 +148,40 @@ export async function resizeImage(params: {
 
   const optimizedBuffer = await transformer.toBuffer();
   return { buffer: optimizedBuffer, contentType };
+}
+
+/**
+ * Crop-to-fill an image into an exact JPEG frame, lowering quality until it fits maxBytes.
+ * Transparency is flattened onto the background because JPEG has no alpha channel.
+ */
+export async function encodeJpegCover(params: {
+  buffer: Buffer;
+  width: number;
+  height: number;
+  maxBytes: number;
+  background?: string;
+}): Promise<Buffer> {
+  const { buffer, width, height, maxBytes, background } = params;
+
+  const contentType = await detectContentType(buffer);
+  if (!contentType || !COVER_INPUT_TYPES.has(contentType)) {
+    throw ErrorWithCode.Factory.BadRequest("notetaker_bot_image_invalid");
+  }
+
+  for (const quality of COVER_JPEG_QUALITIES) {
+    let encoded: Buffer;
+    try {
+      encoded = await sharp(buffer, { limitInputPixels: COVER_MAX_INPUT_PIXELS })
+        .rotate()
+        .resize(width, height, { fit: "cover", position: "centre" })
+        .flatten({ background: background ?? "#ffffff" })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+    } catch {
+      throw ErrorWithCode.Factory.BadRequest("notetaker_bot_image_invalid");
+    }
+    if (encoded.length <= maxBytes) return encoded;
+  }
+
+  throw ErrorWithCode.Factory.BadRequest("notetaker_bot_image_too_large");
 }

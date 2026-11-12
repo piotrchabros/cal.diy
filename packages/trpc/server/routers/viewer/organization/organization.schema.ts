@@ -31,6 +31,16 @@ export const ZRemoveOrganizationMemberInput = z.object({
 
 export const ZRemoveOrganizationMemberOutput = z.object({ userId: id });
 
+export const ZUpdateOrganizationNotetakerSettingsInput = z
+  .object({
+    // Loose caps only bound the payload; the service owns the real name and image rules
+    botName: z.string().max(200).nullable().optional(),
+    botImage: z.string().max(1_000_000).nullable().optional(),
+  })
+  .refine((value) => value.botName !== undefined || value.botImage !== undefined, {
+    message: "Provide botName or botImage",
+  });
+
 export type TListOrganizationMembersInput = z.infer<typeof ZListOrganizationMembersInput>;
 export type TListOrganizationTeamsInput = z.infer<typeof ZListOrganizationTeamsInput>;
 export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationMemberInput>;
@@ -40,3 +50,6 @@ export type TUpdateOrganizationMemberRoleOutput = z.infer<typeof ZUpdateOrganiza
 export type TUpdateOrganizationNameInput = z.infer<typeof ZUpdateOrganizationNameInput>;
 export type TRemoveOrganizationMemberInput = z.infer<typeof ZRemoveOrganizationMemberInput>;
 export type TRemoveOrganizationMemberOutput = z.infer<typeof ZRemoveOrganizationMemberOutput>;
+export type TUpdateOrganizationNotetakerSettingsInput = z.infer<
+  typeof ZUpdateOrganizationNotetakerSettingsInput
+>;

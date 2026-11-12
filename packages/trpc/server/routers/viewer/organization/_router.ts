@@ -4,6 +4,7 @@ import {
   OrganizationMemberListDtoSchema,
   OrganizationTeamListDtoSchema,
 } from "@calcom/lib/dto/OrganizationDto";
+import { OrganizationNotetakerSettingsDtoSchema } from "@calcom/lib/dto/OrganizationNotetakerSettingsDto";
 import { TRPCError } from "@trpc/server";
 import { organizationsFeatureMiddleware } from "../../../middlewares/organizationsFeatureMiddleware";
 import authedProcedure from "../../../procedures/authedProcedure";
@@ -18,6 +19,7 @@ import {
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
   ZUpdateOrganizationNameInput,
+  ZUpdateOrganizationNotetakerSettingsInput,
 } from "./organization.schema";
 
 // The organization always comes from the session, never from input, so a member can only reach their own org
@@ -40,6 +42,13 @@ const loadMembershipService = async () => {
     "@calcom/features/organizations/di/OrganizationMembershipService.container"
   );
   return getOrganizationMembershipService();
+};
+
+const loadNotetakerSettingsService = async () => {
+  const { getOrganizationNotetakerSettingsService } = await import(
+    "@calcom/features/notetaker/di/OrganizationNotetakerSettingsService.container"
+  );
+  return getOrganizationNotetakerSettingsService();
 };
 
 export const organizationRouter = router({
@@ -108,5 +117,23 @@ export const organizationRouter = router({
     .query(async ({ ctx, input }) => {
       const service = await loadMembershipService();
       return service.listTeams({ ...input, organizationId: ctx.organizationId, actorUserId: ctx.user.id });
+    }),
+  notetakerSettings: organizationMemberProcedure
+    .output(OrganizationNotetakerSettingsDtoSchema)
+    .query(async ({ ctx }) => {
+      const service = await loadNotetakerSettingsService();
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  updateNotetakerSettings: organizationMemberProcedure
+    .input(ZUpdateOrganizationNotetakerSettingsInput)
+    .output(OrganizationNotetakerSettingsDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadNotetakerSettingsService();
+      return service.update({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        botName: input.botName,
+        botImage: input.botImage,
+      });
     }),
 });
