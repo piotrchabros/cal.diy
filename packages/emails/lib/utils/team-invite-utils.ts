@@ -18,6 +18,7 @@ export type TeamInvite = {
   isExistingUserMovedToOrg: boolean;
   prevLink: string | null;
   newLink: string | null;
+  senderTeamId?: number;
 };
 
 export function getTypeOfInvite(teamInviteEvent: TeamInvite) {

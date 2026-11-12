@@ -56,4 +56,14 @@ describe("daily video download emails", () => {
       expect(await html(email)).toContain(`href="${WEBAPP_URL}"`);
     }
   });
+
+  it("scope the sender to the organization, else the organizer", () => {
+    const scopeOf = (email: unknown) => (email as { getSenderScope(): unknown }).getSenderScope();
+    for (const email of emails({ ...buildEvent(), organizationId: 42 })) {
+      expect(scopeOf(email)).toEqual({ organizationId: 42 });
+    }
+    for (const email of emails(buildEvent())) {
+      expect(scopeOf(email)).toEqual({ userEmail: "host@example.com" });
+    }
+  });
 });
