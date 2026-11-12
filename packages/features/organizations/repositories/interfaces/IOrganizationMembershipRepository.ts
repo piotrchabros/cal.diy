@@ -20,6 +20,8 @@ export type OrganizationMemberRecord = {
   name: string | null;
   email: string;
   username: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
   role: OrganizationRoleDto;
   accepted: boolean;
 };
@@ -51,6 +53,11 @@ export interface IOrganizationMembershipRepository {
     userId: number;
     role: OrganizationRoleDto;
   }): Promise<{ userId: number; role: OrganizationRoleDto }>;
+  findMember(p: { organizationId: number; userId: number }): Promise<OrganizationMemberRecord | null>;
+  updateUserProfile(p: {
+    userId: number;
+    data: { name?: string; bio?: string; avatarUrl?: string | null };
+  }): Promise<void>;
   listMembers(p: {
     organizationId: number;
     search?: string;

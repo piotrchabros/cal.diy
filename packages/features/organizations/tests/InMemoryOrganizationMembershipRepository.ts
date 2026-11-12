@@ -9,7 +9,11 @@ import type {
 } from "../repositories/interfaces/IOrganizationMembershipRepository";
 import { USERNAME_TAKEN_IN_ORGANIZATION } from "../services/OrganizationMembershipService";
 
-type StoredUser = MembershipUserRecord & { name: string | null };
+type StoredUser = MembershipUserRecord & {
+  name: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+};
 
 type StoredProfile = { userId: number; organizationId: number; username: string };
 
@@ -37,6 +41,8 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     username?: string | null;
     name?: string | null;
     email?: string;
+    bio?: string | null;
+    avatarUrl?: string | null;
     organizationId: number;
   }): StoredUser {
     const user: StoredUser = {
@@ -45,6 +51,8 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
       username: params.username === undefined ? `user${params.id}` : params.username,
       email: params.email ?? `user${params.id}@example.com`,
       organizationId: params.organizationId,
+      bio: params.bio ?? null,
+      avatarUrl: params.avatarUrl ?? null,
     };
     this.users = this.users.filter((existing) => existing.id !== params.id);
     this.users.push(user);
@@ -178,6 +186,23 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
     ).length;
   }
 
+  async findMember(params: {
+    organizationId: number;
+    userId: number;
+  }): Promise<OrganizationMemberRecord | null> {
+    const membership = this.findStoredMembership(params.organizationId, params.userId);
+    const user = this.users.find((existing) => existing.id === params.userId);
+    if (!membership || !user) return null;
+    return this.toMemberRecord(membership, this.membershipIds.get(membership) ?? 0, user);
+  }
+
+  async updateUserProfile(params: {
+    userId: number;
+    data: { name?: string; bio?: string; avatarUrl?: string | null };
+  }): Promise<void> {
+    Object.assign(this.findStoredUser(params.userId), params.data);
+  }
+
   async listMembers(params: {
     organizationId: number;
     search?: string;
@@ -195,15 +220,7 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
       if (search && ![user.name, user.email, user.username].some((v) => v?.toLowerCase().includes(search))) {
         continue;
       }
-      records.push({
-        membershipId,
-        userId: user.id,
-        name: user.name,
-        email: user.email,
-        username: user.username,
-        role: membership.role,
-        accepted: membership.accepted,
-      });
+      records.push(this.toMemberRecord(membership, membershipId, user));
     }
     records.sort((a, b) => a.membershipId - b.membershipId);
 
@@ -321,8 +338,26 @@ export class InMemoryOrganizationMembershipRepository implements IOrganizationMe
   }
 
   private toUserRecord(user: StoredUser): MembershipUserRecord {
-    const { name: _name, ...record } = user;
+    const { name: _name, bio: _bio, avatarUrl: _avatarUrl, ...record } = user;
     return record;
+  }
+
+  private toMemberRecord(
+    membership: StoredMembership,
+    membershipId: number,
+    user: StoredUser
+  ): OrganizationMemberRecord {
+    return {
+      membershipId,
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
+      role: membership.role,
+      accepted: membership.accepted,
+    };
   }
 
   private findProfile(organizationId: number, userId: number): StoredProfile | undefined {
