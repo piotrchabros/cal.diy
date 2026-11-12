@@ -29,7 +29,12 @@ vi.mock("@calcom/features/flags/features.repository", () => ({
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationEmailSenderService.container", () => ({
-  getOrganizationEmailSenderService: () => ({ resolveForScope }),
+  getOrganizationEmailSenderService: () => ({
+    resolveDeliveryForScope: async (scope: unknown) => {
+      const sender = await resolveForScope(scope);
+      return sender ? { sender, smtp: null } : null;
+    },
+  }),
 }));
 
 class TestEmail extends BaseEmail {
