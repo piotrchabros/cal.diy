@@ -1,14 +1,16 @@
-import { decodeHTML } from "entities";
-import { z } from "zod";
-
+import process from "node:process";
 import dayjs from "@calcom/dayjs";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import { APP_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import isSmsCalEmail from "@calcom/lib/isSmsCalEmail";
-import { serverConfig } from "@calcom/lib/serverConfig";
 import { getServerErrorFromUnknown } from "@calcom/lib/server/getServerErrorFromUnknown";
+import { serverConfig } from "@calcom/lib/serverConfig";
 import { setTestEmail } from "@calcom/lib/testEmails";
 import { prisma } from "@calcom/prisma";
-
+import { decodeHTML } from "entities";
+import { z } from "zod";
+import { applyOrganizationSender, parseFromHeader } from "../lib/organizationSender";
 import { sanitizeDisplayName } from "../lib/sanitizeDisplayName";
 
 export default class BaseEmail {
@@ -29,6 +31,38 @@ export default class BaseEmail {
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
     return {};
   }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return null;
+  }
+
+  private async applySender(payload: Record<string, unknown>): Promise<{
+    payload: Record<string, unknown>;
+    customized: boolean;
+  }> {
+    const scope = this.getSenderScope();
+    if (!scope || typeof payload.from !== "string") return { payload, customized: false };
+
+    const envFrom = this.getMailerOptions().from;
+    if (!envFrom) return { payload, customized: false };
+
+    try {
+      const { getOrganizationEmailSenderService } = await import(
+        "@calcom/features/organizations/di/OrganizationEmailSenderService.container"
+      );
+      const sender = await getOrganizationEmailSenderService().resolveForScope(scope);
+      if (!sender) return { payload, customized: false };
+
+      const { from, customized } = applyOrganizationSender(payload.from, sender, {
+        address: parseFromHeader(envFrom).address,
+        systemNames: [EMAIL_FROM_NAME, APP_NAME],
+      });
+      return { payload: { ...payload, from }, customized };
+    } catch (error) {
+      console.warn(`${this.name}: failed to resolve organization email sender, using default`, error);
+      return { payload, customized: false };
+    }
+  }
   public async sendEmail() {
     const featuresRepository = new FeaturesRepository(prisma);
     const emailsDisabled = await featuresRepository.checkIfFeatureIsEnabledGlobally("emails");
@@ -41,14 +75,15 @@ export default class BaseEmail {
     if (process.env.INTEGRATION_TEST_MODE === "true") {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       //@ts-expect-error
-      setTestEmail(await this.getNodeMailerPayload());
+      setTestEmail((await this.applySender(await this.getNodeMailerPayload())).payload);
       console.log(
         "Skipped Sending Email as process.env.NEXT_PUBLIC_UNIT_TESTS is set. Emails are available in globalThis.testEmails"
       );
       return new Promise((r) => r("Skipped sendEmail for Unit Tests"));
     }
 
-    const payload = await this.getNodeMailerPayload();
+    const originalPayload = await this.getNodeMailerPayload();
+    const { payload, customized } = await this.applySender(originalPayload);
 
     const from = "from" in payload ? (payload.from as string) : "";
     const to = "to" in payload ? (payload.to as string) : "";
@@ -71,29 +106,46 @@ export default class BaseEmail {
       },
       ...(parseSubject.success && { subject: decodeHTML(parseSubject.data) }),
     };
-    const { createTransport } = await import("nodemailer");
-    await new Promise((resolve, reject) =>
-      createTransport(this.getMailerOptions().transport).sendMail(
-        payloadWithUnEscapedSubject,
-        (_err, info) => {
-          if (_err) {
-            const err = getServerErrorFromUnknown(_err);
-            this.printNodeMailerError(err);
-            reject(err);
-          } else {
-            resolve(info);
-          }
-        }
-      )
-    ).catch((e) =>
-      console.error(
-        "sendEmail",
-        `from: ${"from" in payloadWithUnEscapedSubject ? payloadWithUnEscapedSubject.from : ""}`,
-        `subject: ${"subject" in payloadWithUnEscapedSubject ? payloadWithUnEscapedSubject.subject : ""}`,
-        e
-      )
-    );
+    try {
+      await this.deliver(payloadWithUnEscapedSubject);
+    } catch (e) {
+      if (customized) {
+        // An organization's sender domain may not be verified with the provider yet; fall back to the env sender.
+        console.warn(
+          `${this.name}: delivery with organization sender failed, retrying with default sender`,
+          e
+        );
+        const originalFrom = "from" in originalPayload ? (originalPayload.from as string) : "";
+        await this.deliver({ ...payloadWithUnEscapedSubject, from: sanitizeDisplayName(originalFrom) }).catch(
+          (retryError) => this.logSendError(payloadWithUnEscapedSubject, retryError)
+        );
+      } else {
+        this.logSendError(payloadWithUnEscapedSubject, e);
+      }
+    }
     return new Promise((resolve) => resolve("send mail async"));
+  }
+  private async deliver(payload: Record<string, unknown>) {
+    const { createTransport } = await import("nodemailer");
+    return new Promise((resolve, reject) =>
+      createTransport(this.getMailerOptions().transport).sendMail(payload, (_err, info) => {
+        if (_err) {
+          const err = getServerErrorFromUnknown(_err);
+          this.printNodeMailerError(err);
+          reject(err);
+        } else {
+          resolve(info);
+        }
+      })
+    );
+  }
+  private logSendError(payload: Record<string, unknown>, error: unknown) {
+    console.error(
+      "sendEmail",
+      `from: ${"from" in payload ? payload.from : ""}`,
+      `subject: ${"subject" in payload ? payload.subject : ""}`,
+      error
+    );
   }
   protected getMailerOptions() {
     return {
