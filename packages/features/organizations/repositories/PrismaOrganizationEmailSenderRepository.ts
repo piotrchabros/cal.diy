@@ -1,0 +1,74 @@
+import type { PrismaClient } from "@calcom/prisma";
+import type {
+  IOrganizationEmailSenderRepository,
+  OrganizationEmailSenderRecord,
+} from "./interfaces/IOrganizationEmailSenderRepository";
+
+const settingsSelect = {
+  organizationId: true,
+  emailFromName: true,
+  emailFromAddress: true,
+  customDomain: true,
+} as const;
+
+export class PrismaOrganizationEmailSenderRepository implements IOrganizationEmailSenderRepository {
+  constructor(private readonly prismaClient: PrismaClient) {}
+
+  async findByOrganizationId(organizationId: number): Promise<OrganizationEmailSenderRecord | null> {
+    return this.prismaClient.organizationSettings.findUnique({
+      where: { organizationId },
+      select: settingsSelect,
+    });
+  }
+
+  async update(
+    organizationId: number,
+    input: { emailFromName: string | null; emailFromAddress: string | null }
+  ): Promise<OrganizationEmailSenderRecord | null> {
+    const organization = await this.prismaClient.team.findFirst({
+      where: { id: organizationId, isOrganization: true, parentId: null },
+      select: { id: true },
+    });
+    if (!organization) return null;
+
+    return this.prismaClient.organizationSettings.upsert({
+      where: { organizationId },
+      create: {
+        organizationId,
+        ...input,
+        orgAutoAcceptEmail: "",
+        isOrganizationConfigured: true,
+        isOrganizationVerified: true,
+        allowSEOIndexing: true,
+      },
+      update: input,
+      select: settingsSelect,
+    });
+  }
+
+  async findOrganizationIdByUserId(userId: number): Promise<number | null> {
+    const user = await this.prismaClient.user.findUnique({
+      where: { id: userId },
+      select: { organizationId: true },
+    });
+    return user?.organizationId ?? null;
+  }
+
+  async findOrganizationIdByUserEmail(email: string): Promise<number | null> {
+    // users.email is stored lowercase (see UserRepository)
+    const user = await this.prismaClient.user.findFirst({
+      where: { email: email.toLowerCase() },
+      select: { organizationId: true },
+    });
+    return user?.organizationId ?? null;
+  }
+
+  async findOrganizationIdByTeamId(teamId: number): Promise<number | null> {
+    const team = await this.prismaClient.team.findUnique({
+      where: { id: teamId },
+      select: { id: true, isOrganization: true, parentId: true },
+    });
+    if (!team) return null;
+    return team.isOrganization ? team.id : team.parentId;
+  }
+}

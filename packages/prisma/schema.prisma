@@ -744,6 +744,11 @@ model OrganizationSettings {
   disableAttendeeRescheduleRequestEmail Boolean @default(false)
   disableAttendeeLocationChangeEmail    Boolean @default(false)
   disableAttendeeNewEventEmail          Boolean @default(false)
+
+  /// Display name for emails sent on behalf of this organization; null falls back to EMAIL_FROM_NAME
+  emailFromName    String?
+  /// From address for this organization's emails; must be on the org's customDomain (or a parent domain); null falls back to EMAIL_FROM
+  emailFromAddress String?
 }
 
 enum MembershipRole {

@@ -21,4 +21,10 @@ export const ORGANIZATIONS_DI_TOKENS = {
   ORGANIZATION_MOVE_REPOSITORY_MODULE: Symbol("OrganizationMoveRepositoryModule"),
   ORGANIZATION_MOVE_SERVICE: Symbol("OrganizationMoveService"),
   ORGANIZATION_MOVE_SERVICE_MODULE: Symbol("OrganizationMoveServiceModule"),
+  ORGANIZATION_EMAIL_SENDER_REPOSITORY: Symbol("OrganizationEmailSenderRepository"),
+  ORGANIZATION_EMAIL_SENDER_REPOSITORY_MODULE: Symbol("OrganizationEmailSenderRepositoryModule"),
+  ORGANIZATION_EMAIL_SENDER_SERVICE: Symbol("OrganizationEmailSenderService"),
+  ORGANIZATION_EMAIL_SENDER_SERVICE_MODULE: Symbol("OrganizationEmailSenderServiceModule"),
+  ORGANIZATION_EMAIL_SENDER_CONFIG: Symbol("OrganizationEmailSenderConfig"),
+  ORGANIZATION_EMAIL_SENDER_CONFIG_MODULE: Symbol("OrganizationEmailSenderConfigModule"),
 };
