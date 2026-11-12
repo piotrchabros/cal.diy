@@ -5,6 +5,8 @@ export const NOTETAKER_DI_TOKENS = {
   EVENT_TYPE_NOTETAKER_SETTINGS_REPOSITORY_MODULE: Symbol("EventTypeNotetakerSettingsRepositoryModule"),
   ORGANIZATION_NOTETAKER_SETTINGS_REPOSITORY: Symbol("OrganizationNotetakerSettingsRepository"),
   ORGANIZATION_NOTETAKER_SETTINGS_REPOSITORY_MODULE: Symbol("OrganizationNotetakerSettingsRepositoryModule"),
+  ORGANIZATION_NOTETAKER_SETTINGS_SERVICE: Symbol("OrganizationNotetakerSettingsService"),
+  ORGANIZATION_NOTETAKER_SETTINGS_SERVICE_MODULE: Symbol("OrganizationNotetakerSettingsServiceModule"),
   NOTETAKER_SESSION_REPOSITORY: Symbol("NotetakerSessionRepository"),
   NOTETAKER_SESSION_REPOSITORY_MODULE: Symbol("NotetakerSessionRepositoryModule"),
   NOTETAKER_TRANSCRIPT_REPOSITORY: Symbol("NotetakerTranscriptRepository"),

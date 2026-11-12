@@ -5233,5 +5233,8 @@
   "organization_make_member": "Make member",
   "organization_owner_demoted": "Owner removed",
   "organization_last_owner_cannot_be_deleted": "This account is the last owner of its organization. Make someone else an owner before deleting it.",
+  "notetaker_bot_name_too_long": "The notetaker name can be at most 100 characters",
+  "notetaker_bot_image_invalid": "Upload a PNG, JPEG or WEBP image",
+  "notetaker_bot_image_too_large": "The image is too large. Upload a smaller image.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

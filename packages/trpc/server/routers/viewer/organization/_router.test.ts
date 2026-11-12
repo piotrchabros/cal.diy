@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   setRole: vi.fn(),
   removeMember: vi.fn(),
   listTeams: vi.fn(),
+  getNotetakerSettings: vi.fn(),
+  updateNotetakerSettings: vi.fn(),
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -38,6 +40,13 @@ vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.contain
     setRole: mocks.setRole,
     removeMember: mocks.removeMember,
     listTeams: mocks.listTeams,
+  }),
+}));
+
+vi.mock("@calcom/features/notetaker/di/OrganizationNotetakerSettingsService.container", () => ({
+  getOrganizationNotetakerSettingsService: () => ({
+    get: mocks.getNotetakerSettings,
+    update: mocks.updateNotetakerSettings,
   }),
 }));
 
@@ -69,6 +78,13 @@ const member = {
   accepted: true,
 };
 
+const notetakerSettings = {
+  botName: "Acme Scribe",
+  botImageDataUrl: null,
+  fallbackBotName: "Notetaker",
+  canEdit: true,
+};
+
 const team = { teamId: 21, name: "Sales", slug: "sales", memberCount: 2, viewerIsMember: true };
 
 const sessionFor = (overrides: { organizationId?: number | null; name?: string | null } = {}) => ({
@@ -91,6 +107,8 @@ const serviceMocks = () => [
   mocks.setRole,
   mocks.removeMember,
   mocks.listTeams,
+  mocks.getNotetakerSettings,
+  mocks.updateNotetakerSettings,
 ];
 
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
@@ -101,6 +119,8 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.updateRole({ userId: 11, role: "ADMIN" }),
   caller.removeMember({ userId: 11 }),
   caller.listTeams({}),
+  caller.notetakerSettings(),
+  caller.updateNotetakerSettings({ botName: "Acme Scribe" }),
 ];
 
 describe("viewer organization router", () => {
@@ -124,6 +144,8 @@ describe("viewer organization router", () => {
     mocks.setRole.mockResolvedValue({ userId: 11, role: "ADMIN" });
     mocks.removeMember.mockResolvedValue({ userId: 11 });
     mocks.listTeams.mockResolvedValue({ items: [team], nextCursor: undefined });
+    mocks.getNotetakerSettings.mockResolvedValue(notetakerSettings);
+    mocks.updateNotetakerSettings.mockResolvedValue(notetakerSettings);
   });
 
   afterEach(() => {
@@ -202,6 +224,23 @@ describe("viewer organization router", () => {
         code: "BAD_REQUEST",
       });
       expect(mocks.updateName).not.toHaveBeenCalled();
+    });
+
+    it("rejects a notetaker settings update without any field", async () => {
+      await expect(createCaller(ctx).updateNotetakerSettings({})).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateNotetakerSettings).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a bot name over 200 characters", { botName: "a".repeat(201) }],
+      ["a bot image over 1,000,000 characters", { botImage: "a".repeat(1_000_001) }],
+    ])("rejects %s", async (_, input) => {
+      await expect(createCaller(ctx).updateNotetakerSettings(input)).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateNotetakerSettings).not.toHaveBeenCalled();
     });
 
     it.each([0, 101])("rejects list limit %s", async (limit) => {
@@ -305,6 +344,51 @@ describe("viewer organization router", () => {
       });
     });
 
+    it("loads the notetaker settings for the session's org and user", async () => {
+      await expect(createCaller(ctx).notetakerSettings()).resolves.toEqual(notetakerSettings);
+      expect(mocks.getNotetakerSettings).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("updates the notetaker settings of the session's organization", async () => {
+      const botImage = "data:image/png;base64,iVBORw0KGgo=";
+
+      const caller = createCaller(ctx);
+
+      await expect(
+        caller.updateNotetakerSettings({ botName: "Acme Scribe", botImage, organizationId: 99 } as Parameters<
+          typeof caller.updateNotetakerSettings
+        >[0])
+      ).resolves.toEqual(notetakerSettings);
+      expect(mocks.updateNotetakerSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        botName: "Acme Scribe",
+        botImage,
+      });
+    });
+
+    it("passes null to clear the notetaker name and image", async () => {
+      await createCaller(ctx).updateNotetakerSettings({ botName: null, botImage: null });
+
+      expect(mocks.updateNotetakerSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        botName: null,
+        botImage: null,
+      });
+    });
+
+    it("leaves an omitted notetaker field undefined", async () => {
+      await createCaller(ctx).updateNotetakerSettings({ botImage: null });
+
+      expect(mocks.updateNotetakerSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        botName: undefined,
+        botImage: null,
+      });
+    });
+
     it("ignores an organizationId sent in the input", async () => {
       const caller = createCaller(ctx);
       const foreign = { organizationId: 99 };
@@ -370,6 +454,20 @@ describe("viewer organization router", () => {
       });
     });
 
+    it.each([
+      ["BadRequest", "BAD_REQUEST", "notetaker_bot_image_too_large"],
+      ["Forbidden", "FORBIDDEN", "organization_only_managers_can_update_organization"],
+    ] as const)("maps ErrorWithCode %s from updateNotetakerSettings to %s", async (factory, code, message) => {
+      mocks.updateNotetakerSettings.mockRejectedValue(ErrorWithCode.Factory[factory](message));
+
+      await expect(
+        createCaller(ctx).updateNotetakerSettings({ botName: "Acme Scribe" })
+      ).rejects.toMatchObject({
+        code,
+        message,
+      });
+    });
+
     it("maps a NotFound from current", async () => {
       mocks.getForMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("organization_not_found"));
 
@@ -385,6 +483,12 @@ describe("viewer organization router", () => {
 
       expect(result.items[0]).toEqual(member);
       expect(result.items[0]).not.toHaveProperty("password");
+    });
+
+    it("strips fields that are not part of the notetaker settings DTO", async () => {
+      mocks.getNotetakerSettings.mockResolvedValue({ ...notetakerSettings, organizationId: 5 });
+
+      await expect(createCaller(ctx).notetakerSettings()).resolves.toEqual(notetakerSettings);
     });
   });
 });
