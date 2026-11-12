@@ -4,6 +4,7 @@ export type EmailSenderScope =
   | { organizationId: number }
   | { teamId: number }
   | { userId: number }
+  | { eventTypeId: number }
   | { userEmail: string };
 
 export type OrganizationEmailSenderDto = { name: string | null; address: string | null };

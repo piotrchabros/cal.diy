@@ -17,10 +17,12 @@ function buildRepository() {
   const teamFindUnique = vi.fn();
   const userFindUnique = vi.fn();
   const userFindFirst = vi.fn();
+  const eventTypeFindUnique = vi.fn();
   const prismaClient = {
     organizationSettings: { findUnique: settingsFindUnique, upsert: settingsUpsert },
     team: { findFirst: teamFindFirst, findUnique: teamFindUnique },
     user: { findUnique: userFindUnique, findFirst: userFindFirst },
+    eventType: { findUnique: eventTypeFindUnique },
   } as unknown as PrismaClient;
   return {
     repository: new PrismaOrganizationEmailSenderRepository(prismaClient),
@@ -30,6 +32,7 @@ function buildRepository() {
     teamFindUnique,
     userFindUnique,
     userFindFirst,
+    eventTypeFindUnique,
   };
 }
 
@@ -105,5 +108,25 @@ describe("PrismaOrganizationEmailSenderRepository", () => {
     expect(await repository.findOrganizationIdByTeamId(7)).toBe(7);
     expect(await repository.findOrganizationIdByTeamId(9)).toBe(7);
     expect(await repository.findOrganizationIdByTeamId(10)).toBeNull();
+  });
+
+  it("resolves an event type through its team, its owner, or to null", async () => {
+    const { repository, eventTypeFindUnique, teamFindUnique, userFindUnique } = buildRepository();
+    eventTypeFindUnique
+      .mockResolvedValueOnce({ teamId: 9, userId: null })
+      .mockResolvedValueOnce({ teamId: null, userId: 4 })
+      .mockResolvedValueOnce({ teamId: null, userId: null })
+      .mockResolvedValueOnce(null);
+    teamFindUnique.mockResolvedValueOnce({ id: 9, isOrganization: false, parentId: 7 });
+    userFindUnique.mockResolvedValueOnce({ organizationId: 8 });
+
+    expect(await repository.findOrganizationIdByEventTypeId(1)).toBe(7);
+    expect(await repository.findOrganizationIdByEventTypeId(2)).toBe(8);
+    expect(await repository.findOrganizationIdByEventTypeId(3)).toBeNull();
+    expect(await repository.findOrganizationIdByEventTypeId(4)).toBeNull();
+    expect(eventTypeFindUnique).toHaveBeenCalledWith({
+      where: { id: 1 },
+      select: { teamId: true, userId: true },
+    });
   });
 });

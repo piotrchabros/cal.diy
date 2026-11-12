@@ -30,6 +30,7 @@ function setup(
     findOrganizationIdByUserId: vi.fn().mockResolvedValue(ORG_ID),
     findOrganizationIdByUserEmail: vi.fn().mockResolvedValue(ORG_ID),
     findOrganizationIdByTeamId: vi.fn().mockResolvedValue(ORG_ID),
+    findOrganizationIdByEventTypeId: vi.fn().mockResolvedValue(ORG_ID),
   } satisfies IOrganizationEmailSenderRepository;
   const getRole = vi.fn().mockResolvedValue(options.role === undefined ? "ADMIN" : options.role);
   const service = new OrganizationEmailSenderService({
@@ -152,6 +153,7 @@ describe("OrganizationEmailSenderService", () => {
       ["organizationId", { organizationId: ORG_ID }, null],
       ["teamId", { teamId: 3 }, "findOrganizationIdByTeamId"],
       ["userId", { userId: 4 }, "findOrganizationIdByUserId"],
+      ["eventTypeId", { eventTypeId: 5 }, "findOrganizationIdByEventTypeId"],
       ["userEmail", { userEmail: "a@b.co" }, "findOrganizationIdByUserEmail"],
     ] as const)("resolves a %s scope", async (_name, scope, lookup) => {
       const { service, repository } = setup();
@@ -212,6 +214,16 @@ describe("OrganizationEmailSenderService", () => {
         await service.resolveForScope({ teamId: 3 });
         await service.resolveForScope({ userId: 4 });
         expect(repository.findByOrganizationId.mock.calls.length).toBe(callsBefore + 2);
+      });
+
+      it("caches eventTypeId scopes and clears them on a public invalidateOrganization call", async () => {
+        const { service, repository } = setup();
+        await service.resolveForScope({ eventTypeId: 5 });
+        await service.resolveForScope({ eventTypeId: 5 });
+        expect(repository.findOrganizationIdByEventTypeId).toHaveBeenCalledTimes(1);
+        service.invalidateOrganization(ORG_ID);
+        await service.resolveForScope({ eventTypeId: 5 });
+        expect(repository.findOrganizationIdByEventTypeId).toHaveBeenCalledTimes(2);
       });
     });
   });

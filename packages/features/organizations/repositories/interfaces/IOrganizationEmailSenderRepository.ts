@@ -15,4 +15,6 @@ export interface IOrganizationEmailSenderRepository {
   findOrganizationIdByUserEmail(email: string): Promise<number | null>;
   // The team's own id when it is the organization, otherwise its parent organization
   findOrganizationIdByTeamId(teamId: number): Promise<number | null>;
+  // Resolved through the event type's team when it has one, otherwise through its owner
+  findOrganizationIdByEventTypeId(eventTypeId: number): Promise<number | null>;
 }

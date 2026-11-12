@@ -123,7 +123,7 @@ export class OrganizationEmailSenderService {
     return value;
   }
 
-  private invalidateOrganization(organizationId: number): void {
+  invalidateOrganization(organizationId: number): void {
     this.cache.forEach((entry, key) => {
       if (entry.organizationId === organizationId) this.cache.delete(key);
     });
@@ -134,6 +134,7 @@ export class OrganizationEmailSenderService {
     if ("organizationId" in scope) return Promise.resolve(scope.organizationId);
     if ("teamId" in scope) return repository.findOrganizationIdByTeamId(scope.teamId);
     if ("userId" in scope) return repository.findOrganizationIdByUserId(scope.userId);
+    if ("eventTypeId" in scope) return repository.findOrganizationIdByEventTypeId(scope.eventTypeId);
     return repository.findOrganizationIdByUserEmail(scope.userEmail);
   }
 }
