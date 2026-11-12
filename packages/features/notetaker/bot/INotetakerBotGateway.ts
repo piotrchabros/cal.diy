@@ -8,14 +8,23 @@ import type {
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
 
+export type NotetakerBotAvatar = { kind: "jpeg"; base64: string };
+
+// Kept apart from NotetakerBotJoinRequest: SelfHostedBotGateway JSON-posts the whole request to the bot.
+export type NotetakerBotJoinOptions = { avatar?: NotetakerBotAvatar | null };
+
 export interface INotetakerBotGateway {
   /**
    * Rejects with an `ErrorWithCode` built by `createNotetakerBotGatewayError`:
    * `LINK_UNUSABLE` for HTTP 422 (except body `{ error: "invalid_request" }`, which is `TRANSIENT`:
    * the bot could not read the request, so the next sweep retries until the give-up deadline),
    * `TRANSIENT` for timeout, network error, 5xx or 503.
+   * Providers that cannot show an image ignore `options.avatar`.
    */
-  requestJoin(input: NotetakerBotJoinRequest): Promise<{ externalRef: string }>;
+  requestJoin(
+    input: NotetakerBotJoinRequest,
+    options?: NotetakerBotJoinOptions
+  ): Promise<{ externalRef: string }>;
   /** Resolves, without throwing, on 404. */
   requestStop(input: { sessionId: string; reason: NotetakerBotStopReason }): Promise<void>;
   getState(sessionId: string): Promise<NotetakerBotStateDto | null>;

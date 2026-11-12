@@ -76,6 +76,82 @@ async function captureError(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("expected the promise to reject");
 }
 
+const AVATAR = { kind: "jpeg", base64: "QUJD" } as const;
+
+describe("buildRecallCreateBotRequest avatar", () => {
+  it("sends the same image for both call states", () => {
+    const body = buildRecallCreateBotRequest(buildJoinRequest(), NOW, AVATAR);
+    expect(body.automatic_video_output).toEqual({
+      in_call_recording: { kind: "jpeg", b64_data: "QUJD" },
+      in_call_not_recording: { kind: "jpeg", b64_data: "QUJD" },
+    });
+  });
+
+  it("omits automatic_video_output without an avatar", () => {
+    expect("automatic_video_output" in buildRecallCreateBotRequest(buildJoinRequest(), NOW)).toBe(false);
+    expect("automatic_video_output" in buildRecallCreateBotRequest(buildJoinRequest(), NOW, null)).toBe(
+      false
+    );
+  });
+});
+
+describe("RecallBotGateway avatar fallback", () => {
+  function badRequest(fieldNames: string[]) {
+    return createRecallApiError("BAD_REQUEST", "bad", { status: 400, fieldNames });
+  }
+
+  it("retries once without the image when Recall rejects automatic_video_output", async () => {
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0].automatic_video_output).toBeDefined();
+    expect(client.createBot.mock.calls[1][0].automatic_video_output).toBeUndefined();
+  });
+
+  it("maps a 400 on the retry to LINK_UNUSABLE", async () => {
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["meeting_url"]));
+
+    const error = await captureError(
+      createGateway({ client }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 400 on the meeting url", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["meeting_url"]));
+
+    const error = await captureError(
+      createGateway({ client }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry without an avatar", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["automatic_video_output"]));
+
+    const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("buildRecallCreateBotRequest", () => {
   it("maps the join request onto the Recall create bot body", () => {
     expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW)).toEqual({
