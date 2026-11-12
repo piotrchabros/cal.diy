@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sendChangeOfEmailVerification, sendEmailVerification } from "./verifyEmail";
+import {
+  sendChangeOfEmailVerification,
+  sendEmailVerification,
+  sendEmailVerificationByCode,
+} from "./verifyEmail";
 
 const { prismaMock, getBaseUrlForEmail, getBaseUrlForUser, emails } = vi.hoisted(() => ({
   prismaMock: { verificationToken: { create: vi.fn() } },
@@ -80,6 +84,21 @@ describe("verifyEmail links", () => {
     expect(emails.sendEmailVerificationLink).toHaveBeenCalledWith(
       expect.objectContaining({ senderScope: { userId: 42 } })
     );
+  });
+
+  it("scopes the verification code sender to the event type when given", async () => {
+    await sendEmailVerificationByCode({ email: "booker@example.com", username: "booker", eventTypeId: 7 });
+
+    expect(emails.sendEmailVerificationCode).toHaveBeenCalledWith(
+      expect.objectContaining({ senderScope: { eventTypeId: 7 } })
+    );
+  });
+
+  it("leaves the verification code sender unscoped without an event type", async () => {
+    await sendEmailVerificationByCode({ email: "booker@example.com", username: "booker" });
+
+    const payload = emails.sendEmailVerificationCode.mock.calls.at(-1)?.[0];
+    expect(payload).not.toHaveProperty("senderScope");
   });
 
   it("sends the change-of-email link on the current address's organization base URL", async () => {

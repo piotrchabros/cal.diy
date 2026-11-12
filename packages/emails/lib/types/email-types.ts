@@ -1,3 +1,4 @@
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { TFunction } from "i18next";
 
 export type OrganizationCreation = {
@@ -21,4 +22,5 @@ export type EmailVerifyCode = {
   verificationEmailCode: string;
   isVerifyingEmail?: boolean;
   hideLogo?: boolean;
+  senderScope?: EmailSenderScope;
 };

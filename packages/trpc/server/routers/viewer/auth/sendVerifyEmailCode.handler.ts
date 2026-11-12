@@ -41,5 +41,6 @@ export const sendVerifyEmailCode = async ({
     language: input.language,
     isVerifyingEmail: input.isVerifyingEmail,
     hideBranding,
+    eventTypeId: input.eventTypeId,
   });
 };

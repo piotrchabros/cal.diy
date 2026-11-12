@@ -28,6 +28,7 @@ interface VerifyEmailType {
   isPlatform?: boolean;
   extraParams?: Record<string, string>;
   hideBranding?: boolean;
+  eventTypeId?: number;
 }
 
 export const sendEmailVerification = async ({
@@ -104,6 +105,7 @@ export const sendEmailVerificationByCode = async ({
   username,
   isVerifyingEmail,
   hideBranding,
+  eventTypeId,
 }: VerifyEmailType) => {
   if (await checkIfEmailIsBlockedInWatchlistController({ email, organizationId: null, span: sentrySpan })) {
     log.warn("Email is blocked - not sending verification email", email);
@@ -127,6 +129,7 @@ export const sendEmailVerificationByCode = async ({
     },
     isVerifyingEmail,
     hideLogo: hideBranding,
+    ...(eventTypeId !== undefined && { senderScope: { eventTypeId } }),
   });
 
   return { ok: true, skipped: false };
