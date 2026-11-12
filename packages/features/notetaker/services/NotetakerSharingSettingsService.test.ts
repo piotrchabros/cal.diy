@@ -634,8 +634,8 @@ describe("NotetakerSharingSettingsService", () => {
   });
 
   describe("personal event type", () => {
-    const SALES = { teamId: TEAM_ID, name: "Sales" };
-    const DESIGN = { teamId: OTHER_TEAM_ID, name: "Design" };
+    const SALES = { teamId: TEAM_ID, name: "Sales", isOrganization: false };
+    const DESIGN = { teamId: OTHER_TEAM_ID, name: "Design", isOrganization: false };
 
     function storedSettings() {
       return repositories.store.eventTypeSettings.get(EVENT_TYPE_ID);
@@ -692,11 +692,9 @@ describe("NotetakerSharingSettingsService", () => {
         expect(result).toMatchObject({ available: false, unavailableReason: "FEATURE_DISABLED" });
       });
 
-      it("offers the owner's accepted teams by name then id, without organizations or pending invitations", async () => {
+      it("offers the owner's accepted teams by name then id, without pending invitations", async () => {
         repositories.store.setTeam(19, "Sales");
         addMembers([ACTOR_ID], 19);
-        // An organization is never registered as a team: findTeamsByIds leaves organizations out.
-        addMembers([ACTOR_ID], ORGANIZATION_ID);
 
         const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
 
@@ -710,8 +708,32 @@ describe("NotetakerSharingSettingsService", () => {
           setAt: null,
           setByName: null,
           teamId: null,
-          teamOptions: [DESIGN, { teamId: 19, name: "Sales" }, SALES],
+          teamOptions: [DESIGN, { teamId: 19, name: "Sales", isOrganization: false }, SALES],
         });
+      });
+
+      it("offers an organization the owner belongs to first when organizations are enabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        repositories.store.setOrganization(ORGANIZATION_ID, "Acme");
+        addMembers([ACTOR_ID], ORGANIZATION_ID);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result.teamOptions).toEqual([
+          { teamId: ORGANIZATION_ID, name: "Acme", isOrganization: true },
+          DESIGN,
+          SALES,
+        ]);
+      });
+
+      it("leaves the organization out when organizations are disabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+        repositories.store.setOrganization(ORGANIZATION_ID, "Acme");
+        addMembers([ACTOR_ID], ORGANIZATION_ID);
+
+        const result = await service.get({ eventTypeId: EVENT_TYPE_ID, userId: ACTOR_ID });
+
+        expect(result.teamOptions).toEqual([DESIGN, SALES]);
       });
 
       it("returns the stored team and checks the people against it", async () => {
@@ -829,7 +851,6 @@ describe("NotetakerSharingSettingsService", () => {
       it.each([
         ["an unknown team", 999],
         ["a team whose invitation the owner has not accepted", PENDING_TEAM_ID],
-        ["an organization the owner belongs to", ORGANIZATION_ID],
       ])("refuses %s, for every mode", async (_label, teamId) => {
         addMembers([ACTOR_ID], ORGANIZATION_ID);
 
@@ -842,6 +863,51 @@ describe("NotetakerSharingSettingsService", () => {
         }
         expect(repositories.store.sharingChanges).toHaveLength(0);
         expect(repositories.store.eventTypeSettings.size).toBe(0);
+      });
+
+      it("refuses an organization the owner belongs to when organizations are disabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+        repositories.store.setOrganization(ORGANIZATION_ID, "Acme");
+        addMembers([ACTOR_ID], ORGANIZATION_ID);
+
+        await expectRejection(
+          service.set({
+            eventTypeId: EVENT_TYPE_ID,
+            mode: "TEAM",
+            teamId: ORGANIZATION_ID,
+            userId: ACTOR_ID,
+          }),
+          ErrorCode.BadRequest,
+          "TEAM_NOT_ALLOWED"
+        );
+        expect(repositories.store.sharingChanges).toHaveLength(0);
+      });
+
+      it("shares with an organization the owner belongs to when organizations are enabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+        repositories.store.setOrganization(ORGANIZATION_ID, "Acme");
+        addMembers([ACTOR_ID, 2], ORGANIZATION_ID);
+
+        const result = await service.set({
+          eventTypeId: EVENT_TYPE_ID,
+          mode: "TEAM",
+          teamId: ORGANIZATION_ID,
+          userId: ACTOR_ID,
+        });
+
+        expect(result).toMatchObject({
+          mode: "TEAM",
+          teamId: ORGANIZATION_ID,
+          teamName: "Acme",
+        });
+        expect(storedSettings()).toMatchObject({ sharingMode: "TEAM", sharingTeamId: ORGANIZATION_ID });
+
+        const candidates = await service.listCandidates({
+          eventTypeId: EVENT_TYPE_ID,
+          teamId: ORGANIZATION_ID,
+          userId: ACTOR_ID,
+        });
+        expect(candidates.items.map((item) => item.userId)).toEqual([1, 2]);
       });
 
       it("refuses sharing when the owner is in no team", async () => {

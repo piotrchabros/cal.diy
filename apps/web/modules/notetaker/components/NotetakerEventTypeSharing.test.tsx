@@ -225,8 +225,12 @@ describe("NotetakerEventTypeSharing", () => {
 
   describe("personal event type", () => {
     const options = [
-      { teamId: 1, name: "Sales" },
-      { teamId: 2, name: "Ops" },
+      { teamId: 1, name: "Sales", isOrganization: false },
+      { teamId: 2, name: "Ops", isOrganization: false },
+    ];
+    const orgOptions = [
+      { teamId: 7, name: "Acme", isOrganization: true },
+      { teamId: 1, name: "Sales", isOrganization: false },
     ];
     const teamSelect = () => screen.getByTestId("notetaker-sharing-team") as HTMLSelectElement;
 
@@ -244,6 +248,44 @@ describe("NotetakerEventTypeSharing", () => {
       expect(screen.getByText("Sales")).toBeInTheDocument();
       expect(screen.getByText("Ops")).toBeInTheDocument();
       expect(screen.getByText("notetaker_sharing_personal_description")).toBeInTheDocument();
+    });
+
+    it("renders an organization option with the organization key and keeps the server order", () => {
+      setup(buildDto({ teamId: null, teamName: null, teamOptions: orgOptions }));
+
+      const texts = Array.from(teamSelect().options).map((option) => option.textContent);
+      expect(texts).toEqual([
+        "notetaker_sharing_team_placeholder",
+        'notetaker_sharing_team_option_organization:Acme|{"escapeValue":false}',
+        "Sales",
+      ]);
+    });
+
+    it("switches the team label and description to organization keys when an organization is chosen", () => {
+      setup(buildDto({ teamId: 1, teamName: "Sales", teamOptions: orgOptions }));
+      expect(screen.getByText("notetaker_sharing_mode_team")).toBeInTheDocument();
+      expect(
+        screen.getByText('notetaker_sharing_mode_team_description:Sales|{"escapeValue":false}')
+      ).toBeInTheDocument();
+
+      fireEvent.change(teamSelect(), { target: { value: "7" } });
+
+      expect(screen.getByText("notetaker_sharing_mode_organization")).toBeInTheDocument();
+      expect(
+        screen.getByText('notetaker_sharing_mode_organization_description:Acme|{"escapeValue":false}')
+      ).toBeInTheDocument();
+      expect(screen.queryByText("notetaker_sharing_mode_team")).not.toBeInTheDocument();
+
+      fireEvent.change(teamSelect(), { target: { value: "1" } });
+
+      expect(screen.getByText("notetaker_sharing_mode_team")).toBeInTheDocument();
+    });
+
+    it("keeps the team label for a team event type", () => {
+      setup(buildDto({ teamId: 9, teamOptions: [] }));
+
+      expect(screen.getByText("notetaker_sharing_mode_team")).toBeInTheDocument();
+      expect(screen.queryByText("notetaker_sharing_mode_organization")).not.toBeInTheDocument();
     });
 
     it("preselects a single team without enabling save", () => {

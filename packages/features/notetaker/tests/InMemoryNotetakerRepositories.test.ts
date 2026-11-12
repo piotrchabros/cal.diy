@@ -854,6 +854,35 @@ describe("InMemoryNotetakerRepositories", () => {
       ]);
       expect(await repo.findTeamsByIds({ teamIds: [] })).toEqual([]);
     });
+
+    it("findTeamsByIds skips organizations", async () => {
+      const store = repositories.store;
+      store.setTeam(31, "Alpha");
+      store.setOrganization(34, "Org");
+
+      expect(
+        await repositories.eventTypeNotetakerSettingsRepository.findTeamsByIds({ teamIds: [31, 34] })
+      ).toEqual([{ teamId: 31, teamName: "Alpha" }]);
+    });
+
+    it("findTeamsAndOrganizationsByIds puts organizations first, then name and id, skipping unknown ids", async () => {
+      const store = repositories.store;
+      store.setTeam(33, "Ops");
+      store.setTeam(32, "Ops");
+      store.setTeam(31, "Alpha");
+      store.setOrganization(36, "Zeta org");
+      store.setOrganization(35, "Beta org");
+      const repo = repositories.eventTypeNotetakerSettingsRepository;
+
+      expect(await repo.findTeamsAndOrganizationsByIds({ teamIds: [33, 32, 36, 31, 35, 35, 99] })).toEqual([
+        { teamId: 35, teamName: "Beta org", isOrganization: true },
+        { teamId: 36, teamName: "Zeta org", isOrganization: true },
+        { teamId: 31, teamName: "Alpha", isOrganization: false },
+        { teamId: 32, teamName: "Ops", isOrganization: false },
+        { teamId: 33, teamName: "Ops", isOrganization: false },
+      ]);
+      expect(await repo.findTeamsAndOrganizationsByIds({ teamIds: [] })).toEqual([]);
+    });
   });
 
   describe("findByEventTypeIdsIncludeResultsSession", () => {

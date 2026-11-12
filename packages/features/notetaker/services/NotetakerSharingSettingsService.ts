@@ -1,10 +1,10 @@
 import type { IFeaturesRepository } from "@calcom/features/flags/features.repository.interface";
 import type {
   NotetakerEventTypeSharingDto,
+  NotetakerEventTypeSharingTeamOptionDto,
   NotetakerSharingCandidatesDto,
   NotetakerSharingModeDto,
   NotetakerSharingPersonDto,
-  NotetakerSharingTeamOptionDto,
   NotetakerSharingUnavailableReasonDto,
 } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
 import { NOTETAKER_SHARING_MAX_PEOPLE } from "@calcom/lib/dto/NotetakerEventTypeSharingDto";
@@ -28,8 +28,8 @@ type SharingTarget =
   | {
       kind: "PERSONAL";
       ownerUserId: number;
-      teamOptions: NotetakerSharingTeamOptionDto[];
-      chosenTeam: NotetakerSharingTeamOptionDto | null;
+      teamOptions: NotetakerEventTypeSharingTeamOptionDto[];
+      chosenTeam: NotetakerEventTypeSharingTeamOptionDto | null;
     }
   | { kind: "NONE" };
 
@@ -268,8 +268,13 @@ export class NotetakerSharingSettingsService {
 
     const { eventTypeNotetakerSettingsRepository, membershipLookup } = this.deps;
     const ownerTeamIds = await membershipLookup.listAcceptedTeamIds({ userId: context.userId });
-    const teams = await eventTypeNotetakerSettingsRepository.findTeamsByIds({ teamIds: ownerTeamIds });
-    const teamOptions = teams.map(({ teamId, teamName }) => ({ teamId, name: teamName }));
+    const teams = await eventTypeNotetakerSettingsRepository.findTeamsAndOrganizationsByIds({
+      teamIds: ownerTeamIds,
+    });
+    const organizationsEnabled = isOrganizationsEnabled();
+    const teamOptions = teams
+      .filter((team) => organizationsEnabled || !team.isOrganization)
+      .map(({ teamId, teamName, isOrganization }) => ({ teamId, name: teamName, isOrganization }));
     const storedTeamId = context.settings?.sharingTeamId ?? null;
 
     return {
@@ -321,7 +326,7 @@ export class NotetakerSharingSettingsService {
   private resolvePersonalTeam(
     target: Extract<SharingTarget, { kind: "PERSONAL" }>,
     requestedTeamId: number | undefined
-  ): NotetakerSharingTeamOptionDto | null {
+  ): NotetakerEventTypeSharingTeamOptionDto | null {
     if (requestedTeamId === undefined) return target.chosenTeam;
     const requested = target.teamOptions.find((option) => option.teamId === requestedTeamId);
     if (!requested) throw ErrorWithCode.Factory.BadRequest("TEAM_NOT_ALLOWED");
