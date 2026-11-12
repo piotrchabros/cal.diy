@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   listTeams: vi.fn(),
   getNotetakerSettings: vi.fn(),
   updateNotetakerSettings: vi.fn(),
+  getEmailSender: vi.fn(),
+  updateEmailSender: vi.fn(),
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -52,6 +54,13 @@ vi.mock("@calcom/features/notetaker/di/OrganizationNotetakerSettingsService.cont
   getOrganizationNotetakerSettingsService: () => ({
     get: mocks.getNotetakerSettings,
     update: mocks.updateNotetakerSettings,
+  }),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationEmailSenderService.container", () => ({
+  getOrganizationEmailSenderService: () => ({
+    get: mocks.getEmailSender,
+    update: mocks.updateEmailSender,
   }),
 }));
 
@@ -91,6 +100,16 @@ const notetakerSettings = {
   canEdit: true,
 };
 
+const emailSenderSettings = {
+  senderName: "Acme Team",
+  senderAddress: "hello@acme.example.com",
+  senderAddressActive: true,
+  allowedDomain: "acme.example.com",
+  fallbackSenderName: "Cal.diy",
+  fallbackSenderAddress: "noreply@cal.example.com",
+  canEdit: true,
+};
+
 const team = { teamId: 21, name: "Sales", slug: "sales", memberCount: 2, viewerIsMember: true };
 
 const sessionFor = (overrides: { organizationId?: number | null; name?: string | null } = {}) => ({
@@ -116,6 +135,8 @@ const serviceMocks = () => [
   mocks.listTeams,
   mocks.getNotetakerSettings,
   mocks.updateNotetakerSettings,
+  mocks.getEmailSender,
+  mocks.updateEmailSender,
 ];
 
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
@@ -129,6 +150,8 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.listTeams({}),
   caller.notetakerSettings(),
   caller.updateNotetakerSettings({ botName: "Acme Scribe" }),
+  caller.emailSender(),
+  caller.updateEmailSender({ senderName: "Acme Team" }),
 ];
 
 describe("viewer organization router", () => {
@@ -166,6 +189,8 @@ describe("viewer organization router", () => {
     mocks.listTeams.mockResolvedValue({ items: [team], nextCursor: undefined });
     mocks.getNotetakerSettings.mockResolvedValue(notetakerSettings);
     mocks.updateNotetakerSettings.mockResolvedValue(notetakerSettings);
+    mocks.getEmailSender.mockResolvedValue(emailSenderSettings);
+    mocks.updateEmailSender.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -276,6 +301,21 @@ describe("viewer organization router", () => {
         code: "BAD_REQUEST",
       });
       expect(mocks.updateNotetakerSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects an email sender update without any field", async () => {
+      await expect(createCaller(ctx).updateEmailSender({})).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(mocks.updateEmailSender).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a sender name over 300 characters", { senderName: "a".repeat(301) }],
+      ["a sender address over 300 characters", { senderAddress: "a".repeat(301) }],
+    ])("rejects %s", async (_, input) => {
+      await expect(createCaller(ctx).updateEmailSender(input)).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateEmailSender).not.toHaveBeenCalled();
     });
 
     it.each([0, 101])("rejects list limit %s", async (limit) => {
@@ -390,6 +430,41 @@ describe("viewer organization router", () => {
         actorUserId: 7,
         userId: 11,
         newUsername: "jane-new",
+      });
+    });
+
+    it("loads the email sender settings for the session's org and user", async () => {
+      await expect(createCaller(ctx).emailSender()).resolves.toEqual(emailSenderSettings);
+      expect(mocks.getEmailSender).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("updates the email sender of the session's organization", async () => {
+      const caller = createCaller(ctx);
+
+      await expect(
+        caller.updateEmailSender({
+          senderName: "Acme Team",
+          senderAddress: "hello@acme.example.com",
+          organizationId: 99,
+        } as Parameters<typeof caller.updateEmailSender>[0])
+      ).resolves.toEqual(emailSenderSettings);
+      expect(mocks.updateEmailSender).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        senderName: "Acme Team",
+        senderAddress: "hello@acme.example.com",
+      });
+      expect(mocks.getEmailSender).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("passes null to clear the email sender and leaves an omitted field undefined", async () => {
+      await createCaller(ctx).updateEmailSender({ senderAddress: null });
+
+      expect(mocks.updateEmailSender).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        senderName: undefined,
+        senderAddress: null,
       });
     });
 
@@ -526,6 +601,18 @@ describe("viewer organization router", () => {
       });
     });
 
+    it.each([
+      ["BadRequest", "BAD_REQUEST", "organization_email_sender_domain_not_allowed"],
+      ["Forbidden", "FORBIDDEN", "organization_only_managers_can_update_organization"],
+    ] as const)("maps ErrorWithCode %s from updateEmailSender to %s", async (factory, code, message) => {
+      mocks.updateEmailSender.mockRejectedValue(ErrorWithCode.Factory[factory](message));
+
+      await expect(createCaller(ctx).updateEmailSender({ senderName: "Acme Team" })).rejects.toMatchObject({
+        code,
+        message,
+      });
+    });
+
     it("maps a NotFound from current", async () => {
       mocks.getForMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("organization_not_found"));
 
@@ -547,6 +634,12 @@ describe("viewer organization router", () => {
       mocks.getNotetakerSettings.mockResolvedValue({ ...notetakerSettings, organizationId: 5 });
 
       await expect(createCaller(ctx).notetakerSettings()).resolves.toEqual(notetakerSettings);
+    });
+
+    it("strips fields that are not part of the email sender settings DTO", async () => {
+      mocks.getEmailSender.mockResolvedValue({ ...emailSenderSettings, organizationId: 5 });
+
+      await expect(createCaller(ctx).emailSender()).resolves.toEqual(emailSenderSettings);
     });
   });
 });
