@@ -1,8 +1,20 @@
+import type { OrganizationSmtpSecurity } from "@calcom/lib/dto/OrganizationSmtpSettingsDto";
+
+export type OrganizationSmtpRecord = {
+  host: string;
+  port: number;
+  security: OrganizationSmtpSecurity;
+  username: string | null;
+  passwordEncrypted: string | null;
+  updatedAt: Date;
+};
+
 export type OrganizationEmailSenderRecord = {
   organizationId: number;
   emailFromName: string | null;
   emailFromAddress: string | null;
   customDomain: string | null;
+  smtp: OrganizationSmtpRecord | null;
 };
 
 export interface IOrganizationEmailSenderRepository {

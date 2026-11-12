@@ -108,6 +108,7 @@ const emailSenderSettings = {
   fallbackSenderName: "Cal.diy",
   fallbackSenderAddress: "noreply@cal.example.com",
   canEdit: true,
+  usesOrganizationSmtp: false,
 };
 
 const team = { teamId: 21, name: "Sales", slug: "sales", memberCount: 2, viewerIsMember: true };

@@ -48,6 +48,7 @@ function renderSection(settings: Partial<OrganizationEmailSenderSettingsDto> = {
       fallbackSenderName: "Cal.diy",
       fallbackSenderAddress: "noreply@cal.example.com",
       canEdit: true,
+      usesOrganizationSmtp: false,
       ...settings,
     },
   });

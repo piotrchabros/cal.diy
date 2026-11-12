@@ -1,3 +1,4 @@
+import process from "node:process";
 import { type Container, createModule, type ModuleLoader } from "@calcom/features/di/di";
 import type { OrganizationEmailSenderConfig } from "@calcom/features/organizations/services/OrganizationEmailSenderService";
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
@@ -21,6 +22,7 @@ thisModule.bind(token).toFactory(
   (): OrganizationEmailSenderConfig => ({
     defaultName: EMAIL_FROM_NAME,
     defaultAddress: toBareAddress(serverConfig.from),
+    encryptionKey: process.env.CALENDSO_ENCRYPTION_KEY ?? "",
   }),
   "singleton"
 );

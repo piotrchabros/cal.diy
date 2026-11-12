@@ -44,6 +44,14 @@ export function parseSenderAddress(raw: string | null): string | null {
   return address;
 }
 
+// For values that are only sometimes addresses, such as an SMTP username
+export function toSenderAddressOrNull(raw: string | null): string | null {
+  if (raw === null) return null;
+  const address = raw.trim().toLowerCase();
+  if (address.length > MAX_ADDRESS_LENGTH || !ADDRESS_PATTERN.test(address)) return null;
+  return address;
+}
+
 // Only the organization's own domain or a parent of it (at least two labels) may send, so a custom
 // domain can never vouch for an unrelated domain such as a bare TLD.
 export function isSenderDomainAllowed(address: string, customDomain: string | null): boolean {
