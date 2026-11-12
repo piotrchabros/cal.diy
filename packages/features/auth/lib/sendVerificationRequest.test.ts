@@ -12,7 +12,12 @@ vi.mock("nodemailer", () => ({
 }));
 
 vi.mock("@calcom/features/organizations/di/OrganizationEmailSenderService.container", () => ({
-  getOrganizationEmailSenderService: () => ({ resolveForScope: mockResolveForScope }),
+  getOrganizationEmailSenderService: () => ({
+    resolveDeliveryForScope: async (scope: unknown) => {
+      const sender = await mockResolveForScope(scope);
+      return sender ? { sender, smtp: null } : null;
+    },
+  }),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
