@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listMembers: vi.fn(),
   inviteMember: vi.fn(),
   setRole: vi.fn(),
+  updateMemberProfile: vi.fn(),
   removeMember: vi.fn(),
   listTeams: vi.fn(),
   getNotetakerSettings: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.contain
     listMembers: mocks.listMembers,
     inviteMember: mocks.inviteMember,
     setRole: mocks.setRole,
+    updateMemberProfile: mocks.updateMemberProfile,
     removeMember: mocks.removeMember,
     listTeams: mocks.listTeams,
   }),
@@ -182,6 +184,7 @@ const serviceMocks = () => [
   mocks.listMembers,
   mocks.inviteMember,
   mocks.setRole,
+  mocks.updateMemberProfile,
   mocks.removeMember,
   mocks.listTeams,
   mocks.getNotetakerSettings,
@@ -201,6 +204,7 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.listMembers({}),
   caller.inviteMember({ email: "new@acme.example.com", role: "MEMBER" }),
   caller.updateRole({ userId: 11, role: "ADMIN" }),
+  caller.updateMemberProfile({ userId: 11, name: "Member" }),
   caller.removeMember({ userId: 11 }),
   caller.listTeams({}),
   caller.notetakerSettings(),
@@ -244,6 +248,7 @@ describe("viewer organization router", () => {
       owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
     });
     mocks.setRole.mockResolvedValue({ userId: 11, role: "ADMIN" });
+    mocks.updateMemberProfile.mockResolvedValue(member);
     mocks.removeMember.mockResolvedValue({ userId: 11 });
     mocks.listTeams.mockResolvedValue({ items: [team], nextCursor: undefined });
     mocks.getNotetakerSettings.mockResolvedValue(notetakerSettings);
@@ -416,6 +421,26 @@ describe("viewer organization router", () => {
       expect(mocks.testSmtpSettings).not.toHaveBeenCalled();
     });
 
+    it("rejects a member profile update without any field", async () => {
+      await expect(createCaller(ctx).updateMemberProfile({ userId: 11 })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateMemberProfile).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a userId of 0", { userId: 0, name: "Member" }],
+      ["a name over 200 characters", { userId: 11, name: "a".repeat(201) }],
+      ["a username over 255 characters", { userId: 11, username: "a".repeat(256) }],
+      ["a bio over 10,000 characters", { userId: 11, bio: "a".repeat(10_001) }],
+      ["an avatar over 8,000,000 characters", { userId: 11, avatar: "a".repeat(8_000_001) }],
+    ])("rejects a member profile update with %s", async (_, input) => {
+      await expect(createCaller(ctx).updateMemberProfile(input)).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateMemberProfile).not.toHaveBeenCalled();
+    });
+
     it.each([0, 101])("rejects list limit %s", async (limit) => {
       const caller = createCaller(ctx);
 
@@ -508,6 +533,44 @@ describe("viewer organization router", () => {
         actorUserId: 7,
         userId: 11,
         role: "ADMIN",
+      });
+    });
+
+    it("updates a member profile of the session's organization and returns the member", async () => {
+      const caller = createCaller(ctx);
+
+      await expect(
+        caller.updateMemberProfile({
+          userId: 11,
+          name: "Member",
+          username: "member",
+          bio: "Hello",
+          avatar: "data:image/png;base64,AAAA",
+          organizationId: 99,
+        } as Parameters<typeof caller.updateMemberProfile>[0])
+      ).resolves.toEqual(member);
+      expect(mocks.updateMemberProfile).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        userId: 11,
+        name: "Member",
+        username: "member",
+        bio: "Hello",
+        avatar: "data:image/png;base64,AAAA",
+      });
+    });
+
+    it("passes a null avatar and leaves omitted profile fields undefined", async () => {
+      await createCaller(ctx).updateMemberProfile({ userId: 11, avatar: null });
+
+      expect(mocks.updateMemberProfile).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        userId: 11,
+        name: undefined,
+        username: undefined,
+        bio: undefined,
+        avatar: null,
       });
     });
 
@@ -765,6 +828,19 @@ describe("viewer organization router", () => {
       ).rejects.toMatchObject({ code: "CONFLICT", message: "user_is_already_a_member" });
     });
 
+    it("maps a Forbidden from updateMemberProfile", async () => {
+      mocks.updateMemberProfile.mockRejectedValue(
+        ErrorWithCode.Factory.Forbidden("organization_only_owners_can_manage_owner_role")
+      );
+
+      await expect(
+        createCaller(ctx).updateMemberProfile({ userId: 11, name: "Member" })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: "organization_only_owners_can_manage_owner_role",
+      });
+    });
+
     it("maps a BadRequest from updateLogo", async () => {
       mocks.updateLogo.mockRejectedValue(ErrorWithCode.Factory.BadRequest("organization_logo_invalid"));
 
@@ -861,6 +937,15 @@ describe("viewer organization router", () => {
 
       expect(result.items[0]).toEqual(member);
       expect(result.items[0]).not.toHaveProperty("password");
+    });
+
+    it("strips fields that are not part of the member DTO from updateMemberProfile", async () => {
+      mocks.updateMemberProfile.mockResolvedValue({ ...member, password: "hash" });
+
+      const result = await createCaller(ctx).updateMemberProfile({ userId: 11, bio: "Hello" });
+
+      expect(result).toEqual(member);
+      expect(result).not.toHaveProperty("password");
     });
 
     it("strips fields that are not part of the notetaker settings DTO", async () => {

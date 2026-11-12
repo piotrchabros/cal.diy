@@ -23,6 +23,24 @@ export const ZUpdateOrganizationMemberRoleInput = z.object({ userId: id, role: O
 
 export const ZUpdateOrganizationMemberRoleOutput = ZUpdateOrganizationMemberRoleInput;
 
+export const ZUpdateOrganizationMemberProfileInput = z
+  .object({
+    userId: id,
+    // Loose caps only bound the payload; the service owns the real name, username, bio and avatar rules
+    name: z.string().max(200).optional(),
+    username: z.string().max(255).optional(),
+    bio: z.string().max(10_000).optional(),
+    avatar: z.string().max(8_000_000).nullable().optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.username !== undefined ||
+      value.bio !== undefined ||
+      value.avatar !== undefined,
+    { message: "Provide at least one field" }
+  );
+
 export const ZUpdateOrganizationNameInput = z.object({ name: z.string().max(100) });
 
 export const ZUpdateOrganizationLogoInput = z.object({ logo: z.string().max(8_000_000).nullable() });
@@ -75,6 +93,7 @@ export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationM
 export type TInviteOrganizationMemberOutput = z.infer<typeof ZInviteOrganizationMemberOutput>;
 export type TUpdateOrganizationMemberRoleInput = z.infer<typeof ZUpdateOrganizationMemberRoleInput>;
 export type TUpdateOrganizationMemberRoleOutput = z.infer<typeof ZUpdateOrganizationMemberRoleOutput>;
+export type TUpdateOrganizationMemberProfileInput = z.infer<typeof ZUpdateOrganizationMemberProfileInput>;
 export type TUpdateOrganizationNameInput = z.infer<typeof ZUpdateOrganizationNameInput>;
 export type TRemoveOrganizationMemberInput = z.infer<typeof ZRemoveOrganizationMemberInput>;
 export type TRemoveOrganizationMemberOutput = z.infer<typeof ZRemoveOrganizationMemberOutput>;
