@@ -1,4 +1,5 @@
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -29,6 +30,10 @@ export default class DisabledAppEmail extends BaseEmail {
     this.title = title;
     this.eventTypeId = eventTypeId;
     this.baseUrl = baseUrl;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return { userEmail: this.email };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {

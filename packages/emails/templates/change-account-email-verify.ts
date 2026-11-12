@@ -1,7 +1,6 @@
-import type { TFunction } from "i18next";
-
 import { APP_NAME, COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -22,6 +21,10 @@ export default class ChangeOfEmailVerifyEmail extends BaseEmail {
     super();
     this.name = "SEND_ACCOUNT_VERIFY_EMAIL";
     this.changeEvent = changeEvent;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return { userEmail: this.changeEvent.user.emailFrom };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {

@@ -1,7 +1,6 @@
-import type { TFunction } from "i18next";
-
 import { APP_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -21,6 +20,10 @@ export default class ForgotPasswordEmail extends BaseEmail {
     super();
     this.name = "SEND_PASSWORD_RESET_EMAIL";
     this.passwordEvent = passwordEvent;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return { userEmail: this.passwordEvent.user.email };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {

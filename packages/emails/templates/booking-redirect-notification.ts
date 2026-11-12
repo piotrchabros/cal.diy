@@ -1,5 +1,5 @@
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { IBookingRedirect } from "../lib/types/booking-redirect-types";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -13,6 +13,10 @@ export default class BookingRedirectNotification extends BaseEmail {
     super();
     this.name = "BOOKING_REDIRECT_NOTIFICATION";
     this.bookingRedirect = bookingRedirect;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return { userEmail: this.bookingRedirect.toEmail };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
