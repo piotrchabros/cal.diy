@@ -3,6 +3,8 @@ export const NOTETAKER_DI_TOKENS = {
   BOOKING_NOTETAKER_REPOSITORY_MODULE: Symbol("BookingNotetakerRepositoryModule"),
   EVENT_TYPE_NOTETAKER_SETTINGS_REPOSITORY: Symbol("EventTypeNotetakerSettingsRepository"),
   EVENT_TYPE_NOTETAKER_SETTINGS_REPOSITORY_MODULE: Symbol("EventTypeNotetakerSettingsRepositoryModule"),
+  ORGANIZATION_NOTETAKER_SETTINGS_REPOSITORY: Symbol("OrganizationNotetakerSettingsRepository"),
+  ORGANIZATION_NOTETAKER_SETTINGS_REPOSITORY_MODULE: Symbol("OrganizationNotetakerSettingsRepositoryModule"),
   NOTETAKER_SESSION_REPOSITORY: Symbol("NotetakerSessionRepository"),
   NOTETAKER_SESSION_REPOSITORY_MODULE: Symbol("NotetakerSessionRepositoryModule"),
   NOTETAKER_TRANSCRIPT_REPOSITORY: Symbol("NotetakerTranscriptRepository"),
