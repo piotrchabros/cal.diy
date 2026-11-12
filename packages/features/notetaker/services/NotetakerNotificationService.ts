@@ -179,6 +179,7 @@ export class NotetakerNotificationService {
           bookingStartTime: booking.startTime,
           notetakerUrl,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
       } catch (error) {
         failureCount++;
@@ -322,6 +323,7 @@ export class NotetakerNotificationService {
           outcomeReason,
           canEnableAgain,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
       } catch (error) {
         failureCount++;
@@ -382,6 +384,7 @@ export class NotetakerNotificationService {
           bookingStartTime: booking.startTime,
           notetakerUrl,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
       } catch (error) {
         failureCount++;
@@ -459,6 +462,7 @@ export class NotetakerNotificationService {
           transcriptCompleteness: transcript.completeness,
           summaryStatus,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
       } catch (error) {
         failureCount++;
@@ -532,6 +536,7 @@ export class NotetakerNotificationService {
           hostName,
           isPending,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
         sentEmails.push(attendee.email);
       } catch (error) {
@@ -620,6 +625,7 @@ export class NotetakerNotificationService {
           sharedByName,
           notetakerUrl,
           logoHref: baseUrl,
+          organizationId: booking.organizationId,
         });
       } catch (error) {
         failureCount++;

@@ -2,6 +2,7 @@ import { COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto, NotetakerSessionStatusDto } from "@calcom/lib/dto/NotetakerStateDto";
 import type { NotetakerSummaryStatusDto } from "@calcom/lib/dto/NotetakerSummaryDto";
 import type { NotetakerTranscriptCompletenessDto } from "@calcom/lib/dto/NotetakerTranscriptDto";
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -27,6 +28,7 @@ export type NotetakerResultsReadyEmailInput = {
   transcriptCompleteness: NotetakerTranscriptCompletenessDto;
   summaryStatus: NotetakerSummaryStatusDto | null;
   logoHref?: string | null;
+  organizationId?: number | null;
 };
 
 export default class OrganizerNotetakerResultsReadyEmail extends BaseEmail {
@@ -36,6 +38,11 @@ export default class OrganizerNotetakerResultsReadyEmail extends BaseEmail {
     super();
     this.name = "SEND_NOTETAKER_RESULTS_READY";
     this.input = input;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    if (this.input.organizationId) return { organizationId: this.input.organizationId };
+    return { userEmail: this.input.to.email };
   }
 
   private getBookingDate(): string {

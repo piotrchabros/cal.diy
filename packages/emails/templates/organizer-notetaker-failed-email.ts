@@ -1,5 +1,6 @@
 import { COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto } from "@calcom/lib/dto/NotetakerStateDto";
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import { NOTETAKER_OUTCOME_REASON_KEYS } from "../src/templates/NotetakerFailedEmail";
@@ -17,6 +18,7 @@ export type NotetakerFailedEmailInput = {
   outcomeReason: NotetakerOutcomeReasonDto;
   canEnableAgain: boolean;
   logoHref?: string | null;
+  organizationId?: number | null;
 };
 
 export default class OrganizerNotetakerFailedEmail extends BaseEmail {
@@ -26,6 +28,11 @@ export default class OrganizerNotetakerFailedEmail extends BaseEmail {
     super();
     this.name = "SEND_NOTETAKER_FAILED";
     this.input = input;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    if (this.input.organizationId) return { organizationId: this.input.organizationId };
+    return { userEmail: this.input.to.email };
   }
 
   private getBookingDate(): string {

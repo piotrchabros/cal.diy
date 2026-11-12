@@ -6,6 +6,10 @@ import AttendeeNotetakerNoticeEmail, {
 } from "./attendee-notetaker-notice-email";
 
 class TestEmail extends AttendeeNotetakerNoticeEmail {
+  public getScope() {
+    return this.getSenderScope();
+  }
+
   public getPayload() {
     return this.getNodeMailerPayload();
   }
@@ -168,5 +172,11 @@ describe("AttendeeNotetakerNoticeEmail", () => {
 
     expect(Object.keys(payload).sort()).toEqual(["from", "html", "subject", "text", "to"]);
     expect(email.name).toBe("SEND_NOTETAKER_ATTENDEE_NOTICE");
+  });
+
+  it("uses the organization sender scope only when the input carries an organization", () => {
+    expect(new TestEmail(buildInput({ organizationId: 42 })).getScope()).toEqual({ organizationId: 42 });
+    expect(new TestEmail(buildInput()).getScope()).toBeNull();
+    expect(new TestEmail(buildInput({ organizationId: null })).getScope()).toBeNull();
   });
 });

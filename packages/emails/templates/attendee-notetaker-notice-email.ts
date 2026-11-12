@@ -1,4 +1,5 @@
 import { COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -14,6 +15,7 @@ export type NotetakerAttendeeNoticeEmailInput = {
   hostName: string;
   isPending: boolean;
   logoHref?: string | null;
+  organizationId?: number | null;
 };
 
 export default class AttendeeNotetakerNoticeEmail extends BaseEmail {
@@ -23,6 +25,10 @@ export default class AttendeeNotetakerNoticeEmail extends BaseEmail {
     super();
     this.name = "SEND_NOTETAKER_ATTENDEE_NOTICE";
     this.input = input;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return this.input.organizationId ? { organizationId: this.input.organizationId } : null;
   }
 
   private getBookingDate(): string {

@@ -6,6 +6,10 @@ import AttendeeNotetakerSharedEmail, {
 } from "./attendee-notetaker-shared-email";
 
 class TestEmail extends AttendeeNotetakerSharedEmail {
+  public getScope() {
+    return this.getSenderScope();
+  }
+
   public getPayload() {
     return this.getNodeMailerPayload();
   }
@@ -62,8 +66,8 @@ const render = async (overrides: Partial<NotetakerSharedEmailInput> = {}) => {
 const URL_PATTERN = /https?:\/\/[^\s"'<>)]+/g;
 
 // Typed as a Record so adding or removing an input field fails type-check here, not just the assertion.
-// logoHref is excluded because it only sets the footer logo link and carries no content.
-const FIELDS: Record<Exclude<keyof NotetakerSharedEmailInput, "logoHref">, true> = {
+// logoHref and organizationId are excluded because they only set the footer logo link and the sender and carry no content.
+const FIELDS: Record<Exclude<keyof NotetakerSharedEmailInput, "logoHref" | "organizationId">, true> = {
   t: true,
   locale: true,
   timeZone: true,
@@ -199,5 +203,11 @@ describe("AttendeeNotetakerSharedEmail", () => {
 
     expect(Object.keys(buildInput()).sort()).toEqual(Object.keys(FIELDS).sort());
     expect(Object.keys(FIELDS).sort()).toEqual(expected);
+  });
+
+  it("uses the organization sender scope only when the input carries an organization", () => {
+    expect(new TestEmail(buildInput({ organizationId: 42 })).getScope()).toEqual({ organizationId: 42 });
+    expect(new TestEmail(buildInput()).getScope()).toBeNull();
+    expect(new TestEmail(buildInput({ organizationId: null })).getScope()).toBeNull();
   });
 });

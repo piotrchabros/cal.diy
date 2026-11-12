@@ -6,6 +6,10 @@ import OrganizerNotetakerAdmitPromptEmail, {
 } from "./organizer-notetaker-admit-prompt-email";
 
 class TestEmail extends OrganizerNotetakerAdmitPromptEmail {
+  public getScope() {
+    return this.getSenderScope();
+  }
+
   public getPayload() {
     return this.getNodeMailerPayload();
   }
@@ -171,5 +175,18 @@ describe("OrganizerNotetakerAdmitPromptEmail", () => {
 
     expect(Object.keys(payload).sort()).toEqual(["from", "html", "subject", "text", "to"]);
     expect(email.name).toBe("SEND_NOTETAKER_ADMIT_PROMPT");
+  });
+
+  it("uses the organization sender scope when the input carries an organization", () => {
+    const email = new TestEmail(buildInput({ organizationId: 42 }));
+
+    expect(email.getScope()).toEqual({ organizationId: 42 });
+  });
+
+  it("falls back to the recipient's email as the sender scope without an organization", () => {
+    expect(new TestEmail(buildInput()).getScope()).toEqual({ userEmail: "host@example.com" });
+    expect(new TestEmail(buildInput({ organizationId: null })).getScope()).toEqual({
+      userEmail: "host@example.com",
+    });
   });
 });
