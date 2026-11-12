@@ -7,14 +7,16 @@ import { Button } from "@calcom/ui/components/button";
 import { TextField } from "@calcom/ui/components/form";
 import { showToast } from "@calcom/ui/components/toast";
 import { useState } from "react";
+import { OrganizationNotetakerBotSection } from "../components/OrganizationNotetakerBotSection";
 
 const EMPTY_VALUE = "—";
 
 export type OrgGeneralViewProps = {
   organization: CurrentOrganizationDto;
+  notetakerEnabled: boolean;
 };
 
-export default function OrgGeneralView({ organization }: OrgGeneralViewProps) {
+export default function OrgGeneralView({ organization, notetakerEnabled }: OrgGeneralViewProps) {
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const canEdit = organization.viewerRole !== "MEMBER";
@@ -87,6 +89,7 @@ export default function OrgGeneralView({ organization }: OrgGeneralViewProps) {
       <p className="text-sm text-subtle" data-testid="org-general-locked-note">
         {t("organization_profile_locked_note")}
       </p>
+      {notetakerEnabled && <OrganizationNotetakerBotSection />}
     </div>
   );
 }

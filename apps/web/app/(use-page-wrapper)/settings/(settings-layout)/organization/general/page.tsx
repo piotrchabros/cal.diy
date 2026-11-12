@@ -1,4 +1,5 @@
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { getFeaturesRepository } from "@calcom/features/di/containers/FeaturesRepository";
 import SettingsHeader from "@calcom/features/settings/appDir/SettingsHeader";
 import type { CurrentOrganizationDto } from "@calcom/lib/dto/OrganizationDto";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
@@ -38,11 +39,12 @@ const Page = async () => {
     notFound();
   }
 
+  const notetakerEnabled = await getFeaturesRepository().checkIfUserHasFeature(session.user.id, "notetaker");
   const t = await getTranslate();
 
   return (
     <SettingsHeader title={t("organization_profile")} description={t("organization_profile_description")}>
-      <OrgGeneralView organization={organization} />
+      <OrgGeneralView organization={organization} notetakerEnabled={notetakerEnabled} />
     </SettingsHeader>
   );
 };

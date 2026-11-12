@@ -1,17 +1,15 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
-import Cropper from "react-easy-crop";
-
 import checkIfItFallbackImage from "@calcom/lib/checkIfItFallbackImage";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-
+import { useCallback, useEffect, useState } from "react";
+import Cropper from "react-easy-crop";
 import type { ButtonColor } from "../button";
 import { Button } from "../button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger, DialogFooter } from "../dialog";
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTrigger } from "../dialog";
 import { showToast } from "../toast";
-import { useFileReader, createImage, Slider } from "./Common";
-import type { FileEvent, Area } from "./Common";
+import type { Area, FileEvent } from "./Common";
+import { createImage, Slider, useFileReader } from "./Common";
 
 type BannerUploaderProps = {
   id: string;
@@ -24,13 +22,17 @@ type BannerUploaderProps = {
   disabled?: boolean;
   height: number;
   width: number;
+  aspect?: number;
+  outputMimeType?: "image/jpeg" | "image/png";
 };
 
 function CropContainer({
   onCropComplete,
   imageSrc,
+  aspect,
 }: {
   imageSrc: string;
+  aspect: number;
   onCropComplete: (croppedAreaPixels: Area) => void;
 }) {
   const { t } = useLocale();
@@ -48,7 +50,7 @@ function CropContainer({
           image={imageSrc}
           crop={crop}
           zoom={zoom}
-          aspect={3}
+          aspect={aspect}
           onCropChange={setCrop}
           onCropComplete={(croppedArea, croppedAreaPixels) => onCropComplete(croppedAreaPixels)}
           onZoomChange={setZoom}
@@ -77,6 +79,8 @@ export default function BannerUploader({
   disabled = false,
   height,
   width,
+  aspect = 3,
+  outputMimeType,
 }: BannerUploaderProps) {
   const { t } = useLocale();
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
@@ -108,18 +112,20 @@ export default function BannerUploader({
           result as string /* result is always string when using readAsDataUrl */,
           croppedAreaPixels,
           height,
-          width
+          width,
+          outputMimeType
         );
         handleAvatarChange(croppedImage);
       } catch (e) {
         console.error(e);
       }
     },
-    [result, height, width, handleAvatarChange]
+    [result, height, width, outputMimeType, handleAvatarChange]
   );
 
   useEffect(() => {
     const checkDimensions = async () => {
+      if (outputMimeType) return;
       const image = await createImage(
         result as string /* result is always string when using readAsDataUrl */
       );
@@ -165,7 +171,13 @@ export default function BannerUploader({
                 )}
               </div>
             )}
-            {result && <CropContainer imageSrc={result as string} onCropComplete={setCroppedAreaPixels} />}
+            {result && (
+              <CropContainer
+                imageSrc={result as string}
+                aspect={aspect}
+                onCropComplete={setCroppedAreaPixels}
+              />
+            )}
             <label
               data-testid="open-upload-image-filechooser"
               className="bg-subtle hover:bg-cal-muted hover:text-emphasis border-subtle text-default mt-8 cursor-pointer rounded-sm border px-3 py-1 text-xs font-medium leading-4 transition focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-1">
@@ -202,7 +214,8 @@ async function getCroppedImg(
   imageSrc: string,
   pixelCrop: Area,
   height: number,
-  width: number
+  width: number,
+  outputMimeType?: "image/jpeg" | "image/png"
 ): Promise<string> {
   const image = await createImage(imageSrc);
   const canvas = document.createElement("canvas");
@@ -211,9 +224,10 @@ async function getCroppedImg(
 
   // Detect original image format from data URL
   const originalFormat =
-    imageSrc.startsWith("data:image/jpeg") || imageSrc.startsWith("data:image/jpg")
+    outputMimeType ??
+    (imageSrc.startsWith("data:image/jpeg") || imageSrc.startsWith("data:image/jpg")
       ? "image/jpeg"
-      : "image/png";
+      : "image/png");
 
   canvas.width = width;
   canvas.height = height;
@@ -231,5 +245,7 @@ async function getCroppedImg(
   );
 
   // Use original format with quality setting for JPEG
-  return canvas.toDataURL(originalFormat, originalFormat === "image/jpeg" ? 0.6 : undefined);
+  // An explicit JPEG output keeps the payload small enough for the tRPC body limit
+  const quality = outputMimeType === "image/jpeg" ? 0.9 : originalFormat === "image/jpeg" ? 0.6 : undefined;
+  return canvas.toDataURL(originalFormat, quality);
 }
