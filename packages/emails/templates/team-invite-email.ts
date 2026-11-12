@@ -1,5 +1,5 @@
 import { EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import { getSubject, type TeamInvite } from "../lib/utils/team-invite-utils";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -12,6 +12,11 @@ export default class TeamInviteEmail extends BaseEmail {
     super();
     this.name = "SEND_TEAM_INVITE_EMAIL";
     this.teamInviteEvent = teamInviteEvent;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    const { senderTeamId } = this.teamInviteEvent;
+    return senderTeamId === undefined ? null : { teamId: senderTeamId };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {

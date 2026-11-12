@@ -40,6 +40,7 @@ describe("TeamInviteService", () => {
     expect(teamRepository.deleteTeamInviteTokens).not.toHaveBeenCalled();
     expect(teamRepository.createTeamInviteToken).not.toHaveBeenCalled();
     expect(sendInviteEmail).toHaveBeenCalledWith({
+      teamId: inviteInput.teamId,
       to: "ada@example.com",
       teamName: "BlueBee",
       joinLink: `${WEBAPP_URL}/auth/team-invite?token=valid-token`,

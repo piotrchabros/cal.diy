@@ -8,6 +8,7 @@ import { getTranslation } from "@calcom/i18n/server";
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SendTeamInviteEmail = (input: {
+  teamId: number;
   to: string;
   teamName: string;
   joinLink: string;
@@ -19,6 +20,7 @@ export type SendTeamInviteEmail = (input: {
 }) => Promise<void>;
 
 export const defaultSendTeamInviteEmail: SendTeamInviteEmail = async ({
+  teamId,
   to,
   teamName,
   joinLink,
@@ -43,6 +45,7 @@ export const defaultSendTeamInviteEmail: SendTeamInviteEmail = async ({
     isExistingUserMovedToOrg: false,
     prevLink: null,
     newLink: null,
+    senderTeamId: teamId,
   });
 };
 
@@ -79,6 +82,7 @@ export class TeamInviteService {
     const organizationUrlService = this.deps.organizationUrlService ?? getOrganizationUrlService();
     const baseUrl = await organizationUrlService.getBaseUrlForTeam({ teamId });
     await this.deps.sendInviteEmail({
+      teamId,
       to: email,
       teamName,
       joinLink: `${baseUrl}/auth/team-invite?token=${token}`,

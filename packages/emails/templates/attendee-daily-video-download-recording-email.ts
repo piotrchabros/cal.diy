@@ -4,6 +4,7 @@ import { getReplyToHeader } from "@calcom/lib/getReplyToHeader";
 import { TimeFormat } from "@calcom/lib/timeFormat";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
 import type { TFunction } from "i18next";
+import { senderScopeFromCalEvent } from "../lib/organizationSender";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -21,6 +22,10 @@ export default class AttendeeDailyVideoDownloadRecordingEmail extends BaseEmail 
     this.downloadLink = downloadLink;
     this.t = attendee.language.translate;
   }
+  protected getSenderScope(): EmailSenderScope | null {
+    return senderScopeFromCalEvent(this.calEvent);
+  }
+
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
     return {
       to: `${this.attendee.name} <${this.attendee.email}>`,
