@@ -2,6 +2,7 @@ import type { CalendarEvent } from "@calcom/types/Calendar";
 import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 import AccountVerifyEmail from "./account-verify-email";
+import AttendeeVerifyEmail from "./attendee-verify-email";
 import BookingRedirectNotification from "./booking-redirect-notification";
 import BrokenIntegrationEmail from "./broken-integration-email";
 import ChangeOfEmailVerifyEmail from "./change-account-email-verify";
@@ -30,6 +31,14 @@ describe("account emails sender scope", () => {
       senderScope: { userId: 42 },
     });
     expect(scopeOf(email)).toEqual({ userId: 42 });
+  });
+
+  it("scopes booker verification codes to the event type, never the booker", () => {
+    const input = { language: t, user: { email: "booker@example.com" }, verificationEmailCode: "123456" };
+    expect(scopeOf(new AttendeeVerifyEmail({ ...input, senderScope: { eventTypeId: 7 } }))).toEqual({
+      eventTypeId: 7,
+    });
+    expect(scopeOf(new AttendeeVerifyEmail(input))).toBeNull();
   });
 
   it("scopes password reset to the recipient email", () => {

@@ -1,5 +1,5 @@
 import { APP_NAME, COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import type { EmailVerifyCode } from "../lib/types/email-types";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
@@ -13,6 +13,10 @@ export default class AttendeeVerifyEmail extends BaseEmail {
     super();
     this.name = "SEND_ACCOUNT_VERIFY_EMAIL";
     this.verifyAccountInput = passwordEvent;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return this.verifyAccountInput.senderScope ?? null;
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
