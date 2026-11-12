@@ -49,8 +49,8 @@ function setup(
   const data: NotetakerCalendarAutoJoinSettingsDto = {
     available: true,
     teamOptions: [
-      { teamId: 3, name: "Sales" },
-      { teamId: 4, name: "Support" },
+      { teamId: 3, name: "Sales", isOrganization: false },
+      { teamId: 4, name: "Support", isOrganization: false },
     ],
     calendars: calendar ? [calendar] : [],
     ...settings,
@@ -151,6 +151,22 @@ describe("NotetakerCalendarAutoJoinSwitch", () => {
       "notetaker_calendar_auto_join_share_only_me",
       "Sales",
       "Support",
+    ]);
+  });
+
+  it("labels an organization option as the whole organization", () => {
+    setup(buildCalendar({ enabled: true }), {
+      teamOptions: [
+        { teamId: 1, name: "Acme", isOrganization: true },
+        { teamId: 3, name: "Sales", isOrganization: false },
+      ],
+    });
+
+    const select = screen.getByTestId("notetaker-calendar-auto-join-share") as HTMLSelectElement;
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+      "notetaker_calendar_auto_join_share_only_me",
+      "notetaker_sharing_team_option_organization",
+      "Sales",
     ]);
   });
 

@@ -53,7 +53,7 @@ vi.mock("@calcom/trpc/react", () => ({
 
 const dto: NotetakerCalendarAutoJoinSettingsDto = {
   available: true,
-  teamOptions: [{ teamId: 3, name: "Sales" }],
+  teamOptions: [{ teamId: 3, name: "Sales", isOrganization: false }],
   calendars: [
     {
       selectedCalendarId: "sc-1",

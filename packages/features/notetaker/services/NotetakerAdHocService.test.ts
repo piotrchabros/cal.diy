@@ -252,12 +252,48 @@ describe("NotetakerAdHocService", () => {
       expect(options).toEqual({
         featureEnabled: true,
         teamOptions: [
-          { teamId: TEAM_ID, name: "Sales" },
-          { teamId: OTHER_TEAM_ID, name: "Support" },
+          { teamId: TEAM_ID, name: "Sales", isOrganization: false },
+          { teamId: OTHER_TEAM_ID, name: "Support", isOrganization: false },
         ],
         enabledPlatforms: ["GOOGLE_MEET"],
         defaultDurationMinutes: 60,
         maxDurationMinutes: 240,
+      });
+    });
+
+    describe("organization option", () => {
+      const ORG_ID = 30;
+
+      beforeEach(() => {
+        repositories.store.setOrganization(ORG_ID, "Acme");
+        membershipLookup.addMember({ teamId: ORG_ID, userId: USER_ID });
+      });
+
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
+      it("offers the organization first when organizations are enabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+
+        const options = await service.getOptions({ userId: USER_ID });
+
+        expect(options.teamOptions[0]).toEqual({ teamId: ORG_ID, name: "Acme", isOrganization: true });
+        expect(options.teamOptions).toHaveLength(3);
+      });
+
+      it("hides the organization when organizations are disabled", async () => {
+        vi.stubEnv("ORGANIZATIONS_ENABLED", "0");
+
+        const options = await service.getOptions({ userId: USER_ID });
+
+        expect(options.teamOptions.map((option) => option.teamId)).toEqual([TEAM_ID, OTHER_TEAM_ID]);
+      });
+
+      it("accepts the organization id as the sharing team", async () => {
+        await dispatch({ sharingTeamId: ORG_ID });
+
+        expect(readAdHocBookingMetadata(adHocBookings()[0].metadata).sharingTeamId).toBe(ORG_ID);
       });
     });
 
