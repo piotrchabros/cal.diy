@@ -65,6 +65,7 @@ const currentOrganization = {
   slug: "acme",
   domain: "acme.example.com",
   isDefault: false,
+  logoUrl: null,
   owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
   viewerRole: "ADMIN" as const,
 };
@@ -139,6 +140,7 @@ describe("viewer organization router", () => {
       isDefault: false,
       memberCount: 3,
       teamCount: 1,
+      logoUrl: null,
       owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
     });
     mocks.setRole.mockResolvedValue({ userId: 11, role: "ADMIN" });

@@ -17,6 +17,7 @@ export const OrganizationListItemDtoSchema = z.object({
 });
 
 export const OrganizationDtoSchema = OrganizationListItemDtoSchema.extend({
+  logoUrl: z.string().nullable(),
   owners: z.array(OrganizationOwnerDtoSchema),
 });
 

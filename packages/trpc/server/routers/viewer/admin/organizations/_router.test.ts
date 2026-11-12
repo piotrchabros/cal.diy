@@ -67,6 +67,7 @@ const organization = {
   isDefault: false,
   memberCount: 3,
   teamCount: 1,
+  logoUrl: null,
   owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
 };
 

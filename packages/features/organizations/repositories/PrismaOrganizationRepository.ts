@@ -29,6 +29,7 @@ const organizationListItemSelect = {
 
 const organizationSelect = {
   ...organizationListItemSelect,
+  logoUrl: true,
   members: {
     where: { role: MembershipRole.OWNER, accepted: true },
     orderBy: { id: "asc" },
@@ -56,7 +57,7 @@ function toListItemRecord(row: OrganizationListItemRow): OrganizationListItemRec
 }
 
 function toRecord(row: OrganizationRow): OrganizationRecord {
-  return { ...toListItemRecord(row), owners: row.members.map(toOwner) };
+  return { ...toListItemRecord(row), logoUrl: row.logoUrl, owners: row.members.map(toOwner) };
 }
 
 function isRecordNotFound(error: unknown): boolean {
@@ -144,7 +145,7 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
 
   async update(
     id: number,
-    { name, slug, domain }: OrganizationUpdateInput
+    { name, slug, domain, logoUrl }: OrganizationUpdateInput
   ): Promise<OrganizationRecord | null> {
     try {
       const row = await this.prismaClient.team.update({
@@ -152,6 +153,7 @@ export class PrismaOrganizationRepository implements IOrganizationRepository {
         data: {
           name,
           slug,
+          logoUrl,
           ...(domain !== undefined && {
             organizationSettings: {
               upsert: {

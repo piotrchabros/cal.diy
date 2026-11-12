@@ -19,6 +19,7 @@ function buildRow(overrides: Partial<OrganizationRow> = {}): OrganizationRow {
     id: 1,
     name: "Acme",
     slug: "acme",
+    logoUrl: null,
     organizationSettings: { customDomain: "cal.acme.com" },
     _count: { orgUsers: 5, children: 2 },
     members: [{ user: { id: 10, name: "Owner", email: "owner@acme.com" } }],
@@ -69,8 +70,19 @@ describe("PrismaOrganizationRepository", () => {
         domain: "cal.acme.com",
         memberCount: 5,
         teamCount: 2,
+        logoUrl: null,
         owners: [{ userId: 10, name: "Owner", email: "owner@acme.com" }],
       });
+    });
+
+    it("selects and maps the logo url", async () => {
+      const { repository, team } = buildRepository();
+      team.findFirst.mockResolvedValue(buildRow({ logoUrl: "https://cdn.acme.com/logo.png" }));
+
+      const result = await repository.findById(1);
+
+      expect(team.findFirst.mock.calls[0][0].select.logoUrl).toBe(true);
+      expect(result?.logoUrl).toBe("https://cdn.acme.com/logo.png");
     });
 
     it("maps a missing settings row to a null domain", async () => {
@@ -208,6 +220,17 @@ describe("PrismaOrganizationRepository", () => {
   });
 
   describe("update", () => {
+    it("passes the logo url through, including a null to clear it", async () => {
+      const { repository, team } = buildRepository();
+      team.update.mockResolvedValue(buildRow());
+
+      await repository.update(1, { logoUrl: "https://cdn.acme.com/logo.png" });
+      await repository.update(1, { logoUrl: null });
+
+      expect(team.update.mock.calls[0][0].data.logoUrl).toBe("https://cdn.acme.com/logo.png");
+      expect(team.update.mock.calls[1][0].data.logoUrl).toBeNull();
+    });
+
     it("upserts the settings only when a domain is given", async () => {
       const { repository, team } = buildRepository();
       team.update.mockResolvedValue(buildRow());

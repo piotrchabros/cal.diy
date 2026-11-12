@@ -510,6 +510,7 @@ describe("OrganizationService", () => {
         slug: "acme",
         domain: "acme.com",
         isDefault: false,
+        logoUrl: null,
         owners: [owner],
         viewerRole: "ADMIN",
       });

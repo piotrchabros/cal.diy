@@ -14,6 +14,7 @@ type StoredOrganization = {
   name: string;
   slug: string | null;
   domain: string | null;
+  logoUrl: string | null;
   owners: OrganizationOwnerDto[];
   memberCount: number;
   teamCount: number;
@@ -30,6 +31,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     name: string;
     slug?: string | null;
     domain?: string | null;
+    logoUrl?: string | null;
     owners?: OrganizationOwnerDto[];
     memberCount?: number;
     teamCount?: number;
@@ -42,6 +44,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
       name: params.name,
       slug: params.slug ?? null,
       domain: params.domain ?? null,
+      logoUrl: params.logoUrl ?? null,
       owners: params.owners ?? [],
       memberCount: params.memberCount ?? 0,
       teamCount: params.teamCount ?? 0,
@@ -107,7 +110,9 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     const pageItems = matching.slice(0, params.limit);
     const hasMore = matching.length > params.limit;
     return {
-      items: pageItems.map(({ owners: _owners, autoAcceptEmailDomain: _domain, ...item }) => ({ ...item })),
+      items: pageItems.map(
+        ({ owners: _owners, logoUrl: _logoUrl, autoAcceptEmailDomain: _domain, ...item }) => ({ ...item })
+      ),
       nextCursor: hasMore ? pageItems[pageItems.length - 1]?.id : undefined,
     };
   }
@@ -122,6 +127,7 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     if (input.name !== undefined) stored.name = input.name;
     if (input.slug !== undefined) stored.slug = input.slug;
     if (input.domain !== undefined) stored.domain = input.domain;
+    if (input.logoUrl !== undefined) stored.logoUrl = input.logoUrl;
     return this.toRecord(stored);
   }
 
