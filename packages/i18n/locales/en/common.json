@@ -5236,5 +5236,16 @@
   "notetaker_bot_name_too_long": "The notetaker name can be at most 100 characters",
   "notetaker_bot_image_invalid": "Upload a PNG, JPEG or WEBP image",
   "notetaker_bot_image_too_large": "The image is too large. Upload a smaller image.",
+  "notetaker_bot_settings_title": "Notetaker bot",
+  "notetaker_bot_settings_description": "How the notetaker appears when it joins meetings for this organization.",
+  "notetaker_bot_name_label": "Bot name",
+  "notetaker_bot_name_default_placeholder": "Notetaker",
+  "notetaker_bot_name_help": "Leave empty to use the default name: {{name}}",
+  "notetaker_bot_image_label": "Bot image",
+  "notetaker_bot_image_help": "JPEG, PNG or WEBP. Shown as the bot's camera, cropped to 16:9 (1280×720).",
+  "notetaker_bot_image_upload": "Upload image",
+  "notetaker_bot_image_remove": "Remove image",
+  "notetaker_bot_image_empty": "No image — the bot joins with its camera off.",
+  "notetaker_bot_settings_saved": "Notetaker bot settings saved",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

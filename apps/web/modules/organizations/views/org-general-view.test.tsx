@@ -43,6 +43,10 @@ vi.mock("@calcom/trpc/react", () => ({
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
 
+vi.mock("../components/OrganizationNotetakerBotSection", () => ({
+  OrganizationNotetakerBotSection: () => <div data-testid="notetaker-bot-section" />,
+}));
+
 function buildOrg(viewerRole: OrganizationRoleDto): CurrentOrganizationDto {
   return {
     id: 5,
@@ -55,10 +59,13 @@ function buildOrg(viewerRole: OrganizationRoleDto): CurrentOrganizationDto {
   };
 }
 
-function renderView(viewerRole: OrganizationRoleDto = "OWNER"): ReturnType<typeof render> {
+function renderView(
+  viewerRole: OrganizationRoleDto = "OWNER",
+  notetakerEnabled = false
+): ReturnType<typeof render> {
   mocks.useMutation.mockReturnValue({ mutate: mocks.mutate, isPending: false });
   mocks.invalidateCurrent.mockResolvedValue(undefined);
-  return render(<OrgGeneralView organization={buildOrg(viewerRole)} />);
+  return render(<OrgGeneralView organization={buildOrg(viewerRole)} notetakerEnabled={notetakerEnabled} />);
 }
 
 function getMutationOptions(callIndex = 0): MutationOptions {
@@ -90,11 +97,20 @@ describe("OrgGeneralView", () => {
     );
   });
 
+  it("renders the notetaker bot section only when the notetaker feature is enabled", () => {
+    const { unmount } = renderView("OWNER", true);
+    expect(screen.getByTestId("notetaker-bot-section")).toBeInTheDocument();
+    unmount();
+
+    renderView("OWNER", false);
+    expect(screen.queryByTestId("notetaker-bot-section")).not.toBeInTheDocument();
+  });
+
   it("renders placeholders when slug or domain are not set", () => {
     const organization = { ...buildOrg("OWNER"), slug: null, domain: null };
     mocks.useMutation.mockReturnValue({ mutate: mocks.mutate, isPending: false });
     mocks.invalidateCurrent.mockResolvedValue(undefined);
-    render(<OrgGeneralView organization={organization} />);
+    render(<OrgGeneralView organization={organization} notetakerEnabled={false} />);
 
     expect(screen.getByTestId("org-general-slug-input")).toHaveValue("—");
     expect(screen.getByTestId("org-general-domain-input")).toHaveValue("—");
