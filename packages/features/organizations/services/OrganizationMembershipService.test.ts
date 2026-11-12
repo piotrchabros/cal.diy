@@ -367,13 +367,41 @@ describe("OrganizationMembershipService", () => {
             name: "Alice",
             email: "alice@acme.com",
             username: "alice",
+            avatarUrl: null,
+            bio: null,
             role: "OWNER",
             accepted: true,
           },
-          { userId: 2, name: null, email: "bob@acme.com", username: null, role: "ADMIN", accepted: false },
+          {
+            userId: 2,
+            name: null,
+            email: "bob@acme.com",
+            username: null,
+            avatarUrl: null,
+            bio: null,
+            role: "ADMIN",
+            accepted: false,
+          },
         ],
         nextCursor: undefined,
       });
+    });
+
+    it("maps legacy data: avatar URLs to null and keeps regular avatar URLs and bios", async () => {
+      membershipRepository.seedUser({
+        id: 2,
+        organizationId: ORG_ID,
+        avatarUrl: "data:image/png;base64,AAAA",
+        bio: "Hi",
+      });
+      membershipRepository.seedMembership({ userId: 2, teamId: ORG_ID, role: "MEMBER" });
+      membershipRepository.seedUser({ id: 3, organizationId: ORG_ID, avatarUrl: "https://acme.com/a.png" });
+      membershipRepository.seedMembership({ userId: 3, teamId: ORG_ID, role: "MEMBER" });
+
+      const result = await service.listMembers({ organizationId: ORG_ID, actorUserId: ACTOR_ID });
+
+      expect(result.items.find((item) => item.userId === 2)).toMatchObject({ avatarUrl: null, bio: "Hi" });
+      expect(result.items.find((item) => item.userId === 3)?.avatarUrl).toBe("https://acme.com/a.png");
     });
 
     it("allows a plain member to list members", async () => {

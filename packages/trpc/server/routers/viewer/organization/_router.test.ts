@@ -107,6 +107,8 @@ const member = {
   name: "Member",
   email: "member@acme.example.com",
   username: "member",
+  avatarUrl: null,
+  bio: null,
   role: "MEMBER" as const,
   accepted: true,
 };

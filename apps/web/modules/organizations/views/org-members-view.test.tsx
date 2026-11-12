@@ -52,6 +52,8 @@ function buildMember(overrides: Partial<OrganizationMemberDto> = {}): Organizati
     name: "Alice",
     email: "alice@acme.com",
     username: "alice",
+    avatarUrl: null,
+    bio: null,
     role: "MEMBER",
     accepted: true,
     ...overrides,

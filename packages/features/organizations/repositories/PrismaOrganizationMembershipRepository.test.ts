@@ -271,7 +271,7 @@ describe("PrismaOrganizationMembershipRepository", () => {
       id: true,
       role: true,
       accepted: true,
-      user: { select: { id: true, name: true, email: true, username: true } },
+      user: { select: { id: true, name: true, email: true, username: true, avatarUrl: true, bio: true } },
     };
 
     function memberRow(id: number, overrides: { role?: string; accepted?: boolean } = {}) {
@@ -279,7 +279,14 @@ describe("PrismaOrganizationMembershipRepository", () => {
         id,
         role: overrides.role ?? "MEMBER",
         accepted: overrides.accepted ?? true,
-        user: { id: id + 100, name: `User ${id}`, email: `user${id}@acme.com`, username: `user${id}` },
+        user: {
+          id: id + 100,
+          name: `User ${id}`,
+          email: `user${id}@acme.com`,
+          username: `user${id}`,
+          avatarUrl: id === 1 ? "https://acme.com/a.png" : null,
+          bio: id === 1 ? "Hello" : null,
+        },
       };
     }
 
@@ -339,6 +346,8 @@ describe("PrismaOrganizationMembershipRepository", () => {
             name: "User 1",
             email: "user1@acme.com",
             username: "user1",
+            avatarUrl: "https://acme.com/a.png",
+            bio: "Hello",
             role: "OWNER",
             accepted: true,
           },
@@ -348,6 +357,8 @@ describe("PrismaOrganizationMembershipRepository", () => {
             name: "User 2",
             email: "user2@acme.com",
             username: "user2",
+            avatarUrl: null,
+            bio: null,
             role: "ADMIN",
             accepted: false,
           },
@@ -364,6 +375,72 @@ describe("PrismaOrganizationMembershipRepository", () => {
 
       expect(result.items.map((item) => item.membershipId)).toEqual([3, 5]);
       expect(result.nextCursor).toBe(5);
+    });
+  });
+
+  describe("findMember", () => {
+    it("selects the member fields by the user/team key and maps the row", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findUnique.mockResolvedValue({
+        id: 4,
+        role: "ADMIN",
+        accepted: true,
+        user: {
+          id: 7,
+          name: "Alice",
+          email: "alice@acme.com",
+          username: "alice",
+          avatarUrl: "https://acme.com/a.png",
+          bio: "Hi",
+        },
+      });
+
+      const result = await repository.findMember({ organizationId: 1, userId: 7 });
+
+      expect(membership.findUnique).toHaveBeenCalledWith({
+        where: { userId_teamId: { userId: 7, teamId: 1 } },
+        select: {
+          id: true,
+          role: true,
+          accepted: true,
+          user: {
+            select: { id: true, name: true, email: true, username: true, avatarUrl: true, bio: true },
+          },
+        },
+      });
+      expect(result).toEqual({
+        membershipId: 4,
+        userId: 7,
+        name: "Alice",
+        email: "alice@acme.com",
+        username: "alice",
+        avatarUrl: "https://acme.com/a.png",
+        bio: "Hi",
+        role: "ADMIN",
+        accepted: true,
+      });
+    });
+
+    it("returns null when the user is not a member", async () => {
+      const { repository, membership } = buildRepository();
+      membership.findUnique.mockResolvedValue(null);
+
+      expect(await repository.findMember({ organizationId: 1, userId: 7 })).toBeNull();
+    });
+  });
+
+  describe("updateUserProfile", () => {
+    it("updates only the given profile fields and selects just the id", async () => {
+      const { repository, user } = buildRepository();
+      user.update.mockResolvedValue({ id: 7 });
+
+      await repository.updateUserProfile({ userId: 7, data: { bio: "New", avatarUrl: null } });
+
+      expect(user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { bio: "New", avatarUrl: null },
+        select: { id: true },
+      });
     });
   });
 

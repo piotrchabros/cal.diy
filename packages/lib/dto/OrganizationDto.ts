@@ -45,6 +45,8 @@ export const OrganizationMemberDtoSchema = z.object({
   name: z.string().nullable(),
   email: z.string(),
   username: z.string().nullable(),
+  avatarUrl: z.string().nullable(),
+  bio: z.string().nullable(),
   role: OrganizationRoleDtoSchema,
   accepted: z.boolean(),
 });

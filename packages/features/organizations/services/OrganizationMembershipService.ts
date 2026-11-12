@@ -498,7 +498,9 @@ export class OrganizationMembershipService {
 
   private toMemberDto(record: OrganizationMemberRecord): OrganizationMemberDto {
     const { membershipId: _membershipId, ...member } = record;
-    return member;
+    // Legacy avatars are inline data: URLs that would bloat the member list payload
+    const avatarUrl = member.avatarUrl?.startsWith("data:") ? null : member.avatarUrl;
+    return { ...member, avatarUrl };
   }
 
   // newRole is null when the member is being removed rather than demoted. An organization created with an

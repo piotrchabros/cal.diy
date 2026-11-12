@@ -25,6 +25,29 @@ const toMembershipRole: Record<OrganizationRoleDto, MembershipRole> = {
   MEMBER: MembershipRole.MEMBER,
 };
 
+const memberSelect = {
+  id: true,
+  role: true,
+  accepted: true,
+  user: { select: { id: true, name: true, email: true, username: true, avatarUrl: true, bio: true } },
+} satisfies Prisma.MembershipSelect;
+
+function toMemberRecord(
+  row: Prisma.MembershipGetPayload<{ select: typeof memberSelect }>
+): OrganizationMemberRecord {
+  return {
+    membershipId: row.id,
+    userId: row.user.id,
+    name: row.user.name,
+    email: row.user.email,
+    username: row.user.username,
+    avatarUrl: row.user.avatarUrl,
+    bio: row.user.bio,
+    role: toRoleDto[row.role],
+    accepted: row.accepted,
+  };
+}
+
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
@@ -183,25 +206,36 @@ export class PrismaOrganizationMembershipRepository implements IOrganizationMemb
       },
       orderBy: { id: "asc" },
       take: limit + 1,
-      select: {
-        id: true,
-        role: true,
-        accepted: true,
-        user: { select: { id: true, name: true, email: true, username: true } },
-      },
+      select: memberSelect,
     });
 
-    const items = rows.slice(0, limit).map((row) => ({
-      membershipId: row.id,
-      userId: row.user.id,
-      name: row.user.name,
-      email: row.user.email,
-      username: row.user.username,
-      role: toRoleDto[row.role],
-      accepted: row.accepted,
-    }));
+    const items = rows.slice(0, limit).map(toMemberRecord);
     if (rows.length <= limit) return { items };
     return { items, nextCursor: items[limit - 1].membershipId };
+  }
+
+  async findMember({
+    organizationId,
+    userId,
+  }: {
+    organizationId: number;
+    userId: number;
+  }): Promise<OrganizationMemberRecord | null> {
+    const row = await this.prismaClient.membership.findUnique({
+      where: { userId_teamId: { userId, teamId: organizationId } },
+      select: memberSelect,
+    });
+    return row ? toMemberRecord(row) : null;
+  }
+
+  async updateUserProfile({
+    userId,
+    data,
+  }: {
+    userId: number;
+    data: { name?: string; bio?: string; avatarUrl?: string | null };
+  }): Promise<void> {
+    await this.prismaClient.user.update({ where: { id: userId }, data, select: { id: true } });
   }
 
   async listTeams({
