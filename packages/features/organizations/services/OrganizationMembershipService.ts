@@ -173,9 +173,10 @@ export class OrganizationMembershipService {
       throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.editOwnProfileInAccountSettings);
     }
 
-    const targetRole = await repository.findRole({ organizationId, userId });
-    if (targetRole === null) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
-    if (targetRole === "OWNER" && actorRole !== "OWNER") {
+    // Pending invitees are editable too; the organizationId check below keeps users who belong to another org out
+    const targetMembership = await repository.findMembership({ organizationId, userId });
+    if (!targetMembership) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
+    if (targetMembership.role === "OWNER" && actorRole !== "OWNER") {
       throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyOwnersCanEditOwner);
     }
 

@@ -153,6 +153,7 @@ describe("OrgMemberActions", () => {
     it.each<[string, OrganizationRoleDto, Member]>([
       ["an OWNER viewer on an ADMIN row", "OWNER", { ...MEMBER, role: "ADMIN" }],
       ["an ADMIN viewer on a MEMBER row", "ADMIN", MEMBER],
+      ["an OWNER viewer on a pending row", "OWNER", { ...MEMBER, accepted: false }],
     ])("is offered to %s", (_label, viewerRole, member) => {
       renderActions(viewerRole, member);
       expect(screen.getByRole("button", { name: "edit" })).toBeInTheDocument();
@@ -161,7 +162,7 @@ describe("OrgMemberActions", () => {
     it.each<[string, OrganizationRoleDto, Member]>([
       ["an ADMIN viewer on an OWNER row", "ADMIN", { ...MEMBER, role: "OWNER" }],
       ["the viewer's own row", "OWNER", { ...MEMBER, userId: 1 }],
-      ["a pending member", "OWNER", { ...MEMBER, accepted: false }],
+      ["an ADMIN viewer on a pending OWNER row", "ADMIN", { ...MEMBER, role: "OWNER", accepted: false }],
     ])("is hidden from %s", (_label, viewerRole, member) => {
       renderActions(viewerRole, member);
       expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();

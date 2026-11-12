@@ -1341,9 +1341,59 @@ describe("OrganizationMembershipService", () => {
         );
       });
 
-      it("rejects a pending invitee as target", async () => {
+      it("lets a manager edit a pending invitee in this organization", async () => {
         membershipRepository.seedUser({ id: 6, username: "pending", organizationId: ORG_ID });
         membershipRepository.seedMembership({ userId: 6, teamId: ORG_ID, role: "MEMBER", accepted: false });
+
+        const result = await update(ADMIN_ID, 6, { name: "Invitee" });
+
+        expect(result.name).toBe("Invitee");
+        expect(result.accepted).toBe(false);
+        expect(storedUser(6)?.name).toBe("Invitee");
+      });
+
+      it("renames a pending invitee without creating an org profile", async () => {
+        membershipRepository.seedUser({ id: 6, username: null, organizationId: ORG_ID });
+        membershipRepository.seedMembership({ userId: 6, teamId: ORG_ID, role: "MEMBER", accepted: false });
+
+        await update(ADMIN_ID, 6, { username: "jane" });
+
+        expect(storedUser(6)?.username).toBe("jane");
+        expect(membershipRepository.profiles.filter((profile) => profile.userId === 6)).toHaveLength(0);
+      });
+
+      it("rejects a pending invitee whose user belongs to another organization", async () => {
+        membershipRepository.seedUser({
+          id: 6,
+          username: "pending",
+          name: "Before",
+          organizationId: OTHER_ORG_ID,
+        });
+        membershipRepository.seedMembership({ userId: 6, teamId: ORG_ID, role: "MEMBER", accepted: false });
+
+        await expectRejection(
+          update(ADMIN_ID, 6),
+          ErrorCode.PreconditionFailed,
+          "member_not_in_organization"
+        );
+        expect(storedUser(6)?.name).toBe("Before");
+      });
+
+      it("forbids an admin from editing a pending owner invite", async () => {
+        membershipRepository.seedUser({ id: 6, username: "pendingowner", organizationId: ORG_ID });
+        membershipRepository.seedMembership({ userId: 6, teamId: ORG_ID, role: "OWNER", accepted: false });
+
+        await expectRejection(
+          update(ADMIN_ID, 6),
+          ErrorCode.Forbidden,
+          "organization_only_owners_can_edit_owner"
+        );
+        const result = await update(OWNER_ID, 6, { name: "Invited Owner" });
+        expect(result.name).toBe("Invited Owner");
+      });
+
+      it("returns NotFound when there is no membership at all", async () => {
+        membershipRepository.seedUser({ id: 6, username: "ghost", organizationId: ORG_ID });
 
         await expectRejection(update(ADMIN_ID, 6), ErrorCode.NotFound, "organization_member_not_found");
       });
