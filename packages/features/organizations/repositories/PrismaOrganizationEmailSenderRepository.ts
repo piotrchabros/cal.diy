@@ -71,4 +71,15 @@ export class PrismaOrganizationEmailSenderRepository implements IOrganizationEma
     if (!team) return null;
     return team.isOrganization ? team.id : team.parentId;
   }
+
+  async findOrganizationIdByEventTypeId(eventTypeId: number): Promise<number | null> {
+    const eventType = await this.prismaClient.eventType.findUnique({
+      where: { id: eventTypeId },
+      select: { teamId: true, userId: true },
+    });
+    if (!eventType) return null;
+    if (eventType.teamId !== null) return this.findOrganizationIdByTeamId(eventType.teamId);
+    if (eventType.userId !== null) return this.findOrganizationIdByUserId(eventType.userId);
+    return null;
+  }
 }
