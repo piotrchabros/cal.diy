@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   useMutation: vi.fn<(options: MutationOptions) => Mutation>(),
   mutate: vi.fn<(input: { name: string }) => void>(),
   invalidateCurrent: vi.fn<() => Promise<void>>(),
+  updateSession: vi.fn<(data: unknown) => Promise<void>>(),
   showToast: vi.fn<(message: string, variant: string) => void>(),
 }));
 
@@ -43,6 +44,16 @@ vi.mock("@calcom/trpc/react", () => ({
 
 vi.mock("@calcom/ui/components/toast", () => ({ showToast: mocks.showToast }));
 
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ update: mocks.updateSession }),
+}));
+
+vi.mock("../components/OrganizationLogoSection", () => ({
+  OrganizationLogoSection: ({ canEdit, logoUrl }: { canEdit: boolean; logoUrl: string | null }) => (
+    <div data-testid="org-logo-section" data-can-edit={String(canEdit)} data-logo={logoUrl ?? ""} />
+  ),
+}));
+
 vi.mock("../components/OrganizationNotetakerBotSection", () => ({
   OrganizationNotetakerBotSection: () => <div data-testid="notetaker-bot-section" />,
 }));
@@ -66,6 +77,7 @@ function renderView(
 ): ReturnType<typeof render> {
   mocks.useMutation.mockReturnValue({ mutate: mocks.mutate, isPending: false });
   mocks.invalidateCurrent.mockResolvedValue(undefined);
+  mocks.updateSession.mockResolvedValue(undefined);
   return render(<OrgGeneralView organization={buildOrg(viewerRole)} notetakerEnabled={notetakerEnabled} />);
 }
 
@@ -84,6 +96,15 @@ describe("OrgGeneralView", () => {
     expect(screen.getByTestId("org-general-name-input")).toHaveValue("Acme");
     expect(screen.getByTestId("org-general-name-input")).toBeEnabled();
     expect(screen.getByTestId("org-general-save-button")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["OWNER", "true"],
+    ["MEMBER", "false"],
+  ] as const)("renders the logo section for an %s with canEdit=%s", (viewerRole, canEdit) => {
+    renderView(viewerRole);
+
+    expect(screen.getByTestId("org-logo-section")).toHaveAttribute("data-can-edit", canEdit);
   });
 
   it("shows slug and domain read-only with the instance-admin note", () => {
@@ -149,6 +170,7 @@ describe("OrgGeneralView", () => {
     await getMutationOptions().onSuccess?.({ name: "Acme Inc" });
 
     await waitFor(() => expect(mocks.invalidateCurrent).toHaveBeenCalledTimes(1));
+    expect(mocks.updateSession).toHaveBeenCalledWith({ refreshOrganization: true });
     expect(mocks.showToast).toHaveBeenCalledWith("Organization name updated", "success");
     expect(screen.getByTestId("org-general-name-input")).toHaveValue("Acme Inc");
   });

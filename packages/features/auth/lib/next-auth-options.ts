@@ -384,6 +384,15 @@ type GetOptionsDeps = {
 
 type SignInCallbackParams = Parameters<NonNullable<NonNullable<AuthOptions["callbacks"]>["signIn"]>>[0];
 
+async function refreshTokenOrganization(org: NonNullable<JWT["org"]>): Promise<JWT["org"]> {
+  const { getOrganizationRepository } = await import(
+    "@calcom/features/organizations/di/OrganizationRepository.container"
+  );
+  const organization = await getOrganizationRepository().findById(org.id);
+  if (!organization) return org;
+  return { ...org, name: organization.name, logoUrl: organization.logoUrl };
+}
+
 async function getOrganizationFullDomain(organizationId: number): Promise<string> {
   if (!isOrganizationsEnabled()) return WEBAPP_URL;
   const { getOrganizationUrlService } = await import(
@@ -546,8 +555,14 @@ const getBaseOptions = ({ getDubId, getTrackingData, getRequestHeaders }: GetOpt
       log.debug("callbacks:jwt", safeStringify({ token, user, account, trigger, session }));
       // The data available in 'session' depends on what data was supplied in update method call of session
       if (trigger === "update") {
+        // Organization data is re-read from the DB; the client payload only signals that it changed.
+        const org =
+          session?.refreshOrganization === true && token.org
+            ? await refreshTokenOrganization(token.org)
+            : token.org;
         return {
           ...token,
+          org,
           profileId: session?.profileId ?? token.profileId ?? null,
           upId: session?.upId ?? token.upId ?? null,
           locale: session?.locale ?? token.locale ?? "en",
