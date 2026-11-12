@@ -643,6 +643,7 @@ model Team {
   notetakerCalendarAutoJoins NotetakerCalendarAutoJoin[]
 
   notetakerOrganizationSettings OrganizationNotetakerSettings?
+  organizationSmtpSettings      OrganizationSmtpSettings?
 
   teamBilling               TeamBilling?               @relation("TeamBilling")
   organizationBilling       OrganizationBilling?       @relation("OrganizationBilling")
@@ -2971,6 +2972,27 @@ model EventTypeNotetakerSettings {
   updatedAt          DateTime             @updatedAt
 
   @@index([sharingTeamId])
+}
+
+enum OrganizationSmtpSecurity {
+  SSL
+  STARTTLS
+  NONE
+}
+
+model OrganizationSmtpSettings {
+  organizationId    Int                      @id
+  organization      Team                     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  host              String
+  port              Int
+  security          OrganizationSmtpSecurity
+  // null for relays that authenticate by IP allowlist
+  username          String?
+  // symmetricEncrypt(password, CALENDSO_ENCRYPTION_KEY); never selected outside the email delivery path
+  passwordEncrypted String?
+  lastVerifiedAt    DateTime?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
 }
 
 model OrganizationNotetakerSettings {
