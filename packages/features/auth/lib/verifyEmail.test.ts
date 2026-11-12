@@ -74,6 +74,14 @@ describe("verifyEmail links", () => {
     );
   });
 
+  it("scopes the sender to the user when a userId is given", async () => {
+    await sendEmailVerification({ email: "ada+work@example.com", username: "ada", userId: 42 });
+
+    expect(emails.sendEmailVerificationLink).toHaveBeenCalledWith(
+      expect.objectContaining({ senderScope: { userId: 42 } })
+    );
+  });
+
   it("sends the change-of-email link on the current address's organization base URL", async () => {
     await sendChangeOfEmailVerification({
       user: { username: "ada", emailFrom: "ada@example.com", emailTo: "new@example.com" },

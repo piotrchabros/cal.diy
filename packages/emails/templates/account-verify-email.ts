@@ -1,7 +1,6 @@
-import type { TFunction } from "i18next";
-
 import { APP_NAME, COMPANY_NAME, EMAIL_FROM_NAME } from "@calcom/lib/constants";
-
+import type { EmailSenderScope } from "@calcom/lib/dto/OrganizationEmailSenderDto";
+import type { TFunction } from "i18next";
 import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
@@ -13,6 +12,7 @@ export type EmailVerifyLink = {
   };
   verificationEmailLink: string;
   isSecondaryEmailVerification?: boolean;
+  senderScope?: EmailSenderScope;
 };
 
 export default class AccountVerifyEmail extends BaseEmail {
@@ -22,6 +22,10 @@ export default class AccountVerifyEmail extends BaseEmail {
     super();
     this.name = "SEND_ACCOUNT_VERIFY_EMAIL";
     this.verifyAccountInput = passwordEvent;
+  }
+
+  protected getSenderScope(): EmailSenderScope | null {
+    return this.verifyAccountInput.senderScope ?? { userEmail: this.verifyAccountInput.user.email };
   }
 
   protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
