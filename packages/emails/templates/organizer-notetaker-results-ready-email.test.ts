@@ -5,6 +5,10 @@ import OrganizerNotetakerResultsReadyEmail, {
 } from "./organizer-notetaker-results-ready-email";
 
 class TestEmail extends OrganizerNotetakerResultsReadyEmail {
+  public getScope() {
+    return this.getSenderScope();
+  }
+
   public getPayload() {
     return this.getNodeMailerPayload();
   }
@@ -157,5 +161,18 @@ describe("OrganizerNotetakerResultsReadyEmail", () => {
 
     expect(Object.keys(payload).sort()).toEqual(["from", "html", "subject", "text", "to"]);
     expect(email.name).toBe("SEND_NOTETAKER_RESULTS_READY");
+  });
+
+  it("uses the organization sender scope when the input carries an organization", () => {
+    const email = new TestEmail(buildInput({ organizationId: 42 }));
+
+    expect(email.getScope()).toEqual({ organizationId: 42 });
+  });
+
+  it("falls back to the recipient's email as the sender scope without an organization", () => {
+    expect(new TestEmail(buildInput()).getScope()).toEqual({ userEmail: "host@example.com" });
+    expect(new TestEmail(buildInput({ organizationId: null })).getScope()).toEqual({
+      userEmail: "host@example.com",
+    });
   });
 });

@@ -58,6 +58,7 @@ const INPUT_FIELDS = [
   "bookingTitle",
   "locale",
   "logoHref",
+  "organizationId",
   "outcomeReason",
   "resultsUrl",
   "sessionStatus",
@@ -75,6 +76,7 @@ const NOTICE_INPUT_FIELDS: string[] = [
   "isPending",
   "locale",
   "logoHref",
+  "organizationId",
   "t",
   "timeZone",
   "to",
@@ -86,6 +88,7 @@ const ADMIT_INPUT_FIELDS: string[] = [
   "locale",
   "logoHref",
   "notetakerUrl",
+  "organizationId",
   "t",
   "timeZone",
   "to",
@@ -98,6 +101,7 @@ const FAILED_INPUT_FIELDS: string[] = [
   "locale",
   "logoHref",
   "notetakerUrl",
+  "organizationId",
   "outcomeReason",
   "t",
   "timeZone",
@@ -110,6 +114,7 @@ const TURNED_OFF_INPUT_FIELDS: string[] = [
   "locale",
   "logoHref",
   "notetakerUrl",
+  "organizationId",
   "t",
   "timeZone",
   "to",
@@ -121,6 +126,7 @@ const SHARED_INPUT_FIELDS: string[] = [
   "locale",
   "logoHref",
   "notetakerUrl",
+  "organizationId",
   "sharedByName",
   "t",
   "timeZone",
@@ -2519,6 +2525,7 @@ describe("NotetakerNotificationService", () => {
         const input = sendMock.mock.calls[0][0];
         expect(input.resultsUrl).toBe(ORG_NOTETAKER_URL);
         expect(input.logoHref).toBe(ORG_URL);
+        expect(input.organizationId).toBe(ORGANIZATION_ID);
       });
 
       it("links the admit prompt email, its logo and the web push to the organization", async () => {
@@ -2531,6 +2538,7 @@ describe("NotetakerNotificationService", () => {
         const input = admitMock.mock.calls[0][0];
         expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
         expect(input.logoHref).toBe(ORG_URL);
+        expect(input.organizationId).toBe(ORGANIZATION_ID);
         expect(pushMock.mock.calls[0][0].url).toBe(ORG_NOTETAKER_URL);
       });
 
@@ -2543,6 +2551,7 @@ describe("NotetakerNotificationService", () => {
         const input = failedMock.mock.calls[0][0];
         expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
         expect(input.logoHref).toBe(ORG_URL);
+        expect(input.organizationId).toBe(ORGANIZATION_ID);
       });
 
       it("links the turned-off email and its logo to the organization", async () => {
@@ -2554,6 +2563,7 @@ describe("NotetakerNotificationService", () => {
         const input = turnedOffMock.mock.calls[0][0];
         expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
         expect(input.logoHref).toBe(ORG_URL);
+        expect(input.organizationId).toBe(ORGANIZATION_ID);
       });
 
       it("links the attendee notice logo to the organization", async () => {
@@ -2563,6 +2573,7 @@ describe("NotetakerNotificationService", () => {
         await service.send({ kind: "ATTENDEE_NOTICE", bookingId: BOOKING_ID, sessionId: null });
 
         expect(noticeMock.mock.calls[0][0].logoHref).toBe(ORG_URL);
+        expect(noticeMock.mock.calls[0][0].organizationId).toBe(ORGANIZATION_ID);
       });
 
       it("links the shared email and its logo to the organization", async () => {
@@ -2578,6 +2589,7 @@ describe("NotetakerNotificationService", () => {
         const input = sharedMock.mock.calls[0][0];
         expect(input.notetakerUrl).toBe(ORG_NOTETAKER_URL);
         expect(input.logoHref).toBe(ORG_URL);
+        expect(input.organizationId).toBe(ORGANIZATION_ID);
       });
     });
 
