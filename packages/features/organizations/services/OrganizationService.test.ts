@@ -63,8 +63,12 @@ describe("OrganizationService", () => {
           organizationsConfig: config,
           userRepository: { findInviteeByEmail, createInvitedWithPendingTeamMembership },
           teamInviteService: { sendInvite },
-          tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
+          tempOrgRedirectRepository: {
+            disableByFrom: vi.fn().mockResolvedValue(0),
+            updateToUrl: vi.fn().mockResolvedValue(0),
+          },
           organizationMoveService: { moveUser },
+          organizationUrlService: { getBaseUrl: vi.fn().mockResolvedValue("https://acme.com") },
         }),
         organizationMoveService: { moveUser },
       },

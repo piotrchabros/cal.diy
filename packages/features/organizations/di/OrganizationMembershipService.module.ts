@@ -4,6 +4,7 @@ import { moduleLoader as teamInviteServiceModuleLoader } from "@calcom/features/
 import { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
 import { moduleLoader as organizationMoveServiceModuleLoader } from "./OrganizationMoveService.module";
 import { moduleLoader as organizationsConfigModuleLoader } from "./OrganizationsConfig.module";
+import { moduleLoader as organizationUrlServiceModuleLoader } from "./OrganizationUrlService.module";
 import { moduleLoader as organizationMembershipRepositoryModuleLoader } from "./PrismaOrganizationMembershipRepository.module";
 import { moduleLoader as organizationRepositoryModuleLoader } from "./PrismaOrganizationRepository.module";
 import { moduleLoader as tempOrgRedirectRepositoryModuleLoader } from "./PrismaTempOrgRedirectRepository.module";
@@ -26,6 +27,7 @@ const loadModule = bindModuleToClassOnToken({
     teamInviteService: teamInviteServiceModuleLoader,
     tempOrgRedirectRepository: tempOrgRedirectRepositoryModuleLoader,
     organizationMoveService: organizationMoveServiceModuleLoader,
+    organizationUrlService: organizationUrlServiceModuleLoader,
   },
 });
 

@@ -1,5 +1,7 @@
 import type { TeamInviteService } from "@calcom/features/membership/services/TeamInviteService";
+import { defaultUploadUserAvatar, type UploadUserAvatar } from "@calcom/features/users/lib/uploadUserAvatar";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import { FULL_NAME_LENGTH_MAX_LIMIT } from "@calcom/lib/constants";
 import type {
   OrganizationMemberDto,
   OrganizationMemberListDto,
@@ -9,6 +11,8 @@ import type {
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
+import { isBase64Image } from "@calcom/lib/server/resizeBase64Image";
+import { slugify } from "@calcom/lib/slugify";
 import { ORGANIZATION_ERRORS } from "../lib/organizationErrors";
 import type {
   IOrganizationMembershipRepository,
@@ -19,6 +23,7 @@ import type { IOrganizationRepository } from "../repositories/interfaces/IOrgani
 import type { ITempOrgRedirectRepository } from "../repositories/interfaces/ITempOrgRedirectRepository";
 import { MOVE_ERRORS, type OrganizationMoveService } from "./OrganizationMoveService";
 import type { OrganizationsConfig } from "./OrganizationService";
+import type { OrganizationUrlService } from "./OrganizationUrlService";
 
 const log = logger.getSubLogger({ prefix: ["[OrganizationMembershipService]"] });
 
@@ -33,12 +38,26 @@ export interface IOrganizationMembershipServiceDeps {
   organizationsConfig: OrganizationsConfig;
   userRepository: Pick<UserRepository, "findInviteeByEmail" | "createInvitedWithPendingTeamMembership">;
   teamInviteService: Pick<TeamInviteService, "sendInvite">;
-  tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom">;
+  tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom" | "updateToUrl">;
   organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
+  organizationUrlService: Pick<OrganizationUrlService, "getBaseUrl">;
 }
 
+export type UpdateMemberProfileInput = {
+  organizationId: number;
+  actorUserId: number;
+  userId: number;
+  name?: string;
+  username?: string;
+  bio?: string;
+  avatar?: string | null;
+};
+
 export class OrganizationMembershipService {
-  constructor(private readonly deps: IOrganizationMembershipServiceDeps) {}
+  constructor(
+    private readonly deps: IOrganizationMembershipServiceDeps,
+    private readonly uploadAvatar: UploadUserAvatar = defaultUploadUserAvatar
+  ) {}
 
   async addMember(params: {
     organizationId: number;
@@ -143,6 +162,70 @@ export class OrganizationMembershipService {
       role,
     });
     return updated;
+  }
+
+  // Managers edit other members only; their own profile is edited in account settings
+  async updateMemberProfile(params: UpdateMemberProfileInput): Promise<OrganizationMemberDto> {
+    const { organizationId, actorUserId, userId } = params;
+    const repository = this.deps.organizationMembershipRepository;
+    const actorRole = await this.requireManagerRole(organizationId, actorUserId);
+    if (userId === actorUserId) {
+      throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.editOwnProfileInAccountSettings);
+    }
+
+    const targetRole = await repository.findRole({ organizationId, userId });
+    if (targetRole === null) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
+    if (targetRole === "OWNER" && actorRole !== "OWNER") {
+      throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyOwnersCanEditOwner);
+    }
+
+    const user = await repository.findUserById(userId);
+    if (!user) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
+    if (user.organizationId !== organizationId) {
+      throw ErrorWithCode.Factory.PreconditionFailed(ORGANIZATION_ERRORS.memberNotInOrganization);
+    }
+
+    // Validate every field up front so a bad value never leaves a half-applied edit behind
+    const name = params.name === undefined ? undefined : this.parseMemberName(params.name);
+    const username = params.username === undefined ? undefined : this.parseUsername(params.username);
+    const bio = params.bio?.trim();
+    if (typeof params.avatar === "string" && !isBase64Image(params.avatar)) {
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.memberAvatarInvalid);
+    }
+
+    const changedFields: string[] = [];
+    if (username !== undefined && username !== user.username) {
+      await this.changeUsername({ userId, username });
+      await this.syncRedirectsAfterRename(organizationId, user.username, username);
+      changedFields.push("username");
+    }
+
+    const data: { name?: string; bio?: string; avatarUrl?: string | null } = {};
+    if (name !== undefined) data.name = name;
+    if (bio !== undefined) data.bio = bio;
+    if (typeof params.avatar === "string") {
+      data.avatarUrl = await this.uploadAvatar({ userId, avatar: params.avatar });
+    } else if (params.avatar === null) {
+      data.avatarUrl = null;
+    }
+
+    const profileFields = Object.keys(data);
+    if (profileFields.length > 0) {
+      await repository.updateUserProfile({ userId, data });
+      changedFields.push(...profileFields);
+    }
+
+    log.info("organization.member.profile", {
+      action: "organization.member.profile",
+      actorUserId,
+      organizationId,
+      userId,
+      fields: changedFields,
+    });
+
+    const member = await repository.findMember({ organizationId, userId });
+    if (!member) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.memberNotFound);
+    return this.toMemberDto(member);
   }
 
   // Removing a member never deletes the user: they are moved to the default organization (FR-011). As a
@@ -490,6 +573,42 @@ export class OrganizationMembershipService {
       throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyManagersCanManageMembers);
     }
     return role;
+  }
+
+  private parseMemberName(value: string): string {
+    const name = value.trim();
+    if (!name || name.length > FULL_NAME_LENGTH_MAX_LIMIT) {
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.memberNameInvalid);
+    }
+    return name;
+  }
+
+  private parseUsername(value: string): string {
+    const username = slugify(value);
+    // Reject rather than silently rewrite so the manager sees the exact URL the member will get
+    if (!username || username !== value.trim().toLowerCase()) {
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.invalidUsername);
+    }
+    return username;
+  }
+
+  // Same redirect handling as repointUserRedirectsForRename and disableUserRedirectsForReusedUsername, but
+  // through injected dependencies instead of the DI containers those helpers resolve
+  private async syncRedirectsAfterRename(
+    organizationId: number,
+    oldUsername: string | null,
+    newUsername: string
+  ): Promise<void> {
+    const redirects = this.deps.tempOrgRedirectRepository;
+    if (oldUsername && oldUsername !== newUsername) {
+      const baseUrl = await this.deps.organizationUrlService.getBaseUrl({ organizationId });
+      await redirects.updateToUrl({
+        types: ["User"],
+        toUrl: `${baseUrl}/${oldUsername}`,
+        newToUrl: `${baseUrl}/${newUsername}`,
+      });
+    }
+    await redirects.disableByFrom({ fromOrgId: organizationId, from: newUsername, types: ["User"] });
   }
 
   private clampLimit(limit: number | undefined): number {
