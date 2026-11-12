@@ -27,4 +27,12 @@ export const ORGANIZATIONS_DI_TOKENS = {
   ORGANIZATION_EMAIL_SENDER_SERVICE_MODULE: Symbol("OrganizationEmailSenderServiceModule"),
   ORGANIZATION_EMAIL_SENDER_CONFIG: Symbol("OrganizationEmailSenderConfig"),
   ORGANIZATION_EMAIL_SENDER_CONFIG_MODULE: Symbol("OrganizationEmailSenderConfigModule"),
+  ORGANIZATION_SMTP_SETTINGS_REPOSITORY: Symbol("OrganizationSmtpSettingsRepository"),
+  ORGANIZATION_SMTP_SETTINGS_REPOSITORY_MODULE: Symbol("OrganizationSmtpSettingsRepositoryModule"),
+  ORGANIZATION_SMTP_SETTINGS_SERVICE: Symbol("OrganizationSmtpSettingsService"),
+  ORGANIZATION_SMTP_SETTINGS_SERVICE_MODULE: Symbol("OrganizationSmtpSettingsServiceModule"),
+  SMTP_CONNECTION_TESTER: Symbol("SmtpConnectionTester"),
+  SMTP_CONNECTION_TESTER_MODULE: Symbol("SmtpConnectionTesterModule"),
+  ORGANIZATION_SMTP_CONFIG: Symbol("OrganizationSmtpConfig"),
+  ORGANIZATION_SMTP_CONFIG_MODULE: Symbol("OrganizationSmtpConfigModule"),
 };
