@@ -1,8 +1,11 @@
+import { symmetricDecrypt } from "@calcom/lib/crypto";
 import type {
   EmailSenderScope,
+  OrganizationEmailDeliveryDto,
   OrganizationEmailSenderDto,
   OrganizationEmailSenderSettingsDto,
 } from "@calcom/lib/dto/OrganizationEmailSenderDto";
+import type { OrganizationSmtpTransportConfig } from "@calcom/lib/dto/OrganizationSmtpSettingsDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import logger from "@calcom/lib/logger";
 import {
@@ -10,11 +13,13 @@ import {
   isSenderDomainAllowed,
   parseSenderAddress,
   parseSenderName,
+  toSenderAddressOrNull,
 } from "../lib/emailSenderPolicy";
 import { ORGANIZATION_ERRORS } from "../lib/organizationErrors";
 import type {
   IOrganizationEmailSenderRepository,
   OrganizationEmailSenderRecord,
+  OrganizationSmtpRecord,
 } from "../repositories/interfaces/IOrganizationEmailSenderRepository";
 import type { OrganizationMembershipService } from "./OrganizationMembershipService";
 
@@ -25,6 +30,7 @@ const CACHE_TTL_MS = 60_000;
 export type OrganizationEmailSenderConfig = {
   defaultName: string;
   defaultAddress: string | null;
+  encryptionKey: string;
 };
 
 export interface IOrganizationEmailSenderServiceDeps {
@@ -36,7 +42,7 @@ export interface IOrganizationEmailSenderServiceDeps {
 type CacheEntry = {
   expiresAt: number;
   organizationId: number | null;
-  value: OrganizationEmailSenderDto | null;
+  value: OrganizationEmailDeliveryDto | null;
 };
 
 export class OrganizationEmailSenderService {
@@ -65,6 +71,7 @@ export class OrganizationEmailSenderService {
       fallbackSenderName: this.deps.emailSenderConfig.defaultName,
       fallbackSenderAddress: this.deps.emailSenderConfig.defaultAddress,
       canEdit: role !== "MEMBER",
+      usesOrganizationSmtp: record?.smtp != null,
     };
   }
 
@@ -108,6 +115,10 @@ export class OrganizationEmailSenderService {
   }
 
   async resolveForScope(scope: EmailSenderScope): Promise<OrganizationEmailSenderDto | null> {
+    return (await this.resolveDeliveryForScope(scope))?.sender ?? null;
+  }
+
+  async resolveDeliveryForScope(scope: EmailSenderScope): Promise<OrganizationEmailDeliveryDto | null> {
     const key = JSON.stringify(scope);
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -117,7 +128,7 @@ export class OrganizationEmailSenderService {
       organizationId === null
         ? null
         : await this.deps.emailSenderRepository.findByOrganizationId(organizationId);
-    const value = record ? toSender(record) : null;
+    const value = record ? this.toDelivery(record) : null;
 
     this.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, organizationId, value });
     return value;
@@ -127,6 +138,48 @@ export class OrganizationEmailSenderService {
     this.cache.forEach((entry, key) => {
       if (entry.organizationId === organizationId) this.cache.delete(key);
     });
+  }
+
+  private toDelivery(record: OrganizationEmailSenderRecord): OrganizationEmailDeliveryDto | null {
+    const allowedAddress = getAllowedSenderAddress(record);
+    // The env sender address must never go out through an organization's own SMTP server, so SMTP is
+    // only used when the organization has an address of its own to send from
+    const smtpFromAddress = record.smtp
+      ? (allowedAddress ?? toSenderAddressOrNull(record.smtp.username))
+      : null;
+    const smtp =
+      record.smtp && smtpFromAddress !== null
+        ? this.toSmtpTransport(record.organizationId, record.smtp)
+        : null;
+    const address = smtp ? smtpFromAddress : allowedAddress;
+    const sender =
+      record.emailFromName === null && address === null ? null : { name: record.emailFromName, address };
+    if (sender === null && smtp === null) return null;
+    return { sender, smtp };
+  }
+
+  private toSmtpTransport(
+    organizationId: number,
+    smtp: OrganizationSmtpRecord
+  ): OrganizationSmtpTransportConfig | null {
+    let password: string | null = null;
+    if (smtp.passwordEncrypted !== null) {
+      try {
+        password = symmetricDecrypt(smtp.passwordEncrypted, this.deps.emailSenderConfig.encryptionKey);
+      } catch {
+        log.warn("organization.smtp.decrypt_failed", { organizationId });
+        return null;
+      }
+    }
+    return {
+      organizationId,
+      version: smtp.updatedAt.toISOString(),
+      host: smtp.host,
+      port: smtp.port,
+      security: smtp.security,
+      username: smtp.username,
+      password,
+    };
   }
 
   private resolveOrganizationId(scope: EmailSenderScope): Promise<number | null> {
@@ -140,13 +193,11 @@ export class OrganizationEmailSenderService {
 }
 
 // The domain may have changed since the address was saved, so it is re-checked on every send
-function toSender(record: OrganizationEmailSenderRecord): OrganizationEmailSenderDto | null {
-  const address =
-    record.emailFromAddress !== null && isSenderDomainAllowed(record.emailFromAddress, record.customDomain)
-      ? record.emailFromAddress
-      : null;
-  if (record.emailFromName === null && address === null) return null;
-  return { name: record.emailFromName, address };
+function getAllowedSenderAddress(record: OrganizationEmailSenderRecord): string | null {
+  return record.emailFromAddress !== null &&
+    isSenderDomainAllowed(record.emailFromAddress, record.customDomain)
+    ? record.emailFromAddress
+    : null;
 }
 
 function getAllowedDomain(customDomain: string | null): string | null {

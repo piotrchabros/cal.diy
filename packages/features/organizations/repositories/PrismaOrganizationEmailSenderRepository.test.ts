@@ -2,17 +2,52 @@ import type { PrismaClient } from "@calcom/prisma";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaOrganizationEmailSenderRepository } from "./PrismaOrganizationEmailSenderRepository";
 
+const smtp = {
+  host: "smtp.acme.com",
+  port: 587,
+  security: "STARTTLS",
+  username: "mailer@acme.com",
+  passwordEncrypted: "iv:cipher",
+  updatedAt: new Date("2026-11-01T00:00:00.000Z"),
+};
+const row = {
+  organizationId: 7,
+  emailFromName: "Acme",
+  emailFromAddress: "no-reply@acme.com",
+  customDomain: "acme.com",
+  organization: { organizationSmtpSettings: smtp },
+};
 const record = {
   organizationId: 7,
   emailFromName: "Acme",
   emailFromAddress: "no-reply@acme.com",
   customDomain: "acme.com",
+  smtp,
 };
-const selectShape = { organizationId: true, emailFromName: true, emailFromAddress: true, customDomain: true };
+const selectShape = {
+  organizationId: true,
+  emailFromName: true,
+  emailFromAddress: true,
+  customDomain: true,
+  organization: {
+    select: {
+      organizationSmtpSettings: {
+        select: {
+          host: true,
+          port: true,
+          security: true,
+          username: true,
+          passwordEncrypted: true,
+          updatedAt: true,
+        },
+      },
+    },
+  },
+};
 
 function buildRepository() {
   const settingsFindUnique = vi.fn();
-  const settingsUpsert = vi.fn().mockResolvedValue(record);
+  const settingsUpsert = vi.fn().mockResolvedValue(row);
   const teamFindFirst = vi.fn();
   const teamFindUnique = vi.fn();
   const userFindUnique = vi.fn();
@@ -37,12 +72,23 @@ function buildRepository() {
 }
 
 describe("PrismaOrganizationEmailSenderRepository", () => {
-  it("reads the sender settings with an explicit select", async () => {
+  it("reads the sender settings and SMTP settings in one query with an explicit select", async () => {
     const { repository, settingsFindUnique } = buildRepository();
-    settingsFindUnique.mockResolvedValue(record);
+    settingsFindUnique.mockResolvedValue(row);
 
     expect(await repository.findByOrganizationId(7)).toEqual(record);
+    expect(settingsFindUnique).toHaveBeenCalledTimes(1);
     expect(settingsFindUnique).toHaveBeenCalledWith({ where: { organizationId: 7 }, select: selectShape });
+  });
+
+  it("maps a missing SMTP row to null and a missing settings row to null", async () => {
+    const { repository, settingsFindUnique } = buildRepository();
+    settingsFindUnique
+      .mockResolvedValueOnce({ ...row, organization: { organizationSmtpSettings: null } })
+      .mockResolvedValueOnce(null);
+
+    expect(await repository.findByOrganizationId(7)).toEqual({ ...record, smtp: null });
+    expect(await repository.findByOrganizationId(7)).toBeNull();
   });
 
   it("returns null from update when the team is not a root organization", async () => {

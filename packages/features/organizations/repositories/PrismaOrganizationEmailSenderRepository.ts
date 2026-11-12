@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@calcom/prisma";
+import type { Prisma } from "@calcom/prisma/client";
 import type {
   IOrganizationEmailSenderRepository,
   OrganizationEmailSenderRecord,
@@ -9,16 +10,38 @@ const settingsSelect = {
   emailFromName: true,
   emailFromAddress: true,
   customDomain: true,
+  organization: {
+    select: {
+      organizationSmtpSettings: {
+        select: {
+          host: true,
+          port: true,
+          security: true,
+          username: true,
+          passwordEncrypted: true,
+          updatedAt: true,
+        },
+      },
+    },
+  },
 } as const;
+
+type SettingsRow = Prisma.OrganizationSettingsGetPayload<{ select: typeof settingsSelect }>;
+
+function toRecord(row: SettingsRow): OrganizationEmailSenderRecord {
+  const { organization, ...settings } = row;
+  return { ...settings, smtp: organization.organizationSmtpSettings };
+}
 
 export class PrismaOrganizationEmailSenderRepository implements IOrganizationEmailSenderRepository {
   constructor(private readonly prismaClient: PrismaClient) {}
 
   async findByOrganizationId(organizationId: number): Promise<OrganizationEmailSenderRecord | null> {
-    return this.prismaClient.organizationSettings.findUnique({
+    const row = await this.prismaClient.organizationSettings.findUnique({
       where: { organizationId },
       select: settingsSelect,
     });
+    return row ? toRecord(row) : null;
   }
 
   async update(
@@ -31,7 +54,7 @@ export class PrismaOrganizationEmailSenderRepository implements IOrganizationEma
     });
     if (!organization) return null;
 
-    return this.prismaClient.organizationSettings.upsert({
+    const row = await this.prismaClient.organizationSettings.upsert({
       where: { organizationId },
       create: {
         organizationId,
@@ -44,6 +67,7 @@ export class PrismaOrganizationEmailSenderRepository implements IOrganizationEma
       update: input,
       select: settingsSelect,
     });
+    return toRecord(row);
   }
 
   async findOrganizationIdByUserId(userId: number): Promise<number | null> {

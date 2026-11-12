@@ -1,3 +1,4 @@
+import { symmetricEncrypt } from "@calcom/lib/crypto";
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMAIL_SENDER_ERRORS } from "../lib/emailSenderPolicy";
@@ -5,10 +6,23 @@ import { ORGANIZATION_ERRORS } from "../lib/organizationErrors";
 import type {
   IOrganizationEmailSenderRepository,
   OrganizationEmailSenderRecord,
+  OrganizationSmtpRecord,
 } from "../repositories/interfaces/IOrganizationEmailSenderRepository";
 import { OrganizationEmailSenderService } from "./OrganizationEmailSenderService";
 
 const ORG_ID = 7;
+const ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef";
+const SMTP_UPDATED_AT = new Date("2026-11-01T10:00:00.000Z");
+
+const makeSmtp = (overrides: Partial<OrganizationSmtpRecord> = {}): OrganizationSmtpRecord => ({
+  host: "smtp.jellymatch.tech",
+  port: 587,
+  security: "STARTTLS",
+  username: "mailer@jellymatch.tech",
+  passwordEncrypted: symmetricEncrypt("s3cret", ENCRYPTION_KEY),
+  updatedAt: SMTP_UPDATED_AT,
+  ...overrides,
+});
 
 const makeRecord = (
   overrides: Partial<OrganizationEmailSenderRecord> = {}
@@ -17,6 +31,7 @@ const makeRecord = (
   emailFromName: "Jelly",
   emailFromAddress: "hello@jellymatch.tech",
   customDomain: "cal.jellymatch.tech",
+  smtp: null,
   ...overrides,
 });
 
@@ -36,7 +51,11 @@ function setup(
   const service = new OrganizationEmailSenderService({
     emailSenderRepository: repository,
     organizationMembershipService: { getRole },
-    emailSenderConfig: { defaultName: "Cal", defaultAddress: "no-reply@cal.test" },
+    emailSenderConfig: {
+      defaultName: "Cal",
+      defaultAddress: "no-reply@cal.test",
+      encryptionKey: ENCRYPTION_KEY,
+    },
   });
   return { service, repository, getRole };
 }
@@ -60,7 +79,15 @@ describe("OrganizationEmailSenderService", () => {
         fallbackSenderName: "Cal",
         fallbackSenderAddress: "no-reply@cal.test",
         canEdit: true,
+        usesOrganizationSmtp: false,
       });
+    });
+
+    it("reports organization SMTP when an SMTP row exists", async () => {
+      const { service } = setup({ record: makeRecord({ smtp: makeSmtp() }) });
+      expect((await service.get({ organizationId: ORG_ID, viewerUserId: 1 })).usesOrganizationSmtp).toBe(
+        true
+      );
     });
 
     it("marks members as read-only", async () => {
@@ -83,6 +110,7 @@ describe("OrganizationEmailSenderService", () => {
         senderAddress: null,
         senderAddressActive: false,
         allowedDomain: null,
+        usesOrganizationSmtp: false,
       });
     });
   });
@@ -225,6 +253,99 @@ describe("OrganizationEmailSenderService", () => {
         await service.resolveForScope({ eventTypeId: 5 });
         expect(repository.findOrganizationIdByEventTypeId).toHaveBeenCalledTimes(2);
       });
+    });
+  });
+
+  describe("resolveDeliveryForScope", () => {
+    const transport = (overrides: Record<string, unknown> = {}) => ({
+      organizationId: ORG_ID,
+      version: SMTP_UPDATED_AT.toISOString(),
+      host: "smtp.jellymatch.tech",
+      port: 587,
+      security: "STARTTLS",
+      username: "mailer@jellymatch.tech",
+      password: "s3cret",
+      ...overrides,
+    });
+
+    it("returns the sender without SMTP when no SMTP row exists", async () => {
+      const { service } = setup();
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: "hello@jellymatch.tech" },
+        smtp: null,
+      });
+    });
+
+    it("sends from the allowed alias over the SMTP username", async () => {
+      const { service } = setup({ record: makeRecord({ smtp: makeSmtp() }) });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: "hello@jellymatch.tech" },
+        smtp: transport(),
+      });
+    });
+
+    it("falls back to the SMTP username when the saved address is not allowed", async () => {
+      const { service } = setup({
+        record: makeRecord({
+          emailFromAddress: "hello@other.io",
+          smtp: makeSmtp({ username: "Mailer@Other.io" }),
+        }),
+      });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: "mailer@other.io" },
+        smtp: transport({ username: "Mailer@Other.io" }),
+      });
+    });
+
+    it("drops SMTP when there is no allowed address and the username is not an address", async () => {
+      const { service } = setup({
+        record: makeRecord({ emailFromAddress: null, smtp: makeSmtp({ username: "apikey" }) }),
+      });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: null },
+        smtp: null,
+      });
+    });
+
+    it("uses a relay without credentials when an allowed address exists", async () => {
+      const { service } = setup({
+        record: makeRecord({ smtp: makeSmtp({ username: null, passwordEncrypted: null }) }),
+      });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: "hello@jellymatch.tech" },
+        smtp: transport({ username: null, password: null }),
+      });
+    });
+
+    it("drops a relay when there is no allowed address", async () => {
+      const { service } = setup({
+        record: makeRecord({
+          emailFromName: null,
+          emailFromAddress: null,
+          smtp: makeSmtp({ username: null, passwordEncrypted: null }),
+        }),
+      });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toBeNull();
+    });
+
+    it("drops SMTP when the password cannot be decrypted", async () => {
+      const { service } = setup({
+        record: makeRecord({ smtp: makeSmtp({ passwordEncrypted: "00:not-valid" }) }),
+      });
+      await expect(service.resolveDeliveryForScope({ organizationId: ORG_ID })).resolves.toEqual({
+        sender: { name: "Jelly", address: "hello@jellymatch.tech" },
+        smtp: null,
+      });
+    });
+
+    it("shares its cache with resolveForScope", async () => {
+      const { service, repository } = setup({ record: makeRecord({ smtp: makeSmtp() }) });
+      await service.resolveDeliveryForScope({ teamId: 3 });
+      await expect(service.resolveForScope({ teamId: 3 })).resolves.toEqual({
+        name: "Jelly",
+        address: "hello@jellymatch.tech",
+      });
+      expect(repository.findByOrganizationId).toHaveBeenCalledTimes(1);
     });
   });
 });
