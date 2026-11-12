@@ -5301,5 +5301,13 @@
   "organization_smtp_host_private": "SMTP hosts on private or internal networks are not allowed.",
   "organization_smtp_host_unresolvable": "The SMTP host name could not be resolved.",
   "organization_smtp_port_not_allowed": "This port is not allowed. Use 25, 465, 587 or 2525.",
+  "edit_organization_member": "Edit member",
+  "edit_organization_member_description": "Change this member's name, username, bio and profile picture.",
+  "organization_member_profile_updated": "Member profile updated",
+  "org_member_username_change_warning": "Changing the username changes all of this member's booking links. Old links will stop working.",
+  "organization_only_owners_can_edit_owner": "Only owners can edit an owner's profile.",
+  "organization_edit_own_profile_in_account_settings": "Edit your own profile in My account → Profile.",
+  "organization_member_name_invalid": "Name is required and can be at most 50 characters.",
+  "organization_member_avatar_invalid": "Upload a PNG or JPEG image.",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

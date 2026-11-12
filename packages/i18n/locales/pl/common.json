@@ -4931,5 +4931,16 @@
   "organization_smtp_host_private": "Hosty SMTP w sieciach prywatnych lub wewnętrznych są niedozwolone.",
   "organization_smtp_host_unresolvable": "Nie udało się odnaleźć hosta SMTP o tej nazwie.",
   "organization_smtp_port_not_allowed": "Ten port jest niedozwolony. Użyj portu 25, 465, 587 lub 2525.",
+  "edit_organization_member": "Edytuj członka",
+  "edit_organization_member_description": "Zmień nazwę, nazwę użytkownika, bio i zdjęcie profilowe tego członka.",
+  "organization_member_profile_updated": "Zaktualizowano profil członka",
+  "org_member_username_change_warning": "Zmiana nazwy użytkownika zmienia wszystkie linki rezerwacji tego członka. Stare linki przestaną działać.",
+  "organization_only_owners_can_edit_owner": "Tylko właściciele mogą edytować profil właściciela.",
+  "organization_edit_own_profile_in_account_settings": "Własny profil edytujesz w Moje konto → Profil.",
+  "organization_member_name_invalid": "Nazwa jest wymagana i może mieć maksymalnie 50 znaków.",
+  "organization_member_avatar_invalid": "Wgraj obraz PNG lub JPEG.",
+  "organization_member_not_found": "Nie znaleziono członka",
+  "invalid_username": "Nieprawidłowa nazwa użytkownika",
+  "username_taken_in_organization": "Ta nazwa użytkownika jest już zajęta w tej organizacji",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

@@ -63,12 +63,18 @@ describe("OrganizationMembershipService", () => {
   let userRepository: ReturnType<typeof buildUserRepository>;
   let sendInvite: Mock;
   let disableByFrom: Mock;
+  let updateToUrl: Mock;
+  let getBaseUrl: Mock;
+  let uploadAvatar: Mock;
   let moveUser: Mock;
 
   beforeEach(() => {
     userRepository = buildUserRepository();
     sendInvite = vi.fn().mockResolvedValue(undefined);
     disableByFrom = vi.fn().mockResolvedValue(0);
+    updateToUrl = vi.fn().mockResolvedValue(0);
+    getBaseUrl = vi.fn().mockResolvedValue("https://acme.com");
+    uploadAvatar = vi.fn().mockResolvedValue("https://cal.example.com/api/avatar/new.png");
     moveUser = vi.fn().mockResolvedValue({ userId: 3, organizationId: DEFAULT_ORG_ID, username: "user3" });
     organizationRepository = new InMemoryOrganizationRepository();
     membershipRepository = new InMemoryOrganizationMembershipRepository();
@@ -76,15 +82,19 @@ describe("OrganizationMembershipService", () => {
     organizationRepository.seed({ id: OTHER_ORG_ID, name: "Globex", slug: "globex", domain: "globex.com" });
     organizationRepository.seed({ id: DEFAULT_ORG_ID, name: "Cal", slug: "cal", domain: DEFAULT_DOMAIN });
     mockLogInfo.mockClear();
-    service = new OrganizationMembershipService({
-      organizationMembershipRepository: membershipRepository,
-      organizationRepository,
-      organizationsConfig: { defaultDomain: DEFAULT_DOMAIN },
-      userRepository,
-      teamInviteService: { sendInvite },
-      tempOrgRedirectRepository: { disableByFrom },
-      organizationMoveService: { moveUser },
-    });
+    service = new OrganizationMembershipService(
+      {
+        organizationMembershipRepository: membershipRepository,
+        organizationRepository,
+        organizationsConfig: { defaultDomain: DEFAULT_DOMAIN },
+        userRepository,
+        teamInviteService: { sendInvite },
+        tempOrgRedirectRepository: { disableByFrom, updateToUrl },
+        organizationMoveService: { moveUser },
+        organizationUrlService: { getBaseUrl },
+      },
+      uploadAvatar
+    );
   });
 
   describe("addMember", () => {
@@ -707,15 +717,19 @@ describe("OrganizationMembershipService", () => {
     });
 
     it("refuses removal when the default organization is missing", async () => {
-      service = new OrganizationMembershipService({
-        organizationMembershipRepository: membershipRepository,
-        organizationRepository,
-        organizationsConfig: { defaultDomain: null },
-        userRepository,
-        teamInviteService: { sendInvite },
-        tempOrgRedirectRepository: { disableByFrom },
-        organizationMoveService: { moveUser },
-      });
+      service = new OrganizationMembershipService(
+        {
+          organizationMembershipRepository: membershipRepository,
+          organizationRepository,
+          organizationsConfig: { defaultDomain: null },
+          userRepository,
+          teamInviteService: { sendInvite },
+          tempOrgRedirectRepository: { disableByFrom, updateToUrl },
+          organizationMoveService: { moveUser },
+          organizationUrlService: { getBaseUrl },
+        },
+        uploadAvatar
+      );
 
       await expectRejection(
         removeMember(ADMIN_ID, MEMBER_ID),
@@ -1235,6 +1249,272 @@ describe("OrganizationMembershipService", () => {
         ErrorCode.NotFound,
         "user_not_found"
       );
+    });
+  });
+
+  describe("updateMemberProfile", () => {
+    const OWNER_ID = 1;
+    const ADMIN_ID = 2;
+    const MEMBER_ID = 3;
+    const OTHER_ADMIN_ID = 4;
+    const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+    beforeEach(() => {
+      membershipRepository.seedUser({ id: OWNER_ID, username: "owner", organizationId: ORG_ID });
+      membershipRepository.seedUser({ id: ADMIN_ID, username: "admin", organizationId: ORG_ID });
+      membershipRepository.seedUser({
+        id: MEMBER_ID,
+        username: "member",
+        name: "Old Name",
+        email: "member@acme.com",
+        organizationId: ORG_ID,
+      });
+      membershipRepository.seedUser({ id: OTHER_ADMIN_ID, username: "admin2", organizationId: ORG_ID });
+      membershipRepository.seedMembership({ userId: OWNER_ID, teamId: ORG_ID, role: "OWNER" });
+      membershipRepository.seedMembership({ userId: ADMIN_ID, teamId: ORG_ID, role: "ADMIN" });
+      membershipRepository.seedMembership({ userId: MEMBER_ID, teamId: ORG_ID, role: "MEMBER" });
+      membershipRepository.seedMembership({ userId: OTHER_ADMIN_ID, teamId: ORG_ID, role: "ADMIN" });
+    });
+
+    function update(
+      actorUserId: number,
+      userId: number,
+      fields: { name?: string; username?: string; bio?: string; avatar?: string | null } = { name: "New" }
+    ) {
+      return service.updateMemberProfile({ organizationId: ORG_ID, actorUserId, userId, ...fields });
+    }
+
+    function storedUser(id: number) {
+      return membershipRepository.users.find((user) => user.id === id);
+    }
+
+    describe("permissions", () => {
+      it("lets an owner edit another owner", async () => {
+        membershipRepository.seedUser({ id: 5, username: "owner2", organizationId: ORG_ID });
+        membershipRepository.seedMembership({ userId: 5, teamId: ORG_ID, role: "OWNER" });
+
+        const result = await update(OWNER_ID, 5, { name: "Second Owner" });
+
+        expect(result.name).toBe("Second Owner");
+      });
+
+      it("lets an admin edit another admin", async () => {
+        const result = await update(ADMIN_ID, OTHER_ADMIN_ID, { name: "Other Admin" });
+
+        expect(result.name).toBe("Other Admin");
+      });
+
+      it("lets an admin edit a member", async () => {
+        const result = await update(ADMIN_ID, MEMBER_ID, { name: "Member" });
+
+        expect(result.name).toBe("Member");
+      });
+
+      it("forbids an admin from editing an owner", async () => {
+        await expectRejection(
+          update(ADMIN_ID, OWNER_ID),
+          ErrorCode.Forbidden,
+          "organization_only_owners_can_edit_owner"
+        );
+        expect(storedUser(OWNER_ID)?.name).toBeNull();
+      });
+
+      it("forbids a plain member", async () => {
+        await expectRejection(
+          update(MEMBER_ID, ADMIN_ID),
+          ErrorCode.Forbidden,
+          "organization_only_managers_can_manage_members"
+        );
+      });
+
+      it("hides the organization from a non-member actor", async () => {
+        membershipRepository.seedUser({ id: 9, username: "outsider", organizationId: OTHER_ORG_ID });
+
+        await expectRejection(update(9, MEMBER_ID), ErrorCode.NotFound, "organization_not_found");
+      });
+
+      it("sends managers to account settings for their own profile", async () => {
+        await expectRejection(
+          update(ADMIN_ID, ADMIN_ID),
+          ErrorCode.Forbidden,
+          "organization_edit_own_profile_in_account_settings"
+        );
+      });
+
+      it("rejects a pending invitee as target", async () => {
+        membershipRepository.seedUser({ id: 6, username: "pending", organizationId: ORG_ID });
+        membershipRepository.seedMembership({ userId: 6, teamId: ORG_ID, role: "MEMBER", accepted: false });
+
+        await expectRejection(update(ADMIN_ID, 6), ErrorCode.NotFound, "organization_member_not_found");
+      });
+
+      it("rejects a target whose user belongs to another organization", async () => {
+        membershipRepository.seedUser({ id: 7, username: "moved", organizationId: OTHER_ORG_ID });
+        membershipRepository.seedMembership({ userId: 7, teamId: ORG_ID, role: "MEMBER" });
+
+        await expectRejection(
+          update(ADMIN_ID, 7),
+          ErrorCode.PreconditionFailed,
+          "member_not_in_organization"
+        );
+      });
+    });
+
+    describe("name", () => {
+      it("saves the trimmed name", async () => {
+        await update(ADMIN_ID, MEMBER_ID, { name: "  Jane Doe  " });
+
+        expect(storedUser(MEMBER_ID)?.name).toBe("Jane Doe");
+      });
+
+      it.each([["   "], ["a".repeat(51)]])("rejects an invalid name %j", async (name) => {
+        await expectRejection(
+          update(ADMIN_ID, MEMBER_ID, { name }),
+          ErrorCode.BadRequest,
+          "organization_member_name_invalid"
+        );
+        expect(storedUser(MEMBER_ID)?.name).toBe("Old Name");
+      });
+
+      it("accepts a name of exactly 50 characters", async () => {
+        await update(ADMIN_ID, MEMBER_ID, { name: "a".repeat(50) });
+
+        expect(storedUser(MEMBER_ID)?.name).toBe("a".repeat(50));
+      });
+    });
+
+    describe("username", () => {
+      it("rejects a username that slugify would rewrite", async () => {
+        await expectRejection(
+          update(ADMIN_ID, MEMBER_ID, { username: "Foo Bar", name: "New" }),
+          ErrorCode.BadRequest,
+          "invalid_username"
+        );
+        expect(storedUser(MEMBER_ID)?.username).toBe("member");
+        expect(storedUser(MEMBER_ID)?.name).toBe("Old Name");
+      });
+
+      it("writes nothing when the username is taken", async () => {
+        membershipRepository.seedProfile({ userId: ADMIN_ID, organizationId: ORG_ID, username: "admin" });
+
+        await expectRejection(
+          update(ADMIN_ID, MEMBER_ID, { username: "admin", name: "New", bio: "Bio", avatar: PNG }),
+          ErrorCode.Conflict,
+          "username_taken_in_organization"
+        );
+        expect(storedUser(MEMBER_ID)).toMatchObject({ username: "member", name: "Old Name", bio: null });
+        expect(uploadAvatar).not.toHaveBeenCalled();
+        expect(updateToUrl).not.toHaveBeenCalled();
+        expect(disableByFrom).not.toHaveBeenCalled();
+      });
+
+      it("renames the member and repoints redirects to the new username", async () => {
+        const result = await update(ADMIN_ID, MEMBER_ID, { username: "jane" });
+
+        expect(result.username).toBe("jane");
+        expect(storedUser(MEMBER_ID)?.username).toBe("jane");
+        expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: ORG_ID });
+        expect(updateToUrl).toHaveBeenCalledWith({
+          types: ["User"],
+          toUrl: "https://acme.com/member",
+          newToUrl: "https://acme.com/jane",
+        });
+        expect(disableByFrom).toHaveBeenCalledWith({ fromOrgId: ORG_ID, from: "jane", types: ["User"] });
+      });
+
+      it("leaves redirects alone when the username is unchanged", async () => {
+        await update(ADMIN_ID, MEMBER_ID, { username: "member" });
+
+        expect(updateToUrl).not.toHaveBeenCalled();
+        expect(disableByFrom).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("avatar", () => {
+      it("uploads a PNG avatar and stores its URL", async () => {
+        const result = await update(ADMIN_ID, MEMBER_ID, { avatar: PNG });
+
+        expect(uploadAvatar).toHaveBeenCalledWith({ userId: MEMBER_ID, avatar: PNG });
+        expect(storedUser(MEMBER_ID)?.avatarUrl).toBe("https://cal.example.com/api/avatar/new.png");
+        expect(result.avatarUrl).toBe("https://cal.example.com/api/avatar/new.png");
+      });
+
+      it("clears the avatar when given null", async () => {
+        membershipRepository.seedUser({
+          id: MEMBER_ID,
+          username: "member",
+          avatarUrl: "https://cal.example.com/api/avatar/old.png",
+          organizationId: ORG_ID,
+        });
+
+        const result = await update(ADMIN_ID, MEMBER_ID, { avatar: null });
+
+        expect(uploadAvatar).not.toHaveBeenCalled();
+        expect(storedUser(MEMBER_ID)?.avatarUrl).toBeNull();
+        expect(result.avatarUrl).toBeNull();
+      });
+
+      it.each([
+        ["data:image/svg+xml;base64,PHN2Zz4="],
+        ["https://evil.example.com/a.png"],
+      ])("rejects %s", async (avatar) => {
+        await expectRejection(
+          update(ADMIN_ID, MEMBER_ID, { avatar, name: "New" }),
+          ErrorCode.BadRequest,
+          "organization_member_avatar_invalid"
+        );
+        expect(uploadAvatar).not.toHaveBeenCalled();
+        expect(storedUser(MEMBER_ID)?.name).toBe("Old Name");
+      });
+    });
+
+    it("saves the trimmed bio and returns the updated member", async () => {
+      const result = await update(ADMIN_ID, MEMBER_ID, { bio: "  Hello  ", name: "Jane" });
+
+      expect(result).toEqual({
+        userId: MEMBER_ID,
+        name: "Jane",
+        email: "member@acme.com",
+        username: "member",
+        avatarUrl: null,
+        bio: "Hello",
+        role: "MEMBER",
+        accepted: true,
+      });
+    });
+
+    it("allows clearing the bio", async () => {
+      membershipRepository.seedUser({
+        id: MEMBER_ID,
+        username: "member",
+        bio: "Old",
+        organizationId: ORG_ID,
+      });
+
+      await update(ADMIN_ID, MEMBER_ID, { bio: "   " });
+
+      expect(storedUser(MEMBER_ID)?.bio).toBe("");
+    });
+
+    it("logs the changed fields without their values", async () => {
+      await update(ADMIN_ID, MEMBER_ID, {
+        name: "Secret Name",
+        username: "jane",
+        bio: "Secret bio",
+        avatar: PNG,
+      });
+
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.member.profile", {
+        action: "organization.member.profile",
+        actorUserId: ADMIN_ID,
+        organizationId: ORG_ID,
+        userId: MEMBER_ID,
+        fields: ["username", "name", "bio", "avatarUrl"],
+      });
+      const logged = JSON.stringify(mockLogInfo.mock.calls);
+      expect(logged).not.toContain("Secret");
+      expect(logged).not.toContain("jane");
+      expect(logged).not.toContain(PNG);
     });
   });
 
