@@ -16,6 +16,7 @@ import {
   ZListOrganizationTeamsInput,
   ZRemoveOrganizationMemberInput,
   ZRemoveOrganizationMemberOutput,
+  ZUpdateOrganizationLogoInput,
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
   ZUpdateOrganizationNameInput,
@@ -65,6 +66,17 @@ export const organizationRouter = router({
         organizationId: ctx.organizationId,
         actorUserId: ctx.user.id,
         name: input.name,
+      });
+    }),
+  updateLogo: organizationMemberProcedure
+    .input(ZUpdateOrganizationLogoInput)
+    .output(OrganizationDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadOrganizationService();
+      return service.updateLogo({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        logo: input.logo,
       });
     }),
   listMembers: organizationMemberProcedure

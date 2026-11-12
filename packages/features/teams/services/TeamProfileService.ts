@@ -8,13 +8,13 @@ import {
   TEAM_LOGO_DATA_URL_PATTERN,
   ZTeamProfileMetadataSchema,
 } from "@calcom/features/teams/lib/teamProfileSchema";
+import type { UploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
+import { defaultUploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
 import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import type { OrganizationRoleDto } from "@calcom/lib/dto/OrganizationDto";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
-import { uploadLogo } from "@calcom/lib/server/avatar";
-import { isBase64Image, resizeBase64Image } from "@calcom/lib/server/resizeBase64Image";
 import slugify from "@calcom/lib/slugify";
 import type { EventType, Prisma, Team } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -66,14 +66,6 @@ const parseProfileMetadata = (metadata: unknown): TTeamProfileMetadata => {
     return {};
   }
   return parsed.data;
-};
-
-export type UploadTeamLogo = (input: { teamId: number; logo: string }) => Promise<string>;
-
-export const defaultUploadTeamLogo: UploadTeamLogo = async ({ teamId, logo }) => {
-  // SVGs skip resizing: uploadLogo rasterises them to PNG itself.
-  const resized = isBase64Image(logo) ? await resizeBase64Image(logo) : logo;
-  return await uploadLogo({ teamId, logo: resized });
 };
 
 export type GetOrganizationRole = (

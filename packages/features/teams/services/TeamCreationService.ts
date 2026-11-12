@@ -1,10 +1,10 @@
 import type { PrismaTempOrgRedirectRepository } from "@calcom/features/organizations/repositories/PrismaTempOrgRedirectRepository";
 import { TEAM_LOGO_DATA_URL_PATTERN } from "@calcom/features/teams/lib/teamProfileSchema";
+import type { UploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
+import { defaultUploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
 import type { TeamRepository } from "@calcom/features/teams/repositories/TeamRepository";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import slugify from "@calcom/lib/slugify";
-import type { UploadTeamLogo } from "./TeamProfileService";
-import { defaultUploadTeamLogo } from "./TeamProfileService";
 
 export const TEAM_NAME_MAX_LENGTH = 100;
 export const TEAM_SLUG_MAX_LENGTH = 50;

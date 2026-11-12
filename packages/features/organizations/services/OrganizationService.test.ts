@@ -48,24 +48,28 @@ describe("OrganizationService", () => {
   let findInviteeByEmail: ReturnType<typeof vi.fn>;
   let createInvitedWithPendingTeamMembership: ReturnType<typeof vi.fn>;
   let sendInvite: ReturnType<typeof vi.fn>;
+  let uploadLogo: ReturnType<typeof vi.fn>;
 
   function buildService(
     config: OrganizationsConfig = { defaultDomain: DEFAULT_DOMAIN }
   ): OrganizationService {
-    return new OrganizationService({
-      organizationRepository: repository,
-      organizationsConfig: config,
-      organizationMembershipService: new OrganizationMembershipService({
-        organizationMembershipRepository: membershipRepo,
+    return new OrganizationService(
+      {
         organizationRepository: repository,
         organizationsConfig: config,
-        userRepository: { findInviteeByEmail, createInvitedWithPendingTeamMembership },
-        teamInviteService: { sendInvite },
-        tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
+        organizationMembershipService: new OrganizationMembershipService({
+          organizationMembershipRepository: membershipRepo,
+          organizationRepository: repository,
+          organizationsConfig: config,
+          userRepository: { findInviteeByEmail, createInvitedWithPendingTeamMembership },
+          teamInviteService: { sendInvite },
+          tempOrgRedirectRepository: { disableByFrom: vi.fn().mockResolvedValue(0) },
+          organizationMoveService: { moveUser },
+        }),
         organizationMoveService: { moveUser },
-      }),
-      organizationMoveService: { moveUser },
-    });
+      },
+      uploadLogo
+    );
   }
 
   function ownerUser() {
@@ -75,6 +79,7 @@ describe("OrganizationService", () => {
   beforeEach(() => {
     mockLogInfo.mockClear();
     mockLogError.mockClear();
+    uploadLogo = vi.fn().mockResolvedValue("/api/avatar/logo.png");
     repository = new InMemoryOrganizationRepository();
     membershipRepo = new InMemoryOrganizationMembershipRepository();
     membershipRepo.seedUser({ id: OWNER_ID, username: "owner", organizationId: OWNER_HOME_ORG_ID });
@@ -975,6 +980,86 @@ describe("OrganizationService", () => {
         ErrorCode.NotFound,
         NOT_FOUND
       );
+    });
+  });
+
+  describe("updateLogo", () => {
+    const ACTOR = 42;
+    const LOGO = "data:image/png;base64,AAAA";
+
+    function seedOrgWith(actorRole: "OWNER" | "ADMIN" | "MEMBER") {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+      membershipRepo.seedMembership({ userId: ACTOR, teamId: seeded.id, role: actorRole });
+      return seeded;
+    }
+
+    it.each(["OWNER", "ADMIN"] as const)("uploads and stores the logo for an %s", async (role) => {
+      const seeded = seedOrgWith(role);
+
+      const updated = await service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: LOGO });
+
+      expect(uploadLogo).toHaveBeenCalledWith({ teamId: seeded.id, logo: LOGO });
+      expect(updated.logoUrl).toBe("/api/avatar/logo.png");
+      expect((await repository.findById(seeded.id))?.logoUrl).toBe("/api/avatar/logo.png");
+    });
+
+    it("removes the logo without uploading when logo is null", async () => {
+      const seeded = seedOrgWith("OWNER");
+      await service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: LOGO });
+
+      const updated = await service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: null });
+
+      expect(uploadLogo).toHaveBeenCalledTimes(1);
+      expect(updated.logoUrl).toBeNull();
+      expect((await repository.findById(seeded.id))?.logoUrl).toBeNull();
+    });
+
+    it.each([
+      "",
+      "https://example.com/logo.png",
+      "data:text/html;base64,AAAA",
+    ])("throws BadRequest for an invalid logo %j", async (logo) => {
+      const seeded = seedOrgWith("OWNER");
+
+      await expectRejection(
+        service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo }),
+        ErrorCode.BadRequest,
+        "organization_logo_invalid"
+      );
+      expect(uploadLogo).not.toHaveBeenCalled();
+    });
+
+    it("throws Forbidden for an accepted MEMBER", async () => {
+      const seeded = seedOrgWith("MEMBER");
+
+      await expectRejection(
+        service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: LOGO }),
+        ErrorCode.Forbidden,
+        "organization_only_managers_can_update_organization"
+      );
+      expect(uploadLogo).not.toHaveBeenCalled();
+    });
+
+    it("throws NotFound for a viewer who is not a member", async () => {
+      const seeded = repository.seed({ name: "Acme", slug: "acme", domain: "acme.com" });
+
+      await expectRejection(
+        service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: LOGO }),
+        ErrorCode.NotFound,
+        NOT_FOUND
+      );
+    });
+
+    it("logs the actor and organization", async () => {
+      const seeded = seedOrgWith("OWNER");
+
+      await service.updateLogo({ organizationId: seeded.id, actorUserId: ACTOR, logo: null });
+
+      expect(mockLogInfo).toHaveBeenCalledWith("organization.updateLogo", {
+        action: "organization.updateLogo",
+        actorUserId: ACTOR,
+        organizationId: seeded.id,
+      });
     });
   });
 

@@ -1,3 +1,6 @@
+import { TEAM_LOGO_DATA_URL_PATTERN } from "@calcom/features/teams/lib/teamProfileSchema";
+import type { UploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
+import { defaultUploadTeamLogo } from "@calcom/features/teams/lib/uploadTeamLogo";
 import type {
   CurrentOrganizationDto,
   OrganizationDto,
@@ -56,7 +59,10 @@ export type UpdateOrganizationInput = { name?: string; slug?: string; domain?: s
 export const ORGANIZATION_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export class OrganizationService {
-  constructor(private readonly deps: IOrganizationServiceDeps) {}
+  constructor(
+    private readonly deps: IOrganizationServiceDeps,
+    private readonly uploadLogo: UploadTeamLogo = defaultUploadTeamLogo
+  ) {}
 
   async list(params: {
     search?: string;
@@ -259,6 +265,34 @@ export class OrganizationService {
 
     log.info("organization.updateName", {
       action: "organization.updateName",
+      actorUserId,
+      organizationId,
+    });
+    return this.toDto(updated);
+  }
+
+  async updateLogo(params: {
+    organizationId: number;
+    actorUserId: number;
+    logo: string | null;
+  }): Promise<OrganizationDto> {
+    const { organizationId, actorUserId, logo } = params;
+    const role = await this.deps.organizationMembershipService.getRole(actorUserId, organizationId);
+    if (role === null) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
+    if (role === "MEMBER") {
+      throw ErrorWithCode.Factory.Forbidden(ORGANIZATION_ERRORS.onlyManagersCanUpdateOrganization);
+    }
+
+    if (logo !== null && !TEAM_LOGO_DATA_URL_PATTERN.test(logo)) {
+      throw ErrorWithCode.Factory.BadRequest(ORGANIZATION_ERRORS.logoInvalid);
+    }
+    const logoUrl = logo === null ? null : await this.uploadLogo({ teamId: organizationId, logo });
+
+    const updated = await this.deps.organizationRepository.update(organizationId, { logoUrl });
+    if (!updated) throw ErrorWithCode.Factory.NotFound(ORGANIZATION_ERRORS.notFound);
+
+    log.info("organization.updateLogo", {
+      action: "organization.updateLogo",
       actorUserId,
       organizationId,
     });

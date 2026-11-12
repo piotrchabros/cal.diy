@@ -7,6 +7,7 @@ export const ORGANIZATION_ERRORS = {
   defaultDomainLocked: "organization_default_domain_locked",
   defaultCannotBeDeleted: "organization_default_cannot_be_deleted",
   notEmpty: "organization_delete_not_empty",
+  logoInvalid: "organization_logo_invalid",
   nameInvalid: "organization_name_invalid",
   slugInvalid: "organization_slug_invalid",
   domainInvalid: "organization_domain_invalid",
