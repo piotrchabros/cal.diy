@@ -54,6 +54,7 @@ function buildOrg(viewerRole: OrganizationRoleDto): CurrentOrganizationDto {
     slug: "acme",
     domain: "acme.example.com",
     isDefault: false,
+    logoUrl: null,
     owners: [{ userId: 9, name: "Owner", email: "owner@acme.example.com" }],
     viewerRole,
   };

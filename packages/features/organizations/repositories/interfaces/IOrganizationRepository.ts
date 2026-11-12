@@ -14,7 +14,12 @@ export type OrganizationListPage = { items: OrganizationListItemRecord[]; nextCu
 
 export type OrganizationCreateInput = { name: string; slug: string; domain: string };
 
-export type OrganizationUpdateInput = { name?: string; slug?: string; domain?: string };
+export type OrganizationUpdateInput = {
+  name?: string;
+  slug?: string;
+  domain?: string;
+  logoUrl?: string | null;
+};
 
 export type TeamParentRecord = { id: number; parentId: number | null; isOrganization: boolean };
 

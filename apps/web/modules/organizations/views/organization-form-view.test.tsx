@@ -115,6 +115,7 @@ function buildOrg(overrides: Partial<OrganizationDto> = {}): OrganizationDto {
     isDefault: false,
     memberCount: 4,
     teamCount: 1,
+    logoUrl: null,
     owners: [{ userId: 7, name: "Jane", email: "jane@acme.com" }],
     ...overrides,
   };
