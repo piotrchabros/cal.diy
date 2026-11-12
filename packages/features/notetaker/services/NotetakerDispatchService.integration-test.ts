@@ -85,6 +85,11 @@ function buildService(gateway: INotetakerBotGateway): NotetakerDispatchService {
     userRepository: { findByIds: async () => [] },
     notetakerTasker: stubTasker,
     calendarInviteService: { ensureBotInvited: async () => "NOT_CONFIGURED" },
+    organizationNotetakerSettingsRepository: {
+      findByUserId: async () => null,
+      findByOrganizationId: async () => null,
+      findBotImageByOrganizationId: async () => null,
+    },
   });
 }
 

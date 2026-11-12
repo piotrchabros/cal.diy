@@ -4,7 +4,11 @@ import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import type { NotetakerOutcomeReasonDto, NotetakerPlatformDto } from "@calcom/lib/dto/NotetakerStateDto";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerBotJoinRequest, NotetakerBotStopReason } from "@calcom/lib/notetaker/botContract";
-import type { INotetakerBotGatewayResolver, NotetakerBotGatewayBinding } from "../bot/INotetakerBotGateway";
+import type {
+  INotetakerBotGatewayResolver,
+  NotetakerBotGatewayBinding,
+  NotetakerBotJoinOptions,
+} from "../bot/INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "../bot/INotetakerBotGateway";
 import { parseAdHocMeetingUrl } from "../lib/adHocMeeting";
 import type { NotetakerConfig } from "../lib/config";
@@ -24,6 +28,10 @@ import type {
   INotetakerSessionRepository,
   NotetakerSessionRecord,
 } from "../repositories/interfaces/INotetakerSessionRepository";
+import type {
+  IOrganizationNotetakerSettingsRepository,
+  OrganizationNotetakerSettingsRecord,
+} from "../repositories/interfaces/IOrganizationNotetakerSettingsRepository";
 import type { NotetakerAccessService } from "./NotetakerAccessService";
 import type { NotetakerCalendarInviteService } from "./NotetakerCalendarInviteService";
 
@@ -36,7 +44,11 @@ const ATTENDEE_NOTICE_DELAY = "30s";
 // Booking ids start at 1, so excluding 0 excludes nothing when no booking exists yet.
 const NO_BOOKING_ID = 0;
 
-type PreparedSession = { session: NotetakerSessionRecord; joinRequest: NotetakerBotJoinRequest };
+type PreparedSession = {
+  session: NotetakerSessionRecord;
+  joinRequest: NotetakerBotJoinRequest;
+  joinOptions: NotetakerBotJoinOptions;
+};
 
 type HostStop = {
   bookingId: number;
@@ -73,6 +85,10 @@ export interface INotetakerDispatchServiceDeps {
   userRepository: INotetakerUserLookup;
   notetakerTasker: INotetakerTasker;
   calendarInviteService: Pick<NotetakerCalendarInviteService, "ensureBotInvited">;
+  organizationNotetakerSettingsRepository: Pick<
+    IOrganizationNotetakerSettingsRepository,
+    "findByUserId" | "findByOrganizationId" | "findBotImageByOrganizationId"
+  >;
 }
 
 export class NotetakerDispatchService {
@@ -665,7 +681,7 @@ export class NotetakerDispatchService {
 
     let externalRef: string;
     try {
-      ({ externalRef } = await binding.gateway.requestJoin(prepared.joinRequest));
+      ({ externalRef } = await binding.gateway.requestJoin(prepared.joinRequest, prepared.joinOptions));
     } catch (error) {
       await this.handleJoinFailure(booking.id, prepared.session.id, error);
       return;
@@ -729,7 +745,7 @@ export class NotetakerDispatchService {
       return null;
     }
 
-    const { t, hostName, displayName } = await this.resolveDisplay(booking);
+    const { t, hostName, displayName, organizationSettings } = await this.resolveDisplay(booking);
     const startedLate = now.getTime() > booking.startTime.getTime() + STARTED_LATE_THRESHOLD_MS;
     const sharedWithColleagues = (await this.deps.accessService.resolveSharingScope(booking)) !== null;
 
@@ -745,8 +761,13 @@ export class NotetakerDispatchService {
       colleagueSharingDisclosed: sharedWithColleagues,
     });
 
+    const botImage = organizationSettings?.botImageUpdatedAt
+      ? await this.findBotImage(booking.id, organizationSettings.organizationId)
+      : null;
+
     return {
       session,
+      joinOptions: { avatar: botImage ? { kind: "jpeg", base64: botImage } : null },
       joinRequest: {
         sessionId: session.id,
         platform,
@@ -794,12 +815,53 @@ export class NotetakerDispatchService {
     t: Awaited<ReturnType<typeof getTranslation>>;
     hostName: string;
     displayName: string;
+    organizationSettings: OrganizationNotetakerSettingsRecord | null;
   }> {
     const t = await getTranslation(booking.organizer?.locale ?? "en", "common");
     const hostName = getNotetakerHostName(booking.organizer);
+    const organizationSettings = await this.resolveOrganizationSettings(booking);
     const displayName =
-      this.deps.config.botName ?? t("notetaker_display_name", { appName: APP_NAME, hostName });
-    return { t, hostName, displayName };
+      organizationSettings?.botName ??
+      this.deps.config.botName ??
+      t("notetaker_display_name", { appName: APP_NAME, hostName });
+    return { t, hostName, displayName, organizationSettings };
+  }
+
+  // Branding is cosmetic: a failed lookup falls back to the default name rather than blocking the join.
+  private async resolveOrganizationSettings(
+    booking: NotetakerBookingContext
+  ): Promise<OrganizationNotetakerSettingsRecord | null> {
+    const { organizationNotetakerSettingsRepository, logger } = this.deps;
+    try {
+      if (booking.userId !== null) {
+        return await organizationNotetakerSettingsRepository.findByUserId(booking.userId);
+      }
+      if (booking.organizationId !== null) {
+        return await organizationNotetakerSettingsRepository.findByOrganizationId(booking.organizationId);
+      }
+      return null;
+    } catch (error) {
+      logger.warn("Notetaker organization settings lookup failed; the default bot name is used", {
+        bookingId: booking.id,
+        message: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  private async findBotImage(bookingId: number, organizationId: number): Promise<string | null> {
+    try {
+      return await this.deps.organizationNotetakerSettingsRepository.findBotImageByOrganizationId(
+        organizationId
+      );
+    } catch (error) {
+      this.deps.logger.warn("Notetaker bot image lookup failed; the bot joins without an image", {
+        bookingId,
+        organizationId,
+        message: getErrorMessage(error),
+      });
+      return null;
+    }
   }
 
   private async createFailedSession(
