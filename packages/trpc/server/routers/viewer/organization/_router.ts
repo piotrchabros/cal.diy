@@ -2,6 +2,7 @@ import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowE
 import {
   CurrentOrganizationDtoSchema,
   OrganizationDtoSchema,
+  OrganizationMemberDtoSchema,
   OrganizationMemberListDtoSchema,
   OrganizationTeamListDtoSchema,
 } from "@calcom/lib/dto/OrganizationDto";
@@ -23,6 +24,7 @@ import {
   ZTestOrganizationSmtpSettingsOutput,
   ZUpdateOrganizationEmailSenderInput,
   ZUpdateOrganizationLogoInput,
+  ZUpdateOrganizationMemberProfileInput,
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
   ZUpdateOrganizationNameInput,
@@ -134,6 +136,21 @@ export const organizationRouter = router({
         actorUserId: ctx.user.id,
         userId: input.userId,
         role: input.role,
+      });
+    }),
+  updateMemberProfile: organizationMemberProcedure
+    .input(ZUpdateOrganizationMemberProfileInput)
+    .output(OrganizationMemberDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      const service = await loadMembershipService();
+      return service.updateMemberProfile({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        userId: input.userId,
+        name: input.name,
+        username: input.username,
+        bio: input.bio,
+        avatar: input.avatar,
       });
     }),
   removeMember: organizationMemberProcedure
