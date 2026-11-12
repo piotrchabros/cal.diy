@@ -77,10 +77,18 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
 
   const update = (next: Partial<Draft>) => setDraft({ ...current, ...next });
 
-  const chosenTeamName = teamOptions.find((option) => option.teamId === current.teamId)?.name ?? null;
+  const chosenOption = teamOptions.find((option) => option.teamId === current.teamId) ?? null;
+  const chosenTeamName = chosenOption?.name ?? null;
+  const chosenIsOrganization = showTeamSelect && chosenOption?.isOrganization === true;
   const teamName = showTeamSelect ? chosenTeamName : data.teamName;
   const teamMissing = showTeamSelect && data.mode !== "HOSTS_ONLY" && savedTeamId === null;
   const teamChanged = showTeamSelect && current.teamId !== initialTeamId;
+
+  const modeDescriptionKey = (mode: NotetakerSharingModeDto, slug: string): string => {
+    if (mode === "TEAM" && teamName === null) return "notetaker_sharing_mode_team_description_no_team";
+    if (mode === "TEAM" && chosenIsOrganization) return "notetaker_sharing_mode_organization_description";
+    return `notetaker_sharing_mode_${slug}_description`;
+  };
 
   const onSave = () => {
     save.mutate(
@@ -135,7 +143,12 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
             ) : null}
             {teamOptions.map((option) => (
               <option key={option.teamId} value={String(option.teamId)}>
-                {option.name}
+                {option.isOrganization
+                  ? t("notetaker_sharing_team_option_organization", {
+                      name: option.name,
+                      interpolation: { escapeValue: false },
+                    })
+                  : option.name}
               </option>
             ))}
           </select>
@@ -161,15 +174,17 @@ export function NotetakerEventTypeSharing({ eventTypeId }: { eventTypeId: number
             />
             <span>
               <span className="block font-medium text-emphasis text-sm">
-                {t(`notetaker_sharing_mode_${slug}`)}
+                {t(
+                  mode === "TEAM" && chosenIsOrganization
+                    ? "notetaker_sharing_mode_organization"
+                    : `notetaker_sharing_mode_${slug}`
+                )}
               </span>
               <span className="block text-sm text-subtle">
-                {t(
-                  mode === "TEAM" && teamName === null
-                    ? "notetaker_sharing_mode_team_description_no_team"
-                    : `notetaker_sharing_mode_${slug}_description`,
-                  { teamName: teamName ?? "", interpolation: { escapeValue: false } }
-                )}
+                {t(modeDescriptionKey(mode, slug), {
+                  teamName: teamName ?? "",
+                  interpolation: { escapeValue: false },
+                })}
               </span>
             </span>
           </label>

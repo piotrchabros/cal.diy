@@ -1205,6 +1205,31 @@ describe.skipIf(!RUNS_ON_ISOLATED_DATABASE)(SUITE, () => {
         });
       });
     });
+
+    describe("findTeamsAndOrganizationsByIds", () => {
+      it("resolves an empty list for no ids", async () => {
+        expect(await repository.findTeamsAndOrganizationsByIds({ teamIds: [] })).toEqual([]);
+      });
+
+      it("lists organizations first, then name then id, and leaves out unknown ids", async () => {
+        await withPersonalScope(async (scope) => {
+          const key = `${PERSONAL_PREFIX}-orgs-order`;
+          const team = await scope.team({ name: `${key} aaa team` });
+          const orgB = await scope.team({ name: `${key} org b`, isOrganization: true });
+          const orgA = await scope.team({ name: `${key} org a`, isOrganization: true });
+
+          const result = await repository.findTeamsAndOrganizationsByIds({
+            teamIds: [team.id, orgB.id, UNKNOWN_USER_ID, orgA.id],
+          });
+
+          expect(result).toEqual([
+            { teamId: orgA.id, teamName: orgA.name, isOrganization: true },
+            { teamId: orgB.id, teamName: orgB.name, isOrganization: true },
+            { teamId: team.id, teamName: team.name, isOrganization: false },
+          ]);
+        });
+      });
+    });
   });
 
   describe("cascades", () => {

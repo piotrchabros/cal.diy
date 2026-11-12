@@ -194,6 +194,7 @@ export class InMemoryNotetakerStore {
   readonly sharingChanges: NotetakerSharingChangeRecord[] = [];
   readonly users = new Map<number, InMemoryUser>();
   readonly teams = new Map<number, string>();
+  readonly organizationIds = new Set<number>();
   readonly sessions = new Map<string, NotetakerSessionRecord>();
   readonly transcripts = new Map<string, NotetakerTranscriptRecord>();
   readonly passages = new Map<string, Map<number, NotetakerPassageRecord>>();
@@ -283,9 +284,15 @@ export class InMemoryNotetakerStore {
     this.teams.set(teamId, name);
   }
 
+  setOrganization(id: number, name: string): void {
+    this.teams.set(id, name);
+    this.organizationIds.add(id);
+  }
+
   // Mirrors the foreign key: deleting a team sets sharingTeamId to null and keeps the settings row.
   removeTeam(teamId: number): void {
     this.teams.delete(teamId);
+    this.organizationIds.delete(teamId);
     for (const settings of Array.from(this.eventTypeSettings.values())) {
       if (settings.sharingTeamId === teamId) settings.sharingTeamId = null;
     }
@@ -1069,10 +1076,28 @@ export class InMemoryEventTypeNotetakerSettingsRepository implements IEventTypeN
     const result: { teamId: number; teamName: string }[] = [];
     for (const teamId of Array.from(new Set(params.teamIds))) {
       const teamName = this.store.teams.get(teamId);
-      if (teamName !== undefined) result.push({ teamId, teamName });
+      if (teamName !== undefined && !this.store.organizationIds.has(teamId))
+        result.push({ teamId, teamName });
     }
     return result.sort(
       (a, b) => compareStrings(a.teamName, b.teamName) || compareNumbers(a.teamId, b.teamId)
+    );
+  }
+
+  async findTeamsAndOrganizationsByIds(params: {
+    teamIds: number[];
+  }): Promise<{ teamId: number; teamName: string; isOrganization: boolean }[]> {
+    const result: { teamId: number; teamName: string; isOrganization: boolean }[] = [];
+    for (const teamId of Array.from(new Set(params.teamIds))) {
+      const teamName = this.store.teams.get(teamId);
+      if (teamName === undefined) continue;
+      result.push({ teamId, teamName, isOrganization: this.store.organizationIds.has(teamId) });
+    }
+    return result.sort(
+      (a, b) =>
+        Number(b.isOrganization) - Number(a.isOrganization) ||
+        compareStrings(a.teamName, b.teamName) ||
+        compareNumbers(a.teamId, b.teamId)
     );
   }
 

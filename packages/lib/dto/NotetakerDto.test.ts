@@ -333,16 +333,33 @@ describe("NotetakerEventTypeSharingDtoSchema", () => {
       ...valid,
       teamId: 5,
       teamOptions: [
-        { teamId: 5, name: "Sales" },
-        { teamId: 9, name: "Support" },
+        { teamId: 5, name: "Sales", isOrganization: false },
+        { teamId: 9, name: "Support", isOrganization: false },
       ],
     };
     expect(NotetakerEventTypeSharingDtoSchema.parse(withTeam)).toEqual(withTeam);
     expect(NotetakerEventTypeSharingDtoSchema.parse(valid)).toEqual(valid);
   });
 
+  it("parses an organization team option", () => {
+    const withOrg: NotetakerEventTypeSharingDto = {
+      ...valid,
+      teamId: 1,
+      teamOptions: [
+        { teamId: 1, name: "Acme", isOrganization: true },
+        { teamId: 5, name: "Sales", isOrganization: false },
+      ],
+    };
+    expect(NotetakerEventTypeSharingDtoSchema.parse(withOrg)).toEqual(withOrg);
+  });
+
   it("rejects a team option without a name", () => {
-    const invalid: unknown = { ...valid, teamOptions: [{ teamId: 5 }] };
+    const invalid: unknown = { ...valid, teamOptions: [{ teamId: 5, isOrganization: false }] };
+    expect(NotetakerEventTypeSharingDtoSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("rejects a team option without isOrganization", () => {
+    const invalid: unknown = { ...valid, teamOptions: [{ teamId: 5, name: "Sales" }] };
     expect(NotetakerEventTypeSharingDtoSchema.safeParse(invalid).success).toBe(false);
   });
 

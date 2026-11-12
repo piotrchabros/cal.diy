@@ -15,6 +15,10 @@ export type NotetakerSharingUnavailableReasonDto =
 
 export type NotetakerSharingTeamOptionDto = { teamId: number; name: string };
 
+export type NotetakerEventTypeSharingTeamOptionDto = NotetakerSharingTeamOptionDto & {
+  isOrganization: boolean;
+};
+
 export type NotetakerSharingPersonDto = {
   userId: number;
   name: string | null;
@@ -34,8 +38,8 @@ export type NotetakerEventTypeSharingDto = {
   setByName: string | null;
   /** Effective sharing team; null when a personal event type has none. Always sent by the server. */
   teamId?: number | null;
-  /** Teams the owner may choose. Empty for a team event type. Always sent by the server. */
-  teamOptions?: NotetakerSharingTeamOptionDto[];
+  /** Teams the owner may choose, organizations first. Empty for a team event type. Always sent by the server. */
+  teamOptions?: NotetakerEventTypeSharingTeamOptionDto[];
 };
 
 export const NotetakerEventTypeSharingDtoSchema: z.ZodType<NotetakerEventTypeSharingDto> = z.object({
@@ -58,7 +62,9 @@ export const NotetakerEventTypeSharingDtoSchema: z.ZodType<NotetakerEventTypeSha
   setAt: z.string().datetime().nullable(),
   setByName: z.string().nullable(),
   teamId: z.number().int().nullable().optional(),
-  teamOptions: z.array(z.object({ teamId: z.number().int(), name: z.string() })).optional(),
+  teamOptions: z
+    .array(z.object({ teamId: z.number().int(), name: z.string(), isOrganization: z.boolean() }))
+    .optional(),
 });
 
 export type NotetakerSharingCandidateDto = {

@@ -115,4 +115,8 @@ export interface IEventTypeNotetakerSettingsRepository {
   }): Promise<NotetakerSharedEventTypeRecord[]>;
   /** Non-organization teams, ordered by name asc then id asc. Empty teamIds gives [] without a query. */
   findTeamsByIds(params: { teamIds: number[] }): Promise<{ teamId: number; teamName: string }[]>;
+  /** Teams and organizations, organizations first, then name asc, then id asc. Empty teamIds gives [] without a query. */
+  findTeamsAndOrganizationsByIds(params: {
+    teamIds: number[];
+  }): Promise<{ teamId: number; teamName: string; isOrganization: boolean }[]>;
 }

@@ -289,4 +289,16 @@ export class PrismaEventTypeNotetakerSettingsRepository implements IEventTypeNot
     });
     return rows.map((row) => ({ teamId: row.id, teamName: row.name }));
   }
+
+  async findTeamsAndOrganizationsByIds(params: {
+    teamIds: number[];
+  }): Promise<{ teamId: number; teamName: string; isOrganization: boolean }[]> {
+    if (params.teamIds.length === 0) return [];
+    const rows = await this.prismaClient.team.findMany({
+      where: { id: { in: params.teamIds } },
+      orderBy: [{ isOrganization: "desc" }, { name: "asc" }, { id: "asc" }],
+      select: { id: true, name: true, isOrganization: true },
+    });
+    return rows.map((row) => ({ teamId: row.id, teamName: row.name, isOrganization: row.isOrganization }));
+  }
 }
