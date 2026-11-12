@@ -1,17 +1,15 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { deliverOrganizationMail, resolveOrganizationMailRoute } from "@calcom/emails/lib/organizationMailer";
+import { parseFromHeader } from "@calcom/emails/lib/organizationSender";
 import { getOrganizationOriginForUrl } from "@calcom/features/organizations/lib/getOrganizationOrigin";
-import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
+import { APP_NAME, EMAIL_FROM_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import { serverConfig } from "@calcom/lib/serverConfig";
 import Handlebars from "handlebars";
 import type { SendVerificationRequestParams } from "next-auth/providers/email";
-import type { TransportOptions } from "nodemailer";
-import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport<TransportOptions>({
-  ...(serverConfig.transport as TransportOptions),
-} as TransportOptions);
+const LOG_NAME = "MAGIC_LINK_EMAIL";
 
 const sendVerificationRequest = async ({
   identifier,
@@ -31,17 +29,29 @@ const sendVerificationRequest = async ({
     encoding: "utf8",
   });
   const emailTemplate = Handlebars.compile(emailFile);
-  // async transporter
-  transporter.sendMail({
-    from: `${process.env.EMAIL_FROM}` || APP_NAME,
-    to: identifier,
-    subject: `Your sign-in link for ${APP_NAME}`,
-    html: emailTemplate({
-      base_url: WEBAPP_URL,
-      signin_url: url,
-      email: identifier,
-    }),
+  const originalFrom = `${EMAIL_FROM_NAME} <${parseFromHeader(serverConfig.from ?? "").address}>`;
+  const route = await resolveOrganizationMailRoute({
+    from: originalFrom,
+    envFrom: serverConfig.from,
+    scope: { userEmail: identifier },
+    logName: LOG_NAME,
   });
+  // Not awaited so the sign-in response isn't held up by SMTP latency.
+  deliverOrganizationMail({
+    payload: {
+      to: identifier,
+      subject: `Your sign-in link for ${APP_NAME}`,
+      html: emailTemplate({
+        base_url: WEBAPP_URL,
+        signin_url: url,
+        email: identifier,
+      }),
+    },
+    route,
+    originalFrom,
+    defaultTransport: serverConfig.transport,
+    logName: LOG_NAME,
+  }).catch((error) => console.error(`${LOG_NAME}: failed to send sign-in link`, error));
 };
 
 export default sendVerificationRequest;
