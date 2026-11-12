@@ -1,9 +1,14 @@
+import logger from "@calcom/lib/logger";
 import type {
   NotetakerBotJoinRequest,
   NotetakerBotStateDto,
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
-import type { INotetakerBotGateway } from "../INotetakerBotGateway";
+import type {
+  INotetakerBotGateway,
+  NotetakerBotAvatar,
+  NotetakerBotJoinOptions,
+} from "../INotetakerBotGateway";
 import { createNotetakerBotGatewayError } from "../INotetakerBotGateway";
 import type { IRecallApiClient } from "./RecallApiClient";
 import { getRecallApiErrorInfo } from "./RecallApiClient";
@@ -21,7 +26,8 @@ const MAX_REPORTED_FIELDS = 10;
 
 export function buildRecallCreateBotRequest(
   input: NotetakerBotJoinRequest,
-  now: Date
+  now: Date,
+  avatar?: NotetakerBotAvatar | null
 ): RecallCreateBotRequest {
   const scheduledStartMs = new Date(input.scheduledStartAt).getTime();
   const isScheduledJoin = scheduledStartMs > now.getTime() + IMMEDIATE_JOIN_MARGIN_MS;
@@ -29,6 +35,14 @@ export function buildRecallCreateBotRequest(
     meeting_url: input.meetingUrl,
     bot_name: input.displayName.slice(0, MAX_BOT_NAME_LENGTH),
     ...(isScheduledJoin ? { join_at: new Date(scheduledStartMs).toISOString() } : {}),
+    ...(avatar
+      ? {
+          automatic_video_output: {
+            in_call_recording: { kind: avatar.kind, b64_data: avatar.base64 },
+            in_call_not_recording: { kind: avatar.kind, b64_data: avatar.base64 },
+          },
+        }
+      : {}),
     metadata: { [RECALL_SESSION_METADATA_KEY]: input.sessionId },
     chat: {
       on_bot_join: {
@@ -83,9 +97,13 @@ export class RecallBotGateway implements INotetakerBotGateway {
     this.now = deps.now ?? (() => new Date());
   }
 
-  async requestJoin(input: NotetakerBotJoinRequest): Promise<{ externalRef: string }> {
+  async requestJoin(
+    input: NotetakerBotJoinRequest,
+    options?: NotetakerBotJoinOptions
+  ): Promise<{ externalRef: string }> {
+    const avatar = options?.avatar ?? null;
     try {
-      const bot = await this.client.createBot(buildRecallCreateBotRequest(input, this.now()));
+      const bot = await this.createBotWithAvatarFallback(input, avatar);
       return { externalRef: bot.id };
     } catch (error) {
       const info = getRecallApiErrorInfo(error);
@@ -101,6 +119,23 @@ export class RecallBotGateway implements INotetakerBotGateway {
       }
       const reason = info ? info.kind : "unexpected error";
       throw createNotetakerBotGatewayError("TRANSIENT", `Recall create bot failed: ${reason}`);
+    }
+  }
+
+  // An image Recall cannot accept must not stop the notetaker from joining, so it is dropped once.
+  private async createBotWithAvatarFallback(
+    input: NotetakerBotJoinRequest,
+    avatar: NotetakerBotAvatar | null
+  ): Promise<RecallBot> {
+    try {
+      return await this.client.createBot(buildRecallCreateBotRequest(input, this.now(), avatar));
+    } catch (error) {
+      const info = getRecallApiErrorInfo(error);
+      const avatarRejected =
+        avatar !== null && info?.kind === "BAD_REQUEST" && info.fieldNames.includes("automatic_video_output");
+      if (!avatarRejected) throw error;
+      logger.warn("Recall rejected the notetaker avatar; retrying the create bot request without it");
+      return this.client.createBot(buildRecallCreateBotRequest(input, this.now()));
     }
   }
 

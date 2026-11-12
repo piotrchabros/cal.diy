@@ -101,6 +101,10 @@ export type RecallCreateBotRequest = {
   meeting_url: string;
   bot_name: string;
   join_at?: string;
+  automatic_video_output?: {
+    in_call_recording: { kind: "jpeg"; b64_data: string };
+    in_call_not_recording: { kind: "jpeg"; b64_data: string };
+  };
   metadata: Record<string, string>;
   chat: { on_bot_join: { send_to: "everyone"; message: string; pin: boolean } };
   automatic_leave: {

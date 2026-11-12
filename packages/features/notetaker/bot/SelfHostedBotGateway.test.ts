@@ -7,6 +7,7 @@ import {
   verifyNotetakerSignature,
 } from "@calcom/lib/notetaker/botContract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { INotetakerBotGateway } from "./INotetakerBotGateway";
 import { getNotetakerBotGatewayFailure } from "./INotetakerBotGateway";
 import { SelfHostedBotGateway } from "./SelfHostedBotGateway";
 
@@ -128,6 +129,19 @@ describe("SelfHostedBotGateway", () => {
       expect(signNotetakerPayload({ secret: SECRET, timestamp: timestamp ?? "", rawBody })).toBe(signature);
       expect(JSON.parse(rawBody)).toEqual(input);
       expect(sent.headers.get("Content-Type")).toBe("application/json");
+    });
+
+    it("does not post the avatar to the bot", async () => {
+      fetchFn.mockResolvedValueOnce(jsonResponse({ sessionId: SESSION_ID, externalRef: "ref-1" }, 202));
+      const input = buildJoinRequest();
+      const gateway: INotetakerBotGateway = buildGateway();
+
+      await gateway.requestJoin(input, { avatar: { kind: "jpeg", base64: "QUJD" } });
+
+      const rawBody = getSentRequest(fetchFn).body ?? "";
+      expect(JSON.parse(rawBody)).toEqual(input);
+      expect(rawBody).not.toContain("QUJD");
+      expect(rawBody).not.toContain("avatar");
     });
 
     it("returns the externalRef on 202", async () => {
