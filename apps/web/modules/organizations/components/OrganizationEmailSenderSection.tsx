@@ -79,6 +79,11 @@ export function OrganizationEmailSenderSection() {
           disabled={!canEdit}
           data-testid="org-email-sender-address-input"
         />
+        {data.usesOrganizationSmtp && (
+          <p className="text-subtle text-sm" data-testid="org-email-sender-smtp-hint">
+            {t("organization_email_sender_smtp_send_as_hint")}
+          </p>
+        )}
         {showInactiveWarning && (
           <p className="text-attention text-sm" data-testid="org-email-sender-inactive">
             {t("organization_email_sender_inactive")}

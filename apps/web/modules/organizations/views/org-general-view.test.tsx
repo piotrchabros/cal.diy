@@ -58,6 +58,10 @@ vi.mock("../components/OrganizationEmailSenderSection", () => ({
   OrganizationEmailSenderSection: () => <div data-testid="email-sender-section" />,
 }));
 
+vi.mock("../components/OrganizationSmtpSection", () => ({
+  OrganizationSmtpSection: () => <div data-testid="smtp-section" />,
+}));
+
 vi.mock("../components/OrganizationNotetakerBotSection", () => ({
   OrganizationNotetakerBotSection: () => <div data-testid="notetaker-bot-section" />,
 }));
@@ -135,6 +139,14 @@ describe("OrgGeneralView", () => {
   it("renders the email sender section regardless of the notetaker feature", () => {
     renderView("OWNER", false);
     expect(screen.getByTestId("email-sender-section")).toBeInTheDocument();
+  });
+
+  it("renders the SMTP section right below the email sender section", () => {
+    renderView("MEMBER", false);
+
+    const emailSender = screen.getByTestId("email-sender-section");
+    const smtp = screen.getByTestId("smtp-section");
+    expect(emailSender.nextElementSibling).toBe(smtp);
   });
 
   it("renders placeholders when slug or domain are not set", () => {

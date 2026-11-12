@@ -96,6 +96,17 @@ describe("OrganizationEmailSenderSection", () => {
     expect(screen.getByTestId("org-email-sender-inactive")).toBeInTheDocument();
   });
 
+  it("explains the send-as requirement only when the organization uses its own SMTP server", () => {
+    const { unmount } = renderSection({ usesOrganizationSmtp: true });
+    expect(screen.getByTestId("org-email-sender-smtp-hint")).toHaveTextContent(
+      "organization_email_sender_smtp_send_as_hint"
+    );
+    unmount();
+
+    renderSection({ usesOrganizationSmtp: false });
+    expect(screen.queryByTestId("org-email-sender-smtp-hint")).not.toBeInTheDocument();
+  });
+
   it("is read-only when the viewer cannot edit", () => {
     renderSection({ canEdit: false });
 
