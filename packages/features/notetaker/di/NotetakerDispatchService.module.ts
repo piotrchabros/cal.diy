@@ -9,6 +9,7 @@ import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
 import { moduleLoader as bookingNotetakerRepositoryModuleLoader } from "./PrismaBookingNotetakerRepository.module";
 import { moduleLoader as activityRepositoryModuleLoader } from "./PrismaNotetakerActivityRepository.module";
 import { moduleLoader as sessionRepositoryModuleLoader } from "./PrismaNotetakerSessionRepository.module";
+import { moduleLoader as organizationNotetakerSettingsRepositoryModuleLoader } from "./PrismaOrganizationNotetakerSettingsRepository.module";
 import { moduleLoader as notetakerTaskerModuleLoader } from "./tasker/NotetakerTasker.module";
 import { NOTETAKER_DI_TOKENS } from "./tokens";
 
@@ -32,6 +33,7 @@ const loadModule = bindModuleToClassOnToken({
     userRepository: userRepositoryModuleLoader,
     notetakerTasker: notetakerTaskerModuleLoader,
     calendarInviteService: calendarInviteServiceModuleLoader,
+    organizationNotetakerSettingsRepository: organizationNotetakerSettingsRepositoryModuleLoader,
   },
 });
 

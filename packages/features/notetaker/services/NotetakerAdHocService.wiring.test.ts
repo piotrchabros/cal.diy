@@ -124,6 +124,11 @@ describe("NotetakerAdHocService wiring with the real choice and dispatch service
       userRepository,
       notetakerTasker: tasker,
       calendarInviteService: { ensureBotInvited: async () => "NOT_CONFIGURED" },
+      organizationNotetakerSettingsRepository: {
+        findByUserId: async () => null,
+        findByOrganizationId: async () => null,
+        findBotImageByOrganizationId: async () => null,
+      },
     });
     service = new NotetakerAdHocService({
       bookingNotetakerRepository: repositories.bookingNotetakerRepository,

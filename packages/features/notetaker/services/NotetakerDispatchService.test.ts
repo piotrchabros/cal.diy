@@ -30,6 +30,7 @@ import type {
 } from "../lib/tasker/types";
 import type { INotetakerUserLookup, NotetakerUserRecord } from "../lib/userLookup";
 import type { NotetakerSessionUpdateInput } from "../repositories/interfaces/INotetakerSessionRepository";
+import type { IOrganizationNotetakerSettingsRepository } from "../repositories/interfaces/IOrganizationNotetakerSettingsRepository";
 import { InMemoryNotetakerMembershipLookup } from "../tests/InMemoryNotetakerMembershipLookup";
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
@@ -172,6 +173,11 @@ describe("NotetakerDispatchService", () => {
   let inviteCalls: InviteParams[];
   let callLog: string[];
   let inviteBot: (params: InviteParams) => Promise<NotetakerCalendarInviteOutcome>;
+  let organizationSettingsRepository: {
+    [K in "findByUserId" | "findByOrganizationId" | "findBotImageByOrganizationId"]: ReturnType<
+      typeof vi.fn<IOrganizationNotetakerSettingsRepository[K]>
+    >;
+  };
   const config: NotetakerConfig = getNotetakerConfig({});
   const NO_SHOW_MS = config.limits.noShowTimeoutSeconds * 1000;
   const HEARTBEAT_MS = config.limits.heartbeatTimeoutSeconds * 1000;
@@ -201,6 +207,11 @@ describe("NotetakerDispatchService", () => {
     inviteCalls = [];
     callLog = [];
     inviteBot = async () => "NOT_CONFIGURED";
+    organizationSettingsRepository = {
+      findByUserId: vi.fn(async () => null),
+      findByOrganizationId: vi.fn(async () => null),
+      findBotImageByOrganizationId: vi.fn(async () => null),
+    };
     users = [
       { id: ORGANIZER_ID, name: ORGANIZER_NAME, email: ORGANIZER_EMAIL, locale: "en", timeZone: "UTC" },
     ];
@@ -244,6 +255,7 @@ describe("NotetakerDispatchService", () => {
       userRepository,
       notetakerTasker: tasker,
       calendarInviteService,
+      organizationNotetakerSettingsRepository: organizationSettingsRepository,
     });
   }
 
@@ -1167,6 +1179,146 @@ describe("NotetakerDispatchService", () => {
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect(repositories.store.sessions.size).toBe(0);
       expect(repositories.store.choices.get(bookingId)?.pendingDispatch).toBe(true);
+    });
+  });
+
+  describe("dispatchDue: organization branding", () => {
+    const ORGANIZATION_ID = 50;
+    const BOT_IMAGE = "base64-jpeg";
+
+    function orgSettings(overrides: { botName?: string | null; botImageUpdatedAt?: Date | null } = {}) {
+      return { organizationId: ORGANIZATION_ID, botName: null, botImageUpdatedAt: null, ...overrides };
+    }
+
+    function joinRecorder(): {
+      gateway: INotetakerBotGateway;
+      joins: Parameters<INotetakerBotGateway["requestJoin"]>[];
+    } {
+      const joins: Parameters<INotetakerBotGateway["requestJoin"]>[] = [];
+      const gateway = createStubGateway({
+        requestJoin: async (...args) => {
+          joins.push(args);
+          return { externalRef: `stub-ref-${args[0].sessionId}` };
+        },
+      });
+      return { gateway, joins };
+    }
+
+    it("prefers the organization's bot name over the configured one", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings({ botName: "Acme Bot" }));
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway), { ...config, botName: "BlueBee Notetaker" }).dispatchDue();
+
+      expect(organizationSettingsRepository.findByUserId).toHaveBeenCalledWith(ORGANIZER_ID);
+      expect(onlySession().displayName).toBe("Acme Bot");
+      expect(joins[0][0].displayName).toBe("Acme Bot");
+    });
+
+    it("uses the configured bot name when the organization has none", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings());
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway), { ...config, botName: "BlueBee Notetaker" }).dispatchDue();
+
+      expect(onlySession().displayName).toBe("BlueBee Notetaker");
+      expect(joins[0][0].displayName).toBe("BlueBee Notetaker");
+    });
+
+    it("uses the translated default name when neither the organization nor the config names the bot", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings());
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway), { ...config, botName: null }).dispatchDue();
+
+      expect(onlySession().displayName).toBe(EXPECTED_DISPLAY_NAME);
+      expect(joins[0][0].displayName).toBe(EXPECTED_DISPLAY_NAME);
+    });
+
+    it("passes the organization's bot image to the join when one is stored", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings({ botImageUpdatedAt: NOW }));
+      organizationSettingsRepository.findBotImageByOrganizationId.mockResolvedValue(BOT_IMAGE);
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(organizationSettingsRepository.findBotImageByOrganizationId).toHaveBeenCalledWith(
+        ORGANIZATION_ID
+      );
+      expect(joins[0][1]).toEqual({ avatar: { kind: "jpeg", base64: BOT_IMAGE } });
+    });
+
+    it("does not read the bot image when the organization has never stored one", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings());
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(organizationSettingsRepository.findBotImageByOrganizationId).not.toHaveBeenCalled();
+      expect(joins[0][1]).toEqual({ avatar: null });
+    });
+
+    it("still dispatches with the default name and no image when the settings lookup throws", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockRejectedValue(new Error("db down"));
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway), { ...config, botName: null }).dispatchDue();
+
+      expect(onlySession()).toMatchObject({ status: "SCHEDULED", displayName: EXPECTED_DISPLAY_NAME });
+      expect(joins).toHaveLength(1);
+      expect(joins[0][1]).toEqual({ avatar: null });
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Notetaker organization settings lookup failed; the default bot name is used",
+        expect.objectContaining({ bookingId: BOOKING_ID, message: "db down" })
+      );
+    });
+
+    it("still dispatches without an image when the image lookup throws", async () => {
+      await seedArmed();
+      organizationSettingsRepository.findByUserId.mockResolvedValue(
+        orgSettings({ botName: "Acme Bot", botImageUpdatedAt: NOW })
+      );
+      organizationSettingsRepository.findBotImageByOrganizationId.mockRejectedValue(new Error("db down"));
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(joins).toHaveLength(1);
+      expect(joins[0][0].displayName).toBe("Acme Bot");
+      expect(joins[0][1]).toEqual({ avatar: null });
+    });
+
+    it("falls back to the booking's organization when the booking has no user", async () => {
+      await seedArmed({ userId: null, organizationId: ORGANIZATION_ID });
+      organizationSettingsRepository.findByOrganizationId.mockResolvedValue(
+        orgSettings({ botName: "Acme Bot" })
+      );
+      const { gateway, joins } = joinRecorder();
+
+      await buildService(fakeBinding(gateway)).dispatchDue();
+
+      expect(organizationSettingsRepository.findByUserId).not.toHaveBeenCalled();
+      expect(organizationSettingsRepository.findByOrganizationId).toHaveBeenCalledWith(ORGANIZATION_ID);
+      expect(joins[0][0].displayName).toBe("Acme Bot");
+    });
+
+    it("stores the organization's bot name on a session that fails before the join", async () => {
+      await seedArmed({ location: MeetLocationType, references: [], metadata: null });
+      organizationSettingsRepository.findByUserId.mockResolvedValue(orgSettings({ botName: "Acme Bot" }));
+
+      await buildService(fakeBinding(createStubGateway())).dispatchDue();
+
+      expect(onlySession()).toMatchObject({
+        status: "FAILED",
+        outcomeReason: "MEETING_LINK_UNUSABLE",
+        displayName: "Acme Bot",
+      });
     });
   });
 
