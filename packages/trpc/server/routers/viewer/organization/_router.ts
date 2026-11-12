@@ -1,3 +1,4 @@
+import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
 import {
   CurrentOrganizationDtoSchema,
   OrganizationDtoSchema,
@@ -6,6 +7,7 @@ import {
 } from "@calcom/lib/dto/OrganizationDto";
 import { OrganizationEmailSenderSettingsDtoSchema } from "@calcom/lib/dto/OrganizationEmailSenderDto";
 import { OrganizationNotetakerSettingsDtoSchema } from "@calcom/lib/dto/OrganizationNotetakerSettingsDto";
+import { OrganizationSmtpSettingsDtoSchema } from "@calcom/lib/dto/OrganizationSmtpSettingsDto";
 import { TRPCError } from "@trpc/server";
 import { organizationsFeatureMiddleware } from "../../../middlewares/organizationsFeatureMiddleware";
 import authedProcedure from "../../../procedures/authedProcedure";
@@ -17,12 +19,15 @@ import {
   ZListOrganizationTeamsInput,
   ZRemoveOrganizationMemberInput,
   ZRemoveOrganizationMemberOutput,
+  ZTestOrganizationSmtpSettingsInput,
+  ZTestOrganizationSmtpSettingsOutput,
   ZUpdateOrganizationEmailSenderInput,
   ZUpdateOrganizationLogoInput,
   ZUpdateOrganizationMemberRoleInput,
   ZUpdateOrganizationMemberRoleOutput,
   ZUpdateOrganizationNameInput,
   ZUpdateOrganizationNotetakerSettingsInput,
+  ZUpdateOrganizationSmtpSettingsInput,
 } from "./organization.schema";
 
 // The organization always comes from the session, never from input, so a member can only reach their own org
@@ -60,6 +65,17 @@ const loadEmailSenderService = async () => {
   );
   return getOrganizationEmailSenderService();
 };
+
+const loadSmtpSettingsService = async () => {
+  const { getOrganizationSmtpSettingsService } = await import(
+    "@calcom/features/organizations/di/OrganizationSmtpSettingsService.container"
+  );
+  return getOrganizationSmtpSettingsService();
+};
+
+// Saving and testing open outbound SMTP connections, so they are throttled per organization
+const checkSmtpRateLimit = (organizationId: number) =>
+  checkRateLimitAndThrowError({ rateLimitingType: "core", identifier: `orgSmtp:${organizationId}` });
 
 export const organizationRouter = router({
   current: organizationMemberProcedure.output(CurrentOrganizationDtoSchema).query(async ({ ctx }) => {
@@ -175,5 +191,48 @@ export const organizationRouter = router({
         senderAddress: input.senderAddress,
       });
       return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  smtpSettings: organizationMemberProcedure
+    .output(OrganizationSmtpSettingsDtoSchema)
+    .query(async ({ ctx }) => {
+      const service = await loadSmtpSettingsService();
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  updateSmtpSettings: organizationMemberProcedure
+    .input(ZUpdateOrganizationSmtpSettingsInput)
+    .output(OrganizationSmtpSettingsDtoSchema)
+    .mutation(async ({ ctx, input }) => {
+      await checkSmtpRateLimit(ctx.organizationId);
+      const service = await loadSmtpSettingsService();
+      await service.update({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        host: input.host,
+        port: input.port,
+        security: input.security,
+        username: input.username,
+        password: input.password,
+      });
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  removeSmtpSettings: organizationMemberProcedure
+    .output(OrganizationSmtpSettingsDtoSchema)
+    .mutation(async ({ ctx }) => {
+      const service = await loadSmtpSettingsService();
+      await service.remove({ organizationId: ctx.organizationId, actorUserId: ctx.user.id });
+      return service.get({ organizationId: ctx.organizationId, viewerUserId: ctx.user.id });
+    }),
+  testSmtpSettings: organizationMemberProcedure
+    .input(ZTestOrganizationSmtpSettingsInput)
+    .output(ZTestOrganizationSmtpSettingsOutput)
+    .mutation(async ({ ctx, input }) => {
+      await checkSmtpRateLimit(ctx.organizationId);
+      const service = await loadSmtpSettingsService();
+      await service.test({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.user.id,
+        sendTo: input.sendTestEmail ? ctx.user.email : null,
+      });
+      return { ok: true as const };
     }),
 });

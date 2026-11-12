@@ -19,6 +19,15 @@ const mocks = vi.hoisted(() => ({
   updateNotetakerSettings: vi.fn(),
   getEmailSender: vi.fn(),
   updateEmailSender: vi.fn(),
+  getSmtpSettings: vi.fn(),
+  updateSmtpSettings: vi.fn(),
+  removeSmtpSettings: vi.fn(),
+  testSmtpSettings: vi.fn(),
+  checkRateLimitAndThrowError: vi.fn(),
+}));
+
+vi.mock("@calcom/lib/checkRateLimitAndThrowError", () => ({
+  checkRateLimitAndThrowError: mocks.checkRateLimitAndThrowError,
 }));
 
 vi.mock("@calcom/features/auth/lib/userFromSessionUtils", () => ({
@@ -61,6 +70,15 @@ vi.mock("@calcom/features/organizations/di/OrganizationEmailSenderService.contai
   getOrganizationEmailSenderService: () => ({
     get: mocks.getEmailSender,
     update: mocks.updateEmailSender,
+  }),
+}));
+
+vi.mock("@calcom/features/organizations/di/OrganizationSmtpSettingsService.container", () => ({
+  getOrganizationSmtpSettingsService: () => ({
+    get: mocks.getSmtpSettings,
+    update: mocks.updateSmtpSettings,
+    remove: mocks.removeSmtpSettings,
+    test: mocks.testSmtpSettings,
   }),
 }));
 
@@ -111,6 +129,36 @@ const emailSenderSettings = {
   usesOrganizationSmtp: false,
 };
 
+const smtpSettings = {
+  configured: true,
+  host: "smtp.acme.example.com",
+  port: 587,
+  security: "STARTTLS" as const,
+  username: "mailer@acme.example.com",
+  hasPassword: true,
+  lastVerifiedAt: null,
+  canEdit: true,
+};
+
+const unconfiguredSmtpSettings = {
+  configured: false,
+  host: null,
+  port: null,
+  security: null,
+  username: null,
+  hasPassword: false,
+  lastVerifiedAt: null,
+  canEdit: true,
+};
+
+const smtpInput = {
+  host: "smtp.acme.example.com",
+  port: 587,
+  security: "STARTTLS" as const,
+  username: "mailer@acme.example.com",
+  password: "s3cret",
+};
+
 const team = { teamId: 21, name: "Sales", slug: "sales", memberCount: 2, viewerIsMember: true };
 
 const sessionFor = (overrides: { organizationId?: number | null; name?: string | null } = {}) => ({
@@ -138,6 +186,10 @@ const serviceMocks = () => [
   mocks.updateNotetakerSettings,
   mocks.getEmailSender,
   mocks.updateEmailSender,
+  mocks.getSmtpSettings,
+  mocks.updateSmtpSettings,
+  mocks.removeSmtpSettings,
+  mocks.testSmtpSettings,
 ];
 
 const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
@@ -153,6 +205,10 @@ const callEveryProcedure = (caller: ReturnType<typeof createCaller>) => [
   caller.updateNotetakerSettings({ botName: "Acme Scribe" }),
   caller.emailSender(),
   caller.updateEmailSender({ senderName: "Acme Team" }),
+  caller.smtpSettings(),
+  caller.updateSmtpSettings(smtpInput),
+  caller.removeSmtpSettings(),
+  caller.testSmtpSettings({ sendTestEmail: false }),
 ];
 
 describe("viewer organization router", () => {
@@ -192,6 +248,11 @@ describe("viewer organization router", () => {
     mocks.updateNotetakerSettings.mockResolvedValue(notetakerSettings);
     mocks.getEmailSender.mockResolvedValue(emailSenderSettings);
     mocks.updateEmailSender.mockResolvedValue(undefined);
+    mocks.getSmtpSettings.mockResolvedValue(smtpSettings);
+    mocks.updateSmtpSettings.mockResolvedValue(undefined);
+    mocks.removeSmtpSettings.mockResolvedValue(undefined);
+    mocks.testSmtpSettings.mockResolvedValue(undefined);
+    mocks.checkRateLimitAndThrowError.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {
@@ -206,6 +267,7 @@ describe("viewer organization router", () => {
         await expect(call).rejects.toMatchObject({ code: "NOT_FOUND" });
       }
       for (const fn of serviceMocks()) expect(fn).not.toHaveBeenCalled();
+      expect(mocks.checkRateLimitAndThrowError).not.toHaveBeenCalled();
     });
 
     it("returns NOT_FOUND on every procedure to a user without an organization", async () => {
@@ -317,6 +379,39 @@ describe("viewer organization router", () => {
         code: "BAD_REQUEST",
       });
       expect(mocks.updateEmailSender).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a host over 253 characters", { ...smtpInput, host: "a".repeat(254) }],
+      ["a non-integer port", { ...smtpInput, port: 587.5 }],
+      ["an unknown security mode", { ...smtpInput, security: "TLS" as unknown as "SSL" }],
+      ["a username over 320 characters", { ...smtpInput, username: "a".repeat(321) }],
+      ["a password over 1024 characters", { ...smtpInput, password: "a".repeat(1025) }],
+    ])("rejects an SMTP update with %s", async (_, input) => {
+      await expect(createCaller(ctx).updateSmtpSettings(input)).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+      expect(mocks.updateSmtpSettings).not.toHaveBeenCalled();
+      expect(mocks.checkRateLimitAndThrowError).not.toHaveBeenCalled();
+    });
+
+    it("rejects an SMTP update without a username field", async () => {
+      const caller = createCaller(ctx);
+      const { username: _username, ...input } = smtpInput;
+
+      await expect(
+        caller.updateSmtpSettings(input as Parameters<typeof caller.updateSmtpSettings>[0])
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(mocks.updateSmtpSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects an SMTP test without sendTestEmail", async () => {
+      const caller = createCaller(ctx);
+
+      await expect(
+        caller.testSmtpSettings({} as Parameters<typeof caller.testSmtpSettings>[0])
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(mocks.testSmtpSettings).not.toHaveBeenCalled();
     });
 
     it.each([0, 101])("rejects list limit %s", async (limit) => {
@@ -469,6 +564,106 @@ describe("viewer organization router", () => {
       });
     });
 
+    it("loads the SMTP settings for the session's org and user", async () => {
+      await expect(createCaller(ctx).smtpSettings()).resolves.toEqual(smtpSettings);
+      expect(mocks.getSmtpSettings).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+      expect(mocks.checkRateLimitAndThrowError).not.toHaveBeenCalled();
+    });
+
+    it("updates the SMTP settings of the session's organization and returns the fresh settings", async () => {
+      const caller = createCaller(ctx);
+
+      await expect(
+        caller.updateSmtpSettings({ ...smtpInput, organizationId: 99 } as Parameters<
+          typeof caller.updateSmtpSettings
+        >[0])
+      ).resolves.toEqual(smtpSettings);
+      expect(mocks.checkRateLimitAndThrowError).toHaveBeenCalledWith({
+        rateLimitingType: "core",
+        identifier: "orgSmtp:5",
+      });
+      expect(mocks.updateSmtpSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        host: "smtp.acme.example.com",
+        port: 587,
+        security: "STARTTLS",
+        username: "mailer@acme.example.com",
+        password: "s3cret",
+      });
+      expect(mocks.getSmtpSettings).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("passes a null username and leaves an omitted password undefined", async () => {
+      await createCaller(ctx).updateSmtpSettings({
+        host: "relay.acme.example.com",
+        port: 25,
+        security: "NONE",
+        username: null,
+      });
+
+      expect(mocks.updateSmtpSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        host: "relay.acme.example.com",
+        port: 25,
+        security: "NONE",
+        username: null,
+        password: undefined,
+      });
+    });
+
+    it("removes the SMTP settings and returns the unconfigured settings", async () => {
+      mocks.getSmtpSettings.mockResolvedValue(unconfiguredSmtpSettings);
+
+      await expect(createCaller(ctx).removeSmtpSettings()).resolves.toEqual(unconfiguredSmtpSettings);
+      expect(mocks.removeSmtpSettings).toHaveBeenCalledWith({ organizationId: 5, actorUserId: 7 });
+      expect(mocks.getSmtpSettings).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
+    });
+
+    it("sends the test email to the actor's own address", async () => {
+      await expect(createCaller(ctx).testSmtpSettings({ sendTestEmail: true })).resolves.toEqual({
+        ok: true,
+      });
+      expect(mocks.checkRateLimitAndThrowError).toHaveBeenCalledWith({
+        rateLimitingType: "core",
+        identifier: "orgSmtp:5",
+      });
+      expect(mocks.testSmtpSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        sendTo: "alice@acme.example.com",
+      });
+    });
+
+    it("only verifies the connection when no test email is requested", async () => {
+      await expect(createCaller(ctx).testSmtpSettings({ sendTestEmail: false })).resolves.toEqual({
+        ok: true,
+      });
+      expect(mocks.testSmtpSettings).toHaveBeenCalledWith({
+        organizationId: 5,
+        actorUserId: 7,
+        sendTo: null,
+      });
+    });
+
+    it.each([
+      [
+        "updateSmtpSettings",
+        (caller: ReturnType<typeof createCaller>) => caller.updateSmtpSettings(smtpInput),
+      ],
+      [
+        "testSmtpSettings",
+        (caller: ReturnType<typeof createCaller>) => caller.testSmtpSettings({ sendTestEmail: true }),
+      ],
+    ])("does not reach the service when %s is rate limited", async (_, call) => {
+      mocks.checkRateLimitAndThrowError.mockRejectedValue(new Error("Rate limit exceeded"));
+
+      await expect(call(createCaller(ctx))).rejects.toThrow("Rate limit exceeded");
+      expect(mocks.updateSmtpSettings).not.toHaveBeenCalled();
+      expect(mocks.testSmtpSettings).not.toHaveBeenCalled();
+    });
+
     it("loads the notetaker settings for the session's org and user", async () => {
       await expect(createCaller(ctx).notetakerSettings()).resolves.toEqual(notetakerSettings);
       expect(mocks.getNotetakerSettings).toHaveBeenCalledWith({ organizationId: 5, viewerUserId: 7 });
@@ -614,6 +809,41 @@ describe("viewer organization router", () => {
       });
     });
 
+    it.each([
+      ["BadRequest", "BAD_REQUEST", "organization_smtp_host_private"],
+      ["BadRequest", "BAD_REQUEST", "organization_smtp_password_required"],
+      ["Forbidden", "FORBIDDEN", "organization_only_managers_can_update_organization"],
+    ] as const)("maps ErrorWithCode %s from updateSmtpSettings to %s (%s)", async (factory, code, message) => {
+      mocks.updateSmtpSettings.mockRejectedValue(ErrorWithCode.Factory[factory](message));
+
+      await expect(createCaller(ctx).updateSmtpSettings(smtpInput)).rejects.toMatchObject({ code, message });
+      expect(mocks.getSmtpSettings).not.toHaveBeenCalled();
+    });
+
+    it("maps a Forbidden from removeSmtpSettings", async () => {
+      mocks.removeSmtpSettings.mockRejectedValue(
+        ErrorWithCode.Factory.Forbidden("organization_only_managers_can_update_organization")
+      );
+
+      await expect(createCaller(ctx).removeSmtpSettings()).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: "organization_only_managers_can_update_organization",
+      });
+    });
+
+    it.each([
+      ["BadRequest", "BAD_REQUEST", "organization_smtp_test_failed_auth"],
+      ["BadRequest", "BAD_REQUEST", "organization_smtp_no_sender_address"],
+      ["NotFound", "NOT_FOUND", "organization_smtp_not_configured"],
+    ] as const)("maps ErrorWithCode %s from testSmtpSettings to %s (%s)", async (factory, code, message) => {
+      mocks.testSmtpSettings.mockRejectedValue(ErrorWithCode.Factory[factory](message));
+
+      await expect(createCaller(ctx).testSmtpSettings({ sendTestEmail: true })).rejects.toMatchObject({
+        code,
+        message,
+      });
+    });
+
     it("maps a NotFound from current", async () => {
       mocks.getForMember.mockRejectedValue(ErrorWithCode.Factory.NotFound("organization_not_found"));
 
@@ -641,6 +871,15 @@ describe("viewer organization router", () => {
       mocks.getEmailSender.mockResolvedValue({ ...emailSenderSettings, organizationId: 5 });
 
       await expect(createCaller(ctx).emailSender()).resolves.toEqual(emailSenderSettings);
+    });
+
+    it("strips fields that are not part of the SMTP settings DTO", async () => {
+      mocks.getSmtpSettings.mockResolvedValue({ ...smtpSettings, passwordEncrypted: "cipher" });
+
+      const result = await createCaller(ctx).smtpSettings();
+
+      expect(result).toEqual(smtpSettings);
+      expect(result).not.toHaveProperty("passwordEncrypted");
     });
   });
 });

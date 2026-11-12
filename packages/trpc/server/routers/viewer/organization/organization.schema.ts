@@ -1,4 +1,5 @@
 import { OrganizationRoleDtoSchema } from "@calcom/lib/dto/OrganizationDto";
+import { OrganizationSmtpSecuritySchema } from "@calcom/lib/dto/OrganizationSmtpSettingsDto";
 import { z } from "zod";
 
 const id = z.number().int().positive();
@@ -55,6 +56,19 @@ export const ZUpdateOrganizationEmailSenderInput = z
     message: "Provide senderName or senderAddress",
   });
 
+export const ZUpdateOrganizationSmtpSettingsInput = z.object({
+  // Loose caps only bound the payload; the service owns the real host, port and username rules
+  host: z.string().max(253),
+  port: z.number().int(),
+  security: OrganizationSmtpSecuritySchema,
+  username: z.string().max(320).nullable(),
+  password: z.string().max(1024).optional(),
+});
+
+export const ZTestOrganizationSmtpSettingsInput = z.object({ sendTestEmail: z.boolean() });
+
+export const ZTestOrganizationSmtpSettingsOutput = z.object({ ok: z.literal(true) });
+
 export type TListOrganizationMembersInput = z.infer<typeof ZListOrganizationMembersInput>;
 export type TListOrganizationTeamsInput = z.infer<typeof ZListOrganizationTeamsInput>;
 export type TInviteOrganizationMemberInput = z.infer<typeof ZInviteOrganizationMemberInput>;
@@ -68,3 +82,5 @@ export type TUpdateOrganizationEmailSenderInput = z.infer<typeof ZUpdateOrganiza
 export type TUpdateOrganizationNotetakerSettingsInput = z.infer<
   typeof ZUpdateOrganizationNotetakerSettingsInput
 >;
+export type TUpdateOrganizationSmtpSettingsInput = z.infer<typeof ZUpdateOrganizationSmtpSettingsInput>;
+export type TTestOrganizationSmtpSettingsInput = z.infer<typeof ZTestOrganizationSmtpSettingsInput>;
