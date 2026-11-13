@@ -78,7 +78,7 @@ const booking = {
     disableRescheduling: false,
     allowReschedulingCancelledBookings: false,
     minimumRescheduleNotice: null,
-    team: { id: 42, parentId: 3, slug: "team" },
+    team: { id: 42, isOrganization: false, parentId: 3, slug: "team" },
     seatsPerTimeSlot: null,
     userId: 7,
     owner: null,

@@ -20,13 +20,29 @@ describe("buildEventUrlFromBooking organization base URL", () => {
     getBaseUrl.mockResolvedValue("https://org.example.com");
 
     const result = await buildEventUrlFromBooking({
-      eventType: { slug: "30min", team: { slug: "engineering", parentId: 123 } },
+      eventType: {
+        slug: "30min",
+        team: { id: 5, slug: "engineering", isOrganization: false, parentId: 123 },
+      },
       profileEnrichedBookingUser: { profile: { organizationId: 456, username: "john" } },
       dynamicGroupSlugRef: null,
     });
 
     expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: 123 });
     expect(result).toBe("https://org.example.com/team/engineering/30min");
+  });
+
+  it("uses the organization itself for an organization-owned event", async () => {
+    getBaseUrl.mockResolvedValue("https://org.example.com");
+
+    const result = await buildEventUrlFromBooking({
+      eventType: { slug: "30min", team: { id: 123, slug: "acme", isOrganization: true, parentId: null } },
+      profileEnrichedBookingUser: { profile: { organizationId: 456, username: "john" } },
+      dynamicGroupSlugRef: null,
+    });
+
+    expect(getBaseUrl).toHaveBeenCalledWith({ organizationId: 123 });
+    expect(result).toBe("https://org.example.com/team/acme/30min");
   });
 
   it("uses the organizer's organization for a personal event", async () => {
@@ -50,7 +66,9 @@ describe("buildEventUrlFromBooking", () => {
         eventType: {
           slug: "30min",
           team: {
+            id: 5,
             slug: "engineering",
+            isOrganization: false,
             parentId: 123,
           },
         },
@@ -113,7 +131,9 @@ describe("buildEventUrlFromBooking", () => {
         eventType: {
           slug: "30min",
           team: {
+            id: 5,
             slug: "engineering",
+            isOrganization: false,
             parentId: 123,
           },
         },

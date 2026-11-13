@@ -69,6 +69,7 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
           team: {
             select: {
               id: true,
+              isOrganization: true,
               parentId: true,
               slug: true,
             },
