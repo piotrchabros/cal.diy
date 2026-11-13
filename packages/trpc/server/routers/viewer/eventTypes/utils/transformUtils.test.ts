@@ -57,6 +57,7 @@ describe("transformUtils booker URLs", () => {
           slug: "sales",
           logoUrl: null,
           parentId: 99,
+          isOrganization: false,
           parent: { name: "Acme", slug: "acme", logoUrl: null, metadata: {} },
           metadata: {},
         },
@@ -81,6 +82,7 @@ describe("transformUtils booker URLs", () => {
           slug: "solo",
           logoUrl: null,
           parentId: null,
+          isOrganization: false,
           parent: null,
           metadata: {},
         },
@@ -93,5 +95,29 @@ describe("transformUtils booker URLs", () => {
 
     expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: null });
     expect(group.bookerUrl).toBe("https://app.example.com");
+  });
+
+  it("resolves the organization's own URL for a team that is the organization", async () => {
+    const group = await createTeamEventGroup(
+      {
+        team: {
+          id: 99,
+          name: "Acme",
+          slug: "acme",
+          logoUrl: null,
+          parentId: null,
+          isOrganization: true,
+          parent: null,
+          metadata: {},
+        },
+        role: MembershipRole.OWNER,
+      },
+      MembershipRole.OWNER,
+      "team/acme",
+      permissions
+    );
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 99 });
+    expect(group.bookerUrl).toBe("https://org-99.example.com");
   });
 });
