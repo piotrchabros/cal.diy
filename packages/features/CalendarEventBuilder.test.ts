@@ -960,6 +960,7 @@ describe("CalendarEventBuilder", () => {
           team: {
             id: 10,
             name: "Engineering Team",
+            isOrganization: false,
             parentId: null,
             members: [],
           },
@@ -1431,7 +1432,13 @@ describe("CalendarEventBuilder", () => {
       team,
       profileOrganizationId,
     }: {
-      team: { id: number; name: string; parentId: number | null; members: [] } | null;
+      team: {
+        id: number;
+        name: string;
+        isOrganization: boolean;
+        parentId: number | null;
+        members: [];
+      } | null;
       profileOrganizationId: number;
     }) =>
       ({
@@ -1499,7 +1506,20 @@ describe("CalendarEventBuilder", () => {
     it("should resolve bookerUrl from the team's parent organization over the organizer's profile org", async () => {
       mockGetBaseUrl.mockClear();
       const mockBooking = buildOrgBooking({
-        team: { id: 11, name: "Org Team", parentId: 7, members: [] },
+        team: { id: 11, name: "Org Team", isOrganization: false, parentId: 7, members: [] },
+        profileOrganizationId: 99,
+      });
+
+      const builtEvent = (await CalendarEventBuilder.fromBooking(mockBooking)).build();
+
+      expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 7 });
+      expect(builtEvent?.bookerUrl).toBe("https://org.example");
+    });
+
+    it("should resolve bookerUrl from the organization itself when the event type is organization-owned", async () => {
+      mockGetBaseUrl.mockClear();
+      const mockBooking = buildOrgBooking({
+        team: { id: 7, name: "Org", isOrganization: true, parentId: null, members: [] },
         profileOrganizationId: 99,
       });
 
@@ -1704,6 +1724,7 @@ describe("CalendarEventBuilder", () => {
           team: {
             id: 50,
             name: "Engineering Team",
+            isOrganization: false,
             parentId: 1,
             members: [],
           },

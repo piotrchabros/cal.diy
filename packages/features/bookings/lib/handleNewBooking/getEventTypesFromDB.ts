@@ -106,6 +106,7 @@ const getEventTypesFromDBSelect = {
       team: {
         select: {
           id: true,
+          isOrganization: true,
           parentId: true,
           bookingLimits: true,
           includeManagedEventsInLimits: true,

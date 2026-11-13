@@ -9,6 +9,7 @@ import {
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
 import type {
   Attendee,
@@ -142,7 +143,7 @@ export class CalendarEventBuilder {
 
     const organizationId = user.profiles?.[0]?.organizationId ?? null;
     const bookerUrl = await getOrganizationUrlService().getBaseUrl({
-      organizationId: eventType.team?.parentId ?? organizationId,
+      organizationId: (eventType.team ? getTeamOrganizationId(eventType.team) : null) ?? organizationId,
     });
 
     const parsedBookingResponses = bookingResponsesSchema.safeParse(responses);

@@ -230,6 +230,23 @@ describe("handleNewBooking organization host check", () => {
   );
 
   test(
+    "builds the booking's bookerUrl on the organization that owns the event type directly",
+    async () => {
+      const handleNewBooking = getNewBookingHandler();
+      const org = await createOrganization({ name: "Acme", slug: "acme" });
+      mockResolveBookingHostOrganization.mockResolvedValue({ orgSlug: null, hostOrganization: null });
+      await createOrganizerEventScenario({ organizationId: null });
+      await prismock.eventType.update({ where: { id: 1 }, data: { teamId: org.id } });
+
+      const createdBooking = await handleNewBooking({ bookingData: getBookingData() });
+
+      expect(createdBooking.uid).toBeTruthy();
+      expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: org.id });
+    },
+    timeout
+  );
+
+  test(
     "creates the booking when no host organization is resolved",
     async () => {
       const handleNewBooking = getNewBookingHandler();

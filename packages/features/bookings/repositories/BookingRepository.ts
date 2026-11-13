@@ -253,6 +253,7 @@ const selectStatementToGetBookingForCalEventBuilder = {
         select: {
           id: true,
           name: true,
+          isOrganization: true,
           parentId: true,
           hideBranding: true,
           parent: { select: { hideBranding: true } },

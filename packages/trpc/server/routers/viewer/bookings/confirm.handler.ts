@@ -25,6 +25,7 @@ import { getTeamIdFromEventType } from "@calcom/lib/getTeamIdFromEventType";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
 import logger from "@calcom/lib/logger";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
 import type { TraceContext } from "@calcom/lib/tracing";
@@ -107,6 +108,7 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
             select: {
               id: true,
               name: true,
+              isOrganization: true,
               parentId: true,
               hideBranding: true,
               parent: { select: { hideBranding: true } },
@@ -235,8 +237,9 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
 
   const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
 
+  const teamOrganizationId = booking.eventType?.team ? getTeamOrganizationId(booking.eventType.team) : null;
   const bookerUrl = await getOrganizationUrlService().getBaseUrl({
-    organizationId: booking.eventType?.team?.parentId ?? organizerOrganizationId,
+    organizationId: teamOrganizationId ?? organizerOrganizationId,
   });
 
   const attendeesList = await Promise.all(attendeesListPromises);
@@ -291,7 +294,7 @@ export const confirmHandler = async ({ ctx, input }: ConfirmOptions) => {
         }
       : undefined,
     ...(platformClientParams ? platformClientParams : {}),
-    organizationId: organizerOrganizationId ?? booking.eventType?.team?.parentId ?? null,
+    organizationId: organizerOrganizationId ?? teamOrganizationId ?? null,
     additionalNotes: booking.description,
     assignmentReason: booking.assignmentReason?.[0]?.reasonEnum
       ? {

@@ -74,6 +74,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import { extractBaseEmail } from "@calcom/lib/extract-base-email";
 import { HttpError } from "@calcom/lib/http-error";
 import { criticalLogger } from "@calcom/lib/logger.server";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { getPiiFreeCalendarEvent, getPiiFreeEventType } from "@calcom/lib/piiFreeData";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getServerErrorFromUnknown } from "@calcom/lib/server/getServerErrorFromUnknown";
@@ -662,11 +663,11 @@ async function handler(
 
   const spamCheckService = getSpamCheckService();
 
+  const eventTypeTeamOrganizationId =
+    (eventType.team ? getTeamOrganizationId(eventType.team) : null) ??
+    (eventType.parent?.team ? getTeamOrganizationId(eventType.parent.team) : null);
   const eventTypeOrganizationId =
-    eventType.team?.parentId ??
-    eventType.parent?.team?.parentId ??
-    eventType.owner?.profiles?.[0]?.organizationId ??
-    null;
+    eventTypeTeamOrganizationId ?? eventType.owner?.profiles?.[0]?.organizationId ?? null;
   spamCheckService.startCheck({ email: bookerEmail, organizationId: eventTypeOrganizationId });
 
   if (!rawBookingData.rescheduleUid) {
@@ -1392,7 +1393,7 @@ async function handler(
 
   const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
   const bookerUrl = await getOrganizationUrlService().getBaseUrl({
-    organizationId: eventType.team?.parentId ?? eventType.parent?.team?.parentId ?? organizerOrganizationId,
+    organizationId: eventTypeTeamOrganizationId ?? organizerOrganizationId,
   });
 
   const destinationCalendar = eventType.destinationCalendar

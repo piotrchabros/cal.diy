@@ -3,6 +3,7 @@ import type { BuiltCalendarEvent } from "@calcom/features/CalendarEventBuilder";
 import { CalendarEventBuilder } from "@calcom/features/CalendarEventBuilder";
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getTranslation } from "@calcom/i18n/server";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import prisma from "@calcom/prisma";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 
@@ -29,6 +30,8 @@ const buildCalendarEvent: (bookingUid: string) => Promise<CalendarEvent> = async
           bookingFields: true,
           team: {
             select: {
+              id: true,
+              isOrganization: true,
               parentId: true,
             },
           },
@@ -60,9 +63,9 @@ const buildCalendarEvent: (bookingUid: string) => Promise<CalendarEvent> = async
   }
 
   const organizationUrlService = getOrganizationUrlService();
-  const teamParentId = booking.eventType.team?.parentId;
-  const bookerUrl = teamParentId
-    ? await organizationUrlService.getBaseUrl({ organizationId: teamParentId })
+  const teamOrganizationId = booking.eventType.team ? getTeamOrganizationId(booking.eventType.team) : null;
+  const bookerUrl = teamOrganizationId
+    ? await organizationUrlService.getBaseUrl({ organizationId: teamOrganizationId })
     : await organizationUrlService.getBaseUrlForUser({ userId: booking.user.id });
   const organizerT = await getTranslation(booking.user?.locale ?? "en", "common");
 
