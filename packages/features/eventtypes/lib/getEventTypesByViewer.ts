@@ -11,6 +11,7 @@ import { ErrorWithCode } from "@calcom/lib/errors";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import logger from "@calcom/lib/logger";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
@@ -270,7 +271,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
           return {
             teamId: team.id,
             parentId: team.parentId,
-            bookerUrl: await urlService.getBaseUrl({ organizationId: team.parentId }),
+            bookerUrl: await urlService.getBaseUrl({ organizationId: getTeamOrganizationId(team) }),
             membershipRole:
               orgMembership && compareMembership(orgMembership, membership.role)
                 ? orgMembership

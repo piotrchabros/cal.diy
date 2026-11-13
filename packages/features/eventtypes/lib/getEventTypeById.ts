@@ -18,6 +18,7 @@ import { parseBookingLimit } from "@calcom/lib/intervalLimits/isBookingLimits";
 import { parseDurationLimit } from "@calcom/lib/intervalLimits/isDurationLimits";
 import { parseEventTypeColor } from "@calcom/lib/isEventTypeColor";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { withoutOrganizationParent } from "@calcom/lib/organizations/withoutOrganizationParent";
 import type { PrismaClient } from "@calcom/prisma";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -124,7 +125,9 @@ export const getEventTypeById = async ({
     customInputs: parsedCustomInputs,
     users: rawEventType.users,
     bookerUrl: restEventType.team
-      ? await getOrganizationUrlService().getBaseUrl({ organizationId: restEventType.team.parentId })
+      ? await getOrganizationUrlService().getBaseUrl({
+          organizationId: getTeamOrganizationId(restEventType.team),
+        })
       : restEventType.owner
         ? await getOrganizationUrlService().getBaseUrl({ organizationId: currentOrganizationId })
         : WEBSITE_URL,

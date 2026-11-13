@@ -94,6 +94,7 @@ const rawEventType = {
     name: "Sales",
     slug: "sales",
     parentId: 1,
+    isOrganization: false,
     parent: { slug: "bluebee", organizationSettings: null },
     members: [member(5, true), member(6, false)],
   },
@@ -128,7 +129,7 @@ describe("getEventTypeById", () => {
     });
     mockFindDefaultByUserId.mockResolvedValue(null);
     mockGetBaseUrl.mockImplementation(async ({ organizationId }: { organizationId: number | null }) =>
-      organizationId ? "https://bluebee.example.com" : "https://app.example.com"
+      organizationId ? `https://org-${organizationId}.example.com` : "https://app.example.com"
     );
   });
 
@@ -143,9 +144,30 @@ describe("getEventTypeById", () => {
     const result = await load();
 
     expect(result.team).toMatchObject({ parentId: 1, parent: { slug: "bluebee" } });
-    expect(result.eventType.bookerUrl).toBe("https://bluebee.example.com");
+    expect(result.eventType.bookerUrl).toBe("https://org-1.example.com");
     expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 1 });
     expect(result.teamMembers.map((m) => m.id)).toEqual([5, 6]);
+  });
+
+  it("requests the organization's own base URL for an event type owned by the organization", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    mockFindById.mockResolvedValue({
+      ...rawEventType,
+      teamId: 1,
+      team: {
+        ...rawEventType.team,
+        id: 1,
+        slug: "bluebee",
+        parentId: null,
+        isOrganization: true,
+        parent: null,
+      },
+    });
+
+    const result = await load();
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 1 });
+    expect(result.eventType.bookerUrl).toBe("https://org-1.example.com");
   });
 
   it("treats the team as top-level when organizations are disabled", async () => {

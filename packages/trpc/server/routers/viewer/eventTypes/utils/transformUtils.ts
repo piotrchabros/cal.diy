@@ -1,6 +1,7 @@
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import type { MembershipRole } from "@calcom/prisma/enums";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import type { TeamPermissions } from "./permissionUtils";
@@ -76,6 +77,7 @@ export async function createTeamEventGroup(
       slug: string | null;
       logoUrl: string | null;
       parentId: number | null;
+      isOrganization: boolean;
       parent?: {
         name: string;
         slug: string | null;
@@ -98,7 +100,7 @@ export async function createTeamEventGroup(
   return {
     teamId: team.id,
     parentId: team.parentId,
-    bookerUrl: await getOrganizationUrlService().getBaseUrl({ organizationId: team.parentId }),
+    bookerUrl: await getOrganizationUrlService().getBaseUrl({ organizationId: getTeamOrganizationId(team) }),
     membershipRole: effectiveRole,
     profile: {
       image: team.parent

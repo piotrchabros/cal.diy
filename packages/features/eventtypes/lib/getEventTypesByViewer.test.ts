@@ -33,7 +33,10 @@ vi.mock("@calcom/features/users/repositories/UserRepository", () => ({
   },
 }));
 vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", () => ({
-  getOrganizationUrlService: () => ({ getBaseUrl: async () => "https://app.example" }),
+  getOrganizationUrlService: () => ({
+    getBaseUrl: async ({ organizationId }: { organizationId: number | null }) =>
+      organizationId ? `https://org-${organizationId}.example` : "https://app.example",
+  }),
 }));
 
 import { getEventTypesByViewer } from "./getEventTypesByViewer";
@@ -187,6 +190,16 @@ describe("getEventTypesByViewer", () => {
     expect(group?.parentId).toBeNull();
     expect(group?.eventTypes.map((e) => e.id)).toEqual([10]);
     expect(result.eventTypeGroups.find((g) => g.teamId === 1)).toBeUndefined();
+  });
+
+  it("requests the organization's base URL for a team inside an organization", async () => {
+    vi.stubEnv("ORGANIZATIONS_ENABLED", "1");
+    grantTeamIds({ read: [2], update: [] });
+    mockFindMemberships.mockResolvedValue([teamMembership("MEMBER")]);
+
+    const { group } = await getTeamGroup(2);
+
+    expect(group?.bookerUrl).toBe("https://org-1.example");
   });
 
   it("includes the personal group as editable", async () => {
