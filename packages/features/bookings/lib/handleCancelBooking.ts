@@ -31,6 +31,7 @@ import { HttpError } from "@calcom/lib/http-error";
 import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
 import logger from "@calcom/lib/logger";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { isPrismaError } from "@calcom/lib/server/getServerErrorFromUnknown";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
@@ -254,7 +255,8 @@ async function handler(input: CancelBookingInput, dependencies?: Dependencies) {
 
   const bookerUrl = await getOrganizationUrlService().getBaseUrl({
     organizationId:
-      bookingToDelete.eventType?.team?.parentId ?? bookingToDelete.user?.profiles?.[0]?.organizationId,
+      (bookingToDelete.eventType?.team ? getTeamOrganizationId(bookingToDelete.eventType.team) : null) ??
+      bookingToDelete.user?.profiles?.[0]?.organizationId,
   });
 
   const evt: CalendarEvent = {

@@ -1,11 +1,14 @@
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import logger from "@calcom/lib/logger";
+import { getTeamOrganizationId } from "@calcom/lib/organizations/getTeamOrganizationId";
 import { safeStringify } from "@calcom/lib/safeStringify";
 
 type BookingEventType = {
   slug: string;
   team: {
+    id: number;
     slug: string | null;
+    isOrganization: boolean;
     parentId: number | null;
   } | null;
 };
@@ -23,7 +26,7 @@ export function getOrganizationIdOfBooking(booking: {
 }) {
   const { eventType, profileEnrichedBookingUser } = booking;
   return eventType.team
-    ? eventType.team.parentId
+    ? getTeamOrganizationId(eventType.team)
     : (profileEnrichedBookingUser?.profile.organizationId ?? null);
 }
 
