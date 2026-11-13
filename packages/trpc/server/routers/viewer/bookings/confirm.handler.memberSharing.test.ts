@@ -150,7 +150,32 @@ describe("confirmHandler bookerUrl", () => {
     } as never);
     vi.mocked(prisma.booking.findUniqueOrThrow).mockResolvedValue({
       ...booking,
-      eventType: { id: 1, title: "Team call", team: { id: 2, name: "Team", parentId: 9 }, metadata: {} },
+      eventType: {
+        id: 1,
+        title: "Team call",
+        team: { id: 2, name: "Team", isOrganization: false, parentId: 9 },
+        metadata: {},
+      },
+    } as never);
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ organizationId: 5 } as never);
+
+    await reject();
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 9 });
+  });
+
+  it("uses the organization itself for an organization-owned event", async () => {
+    vi.mocked(getEventTypeService).mockReturnValue({
+      shouldHideBrandingForEventType: vi.fn().mockResolvedValue(false),
+    } as never);
+    vi.mocked(prisma.booking.findUniqueOrThrow).mockResolvedValue({
+      ...booking,
+      eventType: {
+        id: 1,
+        title: "Org call",
+        team: { id: 9, name: "Org", isOrganization: true, parentId: null },
+        metadata: {},
+      },
     } as never);
     vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ organizationId: 5 } as never);
 

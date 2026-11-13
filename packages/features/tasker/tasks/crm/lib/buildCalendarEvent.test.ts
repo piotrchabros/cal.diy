@@ -24,7 +24,7 @@ vi.mock("@calcom/features/organizations/di/OrganizationUrlService.container", ()
 
 import buildCalendarEvent from "./buildCalendarEvent";
 
-const buildBooking = (team: { parentId: number | null } | null) => ({
+const buildBooking = (team: { id: number; isOrganization: boolean; parentId: number | null } | null) => ({
   uid: "booking-uid",
   title: "CRM Meeting",
   startTime: new Date("2026-01-01T10:00:00.000Z"),
@@ -64,11 +64,21 @@ describe("buildCalendarEvent", () => {
   });
 
   it("resolves bookerUrl from the team's parent organization when present", async () => {
-    mockFindUnique.mockResolvedValue(buildBooking({ parentId: 7 }));
+    mockFindUnique.mockResolvedValue(buildBooking({ id: 3, isOrganization: false, parentId: 7 }));
 
     const calendarEvent = await buildCalendarEvent("booking-uid");
 
     expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 7 });
+    expect(mockGetBaseUrlForUser).not.toHaveBeenCalled();
+    expect(calendarEvent.bookerUrl).toBe("https://org.example");
+  });
+
+  it("resolves bookerUrl from the organization itself when the event type is organization-owned", async () => {
+    mockFindUnique.mockResolvedValue(buildBooking({ id: 9, isOrganization: true, parentId: null }));
+
+    const calendarEvent = await buildCalendarEvent("booking-uid");
+
+    expect(mockGetBaseUrl).toHaveBeenCalledWith({ organizationId: 9 });
     expect(mockGetBaseUrlForUser).not.toHaveBeenCalled();
     expect(calendarEvent.bookerUrl).toBe("https://org.example");
   });
