@@ -871,6 +871,12 @@ async function handler(
     contactOwnerEmail,
     rescheduleUid: reqBody.rescheduleUid || null,
     rrHostSubsetIds: rrHostSubsetIds ?? undefined,
+    originalRescheduledBooking: originalRescheduledBooking
+      ? {
+          userId: originalRescheduledBooking.userId,
+          attendees: originalRescheduledBooking.attendees.map((attendee) => ({ email: attendee.email })),
+        }
+      : null,
   });
 
   // We filter out users but ensure allHostUsers remain same.

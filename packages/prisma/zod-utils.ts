@@ -145,6 +145,7 @@ export const RequiresConfirmationThresholdUnits: z.ZodType<UnitTypeLongPlural> =
 
 const _eventTypeMetaDataSchemaWithoutApps = z.object({
   smartContractAddress: z.string().optional(),
+  allowBookerToSelectHosts: z.boolean().optional(),
   blockchainId: z.number().optional(),
   multipleDuration: z.number().array().optional(),
   hideDurationSelectorInBookingPage: z.boolean().optional(),
