@@ -1,5 +1,10 @@
 import { enrichUsersWithDelegationCredentials } from "@calcom/app-store/delegationCredential";
 import { getQualifiedHostsService } from "@calcom/features/di/containers/QualifiedHosts";
+import {
+  filterBySelectedIds,
+  isBookerHostSelectionEnabled,
+  resolveSelectedHostIds,
+} from "@calcom/features/eventtypes/lib/bookerHostSelection";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { withSelectedCalendars } from "@calcom/features/users/repositories/UserRepository";
 import { sentrySpan } from "@calcom/features/watchlist/lib/telemetry";
@@ -52,6 +57,8 @@ type EventType = Pick<
   | "teamId"
   | "includeNoShowInRRCalculation"
   | "rrHostSubsetEnabled"
+  | "metadata"
+  | "seatsPerTimeSlot"
 >;
 
 type InputProps = {
@@ -66,6 +73,7 @@ type InputProps = {
   hostname: string | undefined;
   forcedSlug: string | undefined;
   rrHostSubsetIds?: number[];
+  originalRescheduledBooking?: { userId: number | null; attendees: { email: string }[] } | null;
 };
 
 const _loadAndValidateUsers = async ({
@@ -80,6 +88,7 @@ const _loadAndValidateUsers = async ({
   hostname,
   forcedSlug,
   rrHostSubsetIds,
+  originalRescheduledBooking,
 }: InputProps): Promise<{
   qualifiedRRUsers: UsersWithDelegationCredentials;
   additionalFallbackRRUsers: UsersWithDelegationCredentials;
@@ -128,6 +137,20 @@ const _loadAndValidateUsers = async ({
   }
 
   if (!users) throw new HttpError({ statusCode: 404, message: "eventTypeUser.notFound" });
+
+  // The qualified-hosts service in this fork ignores rrHostSubsetIds, so the booker's host selection is applied here
+  const selectedHostIds = resolveSelectedHostIds({
+    enabled: isBookerHostSelectionEnabled(eventType),
+    hosts: users.map((user) => ({ id: user.id, email: user.email })),
+    requestedHostIds: rrHostSubsetIds,
+    originalBooking: originalRescheduledBooking
+      ? {
+          userId: originalRescheduledBooking.userId,
+          attendeeEmails: originalRescheduledBooking.attendees.map((attendee) => attendee.email),
+        }
+      : null,
+  });
+  users = filterBySelectedIds(users, (user) => user.id, selectedHostIds);
 
   // Get organizationId from eventType (handles org teams and managed events)
   let organizationId: number | null = eventType.parent?.team?.parentId ?? eventType.team?.parentId ?? null;

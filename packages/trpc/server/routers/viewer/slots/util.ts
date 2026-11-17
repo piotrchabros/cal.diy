@@ -72,6 +72,7 @@ import type { CredentialForCalendarService } from "@calcom/types/Credential";
 import { TRPCError } from "@trpc/server";
 import type { Logger } from "tslog";
 import { v4 as uuid } from "uuid";
+import { applyBookerHostSelection } from "./applyBookerHostSelection";
 import { getEventTypeIdFromSlugs } from "./getEventTypeIdFromSlugs";
 import type { TGetScheduleInputSchema } from "./getSchedule.schema";
 import type { GetScheduleOptions } from "./types";
@@ -573,7 +574,10 @@ export class AvailableSlotsService {
 
             const selectedDuration = (duration || eventType.length) ?? 0;
 
-            const { title: durationTitle, source: durationSource } = LimitSources.eventDurationLimit({ limit, unit });
+            const { title: durationTitle, source: durationSource } = LimitSources.eventDurationLimit({
+              limit,
+              unit,
+            });
 
             if (selectedDuration > limit) {
               limitManager.addBusyTime({
@@ -965,7 +969,7 @@ export class AvailableSlotsService {
 
     const contactOwnerEmail = skipContactOwner ? null : contactOwnerEmailFromInput;
 
-    const { qualifiedRRHosts, allFallbackRRHosts, fixedHosts } =
+    const qualifiedHosts =
       await this.dependencies.qualifiedHostsService.findQualifiedHostsWithDelegationCredentials({
         eventType,
         rescheduleUid: input.rescheduleUid ?? null,
@@ -973,6 +977,18 @@ export class AvailableSlotsService {
         contactOwnerEmail,
         rrHostSubsetIds: input.rrHostSubsetIds ?? undefined,
       });
+    const { allFallbackRRHosts } = qualifiedHosts;
+
+    // The qualified-hosts service in this fork ignores rrHostSubsetIds, so the booker's host selection is applied here
+    const { qualifiedRRHosts, fixedHosts } = await applyBookerHostSelection({
+      eventType,
+      rrHostSubsetIds: input.rrHostSubsetIds,
+      rescheduleUid: input.rescheduleUid,
+      fixedHosts: qualifiedHosts.fixedHosts,
+      qualifiedRRHosts: qualifiedHosts.qualifiedRRHosts,
+      findOriginalBooking: (rescheduleUid) =>
+        this.dependencies.bookingRepo.findOriginalRescheduledBookingUserId({ rescheduleUid }),
+    });
 
     // Filter out blocked hosts BEFORE calculating availability (batched - single DB query)
 
