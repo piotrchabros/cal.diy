@@ -120,6 +120,19 @@ describe("EventTeamAssignmentTab", () => {
     expect(screen.queryByTestId("assignment-scheduling-type")).not.toBeInTheDocument();
   });
 
+  it("toggles allowBookerToSelectHosts metadata for collective events", () => {
+    renderTab();
+    const toggle = screen.getByTestId("allow-booker-to-select-hosts");
+    expect(toggle).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(getForm().getValues("metadata")?.allowBookerToSelectHosts).toBe(true);
+  });
+
+  it("hides the booker host selection toggle for round robin events", () => {
+    renderTab({ overrides: { schedulingType: SchedulingType.ROUND_ROBIN } });
+    expect(screen.queryByTestId("allow-booker-to-select-hosts")).not.toBeInTheDocument();
+  });
+
   it("shows the fixed hosts section for collective events without round robin hosts", () => {
     renderTab();
     expect(screen.getByText("fixed_hosts")).toBeInTheDocument();

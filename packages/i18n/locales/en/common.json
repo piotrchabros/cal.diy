@@ -5309,5 +5309,10 @@
   "organization_edit_own_profile_in_account_settings": "Edit your own profile in My account → Profile.",
   "organization_member_name_invalid": "Name is required and can be at most 50 characters.",
   "organization_member_avatar_invalid": "Upload a PNG or JPEG image.",
+  "allow_booker_to_select_hosts": "Let bookers choose who attends",
+  "allow_booker_to_select_hosts_description": "Bookers can pick any combination of team members; only times when all selected members are free are shown.",
+  "choose_who_attends": "Choose who attends",
+  "at_least_one_member_required": "At least one team member must be selected",
+  "same_members_as_original_booking": "Same team members as the original booking",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Add your new strings above here ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }

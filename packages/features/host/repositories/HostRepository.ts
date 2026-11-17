@@ -381,4 +381,25 @@ export class HostRepository {
     });
     return count;
   }
+
+  async findByEventTypeIdIncludeUser({ eventTypeId }: { eventTypeId: number }): Promise<
+    {
+      user: { id: number; name: string | null; username: string | null; avatarUrl: string | null };
+    }[]
+  > {
+    return await this.prismaClient.host.findMany({
+      where: { eventTypeId },
+      select: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            avatarUrl: true,
+          },
+        },
+      },
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    });
+  }
 }

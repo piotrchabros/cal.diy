@@ -1,7 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
 import { PrismaClient } from "@calcom/prisma";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HostRepository } from "./HostRepository";
 
 vi.mock("@calcom/prisma", () => {
@@ -73,6 +71,23 @@ describe("HostRepository", () => {
         },
       });
       expect(result).toEqual(updateResult);
+    });
+  });
+
+  describe("findByEventTypeIdIncludeUser", () => {
+    it("selects only public user fields, ordered by priority then creation", async () => {
+      const rows = [{ user: { id: 1, name: "A", username: "a", avatarUrl: null } }];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.host.findMany as any).mockResolvedValue(rows);
+
+      const result = await hostRepo.findByEventTypeIdIncludeUser({ eventTypeId: 9 });
+
+      expect(result).toEqual(rows);
+      expect(prisma.host.findMany).toHaveBeenCalledWith({
+        where: { eventTypeId: 9 },
+        select: { user: { select: { id: true, name: true, username: true, avatarUrl: true } } },
+        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+      });
     });
   });
 });

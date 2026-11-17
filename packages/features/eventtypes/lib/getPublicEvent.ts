@@ -4,7 +4,9 @@ import { getAppFromSlug } from "@calcom/app-store/utils";
 import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-utils";
 import dayjs from "@calcom/dayjs";
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
+import { isBookerHostSelectionEnabled } from "@calcom/features/eventtypes/lib/bookerHostSelection";
 import { getDefaultEvent, getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
+import { HostRepository } from "@calcom/features/host/repositories/HostRepository";
 import { TeamRolePermissionService } from "@calcom/features/membership/services/TeamRolePermissionService";
 import { getOrganizationUrlService } from "@calcom/features/organizations/di/OrganizationUrlService.container";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
@@ -341,6 +343,7 @@ export const getPublicEvent = async (
 
     return {
       ...defaultEvent,
+      selectableHosts: null,
       bookingFields: getBookingFieldsWithSystemFields({ ...defaultEvent, disableBookingTitle }),
       // Only return fields consumed by the booker.
       subsetOfUsers: users.map((user, index) => ({
@@ -553,8 +556,21 @@ export const getPublicEvent = async (
     users = [];
   }
 
+  const selectableHosts =
+    isBookerHostSelectionEnabled({
+      schedulingType: event.schedulingType,
+      teamId: event.teamId,
+      metadata: eventMetaData,
+      seatsPerTimeSlot: event.seatsPerTimeSlot,
+    }) && !(eventWithUserProfiles.team?.isPrivate && !canViewPrivateTeamMembers)
+      ? (await new HostRepository(prisma).findByEventTypeIdIncludeUser({ eventTypeId: event.id })).map(
+          ({ user }) => ({ ...user, avatarUrl: getUserAvatarUrl({ avatarUrl: user.avatarUrl }) })
+        )
+      : null;
+
   return {
     ...eventWithUserProfiles,
+    selectableHosts,
     bookerLayouts: bookerLayoutsSchema.parse(eventMetaData?.bookerLayouts || null),
     description: markdownToSafeHTML(eventWithUserProfiles.description),
     metadata: eventMetaData,

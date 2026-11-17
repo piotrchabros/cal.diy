@@ -37,6 +37,16 @@ vi.mock("@calcom/features/membership/services/TeamRolePermissionService", () => 
   },
 }));
 
+const { findByEventTypeIdIncludeUser } = vi.hoisted(() => ({
+  findByEventTypeIdIncludeUser: vi.fn(),
+}));
+
+vi.mock("@calcom/features/host/repositories/HostRepository", () => ({
+  HostRepository: class {
+    findByEventTypeIdIncludeUser = findByEventTypeIdIncludeUser;
+  },
+}));
+
 type GetUsersFromEventInput = Parameters<typeof getUsersFromEvent>[0];
 
 const prisma = {} as unknown as PrismaClient;
@@ -309,12 +319,14 @@ describe("getPublicEvent private team members", () => {
     checkPermission.mockReset();
   });
 
-  async function getTeamEventUsers({
+  async function getTeamEvent({
     isPrivate,
     currentUserId,
+    eventOverrides = {},
   }: {
     isPrivate: boolean;
     currentUserId?: number;
+    eventOverrides?: Record<string, unknown>;
   }) {
     const team = {
       parentId: 1,
@@ -353,12 +365,15 @@ describe("getPublicEvent private team members", () => {
       isInstantEvent: false,
       instantMeetingSchedule: null,
       parent: null,
+      ...eventOverrides,
     });
     const fakePrisma = { eventType: { findFirst } } as unknown as PrismaClient;
 
-    const event = await getPublicEvent("sales", "30min", true, null, fakePrisma, false, currentUserId);
+    return await getPublicEvent("sales", "30min", true, null, fakePrisma, false, currentUserId);
+  }
 
-    return event?.subsetOfUsers;
+  async function getTeamEventUsers(args: Parameters<typeof getTeamEvent>[0]) {
+    return (await getTeamEvent(args))?.subsetOfUsers;
   }
 
   it("hides the members of a private team from an anonymous visitor", async () => {
@@ -388,5 +403,42 @@ describe("getPublicEvent private team members", () => {
   it("shows the members of a public team without checking permissions", async () => {
     expect(await getTeamEventUsers({ isPrivate: false, currentUserId: 5 })).toHaveLength(1);
     expect(checkPermission).not.toHaveBeenCalled();
+  });
+
+  describe("selectableHosts", () => {
+    const selectionOverrides = {
+      schedulingType: "COLLECTIVE",
+      metadata: { allowBookerToSelectHosts: true },
+    };
+
+    beforeEach(() => {
+      findByEventTypeIdIncludeUser.mockReset();
+      findByEventTypeIdIncludeUser.mockResolvedValue([
+        { user: { id: 7, name: "Alice", username: "alice", avatarUrl: null } },
+      ]);
+    });
+
+    it("lists the hosts when booker selection is enabled", async () => {
+      const event = await getTeamEvent({ isPrivate: false, eventOverrides: selectionOverrides });
+
+      expect(findByEventTypeIdIncludeUser).toHaveBeenCalledWith({ eventTypeId: 1 });
+      expect(event?.selectableHosts).toEqual([
+        expect.objectContaining({ id: 7, name: "Alice", username: "alice" }),
+      ]);
+    });
+
+    it("is null when booker selection is disabled", async () => {
+      const event = await getTeamEvent({ isPrivate: false });
+
+      expect(event?.selectableHosts).toBeNull();
+      expect(findByEventTypeIdIncludeUser).not.toHaveBeenCalled();
+    });
+
+    it("is null for a private team the visitor cannot see into", async () => {
+      const event = await getTeamEvent({ isPrivate: true, eventOverrides: selectionOverrides });
+
+      expect(event?.selectableHosts).toBeNull();
+      expect(findByEventTypeIdIncludeUser).not.toHaveBeenCalled();
+    });
   });
 });

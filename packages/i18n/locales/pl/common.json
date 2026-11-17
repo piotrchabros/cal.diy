@@ -4942,5 +4942,10 @@
   "organization_member_not_found": "Nie znaleziono członka",
   "invalid_username": "Nieprawidłowa nazwa użytkownika",
   "username_taken_in_organization": "Ta nazwa użytkownika jest już zajęta w tej organizacji",
+  "allow_booker_to_select_hosts": "Pozwól rezerwującym wybrać uczestników",
+  "allow_booker_to_select_hosts_description": "Rezerwujący może wybrać dowolne osoby z zespołu; pokazywane są tylko godziny, w których wszystkie wybrane osoby są wolne.",
+  "choose_who_attends": "Wybierz uczestników",
+  "at_least_one_member_required": "Wybierz co najmniej jedną osobę z zespołu",
+  "same_members_as_original_booking": "Ci sami członkowie zespołu co w pierwotnej rezerwacji",
   "ADD_NEW_STRINGS_ABOVE_THIS_LINE_TO_PREVENT_MERGE_CONFLICTS": "↑↑↑↑↑↑↑↑↑↑↑↑↑ Dodaj nowe ciągi powyżej ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
 }
