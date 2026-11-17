@@ -57,6 +57,7 @@ export const useHandleBookEvent = ({
   const crmOwnerRecordType = useBookerStoreContext((state) => state.crmOwnerRecordType);
   const crmAppSlug = useBookerStoreContext((state) => state.crmAppSlug);
   const crmRecordId = useBookerStoreContext((state) => state.crmRecordId);
+  const storeSelectedHostIds = useBookerStoreContext((state) => state.selectedHostIds);
   const verificationCode = useBookerStoreContext((state) => state.verificationCode);
   const handleError = (err: unknown) => {
     const errorMessage = err instanceof Error ? t(err.message) : t("can_you_try_again");
@@ -108,7 +109,7 @@ export const useHandleBookEvent = ({
         orgSlug: orgSlug ? orgSlug : undefined,
         isDryRunProp: isBookingDryRun,
         verificationCode: verificationCode || undefined,
-        rrHostSubsetIds,
+        rrHostSubsetIds: rrHostSubsetIds ?? storeSelectedHostIds ?? undefined,
       };
 
       const tracking = getUtmTrackingParameters(searchParams);

@@ -1,7 +1,7 @@
 import { Timezone as PlatformTimezoneSelect } from "@calcom/atoms/timezone";
 import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
-import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
 import { fadeInUp } from "@calcom/features/bookings/Booker/config";
+import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
 import type { Timezone } from "@calcom/features/bookings/Booker/types";
 import { FromToTime } from "@calcom/features/bookings/Booker/utils/dates";
 import { useTimePreferences } from "@calcom/features/bookings/lib";
@@ -19,6 +19,7 @@ import { useEffect, useMemo } from "react";
 import { shallow } from "zustand/shallow";
 import i18nConfigration from "../../../../../i18n.json";
 import { EventDetails, EventMembers, EventMetaSkeleton, EventTitle } from "./event-meta";
+import { HostSelector } from "./event-meta/HostSelector";
 import { ScrollableWithGradients } from "./ScrollableWithGradients";
 
 const WebTimezoneSelect = dynamic(
@@ -80,6 +81,7 @@ export const EventMeta = ({
     | "fieldTranslations"
     | "autoTranslateDescriptionEnabled"
     | "enablePerHostLocations"
+    | "selectableHosts"
   > | null;
   isPending: boolean;
   isPrivateLink: boolean;
@@ -164,15 +166,26 @@ export const EventMeta = ({
       )}
       {!isPending && !!event && (
         <m.div {...fadeInUp} layout transition={{ ...fadeInUp.transition, delay: 0.3 }}>
-          <EventMembers
-            schedulingType={event.schedulingType}
-            users={event.subsetOfUsers}
-            profile={event.profile}
-            entity={event.entity}
-            isPrivateLink={isPrivateLink}
-            roundRobinHideOrgAndTeam={roundRobinHideOrgAndTeam}
-            hideOrgTeamAvatar={hideOrgTeamAvatar}
-          />
+          {event.selectableHosts?.length && !rescheduleUid ? (
+            <HostSelector hosts={event.selectableHosts} />
+          ) : (
+            <>
+              <EventMembers
+                schedulingType={event.schedulingType}
+                users={event.subsetOfUsers}
+                profile={event.profile}
+                entity={event.entity}
+                isPrivateLink={isPrivateLink}
+                roundRobinHideOrgAndTeam={roundRobinHideOrgAndTeam}
+                hideOrgTeamAvatar={hideOrgTeamAvatar}
+              />
+              {rescheduleUid && event.selectableHosts && (
+                <p className="text-subtle mt-1 text-xs" data-testid="same-members-note">
+                  {t("same_members_as_original_booking")}
+                </p>
+              )}
+            </>
+          )}
           <EventTitle className={`${classNames?.eventMetaTitle} my-2`}>
             {translatedTitle ?? event?.title}
           </EventTitle>
