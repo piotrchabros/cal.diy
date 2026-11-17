@@ -1,4 +1,6 @@
 import { validPassword } from "@calcom/features/auth/lib/validPassword";
+import { getAssignAllTeamMembersHostService } from "@calcom/features/host/di/AssignAllTeamMembersHostService.container";
+import type { AssignAllTeamMembersHostService } from "@calcom/features/host/services/AssignAllTeamMembersHostService";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService as defaultGetOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { requireDefaultOrganizationId } from "@calcom/features/organizations/lib/defaultOrganization";
@@ -11,11 +13,14 @@ import { UserRepository } from "@calcom/features/users/repositories/UserReposito
 import { hashPassword } from "@calcom/lib/auth/hashPassword";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
+import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import slugify from "@calcom/lib/slugify";
 import { prisma } from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { defaultSendTeamInviteEmail, type SendTeamInviteEmail, TeamInviteService } from "./TeamInviteService";
+
+const log = logger.getSubLogger({ prefix: ["[TeamMembersService]"] });
 
 type TeamWithParent = { id: number; parentId: number | null };
 
@@ -55,7 +60,11 @@ export class TeamMembersService {
       OrganizationMembershipService,
       "addMember" | "getRole"
     > = defaultGetOrganizationMembershipService,
-    private readonly resolveDefaultOrganizationId: () => Promise<number> = requireDefaultOrganizationId
+    private readonly resolveDefaultOrganizationId: () => Promise<number> = requireDefaultOrganizationId,
+    private readonly getAssignAllHostService: () => Pick<
+      AssignAllTeamMembersHostService,
+      "addMemberToTeams" | "removeMemberFromTeams"
+    > = getAssignAllTeamMembersHostService
   ) {
     this.teamInviteService = new TeamInviteService({ teamRepository, sendInviteEmail });
   }
@@ -110,6 +119,21 @@ export class TeamMembersService {
       this.throwNotVisible(team.id, userId);
     }
     throw ErrorWithCode.Factory.Forbidden(`User ${userId} lacks owner/admin access to team ${team.id}`);
+  }
+
+  // Membership is the primary action, so a failed host sync is logged instead of undoing a join or removal.
+  private async syncAssignAllHosts(action: "add" | "remove", userId: number, teamIds: number[]) {
+    if (teamIds.length === 0) return;
+    try {
+      const hostService = this.getAssignAllHostService();
+      if (action === "add") {
+        await hostService.addMemberToTeams({ userId, teamIds });
+      } else {
+        await hostService.removeMemberFromTeams({ userId, teamIds });
+      }
+    } catch {
+      log.warn("Failed to sync assign-all-team-members hosts", { action, userId, teamIds });
+    }
   }
 
   private throwNotVisible(teamId: number, userId: number): never {
@@ -343,6 +367,10 @@ export class TeamMembersService {
     if (membership && !membership.accepted) {
       await this.membershipRepository.acceptTeamMembership({ teamId: invite.teamId, userId: inviteeId });
     }
+    // Also runs when the organization join above already accepted it; adding hosts is idempotent.
+    if (membership) {
+      await this.syncAssignAllHosts("add", inviteeId, [invite.teamId]);
+    }
     await this.teamRepository.deleteTeamInviteTokens({ teamId: invite.teamId, email: invite.email });
     return { email: invite.email, teamId: invite.teamId };
   }
@@ -383,6 +411,7 @@ export class TeamMembersService {
         acceptedTeamIds.push(invite.teamId);
       }
     }
+    await this.syncAssignAllHosts("add", userId, acceptedTeamIds);
     return {
       status: (acceptedTeamIds.length > 0 ? "accepted" : "no-invites") as "accepted" | "no-invites",
       teamIds: acceptedTeamIds,
@@ -398,6 +427,7 @@ export class TeamMembersService {
       return { status: "already-accepted" as const };
     }
     await this.membershipRepository.acceptTeamMembership({ teamId, userId });
+    await this.syncAssignAllHosts("add", userId, [teamId]);
     return { status: "accepted" as const };
   }
 
@@ -449,6 +479,7 @@ export class TeamMembersService {
       }
     }
     await this.membershipRepository.deleteTeamMembership({ teamId, userId });
+    await this.syncAssignAllHosts("remove", userId, [teamId]);
     return { id: membership.id };
   }
 

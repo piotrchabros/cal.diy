@@ -1,3 +1,4 @@
+import type { AssignAllTeamMembersHostService } from "@calcom/features/host/services/AssignAllTeamMembersHostService";
 import type { OrganizationRoleDto, OrganizationTeamListDto } from "@calcom/lib/dto/OrganizationDto";
 import type {
   MoveTeamPreviewDto,
@@ -40,6 +41,7 @@ export interface IOrganizationMoveServiceDeps {
   organizationMembershipRepository: IOrganizationMembershipRepository;
   organizationRepository: IOrganizationRepository;
   organizationUrlService: Pick<OrganizationUrlService, "getBaseUrl">;
+  assignAllTeamMembersHostService: Pick<AssignAllTeamMembersHostService, "addMemberToTeams">;
 }
 
 export type MoveUserInput = {
@@ -128,6 +130,16 @@ export class OrganizationMoveService {
       fromOrganizationId,
       organizationId: toOrganizationId,
     });
+
+    // The move has been applied, so a failed host sync is logged instead of failing it.
+    try {
+      await this.deps.assignAllTeamMembersHostService.addMemberToTeams({
+        userId,
+        teamIds: [toOrganizationId],
+      });
+    } catch {
+      log.warn("Failed to sync assign-all-team-members hosts", { userId, organizationId: toOrganizationId });
+    }
 
     return { userId, organizationId: toOrganizationId, username };
   }

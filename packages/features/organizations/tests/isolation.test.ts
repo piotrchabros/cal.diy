@@ -46,7 +46,9 @@ function buildServices(world: InMemoryIsolationWorld) {
     world.teamRepository(),
     world.userRepository(),
     vi.fn(async () => undefined),
-    () => world.organizationMembershipService()
+    () => world.organizationMembershipService(),
+    undefined,
+    () => ({ addMemberToTeams: vi.fn(), removeMemberFromTeams: vi.fn() })
   );
   const organizationMembership = world.organizationMembershipService();
   const teamProfile = new TeamProfileService(

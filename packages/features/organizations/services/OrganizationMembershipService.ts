@@ -1,3 +1,4 @@
+import type { AssignAllTeamMembersHostService } from "@calcom/features/host/services/AssignAllTeamMembersHostService";
 import type { TeamInviteService } from "@calcom/features/membership/services/TeamInviteService";
 import { defaultUploadUserAvatar, type UploadUserAvatar } from "@calcom/features/users/lib/uploadUserAvatar";
 import type { UserRepository } from "@calcom/features/users/repositories/UserRepository";
@@ -41,6 +42,7 @@ export interface IOrganizationMembershipServiceDeps {
   tempOrgRedirectRepository: Pick<ITempOrgRedirectRepository, "disableByFrom" | "updateToUrl">;
   organizationMoveService: Pick<OrganizationMoveService, "moveUser">;
   organizationUrlService: Pick<OrganizationUrlService, "getBaseUrl">;
+  assignAllTeamMembersHostService: Pick<AssignAllTeamMembersHostService, "addMemberToTeams">;
 }
 
 export type UpdateMemberProfileInput = {
@@ -99,6 +101,12 @@ export class OrganizationMembershipService {
       from: username,
       types: ["User"],
     });
+    // Joining is the primary action, so a failed host sync is logged instead of failing it.
+    try {
+      await this.deps.assignAllTeamMembersHostService.addMemberToTeams({ userId, teamIds: [organizationId] });
+    } catch {
+      log.warn("Failed to sync assign-all-team-members hosts", { userId, organizationId });
+    }
     return member;
   }
 

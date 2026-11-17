@@ -1,4 +1,5 @@
 import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
+import { moduleLoader as assignAllTeamMembersHostServiceModuleLoader } from "@calcom/features/host/di/AssignAllTeamMembersHostService.module";
 import { OrganizationMoveService } from "@calcom/features/organizations/services/OrganizationMoveService";
 import { moduleLoader as organizationUrlServiceModuleLoader } from "./OrganizationUrlService.module";
 import { moduleLoader as organizationMembershipRepositoryModuleLoader } from "./PrismaOrganizationMembershipRepository.module";
@@ -20,6 +21,7 @@ const loadModule = bindModuleToClassOnToken({
     organizationMembershipRepository: organizationMembershipRepositoryModuleLoader,
     organizationRepository: organizationRepositoryModuleLoader,
     organizationUrlService: organizationUrlServiceModuleLoader,
+    assignAllTeamMembersHostService: assignAllTeamMembersHostServiceModuleLoader,
   },
 });
 

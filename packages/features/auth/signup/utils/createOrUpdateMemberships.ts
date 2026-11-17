@@ -1,11 +1,15 @@
+import { getAssignAllTeamMembersHostService } from "@calcom/features/host/di/AssignAllTeamMembersHostService.container";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { getOrganizationMembershipService } from "@calcom/features/organizations/di/OrganizationMembershipService.container";
 import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
+import logger from "@calcom/lib/logger";
 import { isOrganizationsEnabled } from "@calcom/lib/organizations/isOrganizationsEnabled";
 import { prisma } from "@calcom/prisma";
 import type { OrganizationSettings, Team, User } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { getOrgUsernameFromEmail } from "./getOrgUsernameFromEmail";
+
+const log = logger.getSubLogger({ prefix: ["[createOrUpdateMemberships]"] });
 
 type ParentTeamData = {
   id: number;
@@ -18,6 +22,15 @@ type CreateOrUpdateMembershipsInput = {
     organizationSettings?: Pick<OrganizationSettings, "orgAutoAcceptEmail"> | null;
     parent?: ParentTeamData | null;
   };
+};
+
+// Joining is the primary action, so a failed host sync is logged instead of failing signup.
+const addMemberToAssignAllEventTypes = async (userId: number, teamIds: number[]) => {
+  try {
+    await getAssignAllTeamMembersHostService().addMemberToTeams({ userId, teamIds });
+  } catch {
+    log.warn("Failed to sync assign-all-team-members hosts", { userId, teamIds });
+  }
 };
 
 const createOrUpdateMembershipsLegacy = async ({ user, team }: CreateOrUpdateMembershipsInput) => {
@@ -108,9 +121,12 @@ export const createOrUpdateMemberships = async ({
         teamId: team.id,
         userId: user.id,
       });
+      await addMemberToAssignAllEventTypes(user.id, [team.id]);
     }
     return;
   }
 
   await createOrUpdateMembershipsLegacy({ user, team });
+  const joinedTeamIds = [team.id, team.parentId].filter((id): id is number => id !== null);
+  await addMemberToAssignAllEventTypes(user.id, joinedTeamIds);
 };

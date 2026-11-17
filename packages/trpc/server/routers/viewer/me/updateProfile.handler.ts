@@ -35,7 +35,6 @@ const getBillingProviderService = async (..._args: unknown[]) => ({
   ): Promise<{ items: { data: { price: { id: string } }[] }; status: string }[]> => [],
   updateCustomer: async (..._a: unknown[]) => null,
 });
-const updateNewTeamMemberEventTypes = async (..._args: unknown[]) => {};
 
 const log = logger.getSubLogger({ prefix: ["updateProfile"] });
 type UpdateProfileOptions = {
@@ -187,28 +186,6 @@ export const updateProfileHandler = async ({ ctx, input }: UpdateProfileOptions)
       avatar: await resizeBase64Image(input.avatarUrl),
       userId: user.id,
     });
-  }
-
-  if (input.completedOnboarding) {
-    const userTeams = await prisma.user.findUnique({
-      where: {
-        id: user.id,
-      },
-      select: {
-        teams: {
-          select: {
-            id: true,
-          },
-        },
-      },
-    });
-    if (userTeams && userTeams.teams.length > 0) {
-      await Promise.all(
-        userTeams.teams.map(async (team) => {
-          await updateNewTeamMemberEventTypes(user.id, team.id);
-        })
-      );
-    }
   }
 
   if (travelSchedules) {
