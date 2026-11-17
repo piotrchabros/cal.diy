@@ -1,6 +1,10 @@
 "use client";
 
 import dayjs from "@calcom/dayjs";
+import {
+  parseSelectedHostIdsParam,
+  SELECTED_HOSTS_QUERY_PARAM,
+} from "@calcom/features/eventtypes/lib/bookerHostSelection";
 import { BOOKER_NUMBER_OF_DAYS_TO_LOAD } from "@calcom/lib/constants";
 import { BookerLayouts } from "@calcom/prisma/zod-utils";
 import { useEffect } from "react";
@@ -361,6 +365,11 @@ export type BookerStore = {
   selectedDuration: number | null;
   setSelectedDuration: (duration: number | null) => void;
   /**
+   * Hosts the booker narrowed a collective event down to, null means everyone.
+   */
+  selectedHostIds: number[] | null;
+  setSelectedHostIds: (ids: number[] | null) => void;
+  /**
    * Selected timeslot user has chosen. This is a date string
    * containing both the date + time.
    */
@@ -599,6 +608,8 @@ export const createBookerStore = () =>
         get().crmRecordId === crmRecordId
       )
         return;
+      const previousEventSlug = get().eventSlug;
+      const previousEventId = get().eventId;
       set({
         username,
         eventSlug,
@@ -625,6 +636,14 @@ export const createBookerStore = () =>
         defaultPhoneCountry,
       });
 
+      // The first initialize must keep hosts that came from the URL, only a switch to another event clears them.
+      const switchedEvent =
+        (previousEventSlug !== null && previousEventSlug !== eventSlug) ||
+        (previousEventId !== null && previousEventId !== eventId);
+      if (switchedEvent) {
+        get().setSelectedHostIds(null);
+      }
+
       if (durationConfig?.includes(Number(getQueryParam("duration")))) {
         set({
           selectedDuration: Number(getQueryParam("duration")),
@@ -645,6 +664,16 @@ export const createBookerStore = () =>
       //removeQueryParam("layout");
     },
     durationConfig: null,
+    selectedHostIds: parseSelectedHostIdsParam(getQueryParam(SELECTED_HOSTS_QUERY_PARAM)),
+    setSelectedHostIds: (selectedHostIds: number[] | null) => {
+      set({ selectedHostIds });
+      if (get().isPlatform && !get().allowUpdatingUrlParams) return;
+      if (selectedHostIds && selectedHostIds.length > 0) {
+        updateQueryParam(SELECTED_HOSTS_QUERY_PARAM, selectedHostIds.join(","));
+      } else {
+        removeQueryParam(SELECTED_HOSTS_QUERY_PARAM);
+      }
+    },
     selectedDuration: null,
     setSelectedDuration: (selectedDuration: number | null) => {
       set({ selectedDuration });

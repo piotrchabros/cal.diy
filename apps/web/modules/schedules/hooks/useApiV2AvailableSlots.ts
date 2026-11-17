@@ -1,12 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
-
 import type {
-  GetAvailableSlotsInput_2024_04_15,
   ApiResponse,
   ApiSuccessResponse,
+  GetAvailableSlotsInput_2024_04_15,
 } from "@calcom/platform-types";
 import type { GetAvailableSlotsResponse } from "@calcom/trpc/server/routers/viewer/slots/util";
+import { useQuery } from "@tanstack/react-query";
+import axios from "axios";
 
 export const QUERY_KEY = "get-available-slots";
 
@@ -25,6 +24,7 @@ export const useApiV2AvailableSlots = ({
       rest.teamId ?? false,
       rest.usernameList,
       rest.routedTeamMemberIds,
+      rest.rrHostSubsetIds,
       rest.skipContactOwner,
       rest.teamMemberEmail,
       rest.embedConnectVersion ?? false,

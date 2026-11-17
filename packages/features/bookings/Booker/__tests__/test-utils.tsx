@@ -34,6 +34,8 @@ const createMockStore = (initialState?: Partial<BookerStore>): StoreApi<BookerSt
     durationConfig: null,
     selectedDuration: null,
     setSelectedDuration: vi.fn(),
+    selectedHostIds: null,
+    setSelectedHostIds: vi.fn(),
     selectedTimeslot: null,
     setSelectedTimeslot: vi.fn(),
     tentativeSelectedTimeslots: [],

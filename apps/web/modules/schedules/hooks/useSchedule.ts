@@ -66,6 +66,7 @@ export const useSchedule = ({
   bookerLayout,
 }: UseScheduleWithCacheArgs) => {
   const bookerState = useBookerStore((state) => state.state);
+  const selectedHostIds = useBookerStore((state) => state.selectedHostIds);
 
   const [startTime, endTime] = useTimesForSchedule({
     month,
@@ -105,6 +106,7 @@ export const useSchedule = ({
     orgSlug,
     teamMemberEmail,
     routedTeamMemberIds,
+    rrHostSubsetIds: selectedHostIds ?? undefined,
     skipContactOwner,
     ...(queuedFormResponseId ? { queuedFormResponseId } : {}),
     email,
