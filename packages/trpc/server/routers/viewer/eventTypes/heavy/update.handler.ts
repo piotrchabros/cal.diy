@@ -4,6 +4,7 @@ import { eventTypeAppMetadataOptionalSchema } from "@calcom/app-store/zod-utils"
 import { CalVideoSettingsRepository } from "@calcom/features/calVideoSettings/repositories/CalVideoSettingsRepository";
 import { HashedLinkRepository } from "@calcom/features/hashedLink/lib/repository/HashedLinkRepository";
 import { HashedLinkService } from "@calcom/features/hashedLink/lib/service/HashedLinkService";
+import { getAssignAllTeamMembersHostService } from "@calcom/features/host/di/AssignAllTeamMembersHostService.container";
 import { EventTypeHostService } from "@calcom/features/host/services/EventTypeHostService";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
 import { ScheduleRepository } from "@calcom/features/schedules/repositories/ScheduleRepository";
@@ -703,12 +704,16 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
   const updatedEventTypeSelect = {
     slug: true,
     schedulingType: true,
+    assignAllTeamMembers: true,
+    teamId: true,
   } satisfies Prisma.EventTypeSelect;
 
   // Explicit type to avoid Prisma.EventTypeGetPayload conditional types leaking into .d.ts files
   type UpdatedEventTypeResult = {
     slug: string;
     schedulingType: import("@calcom/prisma/enums").SchedulingType | null;
+    assignAllTeamMembers: boolean;
+    teamId: number | null;
   };
 
   let updatedEventType: UpdatedEventTypeResult;
@@ -726,6 +731,15 @@ export const updateHandler = async ({ ctx, input }: UpdateOptions) => {
       }
     }
     throw e;
+  }
+
+  // Bookings and slots read only Host rows, so assign-all must be materialized as hosts on save.
+  if (updatedEventType.assignAllTeamMembers && updatedEventType.teamId) {
+    await getAssignAllTeamMembersHostService().syncEventType({
+      eventTypeId: id,
+      teamId: updatedEventType.teamId,
+      schedulingType: updatedEventType.schedulingType,
+    });
   }
 
   if (hostLocationDeletions.length > 0) {
