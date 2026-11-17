@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { addMember, upsertAcceptedTeamMembership, tx, transaction } = vi.hoisted(() => {
+const { addMember, upsertAcceptedTeamMembership, addMemberToTeams, tx, transaction } = vi.hoisted(() => {
   const tx = {
     user: { findUnique: vi.fn() },
     profile: { upsert: vi.fn() },
@@ -9,6 +9,7 @@ const { addMember, upsertAcceptedTeamMembership, tx, transaction } = vi.hoisted(
   return {
     addMember: vi.fn(),
     upsertAcceptedTeamMembership: vi.fn(),
+    addMemberToTeams: vi.fn(),
     tx,
     transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
   };
@@ -21,6 +22,10 @@ vi.mock("@calcom/prisma", () => ({
 
 vi.mock("@calcom/features/organizations/di/OrganizationMembershipService.container", () => ({
   getOrganizationMembershipService: () => ({ addMember }),
+}));
+
+vi.mock("@calcom/features/host/di/AssignAllTeamMembersHostService.container", () => ({
+  getAssignAllTeamMembersHostService: () => ({ addMemberToTeams }),
 }));
 
 vi.mock("@calcom/features/membership/repositories/MembershipRepository", () => ({
@@ -63,6 +68,7 @@ describe("createOrUpdateMemberships", () => {
       expect(addMember).toHaveBeenCalledWith({ organizationId: 100, userId: 7, role: "MEMBER" });
       expect(upsertAcceptedTeamMembership).not.toHaveBeenCalled();
       expect(transaction).not.toHaveBeenCalled();
+      expect(addMemberToTeams).not.toHaveBeenCalled();
     });
 
     it("adds the user to the parent organization and upserts the sub-team membership", async () => {
@@ -71,6 +77,14 @@ describe("createOrUpdateMemberships", () => {
       expect(addMember).toHaveBeenCalledWith({ organizationId: 100, userId: 7, role: "MEMBER" });
       expect(upsertAcceptedTeamMembership).toHaveBeenCalledWith({ teamId: 200, userId: 7 });
       expect(transaction).not.toHaveBeenCalled();
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: 7, teamIds: [200] });
+    });
+
+    it("still completes the sub-team join when the host sync fails", async () => {
+      addMemberToTeams.mockRejectedValueOnce(new Error("db down"));
+
+      await expect(createOrUpdateMemberships({ user, team: subTeam })).resolves.toBeUndefined();
+      expect(upsertAcceptedTeamMembership).toHaveBeenCalledWith({ teamId: 200, userId: 7 });
     });
 
     it("falls back to the legacy transaction for a team outside any organization", async () => {
@@ -84,6 +98,7 @@ describe("createOrUpdateMemberships", () => {
       expect(tx.membership.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ where: { userId_teamId: { userId: 7, teamId: 300 } } })
       );
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: 7, teamIds: [300] });
     });
   });
 
@@ -108,6 +123,16 @@ describe("createOrUpdateMemberships", () => {
           update: { accepted: true },
         })
       );
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: 7, teamIds: [100] });
+    });
+
+    it("adds the user as host on both the sub-team and its parent", async () => {
+      vi.stubEnv("ORGANIZATIONS_ENABLED", "");
+
+      await createOrUpdateMemberships({ user, team: subTeam });
+
+      expect(tx.membership.upsert).toHaveBeenCalledTimes(2);
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: 7, teamIds: [200, 100] });
     });
   });
 });

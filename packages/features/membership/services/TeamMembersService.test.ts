@@ -12,6 +12,15 @@ vi.mock("@calcom/features/organizations/lib/defaultOrganization", () => ({
   requireDefaultOrganizationId: vi.fn(async () => 1),
 }));
 
+const { assignAllHostService } = vi.hoisted(() => ({
+  assignAllHostService: { addMemberToTeams: vi.fn(), removeMemberFromTeams: vi.fn() },
+}));
+
+// The real getter builds a Prisma-backed DI container; tests must never reach it.
+vi.mock("@calcom/features/host/di/AssignAllTeamMembersHostService.container", () => ({
+  getAssignAllTeamMembersHostService: () => assignAllHostService,
+}));
+
 vi.mock("@calcom/lib/auth/hashPassword", () => ({
   hashPassword: vi.fn(async (password: string) => `hashed:${password}`),
 }));
@@ -577,6 +586,7 @@ describe("TeamMembersService", () => {
       const result = await service.removeMember({ teamId: 7, requesterId: 9, userId: 12 });
 
       expect(result).toEqual({ id: 6 });
+      expect(assignAllHostService.removeMemberFromTeams).toHaveBeenCalledWith({ userId: 12, teamIds: [7] });
     });
 
     it("protects the last owner from removal", async () => {
@@ -597,6 +607,7 @@ describe("TeamMembersService", () => {
       await expect(service.removeMember({ teamId: 7, requesterId: 9, userId: 5 })).rejects.toBeInstanceOf(
         ErrorWithCode
       );
+      expect(assignAllHostService.removeMemberFromTeams).not.toHaveBeenCalled();
     });
   });
 
@@ -650,6 +661,33 @@ describe("TeamMembersService", () => {
         teamId: 7,
         email: "ada@example.com",
       });
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledTimes(1);
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledWith({ userId: 12, teamIds: [7] });
+    });
+
+    it("adds the user as host on every accepted team in a single sync", async () => {
+      const { service } = buildService({
+        invites: [
+          { id: 1, teamId: 7, token: "t1", expires: futureDate(), team: { id: 7, parentId: null } },
+          { id: 2, teamId: 8, token: "t2", expires: futureDate(), team: { id: 8, parentId: null } },
+          { id: 3, teamId: 9, token: "t3", expires: pastDate(), team: { id: 9, parentId: null } },
+        ],
+      });
+
+      await service.acceptPendingInvitesOnSignup({ userId: 12, email: "ada@example.com" });
+
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledTimes(1);
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledWith({ userId: 12, teamIds: [7, 8] });
+    });
+
+    it("does not sync hosts when no invite was accepted", async () => {
+      const { service } = buildService({
+        invites: [{ id: 1, teamId: 7, token: "t1", expires: pastDate(), team: { id: 7, parentId: null } }],
+      });
+
+      await service.acceptPendingInvitesOnSignup({ userId: 12, email: "ada@example.com" });
+
+      expect(assignAllHostService.addMemberToTeams).not.toHaveBeenCalled();
     });
 
     it("normalizes the email before lookup and cleanup", async () => {
@@ -1045,6 +1083,7 @@ describe("TeamMembersService", () => {
       });
       expect(membershipRepo.acceptTeamMembership).toHaveBeenCalledWith({ teamId: 7, userId: 11 });
       expect(teamRepo.deleteTeamInviteTokens).toHaveBeenCalledWith({ teamId: 7, email: "ada@example.com" });
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledWith({ userId: 11, teamIds: [7] });
     });
 
     it("refuses to overwrite the password of an existing account", async () => {
@@ -1104,6 +1143,50 @@ describe("TeamMembersService", () => {
       const result = await service.acceptInvite({ teamId: 7, userId: 12 });
 
       expect(result).toEqual({ status: "accepted" });
+      expect(assignAllHostService.addMemberToTeams).toHaveBeenCalledWith({ userId: 12, teamIds: [7] });
+    });
+
+    it("does not sync hosts for an already accepted membership", async () => {
+      const service = new TeamMembersService(
+        makeMembershipRepo({
+          findUniqueByUserIdAndTeamId: vi
+            .fn()
+            .mockResolvedValue({ id: 6, role: MembershipRole.MEMBER, accepted: true }),
+        }) as never,
+        makeTeamRepo() as never,
+        makeUserRepo() as never,
+        vi.fn()
+      );
+
+      await expect(service.acceptInvite({ teamId: 7, userId: 12 })).resolves.toEqual({
+        status: "already-accepted",
+      });
+      expect(assignAllHostService.addMemberToTeams).not.toHaveBeenCalled();
+    });
+
+    it("keeps the acceptance when the host sync fails", async () => {
+      const membershipRepo = makeMembershipRepo({
+        findUniqueByUserIdAndTeamId: vi
+          .fn()
+          .mockResolvedValue({ id: 6, role: MembershipRole.MEMBER, accepted: false }),
+      });
+      const failingHostService = {
+        addMemberToTeams: vi.fn().mockRejectedValue(new Error("db down")),
+        removeMemberFromTeams: vi.fn(),
+      };
+      const service = new TeamMembersService(
+        membershipRepo as never,
+        makeTeamRepo() as never,
+        makeUserRepo() as never,
+        vi.fn(),
+        undefined,
+        undefined,
+        () => failingHostService
+      );
+
+      await expect(service.acceptInvite({ teamId: 7, userId: 12 })).resolves.toEqual({ status: "accepted" });
+      expect(membershipRepo.acceptTeamMembership).toHaveBeenCalledWith({ teamId: 7, userId: 12 });
+      expect(failingHostService.addMemberToTeams).toHaveBeenCalledWith({ userId: 12, teamIds: [7] });
     });
   });
 

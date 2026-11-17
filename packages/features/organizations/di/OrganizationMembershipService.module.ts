@@ -1,5 +1,6 @@
 import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
 import { moduleLoader as userRepositoryModuleLoader } from "@calcom/features/di/modules/User";
+import { moduleLoader as assignAllTeamMembersHostServiceModuleLoader } from "@calcom/features/host/di/AssignAllTeamMembersHostService.module";
 import { moduleLoader as teamInviteServiceModuleLoader } from "@calcom/features/membership/di/TeamInviteService.module";
 import { OrganizationMembershipService } from "@calcom/features/organizations/services/OrganizationMembershipService";
 import { moduleLoader as organizationMoveServiceModuleLoader } from "./OrganizationMoveService.module";
@@ -28,6 +29,7 @@ const loadModule = bindModuleToClassOnToken({
     tempOrgRedirectRepository: tempOrgRedirectRepositoryModuleLoader,
     organizationMoveService: organizationMoveServiceModuleLoader,
     organizationUrlService: organizationUrlServiceModuleLoader,
+    assignAllTeamMembersHostService: assignAllTeamMembersHostServiceModuleLoader,
   },
 });
 

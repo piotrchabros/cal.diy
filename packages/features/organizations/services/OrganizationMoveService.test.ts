@@ -11,10 +11,10 @@ import { InMemoryOrganizationRepository } from "../tests/InMemoryOrganizationRep
 import { MOVE_ERRORS, OrganizationMoveService } from "./OrganizationMoveService";
 import type { OrganizationUrlService } from "./OrganizationUrlService";
 
-const { mockLogInfo } = vi.hoisted(() => ({ mockLogInfo: vi.fn() }));
+const { mockLogInfo, mockLogWarn } = vi.hoisted(() => ({ mockLogInfo: vi.fn(), mockLogWarn: vi.fn() }));
 
 vi.mock("@calcom/lib/logger", () => ({
-  default: { getSubLogger: () => ({ info: mockLogInfo }) },
+  default: { getSubLogger: () => ({ info: mockLogInfo, warn: mockLogWarn }) },
 }));
 
 const FROM_ORG_ID = 10;
@@ -66,6 +66,7 @@ describe("OrganizationMoveService", () => {
   };
   let getBaseUrl: ReturnType<typeof vi.fn<OrganizationUrlService["getBaseUrl"]>>;
   let service: OrganizationMoveService;
+  let addMemberToTeams: ReturnType<typeof vi.fn>;
 
   const seedUser = (user: Partial<MoveUserRecord> = {}) => {
     moveRepository.findUserForMove.mockResolvedValue({
@@ -104,11 +105,13 @@ describe("OrganizationMoveService", () => {
     getBaseUrl = vi
       .fn<OrganizationUrlService["getBaseUrl"]>()
       .mockImplementation(async ({ organizationId }) => BASE_URLS[organizationId ?? 0]);
+    addMemberToTeams = vi.fn().mockResolvedValue({ added: 0 });
     service = new OrganizationMoveService({
       organizationMoveRepository: moveRepository,
       organizationMembershipRepository: membershipRepository,
       organizationRepository,
       organizationUrlService: { getBaseUrl },
+      assignAllTeamMembersHostService: { addMemberToTeams },
     });
   });
 
@@ -143,6 +146,21 @@ describe("OrganizationMoveService", () => {
         actorUserId: ACTOR_ID,
         targetUserId: USER_ID,
         fromOrganizationId: FROM_ORG_ID,
+        organizationId: TO_ORG_ID,
+      });
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: USER_ID, teamIds: [TO_ORG_ID] });
+    });
+
+    it("keeps the move when the host sync fails, logging only ids", async () => {
+      seedUser();
+      addMemberToTeams.mockRejectedValueOnce(new Error("db down"));
+
+      const result = await service.moveUser({ userId: USER_ID, toOrganizationId: TO_ORG_ID }, ACTOR_ID);
+
+      expect(result).toEqual({ userId: USER_ID, organizationId: TO_ORG_ID, username: "alice" });
+      expect(moveRepository.applyMove).toHaveBeenCalledTimes(1);
+      expect(mockLogWarn).toHaveBeenCalledWith("Failed to sync assign-all-team-members hosts", {
+        userId: USER_ID,
         organizationId: TO_ORG_ID,
       });
     });

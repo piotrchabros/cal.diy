@@ -13,7 +13,7 @@ import {
 const { mockLogInfo } = vi.hoisted(() => ({ mockLogInfo: vi.fn() }));
 
 vi.mock("@calcom/lib/logger", () => ({
-  default: { getSubLogger: () => ({ info: mockLogInfo, debug: vi.fn() }) },
+  default: { getSubLogger: () => ({ info: mockLogInfo, debug: vi.fn(), warn: vi.fn() }) },
 }));
 
 const ORG_ID = 10;
@@ -67,6 +67,7 @@ describe("OrganizationMembershipService", () => {
   let getBaseUrl: Mock;
   let uploadAvatar: Mock;
   let moveUser: Mock;
+  let addMemberToTeams: Mock;
 
   beforeEach(() => {
     userRepository = buildUserRepository();
@@ -76,6 +77,7 @@ describe("OrganizationMembershipService", () => {
     getBaseUrl = vi.fn().mockResolvedValue("https://acme.com");
     uploadAvatar = vi.fn().mockResolvedValue("https://cal.example.com/api/avatar/new.png");
     moveUser = vi.fn().mockResolvedValue({ userId: 3, organizationId: DEFAULT_ORG_ID, username: "user3" });
+    addMemberToTeams = vi.fn().mockResolvedValue({ added: 0 });
     organizationRepository = new InMemoryOrganizationRepository();
     membershipRepository = new InMemoryOrganizationMembershipRepository();
     organizationRepository.seed({ id: ORG_ID, name: "Acme", slug: "acme", domain: "acme.com" });
@@ -92,6 +94,7 @@ describe("OrganizationMembershipService", () => {
         tempOrgRedirectRepository: { disableByFrom, updateToUrl },
         organizationMoveService: { moveUser },
         organizationUrlService: { getBaseUrl },
+        assignAllTeamMembersHostService: { addMemberToTeams },
       },
       uploadAvatar
     );
@@ -112,6 +115,19 @@ describe("OrganizationMembershipService", () => {
         { userId: 1, teamId: ORG_ID, role: "ADMIN", accepted: true },
       ]);
       expect(disableByFrom).toHaveBeenCalledWith({ fromOrgId: ORG_ID, from: "alice", types: ["User"] });
+      expect(addMemberToTeams).toHaveBeenCalledWith({ userId: 1, teamIds: [ORG_ID] });
+    });
+
+    it("keeps the new member when the host sync fails", async () => {
+      membershipRepository.seedUser({ id: 1, username: "alice", organizationId: ORG_ID });
+      addMemberToTeams.mockRejectedValueOnce(new Error("db down"));
+
+      const result = await service.addMember({ organizationId: ORG_ID, userId: 1, role: "MEMBER" });
+
+      expect(result).toEqual({ userId: 1, organizationId: ORG_ID, role: "MEMBER" });
+      expect(membershipRepository.memberships).toEqual([
+        { userId: 1, teamId: ORG_ID, role: "MEMBER", accepted: true },
+      ]);
     });
 
     it("rejects a user who belongs to another organization", async () => {
@@ -144,6 +160,7 @@ describe("OrganizationMembershipService", () => {
         "username_taken_in_organization"
       );
       expect(disableByFrom).not.toHaveBeenCalled();
+      expect(addMemberToTeams).not.toHaveBeenCalled();
     });
 
     it("uses the given username for a user without one", async () => {
@@ -727,6 +744,7 @@ describe("OrganizationMembershipService", () => {
           tempOrgRedirectRepository: { disableByFrom, updateToUrl },
           organizationMoveService: { moveUser },
           organizationUrlService: { getBaseUrl },
+          assignAllTeamMembersHostService: { addMemberToTeams },
         },
         uploadAvatar
       );

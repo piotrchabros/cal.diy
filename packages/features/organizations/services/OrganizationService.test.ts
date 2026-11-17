@@ -69,6 +69,7 @@ describe("OrganizationService", () => {
           },
           organizationMoveService: { moveUser },
           organizationUrlService: { getBaseUrl: vi.fn().mockResolvedValue("https://acme.com") },
+          assignAllTeamMembersHostService: { addMemberToTeams: vi.fn().mockResolvedValue({ added: 0 }) },
         }),
         organizationMoveService: { moveUser },
       },
