@@ -203,13 +203,14 @@ export class HostRepository {
     search?: string;
     memberUserIds?: number[];
   }) {
-    const userIdFilter = memberUserIds !== undefined
-      ? cursor
-        ? { in: memberUserIds, gt: cursor }
-        : { in: memberUserIds }
-      : cursor
-        ? { gt: cursor }
-        : undefined;
+    const userIdFilter =
+      memberUserIds !== undefined
+        ? cursor
+          ? { in: memberUserIds, gt: cursor }
+          : { in: memberUserIds }
+        : cursor
+          ? { gt: cursor }
+          : undefined;
 
     const hosts = await this.prismaClient.host.findMany({
       where: {
@@ -349,5 +350,35 @@ export class HostRepository {
         },
       },
     });
+  }
+
+  async createManyIgnoringDuplicates(
+    rows: { userId: number; eventTypeId: number; isFixed: boolean; priority: number; weight: number }[]
+  ): Promise<number> {
+    if (rows.length === 0) return 0;
+
+    const { count } = await this.prismaClient.host.createMany({
+      data: rows,
+      skipDuplicates: true,
+    });
+    return count;
+  }
+
+  async deleteByUserIdAndTeamIds({
+    userId,
+    teamIds,
+  }: {
+    userId: number;
+    teamIds: number[];
+  }): Promise<number> {
+    if (teamIds.length === 0) return 0;
+
+    const { count } = await this.prismaClient.host.deleteMany({
+      where: {
+        userId,
+        eventType: { teamId: { in: teamIds } },
+      },
+    });
+    return count;
   }
 }

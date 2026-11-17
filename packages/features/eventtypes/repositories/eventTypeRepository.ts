@@ -12,7 +12,7 @@ import { eventTypeSelect } from "@calcom/lib/server/eventTypeSelect";
 import type { PrismaClient } from "@calcom/prisma";
 import { availabilityUserSelect, userSelect as userSelectWithSelectedCalendars } from "@calcom/prisma";
 import type { Prisma, EventType as PrismaEventType } from "@calcom/prisma/client";
-import { MembershipRole } from "@calcom/prisma/enums";
+import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import { EventTypeMetaDataSchema, rrSegmentQueryValueSchema } from "@calcom/prisma/zod-utils";
 import type { Ensure } from "@calcom/types/utils";
@@ -1889,6 +1889,31 @@ export class EventTypeRepository implements IEventTypesRepository {
     // Same as getEventTypesPublic: an event type with malformed metadata is not bookable, so it is left out.
     return eventTypes.flatMap(({ metadata, ...eventType }) =>
       EventTypeMetaDataSchema.safeParse(metadata ?? {}).success ? [eventType] : []
+    );
+  }
+
+  async findAssignAllHostedByTeamIds({
+    teamIds,
+  }: {
+    teamIds: number[];
+  }): Promise<{ id: number; teamId: number; schedulingType: SchedulingType }[]> {
+    if (teamIds.length === 0) return [];
+
+    const eventTypes = await this.prismaClient.eventType.findMany({
+      where: {
+        teamId: { in: teamIds },
+        assignAllTeamMembers: true,
+        schedulingType: { in: [SchedulingType.COLLECTIVE, SchedulingType.ROUND_ROBIN] },
+      },
+      select: {
+        id: true,
+        teamId: true,
+        schedulingType: true,
+      },
+    });
+
+    return eventTypes.flatMap(({ id, teamId, schedulingType }) =>
+      teamId !== null && schedulingType !== null ? [{ id, teamId, schedulingType }] : []
     );
   }
 }
