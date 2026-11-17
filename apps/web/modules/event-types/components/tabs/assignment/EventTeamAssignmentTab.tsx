@@ -587,6 +587,23 @@ export const EventTeamAssignmentTab = ({ team, teamMembers, eventType }: EventTe
           />
         </div>
       )}
+      {schedulingType === SchedulingType.COLLECTIVE && (
+        <div className="border-subtle mt-4 rounded-md border p-6">
+          <Controller<FormValues, "metadata">
+            name="metadata"
+            render={({ field: { value, onChange } }) => (
+              <SettingsToggle
+                data-testid="allow-booker-to-select-hosts"
+                title={t("allow_booker_to_select_hosts")}
+                description={t("allow_booker_to_select_hosts_description")}
+                labelClassName="mt-1.5"
+                checked={!!value?.allowBookerToSelectHosts}
+                onCheckedChange={(checked) => onChange({ ...value, allowBookerToSelectHosts: checked })}
+              />
+            )}
+          />
+        </div>
+      )}
       <Hosts
         assignAllTeamMembers={assignAllTeamMembers}
         setAssignAllTeamMembers={setAssignAllTeamMembers}
