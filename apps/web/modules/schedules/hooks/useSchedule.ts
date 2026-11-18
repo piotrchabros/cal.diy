@@ -1,6 +1,6 @@
 import { updateEmbedBookerState } from "@calcom/embed-core/src/embed-iframe";
 import { sdkActionManager } from "@calcom/embed-core/src/sdk-event";
-import { useBookerStore } from "@calcom/features/bookings/Booker/store";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import { isBookingDryRun } from "@calcom/features/bookings/Booker/utils/isBookingDryRun";
 import { getUsernameList } from "@calcom/features/eventtypes/lib/defaultEvents";
 import { useTimesForSchedule } from "@calcom/features/schedules/hooks/useTimesForSchedule";
@@ -65,8 +65,8 @@ export const useSchedule = ({
   enabled: enabledProp = true,
   bookerLayout,
 }: UseScheduleWithCacheArgs) => {
-  const bookerState = useBookerStore((state) => state.state);
-  const selectedHostIds = useBookerStore((state) => state.selectedHostIds);
+  const bookerState = useBookerStoreContext((state) => state.state);
+  const selectedHostIds = useBookerStoreContext((state) => state.selectedHostIds);
 
   const [startTime, endTime] = useTimesForSchedule({
     month,
