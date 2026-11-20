@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
+  isNotetakerAgentBrowserUsable,
   isNotetakerAgentUsable,
   isNotetakerAgentVoiceUsable,
   isNotetakerBotProviderUsable,
@@ -703,5 +704,137 @@ describe("isNotetakerAgentVoiceUsable", () => {
   it("is false without an ElevenLabs API key", () => {
     expect(isNotetakerAgentVoiceUsable(configFor({ ELEVENLABS_API_KEY: undefined }))).toBe(false);
     expect(isNotetakerAgentVoiceUsable(configFor({ ELEVENLABS_API_KEY: "" }))).toBe(false);
+  });
+});
+
+describe("getNotetakerConfig agent browser", () => {
+  const secret = "s".repeat(32);
+
+  it("defaults to disabled with no URLs, no secret and no vision", () => {
+    expect(getNotetakerConfig(env()).agentBrowser).toEqual({
+      enabled: false,
+      internalUrl: null,
+      publicUrl: null,
+      secret: null,
+      visionEnabled: false,
+    });
+  });
+
+  it("returns the configured values with trailing slashes stripped", () => {
+    expect(
+      getNotetakerConfig(
+        env({
+          NOTETAKER_AGENT_BROWSER_ENABLED: "true",
+          AGENT_BROWSER_INTERNAL_URL: "http://127.0.0.1:4410/",
+          AGENT_BROWSER_PUBLIC_URL: " https://example.com/agent-browser// ",
+          AGENT_BROWSER_SECRET: secret,
+          NOTETAKER_AGENT_BROWSER_VISION: "1",
+        })
+      ).agentBrowser
+    ).toEqual({
+      enabled: true,
+      internalUrl: "http://127.0.0.1:4410",
+      publicUrl: "https://example.com/agent-browser",
+      secret,
+      visionEnabled: true,
+    });
+  });
+
+  it("accepts an https internal URL", () => {
+    expect(
+      getNotetakerConfig(env({ AGENT_BROWSER_INTERNAL_URL: "https://browser.internal" })).agentBrowser
+        .internalUrl
+    ).toBe("https://browser.internal");
+  });
+
+  it("gives a null public URL for plain http", () => {
+    expect(
+      getNotetakerConfig(env({ AGENT_BROWSER_PUBLIC_URL: "http://example.com/agent-browser" })).agentBrowser
+        .publicUrl
+    ).toBeNull();
+  });
+
+  it("gives a null secret when shorter than 32 characters", () => {
+    expect(getNotetakerConfig(env({ AGENT_BROWSER_SECRET: "s".repeat(31) })).agentBrowser.secret).toBeNull();
+  });
+
+  it.each([["TRUE"], ["true"], ["1"]])("enables the browser and vision for %j", (value) => {
+    const { agentBrowser } = getNotetakerConfig(
+      env({ NOTETAKER_AGENT_BROWSER_ENABLED: value, NOTETAKER_AGENT_BROWSER_VISION: value })
+    );
+    expect(agentBrowser.enabled).toBe(true);
+    expect(agentBrowser.visionEnabled).toBe(true);
+  });
+
+  it("never throws on garbage values", () => {
+    const parse = () =>
+      getNotetakerConfig(
+        env({
+          NOTETAKER_AGENT_BROWSER_ENABLED: "maybe",
+          AGENT_BROWSER_INTERNAL_URL: "not a url",
+          AGENT_BROWSER_PUBLIC_URL: "ftp://example.com",
+          AGENT_BROWSER_SECRET: "short",
+          NOTETAKER_AGENT_BROWSER_VISION: "yes please",
+        })
+      );
+    expect(parse).not.toThrow();
+    expect(parse().agentBrowser).toEqual({
+      enabled: false,
+      internalUrl: null,
+      publicUrl: null,
+      secret: null,
+      visionEnabled: false,
+    });
+  });
+
+  it("rejects a javascript: internal URL", () => {
+    expect(
+      getNotetakerConfig(env({ AGENT_BROWSER_INTERNAL_URL: "javascript:alert(1)" })).agentBrowser.internalUrl
+    ).toBeNull();
+  });
+});
+
+describe("isNotetakerAgentBrowserUsable", () => {
+  const usable = {
+    NOTETAKER_AGENT_ENABLED: "true",
+    NOTETAKER_BOT_PROVIDER: "recall",
+    RECALL_API_KEY: "key-123",
+    RECALL_WEBHOOK_VERIFICATION_SECRET: "whsec_c2VjcmV0LWtleS1ieXRlcw==",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
+    NOTETAKER_AGENT_BROWSER_ENABLED: "true",
+    AGENT_BROWSER_INTERNAL_URL: "http://127.0.0.1:4410",
+    AGENT_BROWSER_PUBLIC_URL: "https://example.com/agent-browser",
+    AGENT_BROWSER_SECRET: "s".repeat(32),
+  };
+  const configFor = (overrides: Record<string, string | undefined>): NotetakerConfig =>
+    getNotetakerConfig(env({ ...usable, ...overrides }));
+
+  it("is true with a usable agent and the browser enabled and fully configured", () => {
+    expect(isNotetakerAgentBrowserUsable(configFor({}))).toBe(true);
+  });
+
+  it("is false when the agent is not usable", () => {
+    expect(isNotetakerAgentBrowserUsable(configFor({ NOTETAKER_AGENT_ENABLED: undefined }))).toBe(false);
+    expect(isNotetakerAgentBrowserUsable(configFor({ NOTETAKER_BOT_PROVIDER: "fake" }))).toBe(false);
+    expect(isNotetakerAgentBrowserUsable(configFor({ ANTHROPIC_API_KEY: undefined }))).toBe(false);
+  });
+
+  it("is false when the browser is disabled", () => {
+    expect(isNotetakerAgentBrowserUsable(configFor({ NOTETAKER_AGENT_BROWSER_ENABLED: undefined }))).toBe(
+      false
+    );
+    expect(isNotetakerAgentBrowserUsable(configFor({ NOTETAKER_AGENT_BROWSER_ENABLED: "false" }))).toBe(
+      false
+    );
+  });
+
+  it.each([
+    ["AGENT_BROWSER_INTERNAL_URL", undefined],
+    ["AGENT_BROWSER_PUBLIC_URL", undefined],
+    ["AGENT_BROWSER_PUBLIC_URL", "http://example.com/agent-browser"],
+    ["AGENT_BROWSER_SECRET", undefined],
+    ["AGENT_BROWSER_SECRET", "too-short"],
+  ])("is false when %s is %j", (variable, value) => {
+    expect(isNotetakerAgentBrowserUsable(configFor({ [variable]: value }))).toBe(false);
   });
 });

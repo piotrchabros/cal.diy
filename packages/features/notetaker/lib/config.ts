@@ -73,6 +73,14 @@ type NotetakerConfig = {
       ttsModel: string;
     };
   };
+  // Off unless explicitly enabled; isNotetakerAgentBrowserUsable decides whether it can actually run
+  agentBrowser: {
+    enabled: boolean;
+    internalUrl: string | null;
+    publicUrl: string | null;
+    secret: string | null;
+    visionEnabled: boolean;
+  };
 };
 
 const DEFAULT_SUMMARY_MODEL = "claude-opus-5-5";
@@ -170,6 +178,24 @@ const recallWebhookSecretSchema = z
   )
   .optional();
 
+const AGENT_BROWSER_MIN_SECRET_LENGTH = 32;
+
+// Lenient on purpose: a bad agent browser value becomes null instead of failing startup for plain note-taking.
+const lenientUrlSchema = (protocols: readonly string[]) =>
+  z
+    .string()
+    .optional()
+    .transform((value): string | null => {
+      if (value === undefined || !URL.canParse(value)) return null;
+      if (!protocols.includes(new URL(value).protocol)) return null;
+      return value.replace(/\/+$/, "");
+    });
+
+const lenientFlagSchema = z
+  .string()
+  .optional()
+  .transform((value) => value === "1" || value?.toLowerCase() === "true");
+
 const configObjectSchema = z.object({
   NOTETAKER_ADMISSION_TIMEOUT_SECONDS: limitSchema(600),
   NOTETAKER_NO_SHOW_TIMEOUT_SECONDS: limitSchema(900),
@@ -256,6 +282,17 @@ const configObjectSchema = z.object({
     .string()
     .optional()
     .transform((value) => value ?? DEFAULT_AGENT_TTS_MODEL),
+  NOTETAKER_AGENT_BROWSER_ENABLED: lenientFlagSchema,
+  AGENT_BROWSER_INTERNAL_URL: lenientUrlSchema(["http:", "https:"]),
+  // The viewer URL is shared into the meeting and carries a token, so it must never travel in clear text.
+  AGENT_BROWSER_PUBLIC_URL: lenientUrlSchema(["https:"]),
+  AGENT_BROWSER_SECRET: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value !== undefined && value.length >= AGENT_BROWSER_MIN_SECRET_LENGTH ? value : null
+    ),
+  NOTETAKER_AGENT_BROWSER_VISION: lenientFlagSchema,
 });
 
 // Half a Recall setup is unusable, so it is reported at startup instead of surfacing as failed joins.
@@ -341,6 +378,13 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
         ttsModel: parsed.NOTETAKER_AGENT_TTS_MODEL,
       },
     },
+    agentBrowser: {
+      enabled: parsed.NOTETAKER_AGENT_BROWSER_ENABLED,
+      internalUrl: parsed.AGENT_BROWSER_INTERNAL_URL,
+      publicUrl: parsed.AGENT_BROWSER_PUBLIC_URL,
+      secret: parsed.AGENT_BROWSER_SECRET,
+      visionEnabled: parsed.NOTETAKER_AGENT_BROWSER_VISION,
+    },
   };
 }
 
@@ -380,6 +424,17 @@ function isNotetakerAgentVoiceUsable(config: NotetakerConfig): boolean {
   );
 }
 
+// Like voice, a half-configured browser means the agent runs without it rather than a startup error.
+function isNotetakerAgentBrowserUsable(config: NotetakerConfig): boolean {
+  return (
+    isNotetakerAgentUsable(config) &&
+    config.agentBrowser.enabled &&
+    config.agentBrowser.internalUrl !== null &&
+    config.agentBrowser.publicUrl !== null &&
+    config.agentBrowser.secret !== null
+  );
+}
+
 type NotetakerSummaryGeneratorKind = "ANTHROPIC" | "STUB" | "DISABLED";
 
 function getNotetakerSummaryGeneratorKind(
@@ -405,6 +460,7 @@ export type {
 export {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
+  isNotetakerAgentBrowserUsable,
   isNotetakerAgentUsable,
   isNotetakerAgentVoiceUsable,
   isNotetakerBotProviderUsable,
