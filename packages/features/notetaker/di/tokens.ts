@@ -71,8 +71,12 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_TRANSCRIPT_WEBHOOK_SERVICE_MODULE: Symbol("NotetakerTranscriptWebhookServiceModule"),
   NOTETAKER_TRANSCRIPT_WEBHOOK_GATEWAY: Symbol("NotetakerTranscriptWebhookGateway"),
   NOTETAKER_TRANSCRIPT_WEBHOOK_GATEWAY_MODULE: Symbol("NotetakerTranscriptWebhookGatewayModule"),
+  NOTETAKER_MEETING_AGENT: Symbol("NotetakerMeetingAgent"),
+  NOTETAKER_MEETING_AGENT_MODULE: Symbol("NotetakerMeetingAgentModule"),
   RECALL_API_CLIENT: Symbol("RecallApiClient"),
   RECALL_API_CLIENT_MODULE: Symbol("RecallApiClientModule"),
   RECALL_WEBHOOK_SERVICE: Symbol("RecallWebhookService"),
   RECALL_WEBHOOK_SERVICE_MODULE: Symbol("RecallWebhookServiceModule"),
+  RECALL_REALTIME_EVENT_SERVICE: Symbol("RecallRealtimeEventService"),
+  RECALL_REALTIME_EVENT_SERVICE_MODULE: Symbol("RecallRealtimeEventServiceModule"),
 };
