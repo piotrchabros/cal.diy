@@ -2,31 +2,12 @@ import { recallWebhookEnvelopeSchema } from "@calcom/features/notetaker/bot/reca
 import { getRecallWebhookService } from "@calcom/features/notetaker/di/RecallWebhookService.container";
 import { getNotetakerConfig } from "@calcom/features/notetaker/lib/config";
 import logger from "@calcom/lib/logger";
-import {
-  RECALL_WEBHOOK_ID_HEADER,
-  RECALL_WEBHOOK_SIGNATURE_HEADER,
-  RECALL_WEBHOOK_TIMESTAMP_HEADER,
-  verifyRecallWebhookSignature,
-} from "@calcom/lib/notetaker/recallWebhookSignature";
 import { defaultResponderForAppDir } from "@calcom/web/app/api/defaultResponderForAppDir";
 import type { NextRequest } from "next/server";
 import { after, NextResponse } from "next/server";
+import { parseJson, verifyRecallRequest } from "../recallRequestVerification";
 
 const log = logger.getSubLogger({ prefix: ["notetaker-recall-webhook"] });
-
-// defaultResponderForAppDir maps a thrown SyntaxError to 500, so malformed JSON must not throw.
-function parseJson(rawBody: string): unknown {
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    return undefined;
-  }
-}
-
-// Recall delivers through Svix, which may still send the legacy svix-* header names.
-function getHeader(request: NextRequest, name: string, fallbackName: string): string | null {
-  return request.headers.get(name) ?? request.headers.get(fallbackName);
-}
 
 async function postHandler(request: NextRequest): Promise<NextResponse> {
   const rawBody = await request.text();
@@ -36,15 +17,8 @@ async function postHandler(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ message: "Invalid signature" }, { status: 401 });
   }
 
-  const webhookId = getHeader(request, RECALL_WEBHOOK_ID_HEADER, "svix-id");
-  const isSignatureValid = verifyRecallWebhookSignature({
-    secret: recall.webhookSecret,
-    webhookId,
-    timestamp: getHeader(request, RECALL_WEBHOOK_TIMESTAMP_HEADER, "svix-timestamp"),
-    signatureHeader: getHeader(request, RECALL_WEBHOOK_SIGNATURE_HEADER, "svix-signature"),
-    rawBody,
-  });
-  if (!isSignatureValid) {
+  const { valid, webhookId } = verifyRecallRequest(request, rawBody, recall.webhookSecret);
+  if (!valid) {
     log.warn("Rejected Recall webhook with an invalid signature", {
       webhookId,
       bodyLength: rawBody.length,
