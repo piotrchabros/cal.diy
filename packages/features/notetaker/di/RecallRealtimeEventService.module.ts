@@ -1,6 +1,7 @@
 import { bindModuleToClassOnToken, createModule, type ModuleLoader } from "@calcom/features/di/di";
 import { moduleLoader as loggerModuleLoader } from "@calcom/features/di/shared/services/logger.service";
 import { RecallRealtimeEventService } from "@calcom/features/notetaker/services/RecallRealtimeEventService";
+import { moduleLoader as agentBrowserModuleLoader } from "./NotetakerAgentBrowser.module";
 import { moduleLoader as configModuleLoader } from "./NotetakerConfig.module";
 import { moduleLoader as meetingAgentModuleLoader } from "./NotetakerMeetingAgent.module";
 import { moduleLoader as speechSynthesizerModuleLoader } from "./NotetakerMeetingAgentSpeechSynthesizer.module";
@@ -22,6 +23,7 @@ const loadModule = bindModuleToClassOnToken({
     sessionRepository: sessionRepositoryModuleLoader,
     meetingAgent: meetingAgentModuleLoader,
     speechSynthesizer: speechSynthesizerModuleLoader,
+    agentBrowser: agentBrowserModuleLoader,
     config: configModuleLoader,
     logger: loggerModuleLoader,
   },

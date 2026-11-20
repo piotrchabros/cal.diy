@@ -13,6 +13,9 @@ import { POST } from "../route";
 const harness = vi.hoisted(() => ({
   process: vi.fn<(envelope: RecallWebhookEnvelope) => Promise<string>>(),
   getRecall: vi.fn<() => NotetakerConfig["recall"]>(),
+  browserUsable: vi.fn<() => boolean>(),
+  closeForBot: vi.fn<(botId: string) => Promise<void>>(),
+  getAgentBrowser: vi.fn<() => { closeForBot: (botId: string) => Promise<void> } | null>(),
   afterCallbacks: [] as Array<() => Promise<void>>,
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -22,8 +25,13 @@ vi.mock("@calcom/features/notetaker/di/RecallWebhookService.container", () => ({
   getRecallWebhookService: () => ({ processWithRetry: harness.process }),
 }));
 
+vi.mock("@calcom/features/notetaker/di/NotetakerAgentBrowser.container", () => ({
+  getNotetakerAgentBrowser: () => harness.getAgentBrowser(),
+}));
+
 vi.mock("@calcom/features/notetaker/lib/config", () => ({
   getNotetakerConfig: () => ({ recall: harness.getRecall() }),
+  isNotetakerAgentBrowserUsable: () => harness.browserUsable(),
 }));
 
 vi.mock("@calcom/lib/logger", () => ({
@@ -61,9 +69,9 @@ const RECALL_CONFIG: NonNullable<NotetakerConfig["recall"]> = {
   webhookSecret: SECRET,
 };
 
-function buildEnvelope(): RecallWebhookEnvelope {
+function buildEnvelope(event = "bot.in_call_recording"): RecallWebhookEnvelope {
   return {
-    event: "bot.in_call_recording",
+    event,
     data: {
       data: { code: "in_call_recording", sub_code: null, updated_at: "2026-10-12T11:59:00.000Z" },
       bot: { id: BOT_ID, metadata: { notetakerSessionId: SESSION_ID } },
@@ -119,6 +127,9 @@ describe("POST /api/notetaker/recall/webhook", () => {
     vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
     harness.getRecall.mockReturnValue(RECALL_CONFIG);
     harness.process.mockResolvedValue("SYNCED");
+    harness.browserUsable.mockReturnValue(true);
+    harness.closeForBot.mockResolvedValue(undefined);
+    harness.getAgentBrowser.mockReturnValue({ closeForBot: harness.closeForBot });
   });
 
   afterEach(() => {
@@ -251,5 +262,76 @@ describe("POST /api/notetaker/recall/webhook", () => {
     const logged = serializedLogCalls();
     expect(logged).not.toContain(SESSION_ID);
     expect(logged).not.toContain(SECRET);
+  });
+
+  describe("agent browser cleanup", () => {
+    it.each([
+      "bot.call_ended",
+      "bot.done",
+      "bot.fatal",
+    ])("closes the bot's browser after acknowledging %s", async (event) => {
+      const rawBody = JSON.stringify(buildEnvelope(event));
+
+      const response = await readResponse(await post(rawBody, signedHeaders(rawBody)));
+
+      expect(response).toEqual({ status: 200, body: OK_BODY });
+      expect(harness.closeForBot).not.toHaveBeenCalled();
+      expect(harness.afterCallbacks).toHaveLength(2);
+
+      await runAfterCallbacks();
+
+      expect(harness.process).toHaveBeenCalledTimes(1);
+      expect(harness.closeForBot).toHaveBeenCalledTimes(1);
+      expect(harness.closeForBot).toHaveBeenCalledWith(BOT_ID);
+    });
+
+    it("does not close the browser for events while the bot is still in the call", async () => {
+      const rawBody = JSON.stringify(buildEnvelope("bot.in_call_recording"));
+
+      await post(rawBody, signedHeaders(rawBody));
+      await runAfterCallbacks();
+
+      expect(harness.closeForBot).not.toHaveBeenCalled();
+      expect(harness.getAgentBrowser).not.toHaveBeenCalled();
+    });
+
+    it("does not load the browser when it is not usable", async () => {
+      harness.browserUsable.mockReturnValue(false);
+      const rawBody = JSON.stringify(buildEnvelope("bot.done"));
+
+      await post(rawBody, signedHeaders(rawBody));
+
+      expect(harness.afterCallbacks).toHaveLength(1);
+      await runAfterCallbacks();
+      expect(harness.getAgentBrowser).not.toHaveBeenCalled();
+    });
+
+    it("does not close anything when the event has no bot", async () => {
+      const envelope = buildEnvelope("bot.done");
+      envelope.data.bot = undefined;
+      const rawBody = JSON.stringify(envelope);
+
+      await post(rawBody, signedHeaders(rawBody));
+
+      expect(harness.afterCallbacks).toHaveLength(1);
+    });
+
+    it("logs and swallows a failure to load the browser", async () => {
+      harness.getAgentBrowser.mockImplementation(() => {
+        throw new Error("Recall is not configured");
+      });
+      const rawBody = JSON.stringify(buildEnvelope("bot.call_ended"));
+
+      const response = await readResponse(await post(rawBody, signedHeaders(rawBody)));
+      await expect(runAfterCallbacks()).resolves.toBeUndefined();
+
+      expect(response).toEqual({ status: 200, body: OK_BODY });
+      expect(harness.log.warn).toHaveBeenCalledWith(expect.any(String), {
+        event: "bot.call_ended",
+        botId: BOT_ID,
+        message: "Recall is not configured",
+      });
+      expect(serializedLogCalls()).not.toContain(SESSION_ID);
+    });
   });
 });
