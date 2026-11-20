@@ -136,6 +136,10 @@ export type RecallRecordingConfig = {
   realtime_endpoints: Array<{ type: "webhook"; url: string; events: RecallRealtimeEventName[] }>;
 };
 
+export type RecallOutputAudioRequest = { kind: "mp3"; b64_data: string };
+
+export type RecallAutomaticAudioOutput = { in_call_recording: { data: RecallOutputAudioRequest } };
+
 export type RecallCreateBotRequest = {
   meeting_url: string;
   bot_name: string;
@@ -144,6 +148,7 @@ export type RecallCreateBotRequest = {
     in_call_recording: { kind: "jpeg"; b64_data: string };
     in_call_not_recording: { kind: "jpeg"; b64_data: string };
   };
+  automatic_audio_output?: RecallAutomaticAudioOutput;
   metadata: Record<string, string>;
   chat: { on_bot_join: { send_to: "everyone"; message: string; pin: boolean } };
   automatic_leave: {

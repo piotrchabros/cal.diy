@@ -65,11 +65,20 @@ type NotetakerConfig = {
     model: string;
     speechProvider: NotetakerAgentSpeechProvider;
     maxCommandsPerMeeting: number;
+    // isNotetakerAgentVoiceUsable decides whether replies can actually be spoken
+    voice: {
+      enabled: boolean;
+      elevenLabsApiKey: string | null;
+      voiceId: string;
+      ttsModel: string;
+    };
   };
 };
 
 const DEFAULT_SUMMARY_MODEL = "claude-opus-5-5";
 const DEFAULT_AGENT_MODEL = "claude-opus-5-5";
+const DEFAULT_AGENT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb";
+const DEFAULT_AGENT_TTS_MODEL = "eleven_flash_v2_5";
 const DEFAULT_PLATFORMS: NotetakerPlatformDto[] = ["GOOGLE_MEET"];
 
 const PLATFORMS = ["GOOGLE_MEET", "MICROSOFT_TEAMS"] as const satisfies readonly NotetakerPlatformDto[];
@@ -230,6 +239,23 @@ const configObjectSchema = z.object({
       return "NONE";
     }),
   NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING: limitSchema(30),
+  ELEVENLABS_API_KEY: z
+    .string()
+    .optional()
+    .transform((value) => value ?? null),
+  // Lenient on purpose: an unexpected value keeps voice on rather than failing startup for plain note-taking.
+  NOTETAKER_AGENT_VOICE_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => !(value === "0" || value?.toLowerCase() === "false")),
+  NOTETAKER_AGENT_VOICE_ID: z
+    .string()
+    .optional()
+    .transform((value) => value ?? DEFAULT_AGENT_VOICE_ID),
+  NOTETAKER_AGENT_TTS_MODEL: z
+    .string()
+    .optional()
+    .transform((value) => value ?? DEFAULT_AGENT_TTS_MODEL),
 });
 
 // Half a Recall setup is unusable, so it is reported at startup instead of surfacing as failed joins.
@@ -308,6 +334,12 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
       model: parsed.NOTETAKER_AGENT_MODEL,
       speechProvider: parsed.NOTETAKER_AGENT_SPEECH_PROVIDER,
       maxCommandsPerMeeting: parsed.NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING,
+      voice: {
+        enabled: parsed.NOTETAKER_AGENT_VOICE_ENABLED,
+        elevenLabsApiKey: parsed.ELEVENLABS_API_KEY,
+        voiceId: parsed.NOTETAKER_AGENT_VOICE_ID,
+        ttsModel: parsed.NOTETAKER_AGENT_TTS_MODEL,
+      },
     },
   };
 }
@@ -338,6 +370,16 @@ function isNotetakerAgentUsable(config: NotetakerConfig): boolean {
   );
 }
 
+// Like the agent itself, missing voice settings mean chat-only replies rather than a startup error.
+function isNotetakerAgentVoiceUsable(config: NotetakerConfig): boolean {
+  return (
+    isNotetakerAgentUsable(config) &&
+    config.agent.speechProvider !== "NONE" &&
+    config.agent.voice.enabled &&
+    Boolean(config.agent.voice.elevenLabsApiKey)
+  );
+}
+
 type NotetakerSummaryGeneratorKind = "ANTHROPIC" | "STUB" | "DISABLED";
 
 function getNotetakerSummaryGeneratorKind(
@@ -364,6 +406,7 @@ export {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
   isNotetakerAgentUsable,
+  isNotetakerAgentVoiceUsable,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
   RECALL_REGIONS,

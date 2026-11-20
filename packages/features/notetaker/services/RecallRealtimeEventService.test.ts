@@ -86,6 +86,7 @@ function createFakeRecallClient() {
     leaveCall: vi.fn<IRecallApiClient["leaveCall"]>(),
     deleteScheduledBot: vi.fn<IRecallApiClient["deleteScheduledBot"]>(),
     sendChatMessage: vi.fn<IRecallApiClient["sendChatMessage"]>().mockResolvedValue(undefined),
+    outputAudio: vi.fn<IRecallApiClient["outputAudio"]>().mockResolvedValue(undefined),
     startScreenshare: vi.fn<IRecallApiClient["startScreenshare"]>().mockResolvedValue(undefined),
     stopScreenshare: vi.fn<IRecallApiClient["stopScreenshare"]>().mockResolvedValue("OK"),
     createTranscript: vi.fn<IRecallApiClient["createTranscript"]>(),
