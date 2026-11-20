@@ -208,4 +208,17 @@ describe.skipIf(!enabled)("PlaywrightBrowserDriver (real Chromium)", () => {
       Buffer.from([0xff, 0xd8])
     );
   });
+
+  it("reports a session as closed once its context goes away without dispose", async () => {
+    const doomed = await driver.createSession("bot-it-closed", { onFrame: () => {}, onPage: () => {} });
+    expect(doomed.isClosed()).toBe(false);
+
+    // Stands in for a crash: the context is closed behind the session's back, as Chromium dying would do.
+    const browser = await driver["getBrowser"]();
+    await browser.contexts().at(-1)?.close();
+
+    expect(doomed.isClosed()).toBe(true);
+    await expectActionError(doomed.perform({ type: "snapshot" }), "ACTION_FAILED");
+    await doomed.dispose();
+  });
 });

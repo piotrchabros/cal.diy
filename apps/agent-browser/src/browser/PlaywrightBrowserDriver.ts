@@ -108,6 +108,8 @@ class PlaywrightBrowserSession implements IBrowserSession {
   private popupFollowed = false;
   private popupWaiter: (() => void) | null = null;
   private disposed = false;
+  // A browser crash closes every context, so the context event also covers a disconnected browser.
+  private closed = false;
 
   private constructor(deps: SessionDeps, page: Page) {
     this.deps = deps;
@@ -138,7 +140,7 @@ class PlaywrightBrowserSession implements IBrowserSession {
   }
 
   async perform(action: AgentBrowserAction): Promise<ActionResult> {
-    if (this.disposed || this.page.isClosed()) {
+    if (this.isClosed()) {
       throw new AgentBrowserActionError(
         "ACTION_FAILED",
         "The browser session was closed; open the page again."
@@ -159,6 +161,10 @@ class PlaywrightBrowserSession implements IBrowserSession {
     return this.info;
   }
 
+  isClosed(): boolean {
+    return this.disposed || this.closed || this.page.isClosed();
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -168,6 +174,12 @@ class PlaywrightBrowserSession implements IBrowserSession {
   }
 
   private attachListeners(): void {
+    const markClosed = (): void => {
+      this.closed = true;
+    };
+    this.page.on("close", markClosed);
+    this.page.on("crash", markClosed);
+    this.context.on("close", markClosed);
     this.page.on("dialog", (dialog) => {
       dialog.dismiss().catch(noop);
     });

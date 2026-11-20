@@ -111,6 +111,12 @@ class SessionManager {
   private async performLocked(botId: string, action: AgentBrowserAction): Promise<AgentBrowserPageState> {
     let entry = this.entries.get(botId);
     let created = false;
+    // A crashed browser leaves a session that fails every action, so it is dropped and goto starts over.
+    if (entry?.session.isClosed()) {
+      await this.disposeEntry(entry, "closed");
+      this.hub.setState(botId, "waiting");
+      entry = undefined;
+    }
     if (!entry) {
       if (action.type !== "goto") {
         throw new AgentBrowserActionError(
@@ -185,6 +191,7 @@ class SessionManager {
   }
 
   private reapReason(entry: SessionEntry, now: number): string | null {
+    if (entry.session.isClosed()) return "closed";
     if (now - entry.createdAt >= this.maxSessionMs) return "max_age";
     if (now - entry.lastActivityAt >= this.idleTimeoutMs && this.hub.count(entry.botId) === 0) return "idle";
     return null;

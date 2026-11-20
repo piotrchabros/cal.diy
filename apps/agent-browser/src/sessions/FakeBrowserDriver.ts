@@ -13,6 +13,7 @@ const FAKE_JPEG_BASE64 = Buffer.from("fake-jpeg").toString("base64");
 class FakeBrowserSession implements IBrowserSession {
   readonly performed: AgentBrowserAction[] = [];
   disposed = false;
+  crashed = false;
   private page: PageInfo = { url: "about:blank", title: "" };
   private readonly queuedErrors: Error[] = [];
   private readonly gates: Promise<void>[] = [];
@@ -36,6 +37,11 @@ class FakeBrowserSession implements IBrowserSession {
     return release;
   }
 
+  // Simulates the browser or its page going away without the manager disposing the session.
+  crash(): void {
+    this.crashed = true;
+  }
+
   emitFrame(jpeg: Buffer): void {
     this.hooks.onFrame(jpeg);
   }
@@ -44,7 +50,8 @@ class FakeBrowserSession implements IBrowserSession {
     this.performed.push(action);
     const gate = this.gates.shift();
     if (gate) await gate;
-    if (this.disposed) throw new AgentBrowserActionError("ACTION_FAILED", "The browser session was closed.");
+    if (this.isClosed())
+      throw new AgentBrowserActionError("ACTION_FAILED", "The browser session was closed.");
     const error = this.queuedErrors.shift();
     if (error) throw error;
 
@@ -62,6 +69,10 @@ class FakeBrowserSession implements IBrowserSession {
 
   currentPage(): PageInfo {
     return this.page;
+  }
+
+  isClosed(): boolean {
+    return this.disposed || this.crashed;
   }
 
   async dispose(): Promise<void> {
