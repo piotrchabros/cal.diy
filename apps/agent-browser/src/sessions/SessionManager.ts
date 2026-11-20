@@ -29,6 +29,7 @@ class SessionManager {
   // Viewer tokens are stateless, so closing a session can only revoke them by remembering when it happened.
   private readonly revokedBefore = new Map<string, Date>();
   private pendingCreations = 0;
+  private shuttingDown = false;
 
   constructor(deps: {
     driver: IBrowserDriver;
@@ -97,6 +98,12 @@ class SessionManager {
     }
   }
 
+  // Shutdown does not wait for the per-bot locks: an in-flight action can hold one for its whole timeout.
+  async disposeAll(): Promise<void> {
+    this.shuttingDown = true;
+    await Promise.all([...this.entries.values()].map((entry) => this.disposeEntry(entry, "shutdown")));
+  }
+
   stats(): { sessions: number; maxSessions: number } {
     return { sessions: this.entries.size, maxSessions: this.maxSessions };
   }
@@ -138,6 +145,9 @@ class SessionManager {
   }
 
   private async createEntry(botId: string): Promise<SessionEntry> {
+    if (this.shuttingDown) {
+      throw new AgentBrowserActionError("INTERNAL", "The browser service is shutting down.");
+    }
     if (this.entries.size + this.pendingCreations >= this.maxSessions) {
       throw new AgentBrowserActionError("CAPACITY", "Too many browser sessions are open; try again later.");
     }
