@@ -1,10 +1,19 @@
+import logger from "@calcom/lib/logger";
 import type { NotetakerBotJoinRequest } from "@calcom/lib/notetaker/botContract";
 import { notetakerBotJoinRequestSchema } from "@calcom/lib/notetaker/botContract";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
+import { getNotetakerConfig } from "../../lib/config";
 import { getNotetakerBotGatewayFailure } from "../INotetakerBotGateway";
 import type { IRecallApiClient } from "./RecallApiClient";
 import { createRecallApiError } from "./RecallApiClient";
-import { buildRecallCreateBotRequest, RecallBotGateway } from "./RecallBotGateway";
+import type { RecallMeetingAgentOptions } from "./RecallBotGateway";
+import {
+  buildRecallCreateBotRequest,
+  buildRecallRecordingConfig,
+  getRecallMeetingAgentOptions,
+  RecallBotGateway,
+} from "./RecallBotGateway";
 import type { RecallBot } from "./recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "./recallSchemas";
 
@@ -58,12 +67,17 @@ function createFakeClient(overrides: Partial<IRecallApiClient> = {}) {
   return Object.assign(client, overrides);
 }
 
-function createGateway(input: { client: IRecallApiClient; externalRef?: string | null }): RecallBotGateway {
+function createGateway(input: {
+  client: IRecallApiClient;
+  externalRef?: string | null;
+  agent?: RecallMeetingAgentOptions | null;
+}): RecallBotGateway {
   const externalRef = input.externalRef === undefined ? BOT_ID : input.externalRef;
   return new RecallBotGateway({
     client: input.client,
     findExternalRef: async () => externalRef,
     now: () => NOW,
+    agent: input.agent,
   });
 }
 
@@ -77,6 +91,19 @@ async function captureError(promise: Promise<unknown>): Promise<unknown> {
 }
 
 const AVATAR = { kind: "jpeg", base64: "QUJD" } as const;
+const REALTIME_URL = "https://app.example.com/api/notetaker/recall/realtime";
+
+function buildAgent(speechProvider: NotetakerAgentSpeechProvider = "DEEPGRAM"): RecallMeetingAgentOptions {
+  return { realtimeUrl: REALTIME_URL, speechProvider };
+}
+
+function badRequest(fieldNames: string[]) {
+  return createRecallApiError("BAD_REQUEST", "bad", { status: 400, fieldNames });
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("buildRecallCreateBotRequest avatar", () => {
   it("sends the same image for both call states", () => {
@@ -96,10 +123,6 @@ describe("buildRecallCreateBotRequest avatar", () => {
 });
 
 describe("RecallBotGateway avatar fallback", () => {
-  function badRequest(fieldNames: string[]) {
-    return createRecallApiError("BAD_REQUEST", "bad", { status: 400, fieldNames });
-  }
-
   it("retries once without the image when Recall rejects automatic_video_output", async () => {
     const client = createFakeClient();
     client.createBot
@@ -358,6 +381,226 @@ describe("RecallBotGateway.requestJoin", () => {
 
     const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
     expect(getNotetakerBotGatewayFailure(error)).toBe("TRANSIENT");
+  });
+});
+
+describe("buildRecallRecordingConfig", () => {
+  it("streams Deepgram transcripts and chat messages to the realtime endpoint", () => {
+    expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM"))).toStrictEqual({
+      transcript: {
+        provider: { deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true } },
+      },
+      realtime_endpoints: [
+        {
+          type: "webhook",
+          url: REALTIME_URL,
+          events: ["participant_events.chat_message", "transcript.data"],
+        },
+      ],
+    });
+  });
+
+  it("streams Recall's low-latency English transcripts and chat messages", () => {
+    expect(buildRecallRecordingConfig(buildAgent("RECALLAI_EN"))).toStrictEqual({
+      transcript: {
+        provider: { recallai_streaming: { mode: "prioritize_low_latency", language_code: "en" } },
+      },
+      realtime_endpoints: [
+        {
+          type: "webhook",
+          url: REALTIME_URL,
+          events: ["participant_events.chat_message", "transcript.data"],
+        },
+      ],
+    });
+  });
+
+  it("streams only chat messages without a speech provider", () => {
+    expect(buildRecallRecordingConfig(buildAgent("NONE"))).toStrictEqual({
+      realtime_endpoints: [
+        { type: "webhook", url: REALTIME_URL, events: ["participant_events.chat_message"] },
+      ],
+    });
+  });
+});
+
+describe("buildRecallCreateBotRequest agent", () => {
+  it("adds the recording config for the agent", () => {
+    const body = buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, buildAgent("DEEPGRAM"));
+    expect(body.recording_config).toStrictEqual(buildRecallRecordingConfig(buildAgent("DEEPGRAM")));
+  });
+
+  it("leaves the rest of the body unchanged and adds no output media", () => {
+    const plain = buildRecallCreateBotRequest(buildJoinRequest(), NOW);
+    const withAgent = buildRecallCreateBotRequest(buildJoinRequest(), NOW, undefined, buildAgent());
+
+    expect(withAgent.chat.on_bot_join).toStrictEqual(plain.chat.on_bot_join);
+    expect(withAgent.automatic_leave).toStrictEqual(plain.automatic_leave);
+    expect(withAgent.metadata).toStrictEqual(plain.metadata);
+    expect(withAgent).not.toHaveProperty("variant");
+    expect(withAgent).not.toHaveProperty("output_media");
+    const { recording_config: _recordingConfig, ...rest } = withAgent;
+    expect(rest).toStrictEqual(plain);
+  });
+
+  it("omits recording_config for a null agent", () => {
+    expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, null)).not.toHaveProperty(
+      "recording_config"
+    );
+  });
+});
+
+describe("RecallBotGateway agent fallback", () => {
+  it("sends the recording config when the gateway has an agent", async () => {
+    const client = createFakeClient();
+
+    await createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest());
+
+    expect(client.createBot).toHaveBeenCalledWith(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, buildAgent())
+    );
+  });
+
+  it("retries once without the recording config when Recall rejects it, so note-taking continues", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0].recording_config).toBeDefined();
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("recording_config");
+    expect(client.createBot.mock.calls[1][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("recording config"));
+  });
+
+  it("drops both the avatar and the recording config when Recall rejects both at once", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output", "recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0]).toHaveProperty("automatic_video_output");
+    expect(client.createBot.mock.calls[0][0]).toHaveProperty("recording_config");
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_video_output");
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("recording_config");
+  });
+
+  it("does not retry a 400 that names neither optional part", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["join_at"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a second 400 on recording_config after dropping it to LINK_UNUSABLE without looping", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["recording_config"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest())
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries at most twice when each 400 drops a different part", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockResolvedValueOnce(buildBot([], "bot-3"));
+
+    await expect(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-3" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(3);
+    expect(client.createBot.mock.calls[2][0]).not.toHaveProperty("automatic_video_output");
+    expect(client.createBot.mock.calls[2][0]).not.toHaveProperty("recording_config");
+  });
+
+  it("does not retry a recording_config 400 when the gateway has no agent", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["recording_config"]));
+
+    const error = await captureError(createGateway({ client }).requestJoin(buildJoinRequest()));
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getRecallMeetingAgentOptions", () => {
+  const usable = {
+    NODE_ENV: "test",
+    NOTETAKER_AGENT_ENABLED: "true",
+    NOTETAKER_BOT_PROVIDER: "recall",
+    RECALL_API_KEY: "key-123",
+    RECALL_WEBHOOK_VERIFICATION_SECRET: "whsec_c2VjcmV0LWtleS1ieXRlcw==",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
+  };
+  const configFor = (overrides: Record<string, string | undefined> = {}): NotetakerConfig =>
+    getNotetakerConfig({ ...usable, ...overrides });
+
+  it("is null when the agent is disabled", () => {
+    expect(
+      getRecallMeetingAgentOptions(
+        configFor({ NOTETAKER_AGENT_ENABLED: undefined }),
+        "https://app.example.com"
+      )
+    ).toBeNull();
+  });
+
+  it("is null when the agent is unusable", () => {
+    expect(
+      getRecallMeetingAgentOptions(configFor({ ANTHROPIC_API_KEY: undefined }), "https://app.example.com")
+    ).toBeNull();
+    expect(
+      getRecallMeetingAgentOptions(configFor({ NOTETAKER_BOT_PROVIDER: "fake" }), "https://app.example.com")
+    ).toBeNull();
+  });
+
+  it.each(["http://app.example.com", "not a url", ""])("is null for the webapp url %j", (webappUrl) => {
+    expect(getRecallMeetingAgentOptions(configFor(), webappUrl)).toBeNull();
+  });
+
+  it.each([
+    "https://app.example.com",
+    "https://app.example.com/",
+    "https://app.example.com/some/path",
+  ])("points Recall at the realtime endpoint for %s", (webappUrl) => {
+    expect(
+      getRecallMeetingAgentOptions(configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram" }), webappUrl)
+    ).toStrictEqual({ realtimeUrl: REALTIME_URL, speechProvider: "DEEPGRAM" });
+  });
+
+  it("passes the configured speech provider through", () => {
+    expect(getRecallMeetingAgentOptions(configFor(), "https://app.example.com")).toStrictEqual({
+      realtimeUrl: REALTIME_URL,
+      speechProvider: "NONE",
+    });
   });
 });
 

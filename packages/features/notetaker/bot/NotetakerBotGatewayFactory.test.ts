@@ -8,6 +8,7 @@ import { getNotetakerConfig } from "../lib/config";
 import { FakeBotGateway } from "./FakeBotGateway";
 import type { NotetakerBotEventSink } from "./INotetakerBotGateway";
 import { NotetakerBotGatewayFactory } from "./NotetakerBotGatewayFactory";
+import { RecallApiClient } from "./recall/RecallApiClient";
 import { RecallBotGateway } from "./recall/RecallBotGateway";
 import { getRecallLivenessTimeoutSeconds } from "./recall/recallEventTranslation";
 import { SelfHostedBotGateway } from "./SelfHostedBotGateway";
@@ -16,6 +17,15 @@ const BOT_URL = "https://bot.internal.example.com/v1";
 const BOT_SECRET = "s3cr3t-token-value";
 const RECALL_API_KEY = "recall-api-key-value";
 const RECALL_WEBHOOK_SECRET = "whsec_c2VjcmV0LWtleS1ieXRlcw==";
+const AGENT_ENV = {
+  NODE_ENV: "test",
+  NOTETAKER_BOT_PROVIDER: "recall",
+  RECALL_API_KEY,
+  RECALL_WEBHOOK_VERIFICATION_SECRET: RECALL_WEBHOOK_SECRET,
+  ANTHROPIC_API_KEY: "anthropic-api-key-value",
+  NOTETAKER_AGENT_ENABLED: "true",
+  NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram",
+};
 
 function buildConfig(overrides: Partial<NotetakerConfig>): NotetakerConfig {
   return { ...getNotetakerConfig({}), ...overrides };
@@ -43,6 +53,23 @@ function createFactory(config: NotetakerConfig, eventSink: NotetakerBotEventSink
   return new NotetakerBotGatewayFactory({ config, eventSink, findExternalRef: async () => null });
 }
 
+async function captureRecallCreateBotBody(config: NotetakerConfig, webappUrl: string) {
+  const createBot = vi
+    .spyOn(RecallApiClient.prototype, "createBot")
+    .mockResolvedValue({ id: "bot-1", status_changes: [], recordings: [], metadata: {} });
+  const { gateway } = new NotetakerBotGatewayFactory({
+    config,
+    eventSink: async () => {},
+    findExternalRef: async () => null,
+    webappUrl,
+  }).create();
+
+  await gateway.requestJoin(buildJoinRequest());
+
+  expect(createBot).toHaveBeenCalledTimes(1);
+  return createBot.mock.calls[0][0];
+}
+
 function captureError(run: () => unknown): unknown {
   try {
     run();
@@ -55,6 +82,7 @@ function captureError(run: () => unknown): unknown {
 describe("NotetakerBotGatewayFactory", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it("builds the fake gateway for FAKE outside production", () => {
@@ -202,5 +230,35 @@ describe("NotetakerBotGatewayFactory", () => {
       expect(error.message).not.toContain(BOT_URL);
       expect(error.message).not.toContain("bot.internal.example.com");
     }
+  });
+
+  describe("recall meeting agent", () => {
+    it("asks Recall to stream realtime events to the webapp when the agent is usable", async () => {
+      vi.stubEnv("NODE_ENV", "test");
+      const body = await captureRecallCreateBotBody(getNotetakerConfig(AGENT_ENV), "https://app.example.com");
+
+      expect(body.recording_config?.realtime_endpoints).toEqual([
+        expect.objectContaining({
+          type: "webhook",
+          url: "https://app.example.com/api/notetaker/recall/realtime",
+        }),
+      ]);
+    });
+
+    it("omits recording_config when the agent is disabled", async () => {
+      vi.stubEnv("NODE_ENV", "test");
+      const config = getNotetakerConfig({ ...AGENT_ENV, NOTETAKER_AGENT_ENABLED: "false" });
+
+      const body = await captureRecallCreateBotBody(config, "https://app.example.com");
+
+      expect(body.recording_config).toBeUndefined();
+    });
+
+    it("omits recording_config when the webapp is not reachable over HTTPS", async () => {
+      vi.stubEnv("NODE_ENV", "test");
+      const body = await captureRecallCreateBotBody(getNotetakerConfig(AGENT_ENV), "http://localhost:3000");
+
+      expect(body.recording_config).toBeUndefined();
+    });
   });
 });

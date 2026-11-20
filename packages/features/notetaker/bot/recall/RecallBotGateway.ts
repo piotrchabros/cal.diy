@@ -4,6 +4,8 @@ import type {
   NotetakerBotStateDto,
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
+import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
+import { isNotetakerAgentUsable } from "../../lib/config";
 import type {
   INotetakerBotGateway,
   NotetakerBotAvatar,
@@ -13,7 +15,12 @@ import { createNotetakerBotGatewayError } from "../INotetakerBotGateway";
 import type { IRecallApiClient } from "./RecallApiClient";
 import { getRecallApiErrorInfo } from "./RecallApiClient";
 import { findRecallTerminalStatus, getRecallBotPhase, isRecallBotDone } from "./recallEventTranslation";
-import type { RecallBot, RecallCreateBotRequest } from "./recallSchemas";
+import type {
+  RecallBot,
+  RecallCreateBotRequest,
+  RecallRealtimeEventName,
+  RecallRecordingConfig,
+} from "./recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "./recallSchemas";
 
 const MAX_BOT_NAME_LENGTH = 100;
@@ -23,11 +30,60 @@ const MAX_CHAT_MESSAGE_LENGTH = 500;
 // request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
 const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
 const MAX_REPORTED_FIELDS = 10;
+const MAX_CREATE_BOT_FALLBACK_RETRIES = 2;
+
+export const RECALL_REALTIME_ENDPOINT_PATH = "/api/notetaker/recall/realtime";
+
+export type RecallMeetingAgentOptions = { realtimeUrl: string; speechProvider: NotetakerAgentSpeechProvider };
+
+export function getRecallMeetingAgentOptions(
+  config: NotetakerConfig,
+  webappUrl: string
+): RecallMeetingAgentOptions | null {
+  if (!isNotetakerAgentUsable(config)) return null;
+  // Recall only delivers realtime events to a publicly reachable HTTPS endpoint.
+  let parsed: URL;
+  try {
+    parsed = new URL(webappUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  return {
+    realtimeUrl: new URL(RECALL_REALTIME_ENDPOINT_PATH, webappUrl).toString(),
+    speechProvider: config.agent.speechProvider,
+  };
+}
+
+export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): RecallRecordingConfig {
+  const realtimeEndpoint = (
+    events: RecallRealtimeEventName[]
+  ): RecallRecordingConfig["realtime_endpoints"] => [{ type: "webhook", url: agent.realtimeUrl, events }];
+  switch (agent.speechProvider) {
+    case "DEEPGRAM":
+      return {
+        transcript: {
+          provider: { deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true } },
+        },
+        realtime_endpoints: realtimeEndpoint(["participant_events.chat_message", "transcript.data"]),
+      };
+    case "RECALLAI_EN":
+      return {
+        transcript: {
+          provider: { recallai_streaming: { mode: "prioritize_low_latency", language_code: "en" } },
+        },
+        realtime_endpoints: realtimeEndpoint(["participant_events.chat_message", "transcript.data"]),
+      };
+    case "NONE":
+      return { realtime_endpoints: realtimeEndpoint(["participant_events.chat_message"]) };
+  }
+}
 
 export function buildRecallCreateBotRequest(
   input: NotetakerBotJoinRequest,
   now: Date,
-  avatar?: NotetakerBotAvatar | null
+  avatar?: NotetakerBotAvatar | null,
+  agent?: RecallMeetingAgentOptions | null
 ): RecallCreateBotRequest {
   const scheduledStartMs = new Date(input.scheduledStartAt).getTime();
   const isScheduledJoin = scheduledStartMs > now.getTime() + IMMEDIATE_JOIN_MARGIN_MS;
@@ -58,6 +114,7 @@ export function buildRecallCreateBotRequest(
       everyone_left_timeout: { timeout: input.limits.aloneTimeoutSeconds },
       in_call_recording_timeout: input.limits.maxDurationSeconds,
     },
+    ...(agent ? { recording_config: buildRecallRecordingConfig(agent) } : {}),
   };
 }
 
@@ -86,15 +143,18 @@ export class RecallBotGateway implements INotetakerBotGateway {
   private readonly client: IRecallApiClient;
   private readonly findExternalRef: (sessionId: string) => Promise<string | null>;
   private readonly now: () => Date;
+  private readonly agent: RecallMeetingAgentOptions | null;
 
   constructor(deps: {
     client: IRecallApiClient;
     findExternalRef: (sessionId: string) => Promise<string | null>;
     now?: () => Date;
+    agent?: RecallMeetingAgentOptions | null;
   }) {
     this.client = deps.client;
     this.findExternalRef = deps.findExternalRef;
     this.now = deps.now ?? (() => new Date());
+    this.agent = deps.agent ?? null;
   }
 
   async requestJoin(
@@ -103,7 +163,7 @@ export class RecallBotGateway implements INotetakerBotGateway {
   ): Promise<{ externalRef: string }> {
     const avatar = options?.avatar ?? null;
     try {
-      const bot = await this.createBotWithAvatarFallback(input, avatar);
+      const bot = await this.createBotWithFallbacks(input, avatar);
       return { externalRef: bot.id };
     } catch (error) {
       const info = getRecallApiErrorInfo(error);
@@ -122,20 +182,37 @@ export class RecallBotGateway implements INotetakerBotGateway {
     }
   }
 
-  // An image Recall cannot accept must not stop the notetaker from joining, so it is dropped once.
-  private async createBotWithAvatarFallback(
+  // An image or a bad agent setup Recall cannot accept must never stop note-taking, so each optional
+  // part it rejects is dropped and the request retried without it.
+  private async createBotWithFallbacks(
     input: NotetakerBotJoinRequest,
     avatar: NotetakerBotAvatar | null
   ): Promise<RecallBot> {
-    try {
-      return await this.client.createBot(buildRecallCreateBotRequest(input, this.now(), avatar));
-    } catch (error) {
-      const info = getRecallApiErrorInfo(error);
-      const avatarRejected =
-        avatar !== null && info?.kind === "BAD_REQUEST" && info.fieldNames.includes("automatic_video_output");
-      if (!avatarRejected) throw error;
-      logger.warn("Recall rejected the notetaker avatar; retrying the create bot request without it");
-      return this.client.createBot(buildRecallCreateBotRequest(input, this.now()));
+    let currentAvatar = avatar;
+    let currentAgent = this.agent;
+    for (let retries = 0; ; retries++) {
+      try {
+        return await this.client.createBot(
+          buildRecallCreateBotRequest(input, this.now(), currentAvatar, currentAgent)
+        );
+      } catch (error) {
+        const info = getRecallApiErrorInfo(error);
+        if (info?.kind !== "BAD_REQUEST" || retries >= MAX_CREATE_BOT_FALLBACK_RETRIES) throw error;
+        let dropped = false;
+        if (currentAvatar !== null && info.fieldNames.includes("automatic_video_output")) {
+          logger.warn("Recall rejected the notetaker avatar; retrying the create bot request without it");
+          currentAvatar = null;
+          dropped = true;
+        }
+        if (currentAgent !== null && info.fieldNames.includes("recording_config")) {
+          logger.warn(
+            "Recall rejected the meeting agent recording config; retrying the create bot request without the agent, note-taking continues"
+          );
+          currentAgent = null;
+          dropped = true;
+        }
+        if (!dropped) throw error;
+      }
     }
   }
 

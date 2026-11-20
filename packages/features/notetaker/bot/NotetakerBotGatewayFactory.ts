@@ -1,10 +1,11 @@
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import type { NotetakerConfig } from "../lib/config";
 import { isNotetakerBotProviderUsable } from "../lib/config";
 import { FakeBotGateway } from "./FakeBotGateway";
 import type { NotetakerBotEventSink, NotetakerBotGatewayBinding } from "./INotetakerBotGateway";
 import { RecallApiClient } from "./recall/RecallApiClient";
-import { RecallBotGateway } from "./recall/RecallBotGateway";
+import { getRecallMeetingAgentOptions, RecallBotGateway } from "./recall/RecallBotGateway";
 import { getRecallLivenessTimeoutSeconds } from "./recall/recallEventTranslation";
 import { SelfHostedBotGateway } from "./SelfHostedBotGateway";
 
@@ -12,13 +13,14 @@ export interface INotetakerBotGatewayFactoryDeps {
   config: NotetakerConfig;
   eventSink: NotetakerBotEventSink;
   findExternalRef: (sessionId: string) => Promise<string | null>;
+  webappUrl?: string;
 }
 
 export class NotetakerBotGatewayFactory {
   constructor(private readonly deps: INotetakerBotGatewayFactoryDeps) {}
 
   create(): NotetakerBotGatewayBinding {
-    const { config, eventSink, findExternalRef } = this.deps;
+    const { config, eventSink, findExternalRef, webappUrl = WEBAPP_URL } = this.deps;
 
     if (config.botProvider === null) {
       throw ErrorWithCode.Factory.InternalServerError(
@@ -34,7 +36,11 @@ export class NotetakerBotGatewayFactory {
       }
       const { apiKey, region } = config.recall;
       return {
-        gateway: new RecallBotGateway({ client: new RecallApiClient({ apiKey, region }), findExternalRef }),
+        gateway: new RecallBotGateway({
+          client: new RecallApiClient({ apiKey, region }),
+          findExternalRef,
+          agent: getRecallMeetingAgentOptions(config, webappUrl),
+        }),
         provider: "RECALL",
         livenessTimeoutSeconds: getRecallLivenessTimeoutSeconds(config.limits),
       };
