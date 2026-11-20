@@ -292,6 +292,52 @@ describe("BrowserUrlProvenanceGuard", () => {
     expect(makeGuard(makeRequest({ command: "open cal dot com" })).allows("https://cal.com")).toBe(true);
   });
 
+  it("understands the spoken Polish kropka between labels", () => {
+    const allows = (command: string, url: string): boolean => makeGuard(makeRequest({ command })).allows(url);
+
+    expect(allows("wejść na stronę Google kropka com", "https://google.com")).toBe(true);
+    expect(allows("otwórz bluebee kropka marketing", "https://bluebee.marketing")).toBe(true);
+    expect(allows("pokaż allegro Kropką pl", "https://allegro.pl")).toBe(true);
+    expect(allows("wejdź na onet kropka com kropka pl", "https://onet.com.pl")).toBe(true);
+  });
+
+  it("allows a brand named by a participant on its own domain only", () => {
+    const guard = makeGuard(makeRequest({ command: "wejść na stronę Google" }));
+
+    expect(guard.allows("https://google.com")).toBe(true);
+    expect(guard.allows("https://www.google.com/search")).toBe(true);
+    expect(guard.allows("https://google.pl")).toBe(true);
+    expect(guard.allows("https://google.co.uk")).toBe(true);
+    expect(guard.allows("https://maps.google.com")).toBe(false);
+    expect(guard.allows("https://google.evil.com")).toBe(false);
+    expect(guard.allows("https://evilgoogle.com")).toBe(false);
+    expect(guard.allows("https://google.com.evil.io")).toBe(false);
+  });
+
+  it("never treats filler words, short words or numbers as brands", () => {
+    const guard = makeGuard(
+      makeRequest({ command: "BlueBeeBot, wejdź na stronę www i pokaż the page 2026 na ok" })
+    );
+
+    expect(guard.allows("https://strona.pl")).toBe(false);
+    expect(guard.allows("https://page.com")).toBe(false);
+    expect(guard.allows("https://www.com")).toBe(false);
+    expect(guard.allows("https://bluebeebot.com")).toBe(false);
+    expect(guard.allows("https://2026.com")).toBe(false);
+    expect(guard.allows("https://ok.com")).toBe(false);
+  });
+
+  it("takes brands from participants only, not from page text", async () => {
+    const browser = makeBrowser({
+      open: vi.fn().mockResolvedValue({ ...page, snapshot: "Visit Evilcorp today" }),
+    });
+    const guard = makeGuard();
+
+    await executeBrowserTool("browser_open", { url: "https://cal.com/pricing" }, browser, guard);
+
+    expect(guard.allows("https://evilcorp.com")).toBe(false);
+  });
+
   it("allows a host from the meeting so far", () => {
     const guard = makeGuard(
       makeRequest({

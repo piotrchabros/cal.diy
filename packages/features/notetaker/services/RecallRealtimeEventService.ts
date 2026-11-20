@@ -1,5 +1,10 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
-import type { IMeetingAgent, MeetingAgentLine, MeetingAgentSource } from "../agent/IMeetingAgent";
+import type {
+  IMeetingAgent,
+  MeetingAgentLine,
+  MeetingAgentRunResult,
+  MeetingAgentSource,
+} from "../agent/IMeetingAgent";
 import { MeetingAgentStateStore } from "../agent/MeetingAgentStateStore";
 import {
   chatMessageToPlainText,
@@ -25,6 +30,27 @@ import type {
 
 const COMMAND_LIMIT_MESSAGE = "Command limit reached for this meeting.";
 const AGENT_FAILURE_MESSAGE = "Sorry, I could not complete that.";
+const ACK_MESSAGE = "On it…";
+const POLISH_ACK_MESSAGE = "Już się tym zajmuję…";
+
+const POLISH_DIACRITICS = /[ąćęłńóśźż]/i;
+const POLISH_WORDS = new Set([
+  "czy",
+  "jak",
+  "jest",
+  "nie",
+  "się",
+  "proszę",
+  "pokaż",
+  "otwórz",
+  "znajdź",
+  "sprawdź",
+  "zrób",
+  "podaj",
+  "gdzie",
+  "kiedy",
+  "ile",
+]);
 
 const LIVE_STATUSES = new Set<NotetakerSessionRecord["status"]>(["WAITING_TO_BE_ADMITTED", "TRANSCRIBING"]);
 
@@ -36,7 +62,16 @@ type AgentRunContext = {
   speakerName: string | null;
   source: MeetingAgentSource;
   recentLines: MeetingAgentLine[];
+  enqueuedAt: number;
 };
+
+function looksPolish(text: string): boolean {
+  if (POLISH_DIACRITICS.test(text)) return true;
+  return text
+    .toLowerCase()
+    .split(/[^a-ząćęłńóśźż]+/)
+    .some((word) => POLISH_WORDS.has(word));
+}
 
 function getErrorKind(error: unknown): string {
   return getRecallApiErrorInfo(error)?.kind ?? "UNKNOWN";
@@ -58,6 +93,8 @@ function getEventText(envelope: RecallRealtimeEnvelope): { source: MeetingAgentS
 export const MEETING_AGENT_COMMANDS_PER_MINUTE = 4;
 
 export const MAX_SPEECH_WAIT_MS = 45_000;
+
+export const DEFAULT_ACK_DELAY_MS = 4_000;
 
 export type RecallRealtimeOutcome =
   | "DISABLED"
@@ -90,14 +127,22 @@ export class RecallRealtimeEventService {
 
   private readonly sleep: (ms: number) => Promise<void>;
 
-  // store, now and sleep stay out of the deps map because bindModuleToClassOnToken requires every deps key to be bound.
+  private readonly ackDelayMs: number;
+
+  // store, now, sleep and ackDelayMs stay out of the deps map because bindModuleToClassOnToken requires every deps key to be bound.
   constructor(
     private readonly deps: IRecallRealtimeEventServiceDeps,
-    options: { store?: MeetingAgentStateStore; now?: () => Date; sleep?: (ms: number) => Promise<void> } = {}
+    options: {
+      store?: MeetingAgentStateStore;
+      now?: () => Date;
+      sleep?: (ms: number) => Promise<void>;
+      ackDelayMs?: number;
+    } = {}
   ) {
     this.store = options.store ?? new MeetingAgentStateStore();
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.ackDelayMs = options.ackDelayMs ?? DEFAULT_ACK_DELAY_MS;
   }
 
   async handle(envelope: RecallRealtimeEnvelope, deliveryId: string | null): Promise<RecallRealtimeOutcome> {
@@ -182,8 +227,18 @@ export class RecallRealtimeEventService {
       return "RATE_LIMITED";
     }
 
+    const enqueuedAt = this.now().getTime();
     await this.enqueue(botId, () =>
-      this.runAgent({ agent: meetingAgent, botId, sessionId, command, speakerName, source, recentLines })
+      this.runAgent({
+        agent: meetingAgent,
+        botId,
+        sessionId,
+        command,
+        speakerName,
+        source,
+        recentLines,
+        enqueuedAt,
+      })
     );
     return "HANDLED";
   }
@@ -211,8 +266,40 @@ export class RecallRealtimeEventService {
     const { recallClient, logger } = this.deps;
     const { agent, botId, sessionId, source } = context;
     const speak = source === "SPEECH" && this.deps.speechSynthesizer !== null;
+    const startedAt = this.now().getTime();
+    const queuedMs = startedAt - context.enqueuedAt;
+    const ackMessage = looksPolish(context.command) ? POLISH_ACK_MESSAGE : ACK_MESSAGE;
+
+    // Long runs (browser mode can take minutes) leave the meeting thinking the bot did not hear,
+    // so a run that stays silent past the delay posts one short acknowledgement first.
+    let acked = false;
+    let replied = false;
+    let ackTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingAck: Promise<void> = Promise.resolve();
+    const postAck = () => {
+      ackTimer = null;
+      if (replied || acked) return;
+      acked = true;
+      // The ack goes through postChatMessage so its echo is ignored, but it is not an AGENT line.
+      pendingAck = this.postBestEffort(botId, sessionId, ackMessage).then((posted) => {
+        acked = posted;
+      });
+    };
+    const cancelAck = () => {
+      if (ackTimer) clearTimeout(ackTimer);
+      ackTimer = null;
+    };
+
+    if (queuedMs > this.ackDelayMs) {
+      postAck();
+      await pendingAck;
+    } else {
+      ackTimer = setTimeout(postAck, this.ackDelayMs);
+    }
+
+    let result: MeetingAgentRunResult | null = null;
     try {
-      const result = await agent.run(
+      result = await agent.run(
         {
           command: context.command,
           speakerName: context.speakerName,
@@ -221,6 +308,10 @@ export class RecallRealtimeEventService {
         },
         {
           sendChatMessage: async (text) => {
+            replied = true;
+            cancelAck();
+            // An ack already in flight must land before the reply so chat reads in order.
+            await pendingAck;
             const reply = stripLeadingAgentName(text);
             for (const part of splitChatMessage(reply)) {
               await this.postChatMessage(botId, part);
@@ -236,12 +327,8 @@ export class RecallRealtimeEventService {
           browser: this.deps.agentBrowser?.forBot(botId) ?? null,
         }
       );
-      const runLog = { botId, sessionId, outcome: result.outcome, kind: source };
-      if (result.outcome === "COMPLETED") {
-        logger.info("Meeting agent run finished", runLog);
-      } else {
-        logger.warn("Meeting agent run did not complete", runLog);
-      }
+      cancelAck();
+      await pendingAck;
       if (result.outcome === "FAILED" || result.outcome === "LOOP_LIMIT") {
         await this.postBestEffort(botId, sessionId, AGENT_FAILURE_MESSAGE);
       }
@@ -251,6 +338,20 @@ export class RecallRealtimeEventService {
         sessionId,
         outcome: "FAILED",
         kind: getErrorKind(error),
+      });
+    } finally {
+      cancelAck();
+      await pendingAck;
+      // Production logs keep only warn and above, so every run's outcome is logged at warn, never its text.
+      logger.warn("Meeting agent run", {
+        botId,
+        sessionId,
+        kind: source,
+        outcome: result?.outcome ?? "FAILED",
+        ...(result ? { iterations: result.iterations } : {}),
+        durationMs: this.now().getTime() - startedAt,
+        queuedMs,
+        acked,
       });
     }
   }
@@ -281,15 +382,17 @@ export class RecallRealtimeEventService {
     }
   }
 
-  private async postBestEffort(botId: string, sessionId: string, message: string): Promise<void> {
+  private async postBestEffort(botId: string, sessionId: string, message: string): Promise<boolean> {
     try {
       await this.postChatMessage(botId, message);
+      return true;
     } catch (error) {
       this.deps.logger.warn("Failed to post a meeting agent notice", {
         botId,
         sessionId,
         kind: getErrorKind(error),
       });
+      return false;
     }
   }
 }

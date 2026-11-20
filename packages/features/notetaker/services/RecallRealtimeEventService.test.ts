@@ -1,5 +1,5 @@
 import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.service";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IMeetingAgent, MeetingAgentActions, MeetingAgentRunResult } from "../agent/IMeetingAgent";
 import { MeetingAgentStateStore } from "../agent/MeetingAgentStateStore";
 import type {
@@ -591,11 +591,209 @@ describe("RecallRealtimeEventService", () => {
 
     await service.handle(chatEnvelope("BlueBeeBot, summarise"), "d-1");
 
-    expect(logger.warn).toHaveBeenCalledWith("Meeting agent run did not complete", {
+    expect(logger.warn).toHaveBeenCalledWith("Meeting agent run", {
       botId: BOT_ID,
       sessionId: SESSION_ID,
-      outcome: "LOOP_LIMIT",
       kind: "CHAT",
+      outcome: "LOOP_LIMIT",
+      iterations: 8,
+      durationMs: 0,
+      queuedMs: 0,
+      acked: false,
+    });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs each run's duration and queue time at warn without the text", async () => {
+    const { service, run, logger, advance } = setup();
+    const first = createDeferred<MeetingAgentRunResult>();
+    run.mockReturnValueOnce(first.promise).mockImplementationOnce(async () => {
+      advance(1_500);
+      return { outcome: "COMPLETED", iterations: 3, chatMessagesSent: 1 };
+    });
+
+    const firstHandle = service.handle(chatEnvelope("BlueBeeBot, summarise the budget"), "d-1");
+    const secondHandle = service.handle(chatEnvelope("BlueBeeBot, list the actions", BOB), "d-2");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    advance(2_000);
+    first.resolve(COMPLETED);
+    await Promise.all([firstHandle, secondHandle]);
+
+    expect(logger.warn).toHaveBeenNthCalledWith(1, "Meeting agent run", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      kind: "CHAT",
+      outcome: "COMPLETED",
+      iterations: 1,
+      durationMs: 2_000,
+      queuedMs: 0,
+      acked: false,
+    });
+    expect(logger.warn).toHaveBeenNthCalledWith(2, "Meeting agent run", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      kind: "CHAT",
+      outcome: "COMPLETED",
+      iterations: 3,
+      durationMs: 1_500,
+      queuedMs: 2_000,
+      acked: false,
+    });
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("budget");
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("actions");
+  });
+
+  it("logs a thrown run as failed alongside its error kind", async () => {
+    const { service, run, logger } = setup();
+    run.mockRejectedValueOnce(new Error("model unavailable"));
+
+    await service.handle(chatEnvelope("BlueBeeBot, summarise"), "d-1");
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Meeting agent run",
+      expect.objectContaining({ outcome: "FAILED", acked: false, queuedMs: 0, durationMs: 0 })
+    );
+    expect(
+      logger.warn.mock.calls.find(([message]) => message === "Meeting agent run")?.[1]
+    ).not.toHaveProperty("iterations");
+  });
+
+  describe("acknowledgement", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function replyAfter(run: ReturnType<typeof setup>["run"], gate: Promise<void>, reply: string) {
+      run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+        await gate;
+        await actions.sendChatMessage(reply);
+        return COMPLETED;
+      });
+    }
+
+    it("posts one short ack in chat when the run stays silent past the delay", async () => {
+      vi.useFakeTimers();
+      const { service, run, recallClient, synthesize, logger } = setup({ voice: true });
+      const gate = createDeferred<void>();
+      replyAfter(run, gate.promise, "Here is the answer");
+
+      const handled = service.handle(speechEnvelope("BlueBeeBot, open the report"), null);
+      await vi.advanceTimersByTimeAsync(3_999);
+      expect(sentMessages(recallClient)).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sentMessages(recallClient)).toEqual(["On it…"]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(sentMessages(recallClient)).toEqual(["On it…"]);
+
+      gate.resolve();
+      await expect(handled).resolves.toBe("HANDLED");
+      expect(sentMessages(recallClient)).toEqual(["On it…", "Here is the answer"]);
+      expect(synthesize).toHaveBeenCalledTimes(1);
+      expect(synthesize).toHaveBeenCalledWith("Here is the answer");
+      expect(logger.warn).toHaveBeenCalledWith("Meeting agent run", expect.objectContaining({ acked: true }));
+    });
+
+    it("acks in Polish when the command looks Polish", async () => {
+      vi.useFakeTimers();
+      const { service, run, recallClient } = setup();
+      const gate = createDeferred<void>();
+      replyAfter(run, gate.promise, "Gotowe");
+
+      const handled = service.handle(
+        chatEnvelope("BlueBeeBot, pokaz mi raport, prosze. Czy jest gotowy"),
+        "d-1"
+      );
+      await vi.advanceTimersByTimeAsync(4_000);
+      gate.resolve();
+      await handled;
+
+      expect(sentMessages(recallClient)).toEqual(["Już się tym zajmuję…", "Gotowe"]);
+    });
+
+    it("does not ack when the reply comes before the delay", async () => {
+      vi.useFakeTimers();
+      const { service, run, recallClient, logger } = setup();
+      const gate = createDeferred<void>();
+      const finish = createDeferred<MeetingAgentRunResult>();
+      run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+        await gate.promise;
+        await actions.sendChatMessage("Quick answer");
+        return finish.promise;
+      });
+
+      const handled = service.handle(chatEnvelope("BlueBeeBot, open the report"), "d-1");
+      await vi.advanceTimersByTimeAsync(1_000);
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(10_000);
+      finish.resolve(COMPLETED);
+      await handled;
+
+      expect(sentMessages(recallClient)).toEqual(["Quick answer"]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Meeting agent run",
+        expect.objectContaining({ acked: false })
+      );
+    });
+
+    it("does not record the ack as an agent line and ignores its echo", async () => {
+      vi.useFakeTimers();
+      const { service, run, advance } = setup();
+      const gate = createDeferred<void>();
+      replyAfter(run, gate.promise, "Answer one");
+
+      const handled = service.handle(chatEnvelope("BlueBeeBot, open the report"), "d-1");
+      await vi.advanceTimersByTimeAsync(4_000);
+      gate.resolve();
+      await handled;
+
+      advance(1_000);
+      await expect(service.handle(chatEnvelope("On it…", BOB), "d-2")).resolves.toBe("IGNORED");
+      advance(1_000);
+      await service.handle(chatEnvelope("BlueBeeBot, second question", BOB), "d-3");
+
+      expect(run.mock.calls[1][0].recentLines.map((line) => [line.source, line.text])).toEqual([
+        ["CHAT", "BlueBeeBot, open the report"],
+        ["AGENT", "Answer one"],
+      ]);
+    });
+
+    it("acks a queued command as soon as its run starts when it waited longer than the delay", async () => {
+      const { service, run, recallClient, advance, logger } = setup();
+      const first = createDeferred<MeetingAgentRunResult>();
+      run.mockReturnValueOnce(first.promise).mockImplementationOnce(async () => {
+        expect(sentMessages(recallClient)).toEqual(["Już się tym zajmuję…"]);
+        return COMPLETED;
+      });
+
+      const firstHandle = service.handle(chatEnvelope("BlueBeeBot, task one"), "d-1");
+      const secondHandle = service.handle(chatEnvelope("BlueBeeBot, pokaż agendę", BOB), "d-2");
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      advance(5_000);
+      first.resolve(COMPLETED);
+      await Promise.all([firstHandle, secondHandle]);
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(sentMessages(recallClient)).toEqual(["Już się tym zajmuję…"]);
+      expect(logger.warn).toHaveBeenLastCalledWith(
+        "Meeting agent run",
+        expect.objectContaining({ queuedMs: 5_000, acked: true })
+      );
+    });
+
+    it("does not ack a queued command that waited less than the delay", async () => {
+      const { service, run, recallClient, advance } = setup();
+      const first = createDeferred<MeetingAgentRunResult>();
+      run.mockReturnValueOnce(first.promise);
+
+      const firstHandle = service.handle(chatEnvelope("BlueBeeBot, task one"), "d-1");
+      const secondHandle = service.handle(chatEnvelope("BlueBeeBot, task two", BOB), "d-2");
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      advance(3_000);
+      first.resolve(COMPLETED);
+      await Promise.all([firstHandle, secondHandle]);
+
+      expect(sentMessages(recallClient)).toEqual([]);
     });
   });
 
