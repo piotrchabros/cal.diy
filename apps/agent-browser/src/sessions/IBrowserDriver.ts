@@ -15,6 +15,8 @@ interface BrowserSessionHooks {
 interface IBrowserSession {
   perform(action: AgentBrowserAction): Promise<ActionResult>;
   currentPage(): PageInfo;
+  // True once the page is gone for good, such as after a browser crash, even if dispose was never called.
+  isClosed(): boolean;
   dispose(): Promise<void>;
 }
 

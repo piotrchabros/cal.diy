@@ -193,6 +193,40 @@ describe("SessionManager", () => {
       expect(driver.lastSession("bot2")?.disposed).toBe(true);
     });
 
+    it("replaces a session whose browser closed on the next goto, keeping viewers attached", async () => {
+      const ws = new FakeSocket();
+      hub.add("bot1", ws);
+      await manager.perform("bot1", { type: "goto", url: "https://example.com/" });
+      const crashed = driver.lastSession("bot1");
+      crashed?.crash();
+
+      const state = await manager.perform("bot1", { type: "goto", url: "https://example.org/" });
+
+      expect(state).toMatchObject({ created: true, url: "https://example.org/" });
+      expect(crashed?.disposed).toBe(true);
+      expect(driver.sessions).toHaveLength(2);
+      expect(manager.stats().sessions).toBe(1);
+      expect(ws.closed).toBe(false);
+      expect(ws.texts().slice(-3)).toEqual([
+        { t: "state", state: "waiting" },
+        { t: "state", state: "live" },
+        { t: "page", url: "https://example.org/", title: "Title of https://example.org/" },
+      ]);
+    });
+
+    it("refuses other actions once the browser closed so the agent opens a page again", async () => {
+      await manager.perform("bot1", { type: "goto", url: "https://example.com/" });
+      const crashed = driver.lastSession("bot1");
+      crashed?.crash();
+
+      await expectActionError(manager.perform("bot1", { type: "click", ref: "e1" }), "SESSION_NOT_FOUND");
+
+      expect(crashed?.disposed).toBe(true);
+      expect(crashed?.performed).toHaveLength(1);
+      expect(manager.stats().sessions).toBe(0);
+      expect(driver.sessions).toHaveLength(1);
+    });
+
     it("maps a driver failure to INTERNAL without leaking its message", async () => {
       driver.failNextCreate(new Error("browserType.launch: Executable doesn't exist at /secret/path"));
 
@@ -344,6 +378,20 @@ describe("SessionManager", () => {
 
       await manager.perform("bot1", { type: "goto", url: "https://example.com/" });
       expect(ws.texts().at(-2)).toEqual({ t: "state", state: "live" });
+    });
+
+    it("reaps a session whose browser closed even while watched, and leaves viewers waiting", async () => {
+      const ws = new FakeSocket();
+      hub.add("bot1", ws);
+      await manager.perform("bot1", { type: "goto", url: "https://example.com/" });
+      driver.lastSession("bot1")?.crash();
+
+      await manager.reap();
+
+      expect(manager.stats().sessions).toBe(0);
+      expect(driver.lastSession("bot1")?.disposed).toBe(true);
+      expect(ws.closed).toBe(false);
+      expect(ws.texts().at(-1)).toEqual({ t: "state", state: "waiting" });
     });
 
     it("forgets tombstones once every token they could revoke has expired", async () => {
