@@ -1,0 +1,29 @@
+[Unit]
+Description=cal.diy agent browser (Playwright in Docker)
+# Managed independently of the web blue/green swap. Without the firewall unit the container must not
+# start: the browser would reach the host and private networks.
+After=docker.service caldiy-agent-browser-firewall.service
+Requires=docker.service caldiy-agent-browser-firewall.service
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f caldiy-agent-browser
+# Chromium runs without its own sandbox here (see the Dockerfile), so the container is the boundary:
+# non-root, no capabilities, read-only root with small tmpfs mounts for HOME and /tmp, bounded memory,
+# CPU and pids, default seccomp, ports published on loopback only, and the firewalled bridge network.
+ExecStart=/usr/bin/docker run --rm --name caldiy-agent-browser \
+  --network caldiy-agent-browser --dns 1.1.1.1 --dns 9.9.9.9 \
+  -p 127.0.0.1:4410:4410 -p 127.0.0.1:4411:4411 \
+  --env-file /etc/caldiy/agent-browser.env \
+  --init --user pwuser --cap-drop ALL --security-opt no-new-privileges:true \
+  --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+  --tmpfs /home/pwuser:rw,nosuid,nodev,size=256m,mode=1777 --shm-size 1g \
+  --memory 8g --memory-swap 8g --cpus 6 --pids-limit 2048 \
+  caldiy-agent-browser:current
+# The service closes contexts on SIGTERM and forces its own exit after 10 s.
+ExecStop=/usr/bin/docker stop -t 20 caldiy-agent-browser
+TimeoutStopSec=40
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
