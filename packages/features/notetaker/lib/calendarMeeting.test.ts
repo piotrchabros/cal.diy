@@ -65,8 +65,8 @@ describe("decideCalendarEvent", () => {
   });
 
   it("skips a missing self response when someone else organizes", () => {
-    expect(decide(buildEvent({ selfResponse: null }))).toEqual(skipped("NOT_ACCEPTED"));
-    expect(decide(buildEvent({ selfResponse: null, organizerEmail: null }))).toEqual(skipped("NOT_ACCEPTED"));
+    expect(decide(buildEvent({ selfResponse: null }))).toEqual(skipped("NOT_INVITED"));
+    expect(decide(buildEvent({ selfResponse: null, organizerEmail: null }))).toEqual(skipped("NOT_INVITED"));
   });
 
   it("skips cancelled events", () => {
@@ -90,8 +90,30 @@ describe("decideCalendarEvent", () => {
     expect(decide(buildEvent({ selfResponse: "declined" }))).toEqual(skipped("DECLINED"));
   });
 
-  it.each(["tentative", "needsAction"] as const)("skips %s events", (selfResponse) => {
-    expect(decide(buildEvent({ selfResponse }))).toEqual(skipped("NOT_ACCEPTED"));
+  it.each(["tentative", "needsAction"] as const)("joins %s events", (selfResponse) => {
+    expect(decide(buildEvent({ selfResponse }))).toEqual({
+      join: true,
+      platform: "GOOGLE_MEET",
+      meetingUrl: MEET,
+      meetingKey: `GOOGLE_MEET:${MEET}`,
+    });
+  });
+
+  it.each([
+    "tentative",
+    "needsAction",
+  ] as const)("still skips %s events without other attendees or a supported link", (selfResponse) => {
+    expect(decide(buildEvent({ selfResponse, attendeeEmails: ["me@example.com"] }))).toEqual(
+      skipped("NO_OTHER_ATTENDEES")
+    );
+    expect(decide(buildEvent({ selfResponse, candidateLinks: [] }))).toEqual(skipped("NO_SUPPORTED_LINK"));
+  });
+
+  it("still skips cancelled or ended tentative and unanswered events", () => {
+    expect(decide(buildEvent({ selfResponse: "tentative", status: "cancelled" }))).toEqual(
+      skipped("CANCELLED")
+    );
+    expect(decide(buildEvent({ selfResponse: "needsAction", end: NOW }))).toEqual(skipped("ENDED"));
   });
 
   it("skips events with no attendee other than the user, ignoring email case", () => {
