@@ -28,6 +28,8 @@ const DEFAULT_MAX_VIEWERS = 50;
 // keeps the server bounded and the picture only ever lags by what is already buffered.
 const DEFAULT_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 const NORMAL_CLOSURE = 1000;
+// "Service Restart": the viewer page reconnects and tells participants the browser restarted.
+const SERVICE_RESTART = 1012;
 
 class ViewerHub {
   private readonly channels = new Map<string, Channel>();
@@ -50,7 +52,7 @@ class ViewerHub {
 
   // Returns false when a cap is reached; the caller rejects the viewer before upgrading if it can.
   add(botId: string, ws: ViewerSocket): boolean {
-    if (this.count(botId) >= this.maxViewersPerBot || this.total() >= this.maxViewers) return false;
+    if (!this.canAdd(botId)) return false;
 
     const channel = this.channels.get(botId) ?? this.createChannel(botId, "waiting");
     channel.viewers.add(ws);
@@ -68,6 +70,10 @@ class ViewerHub {
 
     this.logger.debug("viewer joined", { botId, viewers: channel.viewers.size });
     return true;
+  }
+
+  canAdd(botId: string): boolean {
+    return this.count(botId) < this.maxViewersPerBot && this.total() < this.maxViewers;
   }
 
   count(botId: string): number {
@@ -115,6 +121,16 @@ class ViewerHub {
     this.channels.delete(botId);
     for (const ws of channel.viewers) ws.close(NORMAL_CLOSURE, "closed");
     channel.viewers.clear();
+  }
+
+  // On shutdown no `closed` state is sent, so viewers keep retrying until the service is back.
+  closeEveryViewer(): void {
+    const channels = [...this.channels.values()];
+    this.channels.clear();
+    for (const channel of channels) {
+      for (const ws of channel.viewers) ws.close(SERVICE_RESTART, "restarting");
+      channel.viewers.clear();
+    }
   }
 
   private createChannel(botId: string, state: ViewerState): Channel {

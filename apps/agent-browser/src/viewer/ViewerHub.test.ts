@@ -225,4 +225,33 @@ describe("ViewerHub", () => {
     expect(next.messages()).toEqual([{ t: "hello", width: 1280, height: 680, state: "waiting" }]);
     expect(next.frames()).toEqual([]);
   });
+
+  it("canAdd reports whether another viewer of the bot fits under both caps", () => {
+    const hub = createHub({ maxViewersPerBot: 1, maxViewers: 2 });
+    expect(hub.canAdd("bot1")).toBe(true);
+
+    hub.add("bot1", new FakeSocket());
+    expect(hub.canAdd("bot1")).toBe(false);
+    expect(hub.canAdd("bot2")).toBe(true);
+
+    hub.add("bot2", new FakeSocket());
+    expect(hub.canAdd("bot3")).toBe(false);
+  });
+
+  it("closeEveryViewer closes all viewers as a restart without a closed state", () => {
+    const hub = createHub();
+    const a = new FakeSocket();
+    const b = new FakeSocket();
+    hub.add("bot1", a);
+    hub.add("bot2", b);
+    hub.setState("bot1", "live");
+
+    hub.closeEveryViewer();
+
+    for (const ws of [a, b]) {
+      expect(ws.closedWith).toEqual({ code: 1012, reason: "restarting" });
+      expect(ws.messages()).not.toContainEqual({ t: "state", state: "closed" });
+    }
+    expect(hub.total()).toBe(0);
+  });
 });
