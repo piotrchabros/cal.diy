@@ -107,7 +107,8 @@ export const recallWebhookEnvelopeSchema = z.object({
 });
 export type RecallWebhookEnvelope = z.infer<typeof recallWebhookEnvelopeSchema>;
 
-// One envelope covers both realtime events: transcript.data carries `words`, chat_message carries the inner `data`.
+// One envelope covers every realtime event: transcript.data and transcript.partial_data carry `words`,
+// chat_message carries the inner `data`.
 export const recallRealtimeEnvelopeSchema = z.object({
   event: z.string(),
   data: z.object({
@@ -128,7 +129,8 @@ export type RecallRealtimeEnvelope = z.infer<typeof recallRealtimeEnvelopeSchema
 export type RecallRealtimeEventName =
   | "participant_events.chat_message"
   | "participant_events.speech_on"
-  | "transcript.data";
+  | "transcript.data"
+  | "transcript.partial_data";
 
 export type RecallStreamingTranscriptProvider =
   | {

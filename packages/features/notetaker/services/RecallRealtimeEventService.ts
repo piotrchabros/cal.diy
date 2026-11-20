@@ -72,6 +72,24 @@ type VoiceRun = {
   interrupted: boolean;
 };
 
+type Playback = {
+  issuerParticipantId: number;
+  runId: number;
+  startedAt: number;
+  until: number;
+};
+
+type InterruptSignal = "speech_on" | "partial";
+
+function getInterruptSignal(envelope: RecallRealtimeEnvelope): InterruptSignal | null {
+  if (envelope.event === "participant_events.speech_on") return "speech_on";
+  if (envelope.event === "transcript.partial_data") {
+    const words = envelope.data.data?.words ?? [];
+    return words.some((word) => word.text.trim() !== "") ? "partial" : null;
+  }
+  return null;
+}
+
 function looksPolish(text: string): boolean {
   if (POLISH_DIACRITICS.test(text)) return true;
   return text
@@ -126,10 +144,11 @@ export class RecallRealtimeEventService {
   // The agent runs for one bot are serialized so replies to consecutive commands never interleave in chat.
   private readonly queues = new Map<string, Promise<void>>();
 
-  // Epoch ms at which the bot's last spoken clip ends, so the next clip starts after it.
-  private readonly speakingUntil = new Map<string, number>();
+  // The clip each bot is playing. It outlives the run that sent it, because Recall plays a clip for seconds
+  // after outputAudio returns; its `until` also makes the next clip start after it.
+  private readonly playback = new Map<string, Playback>();
 
-  // The spoken run in progress per bot, so its issuer can cut the reply short by starting to talk.
+  // The spoken run in progress per bot, so an interrupted run skips the clips it has not played yet.
   private readonly voiceRuns = new Map<string, VoiceRun>();
 
   private nextRunId = 0;
@@ -171,8 +190,10 @@ export class RecallRealtimeEventService {
     if (!botId || typeof sessionId !== "string" || !participant) return "IGNORED";
 
     // Handled before the queue on purpose: it must act while the run it interrupts is still in progress.
-    if (envelope.event === "participant_events.speech_on") {
-      return this.interruptBestEffort(botId, sessionId, participant.id);
+    // Partial transcripts arrive many times per utterance, so they never reach the session lookup below.
+    if (envelope.event === "participant_events.speech_on" || envelope.event === "transcript.partial_data") {
+      const signal = getInterruptSignal(envelope);
+      return signal ? this.interruptBestEffort(botId, sessionId, participant.id, signal) : "IGNORED";
     }
 
     const event = getEventText(envelope);
@@ -276,7 +297,7 @@ export class RecallRealtimeEventService {
     } finally {
       if (this.queues.get(botId) === tail) {
         this.queues.delete(botId);
-        if ((this.speakingUntil.get(botId) ?? 0) <= this.now().getTime()) this.speakingUntil.delete(botId);
+        if ((this.playback.get(botId)?.until ?? 0) <= this.now().getTime()) this.playback.delete(botId);
       }
     }
   }
@@ -284,26 +305,35 @@ export class RecallRealtimeEventService {
   private async interruptBestEffort(
     botId: string,
     sessionId: string,
-    participantId: number
+    participantId: number,
+    signal: InterruptSignal
   ): Promise<RecallRealtimeOutcome> {
+    const playback = this.playback.get(botId);
+    const now = this.now().getTime();
+    // Only a playing clip is cut: the issuer's speech_on often lands just after their own command, before
+    // the reply plays, and cancelling then left the meeting with chat replies and no voice.
+    if (!playback || playback.issuerParticipantId !== participantId || now >= playback.until)
+      return "IGNORED";
+    // Cleared before the stop request so the signals that follow within the same clip do not stop it again.
+    this.playback.delete(botId);
     const voiceRun = this.voiceRuns.get(botId);
-    if (!voiceRun || voiceRun.issuerParticipantId !== participantId) return "IGNORED";
-    voiceRun.interrupted = true;
+    if (voiceRun?.runId === playback.runId) voiceRun.interrupted = true;
 
-    const wasSpeaking = (this.speakingUntil.get(botId) ?? 0) > this.now().getTime();
-    if (wasSpeaking) {
-      try {
-        await this.deps.recallClient.stopOutputAudio(botId);
-      } catch (error) {
-        this.deps.logger.warn("Failed to stop meeting agent speech", {
-          botId,
-          sessionId,
-          kind: getErrorKind(error),
-        });
-      }
+    try {
+      await this.deps.recallClient.stopOutputAudio(botId);
+    } catch (error) {
+      this.deps.logger.warn("Failed to stop meeting agent speech", {
+        botId,
+        sessionId,
+        kind: getErrorKind(error),
+      });
     }
-    this.speakingUntil.delete(botId);
-    this.deps.logger.warn("Meeting agent speech interrupted", { botId, sessionId, wasSpeaking });
+    this.deps.logger.warn("Meeting agent speech interrupted", {
+      botId,
+      sessionId,
+      signal,
+      msIntoClip: now - playback.startedAt,
+    });
     return "INTERRUPTED";
   }
 
@@ -423,13 +453,19 @@ export class RecallRealtimeEventService {
     if (spoken === "") return;
     try {
       const speech = await speechSynthesizer.synthesize(spoken);
-      const wait = (this.speakingUntil.get(botId) ?? 0) - this.now().getTime();
+      const wait = (this.playback.get(botId)?.until ?? 0) - this.now().getTime();
       // Recall does not document what happens to a clip sent while another plays, so clips never overlap.
       if (wait > 0) await this.sleep(Math.min(wait, MAX_SPEECH_WAIT_MS));
-      // Synthesis and the wait take seconds, during which the issuer may have started talking.
+      // The issuer may have cut an earlier clip of this run during synthesis or the wait.
       if (voiceRun.interrupted) return;
       await recallClient.outputAudio(botId, speech.base64);
-      this.speakingUntil.set(botId, this.now().getTime() + speech.durationMs);
+      const startedAt = this.now().getTime();
+      this.playback.set(botId, {
+        issuerParticipantId: voiceRun.issuerParticipantId,
+        runId: voiceRun.runId,
+        startedAt,
+        until: startedAt + speech.durationMs,
+      });
     } catch (error) {
       logger.warn("Failed to speak a meeting agent reply", {
         botId,
