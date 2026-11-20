@@ -82,9 +82,15 @@ export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): Re
   const realtimeEndpoint = (
     events: RecallRealtimeEventName[]
   ): RecallRecordingConfig["realtime_endpoints"] => [{ type: "webhook", url: agent.realtimeUrl, events }];
-  // speech_on lets the agent stop a spoken reply as soon as a participant starts talking over it.
+  // partial_data and speech_on let the agent stop a spoken reply as soon as a participant starts talking over it,
+  // without waiting for the finalised transcript.
   const speechEvents: RecallRealtimeEventName[] = agent.voice
-    ? ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"]
+    ? [
+        "participant_events.chat_message",
+        "transcript.data",
+        "transcript.partial_data",
+        "participant_events.speech_on",
+      ]
     : ["participant_events.chat_message", "transcript.data"];
   switch (agent.speechProvider) {
     case "DEEPGRAM":

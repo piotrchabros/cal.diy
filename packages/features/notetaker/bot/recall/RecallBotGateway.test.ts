@@ -452,27 +452,37 @@ describe("buildRecallRecordingConfig", () => {
     });
   });
 
-  it("also streams speech_on with Deepgram when the agent has voice, so spoken replies can be interrupted", () => {
+  it("also streams partial transcripts and speech_on with Deepgram when the agent has voice, so spoken replies can be interrupted", () => {
     expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM", true, true)).realtime_endpoints).toStrictEqual([
       {
         type: "webhook",
         url: REALTIME_URL,
-        events: ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"],
+        events: [
+          "participant_events.chat_message",
+          "transcript.data",
+          "transcript.partial_data",
+          "participant_events.speech_on",
+        ],
       },
     ]);
   });
 
-  it("also streams speech_on with Recall's English transcripts when the agent has voice", () => {
+  it("also streams partial transcripts and speech_on with Recall's English transcripts when the agent has voice", () => {
     expect(buildRecallRecordingConfig(buildAgent("RECALLAI_EN", true)).realtime_endpoints).toStrictEqual([
       {
         type: "webhook",
         url: REALTIME_URL,
-        events: ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"],
+        events: [
+          "participant_events.chat_message",
+          "transcript.data",
+          "transcript.partial_data",
+          "participant_events.speech_on",
+        ],
       },
     ]);
   });
 
-  it("streams no speech_on without a speech provider even when the agent has voice", () => {
+  it("streams no partial transcripts or speech_on without a speech provider even when the agent has voice", () => {
     expect(buildRecallRecordingConfig(buildAgent("NONE", true))).toStrictEqual({
       realtime_endpoints: [
         { type: "webhook", url: REALTIME_URL, events: ["participant_events.chat_message"] },
