@@ -128,7 +128,9 @@ export type RecallRealtimeEnvelope = z.infer<typeof recallRealtimeEnvelopeSchema
 export type RecallRealtimeEventName = "participant_events.chat_message" | "transcript.data";
 
 export type RecallStreamingTranscriptProvider =
-  | { deepgram_streaming: { model: "nova-3"; language: "multi"; mip_opt_out: true } }
+  | {
+      deepgram_streaming: { model: "nova-3"; language: "multi"; mip_opt_out: true; keyterm?: string[] };
+    }
   | { recallai_streaming: { mode: "prioritize_low_latency"; language_code: "en" } };
 
 export type RecallRecordingConfig = {

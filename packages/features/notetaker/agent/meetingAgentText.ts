@@ -5,12 +5,13 @@ const DEFAULT_CHAT_MESSAGE_MAX_PARTS = 4;
 const TRUNCATION_MARK = "…";
 export const MAX_SPOKEN_REPLY_CHARS = 600;
 
-// Tolerates the spellings speech-to-text produces for the name ("Blue Bee Bot", "Blu be bot", ...).
+// Tolerates the spellings speech-to-text produces for the name. Seen in Deepgram transcripts of Polish speech:
+// "Blue-Bot", "Blooby Bot", "Blubie Bot", "bluebii bot", "BluebeeBot". The middle "Bee" is optional because it gets dropped.
 // Patterns are strings rather than literals because a regex literal with the `u` flag does not compile under the ES5 target.
-const NAME_STEM_PATTERN_SOURCE = "blue?[\\s\\-_.]*b(?:ee|e|i|y)[\\s\\-_.]*";
+const NAME_STEM_PATTERN_SOURCE = "bl(?:ue?|oo|ou)[\\s\\-_.]*(?:b(?:ee|ea|ie|ii|i|e|y|ey)[\\s\\-_.]*)?";
 const NAME_PATTERN_SOURCE = `${NAME_STEM_PATTERN_SOURCE}bot`;
 // Polish speakers inflect the name ("zapytajmy BlueBeeBota", "dzięki BlueBeeBocie").
-const INFLECTED_NAME_PATTERN_SOURCE = `${NAME_STEM_PATTERN_SOURCE}(?:bot(?:a|em|owi|y)?|bocie)`;
+const INFLECTED_NAME_PATTERN_SOURCE = `${NAME_STEM_PATTERN_SOURCE}bo(?:t(?:a|em|owi|y)?|cie)`;
 const WORD_CHAR_CLASS = "[\\p{L}\\p{N}]";
 const SPACE_OR_PUNCTUATION_CLASS = "[\\s\\p{P}]";
 const SPACE_PUNCTUATION_OR_SYMBOL_CLASS = "[\\s\\p{P}\\p{S}]";
@@ -25,6 +26,7 @@ const MENTION_PATTERN: RegExp = new RegExp(
 const ONLY_PUNCTUATION_PATTERN: RegExp = new RegExp(`^${SPACE_PUNCTUATION_OR_SYMBOL_CLASS}*$`, "u");
 const LEADING_PUNCTUATION_PATTERN: RegExp = new RegExp(`^${SPACE_OR_PUNCTUATION_CLASS}+`, "u");
 const MEANINGFUL_CHAR_PATTERN: RegExp = new RegExp(WORD_CHAR_CLASS, "u");
+const NEAR_MISS_NAME_PATTERN: RegExp = new RegExp(`(?<!${WORD_CHAR_CLASS})bl[\\s\\S]{0,12}bo`, "iu");
 
 const HTML_ENTITIES: ReadonlyArray<[RegExp, string]> = [
   [/&lt;/g, "<"],
@@ -69,6 +71,11 @@ export function parseMeetingAgentTrigger(text: string): { command: string } | nu
     ? after.replace(LEADING_PUNCTUATION_PATTERN, "").trim()
     : removeMention(before, after);
   return { command: MEANINGFUL_CHAR_PATTERN.test(command) ? command : "" };
+}
+
+// Deliberately loose: flags utterances worth logging when the name pattern misses a new transcription variant.
+export function looksLikeAgentNameNearMiss(text: string): boolean {
+  return NEAR_MISS_NAME_PATTERN.test(text);
 }
 
 export function chatMessageToPlainText(raw: string): string {

@@ -3,6 +3,7 @@ import type { IMeetingAgent, MeetingAgentLine, MeetingAgentSource } from "../age
 import { MeetingAgentStateStore } from "../agent/MeetingAgentStateStore";
 import {
   chatMessageToPlainText,
+  looksLikeAgentNameNearMiss,
   parseMeetingAgentTrigger,
   splitChatMessage,
   stripLeadingAgentName,
@@ -128,6 +129,15 @@ export class RecallRealtimeEventService {
       // A speaker who said only the name gets the next utterance treated as the command, because
       // transcription often splits "BlueBeeBot, ... " into two sentences at the pause after the name.
       if (source !== "SPEECH" || !this.store.takePendingTrigger(botId, participant.id, now)) {
+        // Transcription often misspells the agent's name; without this nobody can tell why a command was ignored.
+        if (looksLikeAgentNameNearMiss(text)) {
+          this.deps.logger.warn("Meeting agent ignored a possible mention", {
+            botId,
+            sessionId,
+            kind: source,
+            length: text.length,
+          });
+        }
         return "BUFFERED";
       }
       command = text;
@@ -138,7 +148,10 @@ export class RecallRealtimeEventService {
       command = trigger.command;
     }
 
-    if (this.store.isDuplicateCommand(botId, `${participant.id}`, command, now)) return "DUPLICATE";
+    if (this.store.isDuplicateCommand(botId, `${participant.id}`, command, now)) {
+      this.deps.logger.warn("Meeting agent dropped a duplicate command", { botId, sessionId, kind: source });
+      return "DUPLICATE";
+    }
 
     const session = await sessionRepository.findById(sessionId);
     if (
@@ -157,7 +170,7 @@ export class RecallRealtimeEventService {
       perMeeting: config.agent.maxCommandsPerMeeting,
     });
     if (consumed !== "OK") {
-      this.deps.logger.info("Meeting agent command was rate limited", {
+      this.deps.logger.warn("Meeting agent command was rate limited", {
         botId,
         sessionId,
         outcome: consumed,
@@ -223,7 +236,12 @@ export class RecallRealtimeEventService {
           browser: this.deps.agentBrowser?.forBot(botId) ?? null,
         }
       );
-      logger.info("Meeting agent run finished", { botId, sessionId, outcome: result.outcome, kind: source });
+      const runLog = { botId, sessionId, outcome: result.outcome, kind: source };
+      if (result.outcome === "COMPLETED") {
+        logger.info("Meeting agent run finished", runLog);
+      } else {
+        logger.warn("Meeting agent run did not complete", runLog);
+      }
       if (result.outcome === "FAILED" || result.outcome === "LOOP_LIMIT") {
         await this.postBestEffort(botId, sessionId, AGENT_FAILURE_MESSAGE);
       }
