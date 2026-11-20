@@ -5,6 +5,7 @@ import type {
   RecallBot,
   RecallCreateBotRequest,
   RecallCreateTranscriptRequest,
+  RecallSendChatMessageRequest,
   RecallTranscriptArtifact,
   RecallTranscriptEntry,
 } from "./recallSchemas";
@@ -13,6 +14,7 @@ import {
   recallBotSchema,
   recallTranscriptArtifactSchema,
   recallTranscriptDownloadSchema,
+  recallTranscriptListSchema,
 } from "./recallSchemas";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -81,11 +83,17 @@ export interface IRecallApiClient {
   leaveCall(botId: string): Promise<"OK" | "NOT_FOUND" | "NOT_IN_CALL">;
   /** Only works for bots that have not joined yet. */
   deleteScheduledBot(botId: string): Promise<"OK" | "NOT_FOUND" | "NOT_DELETABLE">;
+  sendChatMessage(botId: string, body: RecallSendChatMessageRequest): Promise<void>;
+  startScreenshare(botId: string, url: string): Promise<void>;
+  /** NOT_ACTIVE on any 4xx (no screenshare is running for the bot). */
+  stopScreenshare(botId: string): Promise<"OK" | "NOT_ACTIVE">;
   createTranscript(recordingId: string, body: RecallCreateTranscriptRequest): Promise<{ id: string }>;
   /** Null on 404. */
   retrieveTranscript(transcriptId: string): Promise<RecallTranscriptArtifact | null>;
   /** The download URL is presigned, so no Authorization header is sent. */
   downloadTranscript(downloadUrl: string): Promise<RecallTranscriptEntry[]>;
+  /** First page only. */
+  listTranscriptsByRecording(recordingId: string): Promise<RecallTranscriptArtifact[]>;
 }
 
 type RequestOptions = {
@@ -223,6 +231,47 @@ export class RecallApiClient implements IRecallApiClient {
     throw this.httpError(response, template);
   }
 
+  async sendChatMessage(botId: string, body: RecallSendChatMessageRequest): Promise<void> {
+    const template = "POST /bot/{id}/send_chat_message/";
+    const response = await this.send({
+      method: "POST",
+      path: `/bot/${encodeURIComponent(botId)}/send_chat_message/`,
+      template,
+      body,
+      idempotent: false,
+      timeoutMs: this.timeoutMs,
+    });
+    this.assertSuccess(response, template);
+  }
+
+  async startScreenshare(botId: string, url: string): Promise<void> {
+    const template = "POST /bot/{id}/output_media/";
+    const response = await this.send({
+      method: "POST",
+      path: `/bot/${encodeURIComponent(botId)}/output_media/`,
+      template,
+      body: { screenshare: { kind: "webpage", config: { url } } },
+      idempotent: false,
+      timeoutMs: this.timeoutMs,
+    });
+    this.assertSuccess(response, template);
+  }
+
+  async stopScreenshare(botId: string): Promise<"OK" | "NOT_ACTIVE"> {
+    const template = "DELETE /bot/{id}/output_media/";
+    const response = await this.send({
+      method: "DELETE",
+      path: `/bot/${encodeURIComponent(botId)}/output_media/`,
+      template,
+      body: { screenshare: true },
+      idempotent: true,
+      timeoutMs: this.timeoutMs,
+    });
+    if (response.status >= 200 && response.status < 300) return "OK";
+    if (response.status >= 400 && response.status < 500) return "NOT_ACTIVE";
+    throw this.httpError(response, template);
+  }
+
   async createTranscript(recordingId: string, body: RecallCreateTranscriptRequest): Promise<{ id: string }> {
     const template = "POST /recording/{id}/create_transcript/";
     const response = await this.send({
@@ -263,6 +312,19 @@ export class RecallApiClient implements IRecallApiClient {
     });
     this.assertSuccess(response, template);
     return this.parse(recallTranscriptDownloadSchema, response.text, template);
+  }
+
+  async listTranscriptsByRecording(recordingId: string): Promise<RecallTranscriptArtifact[]> {
+    const template = "GET /transcript/?recording_id={id}";
+    const response = await this.send({
+      method: "GET",
+      path: `/transcript/?recording_id=${encodeURIComponent(recordingId)}`,
+      template,
+      idempotent: true,
+      timeoutMs: this.timeoutMs,
+    });
+    this.assertSuccess(response, template);
+    return this.parse(recallTranscriptListSchema, response.text, template).results;
   }
 
   private assertSuccess(response: RawResponse, template: string): void {

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { getRecallApiErrorInfo, RecallApiClient } from "./RecallApiClient";
-import type { RecallCreateBotRequest, RecallCreateTranscriptRequest } from "./recallSchemas";
+import type {
+  RecallCreateBotRequest,
+  RecallCreateTranscriptRequest,
+  RecallSendChatMessageRequest,
+} from "./recallSchemas";
 
 const API_KEY = "secret-api-key-123";
 const PRESIGNED_URL = "https://files.example.com/t.json?X-Signature=presigned-secret";
@@ -59,6 +63,8 @@ const transcriptBody: RecallCreateTranscriptRequest = {
   provider: { recallai_async: { language_code: "auto" } },
   diarization: { use_separate_streams_when_available: true },
 };
+
+const chatBody: RecallSendChatMessageRequest = { to: "everyone", message: "Recording has started" };
 
 function headersOf(call: Call): Record<string, string> {
   return call.init.headers as Record<string, string>;
@@ -167,6 +173,66 @@ describe("RecallApiClient requests", () => {
     expect(headersOf(calls[0]).Authorization).toBeUndefined();
   });
 
+  it("sendChatMessage posts the body to the url-encoded bot with auth headers", async () => {
+    const { client, calls } = setup([jsonResponse(200, {})]);
+    await expect(client.sendChatMessage("bot/1 a", chatBody)).resolves.toBeUndefined();
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/bot/bot%2F1%20a/send_chat_message/");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(chatBody);
+    expect(headersOf(calls[0])).toMatchObject({
+      Authorization: API_KEY,
+      accept: "application/json",
+      "content-type": "application/json",
+    });
+  });
+
+  it("startScreenshare posts a webpage screenshare to the url-encoded bot", async () => {
+    const { client, calls } = setup([jsonResponse(200, {})]);
+    await expect(client.startScreenshare("bot/1 a", "https://cal.example/live")).resolves.toBeUndefined();
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/bot/bot%2F1%20a/output_media/");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      screenshare: { kind: "webpage", config: { url: "https://cal.example/live" } },
+    });
+    expect(headersOf(calls[0])).toMatchObject({
+      Authorization: API_KEY,
+      "content-type": "application/json",
+    });
+  });
+
+  it("stopScreenshare deletes the screenshare output and maps statuses", async () => {
+    const { client, calls } = setup([jsonResponse(204, ""), jsonResponse(400, {}), jsonResponse(404, {})]);
+    await expect(client.stopScreenshare("bot/1 a")).resolves.toBe("OK");
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/bot/bot%2F1%20a/output_media/");
+    expect(calls[0].init.method).toBe("DELETE");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ screenshare: true });
+    expect(headersOf(calls[0])).toMatchObject({
+      Authorization: API_KEY,
+      "content-type": "application/json",
+    });
+    await expect(client.stopScreenshare("b")).resolves.toBe("NOT_ACTIVE");
+    await expect(client.stopScreenshare("b")).resolves.toBe("NOT_ACTIVE");
+  });
+
+  it("listTranscriptsByRecording url-encodes the recording id and returns parsed results", async () => {
+    const transcript = {
+      id: "t1",
+      status: { code: "done" },
+      data: { download_url: PRESIGNED_URL },
+      provider: { recallai_async: { language_code: "auto" } },
+    };
+    const { client, calls } = setup([jsonResponse(200, { results: [transcript], next: null })]);
+    await expect(client.listTranscriptsByRecording("rec/1 a")).resolves.toEqual([transcript]);
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/transcript/?recording_id=rec%2F1%20a");
+    expect(calls[0].init.method).toBe("GET");
+    expect(headersOf(calls[0]).Authorization).toBe(API_KEY);
+  });
+
+  it("listTranscriptsByRecording defaults to an empty list when results are missing", async () => {
+    const { client } = setup([jsonResponse(200, { next: null })]);
+    await expect(client.listTranscriptsByRecording("r1")).resolves.toEqual([]);
+  });
+
   it("reports INVALID_RESPONSE for a body that fails the schema", async () => {
     const { client } = setup([jsonResponse(200, { nope: true })]);
     const error = await client.retrieveBot("b").catch((e: unknown) => e);
@@ -254,6 +320,20 @@ describe("RecallApiClient retries", () => {
     expect(second.calls).toHaveLength(1);
   });
 
+  it("does not retry sendChatMessage or startScreenshare after a network error", async () => {
+    const chat = setup([new TypeError("fetch failed")]);
+    const chatError = await chat.client.sendChatMessage("b", chatBody).catch((e: unknown) => e);
+    expect(getRecallApiErrorInfo(chatError)?.kind).toBe("NETWORK");
+    expect(chat.calls).toHaveLength(1);
+
+    const screenshare = setup([new TypeError("fetch failed")]);
+    const screenshareError = await screenshare.client
+      .startScreenshare("b", "https://cal.example/live")
+      .catch((e: unknown) => e);
+    expect(getRecallApiErrorInfo(screenshareError)?.kind).toBe("NETWORK");
+    expect(screenshare.calls).toHaveLength(1);
+  });
+
   it("does not retry createBot after a timeout", async () => {
     vi.useFakeTimers();
     try {
@@ -305,6 +385,15 @@ describe("RecallApiClient retries", () => {
     const del = setup([new TypeError("x"), jsonResponse(204, "")]);
     await expect(del.client.deleteScheduledBot("b")).resolves.toBe("OK");
   });
+
+  it("retries stopScreenshare and listTranscriptsByRecording once after a network error", async () => {
+    const stop = setup([new TypeError("x"), jsonResponse(204, "")]);
+    await expect(stop.client.stopScreenshare("b")).resolves.toBe("OK");
+    expect(stop.calls).toHaveLength(2);
+    const list = setup([new TypeError("x"), jsonResponse(200, { results: [], next: null })]);
+    await expect(list.client.listTranscriptsByRecording("r")).resolves.toEqual([]);
+    expect(list.calls).toHaveLength(2);
+  });
 });
 
 describe("RecallApiClient errors", () => {
@@ -330,6 +419,14 @@ describe("RecallApiClient errors", () => {
       status: 401,
     });
     expect(getRecallApiErrorInfo(await client.leaveCall("b").catch((e: unknown) => e))).toMatchObject({
+      kind: "HTTP",
+      status: 500,
+    });
+  });
+
+  it("throws HTTP when stopScreenshare gets a 5xx", async () => {
+    const { client } = setup([jsonResponse(500, {})]);
+    expect(getRecallApiErrorInfo(await client.stopScreenshare("b").catch((e: unknown) => e))).toMatchObject({
       kind: "HTTP",
       status: 500,
     });

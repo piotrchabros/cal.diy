@@ -20,6 +20,8 @@ const RECALL_REGIONS = ["us-east-1", "us-west-2", "eu-central-1", "ap-northeast-
 type RecallRegion = (typeof RECALL_REGIONS)[number];
 type NotetakerRecallConfig = { apiKey: string; region: RecallRegion; webhookSecret: string };
 
+type NotetakerAgentSpeechProvider = "NONE" | "DEEPGRAM" | "RECALLAI_EN";
+
 type NotetakerConfig = {
   limits: {
     admissionTimeoutSeconds: number;
@@ -57,9 +59,17 @@ type NotetakerConfig = {
   admitPromptEmailsEnabled: boolean;
   // null means neither RECALL_API_KEY nor RECALL_WEBHOOK_VERIFICATION_SECRET is set
   recall: NotetakerRecallConfig | null;
+  // Off unless explicitly enabled; isNotetakerAgentUsable decides whether it can actually run
+  agent: {
+    enabled: boolean;
+    model: string;
+    speechProvider: NotetakerAgentSpeechProvider;
+    maxCommandsPerMeeting: number;
+  };
 };
 
 const DEFAULT_SUMMARY_MODEL = "claude-opus-5-5";
+const DEFAULT_AGENT_MODEL = "claude-opus-5-5";
 const DEFAULT_PLATFORMS: NotetakerPlatformDto[] = ["GOOGLE_MEET"];
 
 const PLATFORMS = ["GOOGLE_MEET", "MICROSOFT_TEAMS"] as const satisfies readonly NotetakerPlatformDto[];
@@ -203,6 +213,23 @@ const configObjectSchema = z.object({
     .enum(RECALL_REGIONS, { errorMap: () => ({ message: `must be one of ${RECALL_REGIONS.join(", ")}` }) })
     .default("eu-central-1"),
   RECALL_WEBHOOK_VERIFICATION_SECRET: recallWebhookSecretSchema,
+  NOTETAKER_AGENT_ENABLED: z
+    .enum(["0", "1", "false", "true", ""])
+    .optional()
+    .transform((value) => value === "1" || value === "true"),
+  NOTETAKER_AGENT_MODEL: z
+    .string()
+    .optional()
+    .transform((value) => value ?? DEFAULT_AGENT_MODEL),
+  NOTETAKER_AGENT_SPEECH_PROVIDER: z
+    .enum(["none", "deepgram", "recallai_en"])
+    .optional()
+    .transform((value): NotetakerAgentSpeechProvider => {
+      if (value === "deepgram") return "DEEPGRAM";
+      if (value === "recallai_en") return "RECALLAI_EN";
+      return "NONE";
+    }),
+  NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING: limitSchema(30),
 });
 
 // Half a Recall setup is unusable, so it is reported at startup instead of surfacing as failed joins.
@@ -276,6 +303,12 @@ function getNotetakerConfig(env: NodeJS.ProcessEnv = process.env): NotetakerConf
             webhookSecret: parsed.RECALL_WEBHOOK_VERIFICATION_SECRET,
           }
         : null,
+    agent: {
+      enabled: parsed.NOTETAKER_AGENT_ENABLED,
+      model: parsed.NOTETAKER_AGENT_MODEL,
+      speechProvider: parsed.NOTETAKER_AGENT_SPEECH_PROVIDER,
+      maxCommandsPerMeeting: parsed.NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING,
+    },
   };
 }
 
@@ -295,6 +328,16 @@ function isNotetakerBotProviderUsable(
   }
 }
 
+// A misconfigured agent is reported as unusable rather than thrown at startup, so it never blocks plain note-taking.
+function isNotetakerAgentUsable(config: NotetakerConfig): boolean {
+  return (
+    config.agent.enabled &&
+    config.botProvider === "RECALL" &&
+    config.recall !== null &&
+    Boolean(config.anthropicApiKey)
+  );
+}
+
 type NotetakerSummaryGeneratorKind = "ANTHROPIC" | "STUB" | "DISABLED";
 
 function getNotetakerSummaryGeneratorKind(
@@ -310,6 +353,7 @@ function getNotetakerSummaryGeneratorKind(
 const NOTETAKER_SWEEP_BATCH_SIZE = 200;
 
 export type {
+  NotetakerAgentSpeechProvider,
   NotetakerConfig,
   NotetakerFakeScenario,
   NotetakerRecallConfig,
@@ -319,6 +363,7 @@ export type {
 export {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
+  isNotetakerAgentUsable,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
   RECALL_REGIONS,
