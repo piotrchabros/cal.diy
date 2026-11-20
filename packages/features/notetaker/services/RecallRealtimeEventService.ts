@@ -6,8 +6,11 @@ import {
   parseMeetingAgentTrigger,
   splitChatMessage,
   stripLeadingAgentName,
+  toSpokenText,
   utteranceWordsToText,
 } from "../agent/meetingAgentText";
+import type { IMeetingAgentSpeechSynthesizer } from "../agent/tts/IMeetingAgentSpeechSynthesizer";
+import { getSpeechSynthesisErrorKind } from "../agent/tts/IMeetingAgentSpeechSynthesizer";
 import type { IRecallApiClient } from "../bot/recall/RecallApiClient";
 import { getRecallApiErrorInfo } from "../bot/recall/RecallApiClient";
 import type { RecallRealtimeEnvelope } from "../bot/recall/recallSchemas";
@@ -52,6 +55,8 @@ function getEventText(envelope: RecallRealtimeEnvelope): { source: MeetingAgentS
 
 export const MEETING_AGENT_COMMANDS_PER_MINUTE = 4;
 
+export const MAX_SPEECH_WAIT_MS = 45_000;
+
 export type RecallRealtimeOutcome =
   | "DISABLED"
   | "IGNORED"
@@ -64,6 +69,7 @@ export interface IRecallRealtimeEventServiceDeps {
   recallClient: IRecallApiClient;
   sessionRepository: INotetakerSessionRepository;
   meetingAgent: IMeetingAgent | null;
+  speechSynthesizer: IMeetingAgentSpeechSynthesizer | null;
   config: NotetakerConfig;
   logger: ISimpleLogger;
 }
@@ -72,17 +78,23 @@ export class RecallRealtimeEventService {
   // The agent runs for one bot are serialized so replies to consecutive commands never interleave in chat.
   private readonly queues = new Map<string, Promise<void>>();
 
+  // Epoch ms at which the bot's last spoken clip ends, so the next clip starts after it.
+  private readonly speakingUntil = new Map<string, number>();
+
   private readonly store: MeetingAgentStateStore;
 
   private readonly now: () => Date;
 
-  // store and now stay out of the deps map because bindModuleToClassOnToken requires every deps key to be bound.
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  // store, now and sleep stay out of the deps map because bindModuleToClassOnToken requires every deps key to be bound.
   constructor(
     private readonly deps: IRecallRealtimeEventServiceDeps,
-    options: { store?: MeetingAgentStateStore; now?: () => Date } = {}
+    options: { store?: MeetingAgentStateStore; now?: () => Date; sleep?: (ms: number) => Promise<void> } = {}
   ) {
     this.store = options.store ?? new MeetingAgentStateStore();
     this.now = options.now ?? (() => new Date());
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async handle(envelope: RecallRealtimeEnvelope, deliveryId: string | null): Promise<RecallRealtimeOutcome> {
@@ -173,13 +185,17 @@ export class RecallRealtimeEventService {
     try {
       await run;
     } finally {
-      if (this.queues.get(botId) === tail) this.queues.delete(botId);
+      if (this.queues.get(botId) === tail) {
+        this.queues.delete(botId);
+        if ((this.speakingUntil.get(botId) ?? 0) <= this.now().getTime()) this.speakingUntil.delete(botId);
+      }
     }
   }
 
   private async runAgent(context: AgentRunContext): Promise<void> {
     const { recallClient, logger } = this.deps;
     const { agent, botId, sessionId, source } = context;
+    const speak = source === "SPEECH" && this.deps.speechSynthesizer !== null;
     try {
       const result = await agent.run(
         {
@@ -196,6 +212,7 @@ export class RecallRealtimeEventService {
             }
             // Recording the whole reply lets later commands see the bot's earlier answers; its chat echo is ignored.
             this.store.appendLine(botId, { source: "AGENT", speakerName: null, text: reply, at: this.now() });
+            if (speak) await this.speakBestEffort(botId, sessionId, reply);
           },
           startScreenshare: (url) => recallClient.startScreenshare(botId, url),
           stopScreenshare: async () => {
@@ -220,6 +237,27 @@ export class RecallRealtimeEventService {
   private async postChatMessage(botId: string, message: string): Promise<void> {
     this.store.recordSentMessage(botId, message, this.now());
     await this.deps.recallClient.sendChatMessage(botId, { to: "everyone", message });
+  }
+
+  private async speakBestEffort(botId: string, sessionId: string, reply: string): Promise<void> {
+    const { speechSynthesizer, recallClient, logger } = this.deps;
+    if (!speechSynthesizer) return;
+    const spoken = toSpokenText(reply);
+    if (spoken === "") return;
+    try {
+      const speech = await speechSynthesizer.synthesize(spoken);
+      const wait = (this.speakingUntil.get(botId) ?? 0) - this.now().getTime();
+      // Recall does not document what happens to a clip sent while another plays, so clips never overlap.
+      if (wait > 0) await this.sleep(Math.min(wait, MAX_SPEECH_WAIT_MS));
+      await recallClient.outputAudio(botId, speech.base64);
+      this.speakingUntil.set(botId, this.now().getTime() + speech.durationMs);
+    } catch (error) {
+      logger.warn("Failed to speak a meeting agent reply", {
+        botId,
+        sessionId,
+        kind: getSpeechSynthesisErrorKind(error) ?? getErrorKind(error),
+      });
+    }
   }
 
   private async postBestEffort(botId: string, sessionId: string, message: string): Promise<void> {
