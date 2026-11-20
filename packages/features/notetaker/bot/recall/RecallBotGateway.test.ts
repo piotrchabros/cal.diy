@@ -74,6 +74,7 @@ function createFakeClient(overrides: Partial<FakeRecallClient> = {}): FakeRecall
     outputAudio: vi.fn<IRecallApiClient["outputAudio"]>().mockResolvedValue(undefined),
     startScreenshare: vi.fn<IRecallApiClient["startScreenshare"]>().mockResolvedValue(undefined),
     stopScreenshare: vi.fn<IRecallApiClient["stopScreenshare"]>().mockResolvedValue("OK"),
+    stopOutputAudio: vi.fn<IRecallApiClient["stopOutputAudio"]>().mockResolvedValue("OK"),
     ...overrides,
   };
 }
@@ -450,6 +451,34 @@ describe("buildRecallRecordingConfig", () => {
       ],
     });
   });
+
+  it("also streams speech_on with Deepgram when the agent has voice, so spoken replies can be interrupted", () => {
+    expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM", true, true)).realtime_endpoints).toStrictEqual([
+      {
+        type: "webhook",
+        url: REALTIME_URL,
+        events: ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"],
+      },
+    ]);
+  });
+
+  it("also streams speech_on with Recall's English transcripts when the agent has voice", () => {
+    expect(buildRecallRecordingConfig(buildAgent("RECALLAI_EN", true)).realtime_endpoints).toStrictEqual([
+      {
+        type: "webhook",
+        url: REALTIME_URL,
+        events: ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"],
+      },
+    ]);
+  });
+
+  it("streams no speech_on without a speech provider even when the agent has voice", () => {
+    expect(buildRecallRecordingConfig(buildAgent("NONE", true))).toStrictEqual({
+      realtime_endpoints: [
+        { type: "webhook", url: REALTIME_URL, events: ["participant_events.chat_message"] },
+      ],
+    });
+  });
 });
 
 describe("buildRecallCreateBotRequest agent", () => {
@@ -728,7 +757,7 @@ describe("RecallBotGateway voice fallback", () => {
     expect(client.createBot.mock.calls[0][0]).toHaveProperty("automatic_audio_output");
     expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_audio_output");
     expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
-      buildRecallRecordingConfig(voiceAgent)
+      buildRecallRecordingConfig({ ...voiceAgent, voice: false })
     );
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("audio output"));
   });
@@ -897,7 +926,7 @@ describe("RecallBotGateway variant fallback", () => {
     expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("variant");
     expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_audio_output");
     expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
-      buildRecallRecordingConfig(browserAgent)
+      buildRecallRecordingConfig({ ...browserAgent, voice: false })
     );
   });
 

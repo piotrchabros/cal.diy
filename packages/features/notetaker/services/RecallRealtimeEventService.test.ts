@@ -86,6 +86,13 @@ function speechEnvelope(
   };
 }
 
+function speechOnEnvelope(
+  participant: Participant = ALICE,
+  bot: RecallRealtimeEnvelope["data"]["bot"] = botOf()
+): RecallRealtimeEnvelope {
+  return { event: "participant_events.speech_on", data: { data: { participant }, bot } };
+}
+
 function createFakeRecallClient() {
   return {
     createBot: vi.fn<IRecallApiClient["createBot"]>(),
@@ -95,6 +102,7 @@ function createFakeRecallClient() {
     deleteScheduledBot: vi.fn<IRecallApiClient["deleteScheduledBot"]>(),
     sendChatMessage: vi.fn<IRecallApiClient["sendChatMessage"]>().mockResolvedValue(undefined),
     outputAudio: vi.fn<IRecallApiClient["outputAudio"]>().mockResolvedValue(undefined),
+    stopOutputAudio: vi.fn<IRecallApiClient["stopOutputAudio"]>().mockResolvedValue("OK"),
     startScreenshare: vi.fn<IRecallApiClient["startScreenshare"]>().mockResolvedValue(undefined),
     stopScreenshare: vi.fn<IRecallApiClient["stopScreenshare"]>().mockResolvedValue("OK"),
     createTranscript: vi.fn<IRecallApiClient["createTranscript"]>(),
@@ -962,5 +970,163 @@ describe("RecallRealtimeEventService", () => {
       expect(sentMessages(recallClient)).toEqual(["Sorry, I could not complete that."]);
       expect(synthesize).not.toHaveBeenCalled();
     });
+  });
+
+  describe("interrupting a spoken reply", () => {
+    // Replies twice with a pause in between, so the run is still in progress while the test sends speech_on.
+    function replyTwiceWithGate(run: ReturnType<typeof setup>["run"]) {
+      const gate = createDeferred<void>();
+      const firstReplySent = createDeferred<void>();
+      run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+        await actions.sendChatMessage("Answer one");
+        firstReplySent.resolve();
+        await gate.promise;
+        await actions.sendChatMessage("Answer two");
+        return COMPLETED;
+      });
+      return { gate, firstReplySent };
+    }
+
+    it("stops the bot's audio when the issuer starts talking while it speaks", async () => {
+      const { service, run, recallClient, logger } = setup({ voice: true });
+      const { gate, firstReplySent } = replyTwiceWithGate(run);
+
+      const commandHandle = service.handle(speechEnvelope("BlueBeeBot, secret question"), null);
+      await firstReplySent.promise;
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(1);
+
+      await expect(service.handle(speechOnEnvelope(ALICE), "d-on")).resolves.toBe("INTERRUPTED");
+      expect(recallClient.stopOutputAudio).toHaveBeenCalledWith(BOT_ID);
+      expect(logger.warn).toHaveBeenCalledWith("Meeting agent speech interrupted", {
+        botId: BOT_ID,
+        sessionId: SESSION_ID,
+        wasSpeaking: true,
+      });
+
+      gate.resolve();
+      await expect(commandHandle).resolves.toBe("HANDLED");
+      expect(sentMessages(recallClient)).toEqual(["Answer one", "Answer two"]);
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("secret");
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("Answer");
+    });
+
+    it("plays no clip of the run when the issuer talks during synthesis", async () => {
+      const { service, run, recallClient, synthesize, logger } = setup({ voice: true });
+      const synthesis = createDeferred<SynthesizedSpeech>();
+      synthesize.mockReturnValueOnce(synthesis.promise);
+      replyWithBoth(run);
+
+      const commandHandle = service.handle(speechEnvelope("BlueBeeBot, question"), null);
+      await vi.waitFor(() => expect(synthesize).toHaveBeenCalledTimes(1));
+
+      await expect(service.handle(speechOnEnvelope(ALICE), null)).resolves.toBe("INTERRUPTED");
+      expect(recallClient.stopOutputAudio).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith("Meeting agent speech interrupted", {
+        botId: BOT_ID,
+        sessionId: SESSION_ID,
+        wasSpeaking: false,
+      });
+
+      synthesis.resolve(SPEECH);
+      await expect(commandHandle).resolves.toBe("HANDLED");
+      expect(recallClient.outputAudio).not.toHaveBeenCalled();
+      expect(synthesize).toHaveBeenCalledTimes(1);
+      expect(sentMessages(recallClient)).toEqual(["Answer one", "Answer two"]);
+    });
+
+    it("ignores another participant starting to talk and keeps speaking", async () => {
+      const { service, run, recallClient } = setup({ voice: true });
+      const { gate, firstReplySent } = replyTwiceWithGate(run);
+
+      const commandHandle = service.handle(speechEnvelope("BlueBeeBot, question"), null);
+      await firstReplySent.promise;
+
+      await expect(service.handle(speechOnEnvelope(BOB), null)).resolves.toBe("IGNORED");
+      expect(recallClient.stopOutputAudio).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await expect(commandHandle).resolves.toBe("HANDLED");
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(2);
+    });
+
+    it("ignores speech_on when no spoken run is active", async () => {
+      const { service, run, recallClient, logger } = setup({ voice: true });
+
+      await expect(service.handle(speechOnEnvelope(ALICE), null)).resolves.toBe("IGNORED");
+
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+      await expect(service.handle(speechOnEnvelope(ALICE), null)).resolves.toBe("IGNORED");
+
+      expect(recallClient.stopOutputAudio).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalledWith("Meeting agent speech interrupted", expect.anything());
+      expect(run.mock.calls[0][0].recentLines).toEqual([]);
+    });
+
+    it("ignores speech_on during a chat command's run", async () => {
+      const { service, run, recallClient } = setup({ voice: true });
+      const { gate, firstReplySent } = replyTwiceWithGate(run);
+
+      const commandHandle = service.handle(chatEnvelope("BlueBeeBot, question"), "d-1");
+      await firstReplySent.promise;
+
+      await expect(service.handle(speechOnEnvelope(ALICE), "d-2")).resolves.toBe("IGNORED");
+      gate.resolve();
+      await commandHandle;
+      expect(recallClient.stopOutputAudio).not.toHaveBeenCalled();
+    });
+
+    it("never records speech_on as a line or treats it as a command", async () => {
+      const { service, run } = setup({ voice: true });
+
+      await service.handle(speechOnEnvelope(ALICE), "d-1");
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0][0].recentLines).toEqual([]);
+    });
+
+    it("reports a repeated speech_on delivery as a duplicate", async () => {
+      const { service, run, recallClient } = setup({ voice: true });
+      const { gate, firstReplySent } = replyTwiceWithGate(run);
+
+      const commandHandle = service.handle(speechEnvelope("BlueBeeBot, question"), null);
+      await firstReplySent.promise;
+
+      await expect(service.handle(speechOnEnvelope(ALICE), "d-on")).resolves.toBe("INTERRUPTED");
+      await expect(service.handle(speechOnEnvelope(ALICE), "d-on")).resolves.toBe("DUPLICATE");
+      expect(recallClient.stopOutputAudio).toHaveBeenCalledTimes(1);
+
+      gate.resolve();
+      await commandHandle;
+    });
+
+    it("still interrupts when Recall rejects the stop request", async () => {
+      const { service, run, recallClient, logger } = setup({ voice: true });
+      recallClient.stopOutputAudio.mockRejectedValueOnce(new Error("stop failed"));
+      const { gate, firstReplySent } = replyTwiceWithGate(run);
+
+      const commandHandle = service.handle(speechEnvelope("BlueBeeBot, question"), null);
+      await firstReplySent.promise;
+
+      await expect(service.handle(speechOnEnvelope(ALICE), null)).resolves.toBe("INTERRUPTED");
+      expect(logger.warn).toHaveBeenCalledWith("Failed to stop meeting agent speech", {
+        botId: BOT_ID,
+        sessionId: SESSION_ID,
+        kind: "UNKNOWN",
+      });
+
+      gate.resolve();
+      await expect(commandHandle).resolves.toBe("HANDLED");
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(1);
+    });
+
+    function replyWithBoth(run: ReturnType<typeof setup>["run"]) {
+      run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+        await actions.sendChatMessage("Answer one");
+        await actions.sendChatMessage("Answer two");
+        return COMPLETED;
+      });
+    }
   });
 });
