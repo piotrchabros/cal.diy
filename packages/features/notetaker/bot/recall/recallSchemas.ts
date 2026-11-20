@@ -140,6 +140,13 @@ export type RecallOutputAudioRequest = { kind: "mp3"; b64_data: string };
 
 export type RecallAutomaticAudioOutput = { in_call_recording: { data: RecallOutputAudioRequest } };
 
+// Recall's default bot cannot render a shared web page smoothly; the 4-core variant can.
+export type RecallBotVariant = {
+  zoom: "web_4_core";
+  google_meet: "web_4_core";
+  microsoft_teams: "web_4_core";
+};
+
 export type RecallCreateBotRequest = {
   meeting_url: string;
   bot_name: string;
@@ -158,6 +165,7 @@ export type RecallCreateBotRequest = {
     in_call_recording_timeout: number;
   };
   recording_config?: RecallRecordingConfig;
+  variant?: RecallBotVariant;
 };
 
 export type RecallCreateTranscriptRequest = {

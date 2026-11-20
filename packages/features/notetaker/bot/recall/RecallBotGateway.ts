@@ -5,7 +5,11 @@ import type {
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
 import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
-import { isNotetakerAgentUsable, isNotetakerAgentVoiceUsable } from "../../lib/config";
+import {
+  isNotetakerAgentBrowserUsable,
+  isNotetakerAgentUsable,
+  isNotetakerAgentVoiceUsable,
+} from "../../lib/config";
 import type {
   INotetakerBotGateway,
   NotetakerBotAvatar,
@@ -18,6 +22,7 @@ import { findRecallTerminalStatus, getRecallBotPhase, isRecallBotDone } from "./
 import type {
   RecallAutomaticAudioOutput,
   RecallBot,
+  RecallBotVariant,
   RecallCreateBotRequest,
   RecallRealtimeEventName,
   RecallRecordingConfig,
@@ -32,14 +37,21 @@ const MAX_CHAT_MESSAGE_LENGTH = 500;
 // request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
 const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
 const MAX_REPORTED_FIELDS = 10;
-const MAX_CREATE_BOT_FALLBACK_RETRIES = 3;
+const MAX_CREATE_BOT_FALLBACK_RETRIES = 4;
 
 export const RECALL_REALTIME_ENDPOINT_PATH = "/api/notetaker/recall/realtime";
+
+export const RECALL_WEB_4_CORE_VARIANT: RecallBotVariant = {
+  zoom: "web_4_core",
+  google_meet: "web_4_core",
+  microsoft_teams: "web_4_core",
+};
 
 export type RecallMeetingAgentOptions = {
   realtimeUrl: string;
   speechProvider: NotetakerAgentSpeechProvider;
   voice: boolean;
+  variant?: RecallBotVariant | null;
 };
 
 export function getRecallMeetingAgentOptions(
@@ -59,6 +71,7 @@ export function getRecallMeetingAgentOptions(
     realtimeUrl: new URL(RECALL_REALTIME_ENDPOINT_PATH, webappUrl).toString(),
     speechProvider: config.agent.speechProvider,
     voice: isNotetakerAgentVoiceUsable(config),
+    ...(isNotetakerAgentBrowserUsable(config) ? { variant: RECALL_WEB_4_CORE_VARIANT } : {}),
   };
 }
 
@@ -129,6 +142,7 @@ export function buildRecallCreateBotRequest(
       in_call_recording_timeout: input.limits.maxDurationSeconds,
     },
     ...(agent ? { recording_config: buildRecallRecordingConfig(agent) } : {}),
+    ...(agent?.variant ? { variant: agent.variant } : {}),
   };
 }
 
@@ -223,6 +237,13 @@ export class RecallBotGateway implements INotetakerBotGateway {
             "Recall rejected the meeting agent audio output; retrying the create bot request without voice, chat replies continue"
           );
           currentAgent = { ...currentAgent, voice: false };
+          dropped = true;
+        }
+        if (currentAgent?.variant && info.fieldNames.includes("variant")) {
+          logger.warn(
+            "Recall rejected the 4-core bot variant; retrying the create bot request on the default bot, the agent browser runs slower"
+          );
+          currentAgent = { ...currentAgent, variant: null };
           dropped = true;
         }
         if (currentAgent !== null && info.fieldNames.includes("recording_config")) {
