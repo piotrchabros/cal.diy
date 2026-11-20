@@ -106,9 +106,10 @@ const REALTIME_URL = "https://app.example.com/api/notetaker/recall/realtime";
 
 function buildAgent(
   speechProvider: NotetakerAgentSpeechProvider = "DEEPGRAM",
-  voice = false
+  voice = false,
+  keyterms = false
 ): RecallMeetingAgentOptions {
-  return { realtimeUrl: REALTIME_URL, speechProvider, voice };
+  return { realtimeUrl: REALTIME_URL, speechProvider, voice, keyterms };
 }
 
 function badRequest(fieldNames: string[]) {
@@ -400,9 +401,16 @@ describe("RecallBotGateway.requestJoin", () => {
 
 describe("buildRecallRecordingConfig", () => {
   it("streams Deepgram transcripts and chat messages to the realtime endpoint", () => {
-    expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM"))).toStrictEqual({
+    expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM", false, true))).toStrictEqual({
       transcript: {
-        provider: { deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true } },
+        provider: {
+          deepgram_streaming: {
+            model: "nova-3",
+            language: "multi",
+            mip_opt_out: true,
+            keyterm: ["BlueBeeBot"],
+          },
+        },
       },
       realtime_endpoints: [
         {
@@ -414,8 +422,14 @@ describe("buildRecallRecordingConfig", () => {
     });
   });
 
+  it("leaves the keyterm prompt out once it was dropped", () => {
+    expect(buildRecallRecordingConfig(buildAgent("DEEPGRAM", false, false)).transcript).toStrictEqual({
+      provider: { deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true } },
+    });
+  });
+
   it("streams Recall's low-latency English transcripts and chat messages", () => {
-    expect(buildRecallRecordingConfig(buildAgent("RECALLAI_EN"))).toStrictEqual({
+    expect(buildRecallRecordingConfig(buildAgent("RECALLAI_EN", false, true))).toStrictEqual({
       transcript: {
         provider: { recallai_streaming: { mode: "prioritize_low_latency", language_code: "en" } },
       },
@@ -563,6 +577,101 @@ describe("RecallBotGateway agent fallback", () => {
 
     expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
     expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RecallBotGateway keyterm fallback", () => {
+  const keytermAgent = buildAgent("DEEPGRAM", false, true);
+
+  it("retries without the keyterm prompt but keeps the agent when Recall rejects the recording config", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: keytermAgent }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig(keytermAgent)
+    );
+    expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig({ ...keytermAgent, keyterms: false })
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("keyterm"));
+  });
+
+  it("drops the keyterm prompt for a 400 that names a nested keyterm path", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config.transcript.provider.deepgram_streaming.keyterm"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await createGateway({ client, agent: keytermAgent }).requestJoin(buildJoinRequest());
+
+    expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig({ ...keytermAgent, keyterms: false })
+    );
+  });
+
+  it("drops the whole agent when Recall still rejects the recording config without keyterms", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-3"));
+
+    await expect(
+      createGateway({ client, agent: keytermAgent }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-3" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(3);
+    expect(client.createBot.mock.calls[1][0]).toHaveProperty("recording_config");
+    expect(client.createBot.mock.calls[2][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+  });
+
+  it("drops the whole agent at once for a provider that sends no keyterm prompt", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await createGateway({ client, agent: buildAgent("RECALLAI_EN", false, true) }).requestJoin(
+      buildJoinRequest()
+    );
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("recording_config");
+  });
+
+  it("succeeds on the sixth call when each 400 drops a different part", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockRejectedValueOnce(badRequest(["variant"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-6"));
+
+    const agent = { ...buildAgent("DEEPGRAM", true, true), variant: RECALL_WEB_4_CORE_VARIANT };
+    await expect(
+      createGateway({ client, agent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-6" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(6);
+    expect(client.createBot.mock.calls[5][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
   });
 });
 
@@ -875,7 +984,7 @@ describe("getRecallMeetingAgentOptions", () => {
   ])("points Recall at the realtime endpoint for %s", (webappUrl) => {
     expect(
       getRecallMeetingAgentOptions(configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram" }), webappUrl)
-    ).toStrictEqual({ realtimeUrl: REALTIME_URL, speechProvider: "DEEPGRAM", voice: false });
+    ).toStrictEqual({ realtimeUrl: REALTIME_URL, speechProvider: "DEEPGRAM", voice: false, keyterms: true });
   });
 
   it("passes the configured speech provider through", () => {
@@ -883,6 +992,7 @@ describe("getRecallMeetingAgentOptions", () => {
       realtimeUrl: REALTIME_URL,
       speechProvider: "NONE",
       voice: false,
+      keyterms: true,
     });
   });
 

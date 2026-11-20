@@ -525,6 +525,80 @@ describe("RecallRealtimeEventService", () => {
     );
   });
 
+  it("warns once without the text when an ignored utterance looks like a misheard name", async () => {
+    const { service, run, logger } = setup();
+    const text = "Blue Bird Bot, summarise the budget";
+
+    await expect(service.handle(speechEnvelope(text), null)).resolves.toBe("BUFFERED");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith("Meeting agent ignored a possible mention", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      kind: "SPEECH",
+      length: text.length,
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("budget");
+  });
+
+  it("logs nothing for an ordinary line without a trigger", async () => {
+    const { service, logger } = setup();
+
+    await expect(service.handle(chatEnvelope("Hello team"), "d-1")).resolves.toBe("BUFFERED");
+
+    for (const fn of [logger.debug, logger.error, logger.info, logger.warn]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("warns without the text when a command is dropped as a duplicate", async () => {
+    const { service, logger } = setup();
+
+    await service.handle(chatEnvelope("BlueBeeBot, summarise the budget"), "d-1");
+    await expect(service.handle(chatEnvelope("BlueBeeBot, summarise the budget"), "d-2")).resolves.toBe(
+      "DUPLICATE"
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith("Meeting agent dropped a duplicate command", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      kind: "CHAT",
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("budget");
+  });
+
+  it("warns without the text when a command is rate limited", async () => {
+    const { service, logger } = setup({ maxCommandsPerMeeting: 1 });
+
+    await service.handle(chatEnvelope("BlueBeeBot, task one"), "d-1");
+    await expect(service.handle(chatEnvelope("BlueBeeBot, summarise the budget"), "d-2")).resolves.toBe(
+      "RATE_LIMITED"
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith("Meeting agent command was rate limited", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      outcome: "MEETING_LIMIT",
+      kind: "CHAT",
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("budget");
+  });
+
+  it("warns when an agent run ends without completing", async () => {
+    const { service, run, logger } = setup();
+    run.mockResolvedValueOnce({ outcome: "LOOP_LIMIT", iterations: 8, chatMessagesSent: 0 });
+
+    await service.handle(chatEnvelope("BlueBeeBot, summarise"), "d-1");
+
+    expect(logger.warn).toHaveBeenCalledWith("Meeting agent run did not complete", {
+      botId: BOT_ID,
+      sessionId: SESSION_ID,
+      outcome: "LOOP_LIMIT",
+      kind: "CHAT",
+    });
+  });
+
   it("never logs the message text", async () => {
     const { service, run, logger } = setup({ maxCommandsPerMeeting: 2 });
     const secret = "read the confidential salary numbers";

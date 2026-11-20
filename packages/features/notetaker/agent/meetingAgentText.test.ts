@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chatMessageToPlainText,
+  looksLikeAgentNameNearMiss,
   parseMeetingAgentTrigger,
   splitChatMessage,
   stripLeadingAgentName,
@@ -32,8 +33,36 @@ describe("parseMeetingAgentTrigger", () => {
     ["Blue Bee Botowi: przypomnij zadania", "przypomnij zadania"],
     ["@BlueBeeBot", ""],
     ["  BlueBeeBot ?! ", ""],
+    ["Pokaż porównanie na ekranie BluebeeBot.", "Pokaż porównanie na ekranie."],
+    ["Blubie Bot jakie było pierwsze zdanie", "jakie było pierwsze zdanie"],
+    ["Vej na bluebii dot com marketing bluebii bot.", "Vej na bluebii dot com marketing."],
   ])("matches %j", (text, command) => {
     expect(parseMeetingAgentTrigger(text)).toEqual({ command });
+  });
+
+  // Spellings Deepgram nova-3 produced for the name in a real Polish meeting.
+  const transcribedSpellings = [
+    "Blue-Bot",
+    "Blue BeeBot",
+    "BluebeeBot",
+    "Blooby Bot",
+    "Blubie Bot",
+    "Blubiebot",
+    "Bluebee Bot",
+    "bluebii bot",
+    "Blue Bee Bot",
+    "Blue Bee Bota",
+    "BlueBeeBocie",
+  ];
+
+  it.each(transcribedSpellings)("matches transcribed spelling %j at the start", (name) => {
+    expect(parseMeetingAgentTrigger(`${name}, pokaż zadania`)).toEqual({ command: "pokaż zadania" });
+  });
+
+  it.each(transcribedSpellings)("matches transcribed spelling %j inside a sentence", (name) => {
+    expect(parseMeetingAgentTrigger(`Dobrze ${name} pokaż zadania`)).toEqual({
+      command: "Dobrze pokaż zadania",
+    });
   });
 
   it.each([
@@ -43,6 +72,10 @@ describe("parseMeetingAgentTrigger", () => {
     "ask BlueBeeBot2 about it",
     "Bluebird bot",
     "blue beetle bot",
+    "Blue Bottle coffee",
+    "bloody bot",
+    // "blo" is not accepted as a prefix: no transcript produced it, and allowing it would also admit "blob", "blok".
+    "blob bot",
     "",
   ])("ignores %j", (text) => {
     expect(parseMeetingAgentTrigger(text)).toBeNull();
@@ -96,6 +129,26 @@ describe("stripLeadingAgentName", () => {
 
   it("leaves text without a name unchanged", () => {
     expect(stripLeadingAgentName("The meeting ended at noon.")).toBe("The meeting ended at noon.");
+  });
+
+  it.each([
+    "Blubie Bot: hello",
+    "Blue-Bot hello",
+    "Blooby Bot, hello",
+    "bluebii bot - hello",
+    "Blubiebot hello",
+  ])("strips the transcribed spelling in %j", (text) => {
+    expect(stripLeadingAgentName(text)).toBe("hello");
+  });
+});
+
+describe("looksLikeAgentNameNearMiss", () => {
+  it.each(["Blooby Bot jakie było zdanie", "ok, blob bot pokaż", "Bluebird bot"])("flags %j", (text) => {
+    expect(looksLikeAgentNameNearMiss(text)).toBe(true);
+  });
+
+  it.each(["The meeting ended at noon.", "black and white boat", "xblue bot"])("does not flag %j", (text) => {
+    expect(looksLikeAgentNameNearMiss(text)).toBe(false);
   });
 });
 

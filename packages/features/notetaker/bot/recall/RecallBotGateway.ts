@@ -4,6 +4,7 @@ import type {
   NotetakerBotStateDto,
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
+import { MEETING_AGENT_NAME } from "../../agent/meetingAgentText";
 import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
 import {
   isNotetakerAgentBrowserUsable,
@@ -37,7 +38,7 @@ const MAX_CHAT_MESSAGE_LENGTH = 500;
 // request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
 const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
 const MAX_REPORTED_FIELDS = 10;
-const MAX_CREATE_BOT_FALLBACK_RETRIES = 4;
+const MAX_CREATE_BOT_FALLBACK_RETRIES = 5;
 
 export const RECALL_REALTIME_ENDPOINT_PATH = "/api/notetaker/recall/realtime";
 
@@ -51,6 +52,7 @@ export type RecallMeetingAgentOptions = {
   realtimeUrl: string;
   speechProvider: NotetakerAgentSpeechProvider;
   voice: boolean;
+  keyterms: boolean;
   variant?: RecallBotVariant | null;
 };
 
@@ -71,6 +73,7 @@ export function getRecallMeetingAgentOptions(
     realtimeUrl: new URL(RECALL_REALTIME_ENDPOINT_PATH, webappUrl).toString(),
     speechProvider: config.agent.speechProvider,
     voice: isNotetakerAgentVoiceUsable(config),
+    keyterms: true,
     ...(isNotetakerAgentBrowserUsable(config) ? { variant: RECALL_WEB_4_CORE_VARIANT } : {}),
   };
 }
@@ -83,7 +86,16 @@ export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): Re
     case "DEEPGRAM":
       return {
         transcript: {
-          provider: { deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true } },
+          provider: {
+            deepgram_streaming: {
+              model: "nova-3",
+              language: "multi",
+              mip_opt_out: true,
+              // Without a keyterm prompt nova-3 spells the made-up bot name differently each time,
+              // so the agent misses being addressed.
+              ...(agent.keyterms ? { keyterm: [MEETING_AGENT_NAME] } : {}),
+            },
+          },
         },
         realtime_endpoints: realtimeEndpoint(["participant_events.chat_message", "transcript.data"]),
       };
@@ -246,7 +258,18 @@ export class RecallBotGateway implements INotetakerBotGateway {
           currentAgent = { ...currentAgent, variant: null };
           dropped = true;
         }
-        if (currentAgent !== null && info.fieldNames.includes("recording_config")) {
+        // Recall names only the top-level field, so a rejected recording config first loses its newest,
+        // least essential part, the Deepgram keyterm prompt, before the whole agent is dropped.
+        const recordingConfigRejected = info.fieldNames.some(
+          (name) => name === "recording_config" || name.includes("keyterm")
+        );
+        if (currentAgent?.keyterms && currentAgent.speechProvider === "DEEPGRAM" && recordingConfigRejected) {
+          logger.warn(
+            "Recall rejected the meeting agent recording config; retrying the create bot request without the Deepgram keyterm prompt"
+          );
+          currentAgent = { ...currentAgent, keyterms: false };
+          dropped = true;
+        } else if (currentAgent !== null && info.fieldNames.includes("recording_config")) {
           logger.warn(
             "Recall rejected the meeting agent recording config; retrying the create bot request without the agent, note-taking continues"
           );
