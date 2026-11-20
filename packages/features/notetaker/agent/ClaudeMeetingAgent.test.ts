@@ -12,11 +12,19 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type AnthropicAgentMessagesClient,
   ClaudeMeetingAgent,
+  type IClaudeMeetingAgentDeps,
+  MEETING_AGENT_BROWSER_MAX_ITERATIONS,
+  MEETING_AGENT_BROWSER_TIME_BUDGET_MS,
   MEETING_AGENT_MAX_ITERATIONS,
   MEETING_AGENT_MAX_OUTPUT_TOKENS,
 } from "./ClaudeMeetingAgent";
-import type { MeetingAgentActions, MeetingAgentRequest } from "./IMeetingAgent";
-import { buildMeetingAgentUserPrompt } from "./meetingAgentPrompt";
+import type {
+  MeetingAgentActions,
+  MeetingAgentBrowserActions,
+  MeetingAgentBrowserPage,
+  MeetingAgentRequest,
+} from "./IMeetingAgent";
+import { buildMeetingAgentSystemPrompt, buildMeetingAgentUserPrompt } from "./meetingAgentPrompt";
 
 const MODEL = "claude-test-model";
 const SECRET = "zxqvsecretproviderdetail";
@@ -78,7 +86,29 @@ function createActions() {
   } satisfies MeetingAgentActions;
 }
 
-function setup(responses: Array<BetaMessage | Error>) {
+const PAGE: MeetingAgentBrowserPage = {
+  url: "https://cal.com/pricing",
+  title: "Pricing",
+  snapshot: "[e1] link Teams",
+  screenshot: null,
+};
+
+function createBrowser() {
+  return {
+    open: vi.fn<MeetingAgentBrowserActions["open"]>().mockResolvedValue(PAGE),
+    perform: vi.fn<MeetingAgentBrowserActions["perform"]>().mockResolvedValue(PAGE),
+    close: vi.fn<MeetingAgentBrowserActions["close"]>().mockResolvedValue(undefined),
+  } satisfies MeetingAgentBrowserActions;
+}
+
+function toolNames(request: BetaMessageCreateParamsNonStreaming): Array<string | undefined> {
+  return (request.tools ?? []).map((tool) => ("name" in tool ? tool.name : undefined));
+}
+
+function setup(
+  responses: Array<BetaMessage | Error>,
+  extraDeps: Pick<IClaudeMeetingAgentDeps, "browserVision" | "now"> = {}
+) {
   // The agent keeps appending to the same messages array, so each request is cloned at call time.
   const requests: BetaMessageCreateParamsNonStreaming[] = [];
   let index = 0;
@@ -92,7 +122,7 @@ function setup(responses: Array<BetaMessage | Error>) {
   const client: AnthropicAgentMessagesClient = { beta: { messages: { create } } };
   const logger = createLogger();
   const actions = createActions();
-  const agent = new ClaudeMeetingAgent({ client, model: MODEL, logger });
+  const agent = new ClaudeMeetingAgent({ client, model: MODEL, logger, ...extraDeps });
   return { agent, create, requests, logger, actions };
 }
 
@@ -342,5 +372,205 @@ describe("ClaudeMeetingAgent", () => {
     expect(logger.error).toHaveBeenCalledWith("Meeting agent run failed", { errorName, status });
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(SECRET);
     expect(actions.sendChatMessage).not.toHaveBeenCalled();
+  });
+
+  describe("browser mode", () => {
+    const BROWSER_REQUEST: MeetingAgentRequest = { ...REQUEST, command: "open cal.com pricing" };
+
+    it("offers send_chat_message, the browser tools and the server tools with the browser prompt", async () => {
+      const { agent, requests, actions } = setup([buildMessage("end_turn", [])]);
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser: createBrowser() });
+
+      const params = requests[0];
+      expect(params.system).toBe(buildMeetingAgentSystemPrompt({ browser: true }));
+      expect(toolNames(params)).toEqual([
+        "send_chat_message",
+        "browser_open",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_scroll",
+        "browser_back",
+        "browser_close",
+        "web_search",
+        "web_fetch",
+      ]);
+    });
+
+    it("adds browser_screenshot only when vision is enabled", async () => {
+      const { agent, requests, actions } = setup([buildMessage("end_turn", [])], { browserVision: true });
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser: createBrowser() });
+
+      expect(toolNames(requests[0])).toContain("browser_screenshot");
+    });
+
+    it("keeps the classic tools and prompt when the browser is null", async () => {
+      const { agent, requests, actions } = setup([buildMessage("end_turn", [])]);
+
+      await agent.run(REQUEST, { ...actions, browser: null });
+
+      expect(requests[0].system).toBe(buildMeetingAgentSystemPrompt());
+      expect(toolNames(requests[0]).slice(0, 3)).toEqual([
+        "send_chat_message",
+        "share_screen",
+        "stop_screen_share",
+      ]);
+    });
+
+    it("rejects browser tools in classic mode", async () => {
+      const { agent, requests, actions } = setup([
+        buildMessage("tool_use", [toolUse("toolu_1", "browser_snapshot", {})]),
+        buildMessage("end_turn", []),
+      ]);
+
+      await agent.run(REQUEST, actions);
+
+      const [result] = toolResultsOf(requests[1]);
+      expect(result).toMatchObject({ tool_use_id: "toolu_1", content: "Unknown tool.", is_error: true });
+    });
+
+    it("opens a page mentioned in the command and returns its snapshot", async () => {
+      const browser = createBrowser();
+      const { agent, requests, actions } = setup([
+        buildMessage("tool_use", [toolUse("toolu_1", "browser_open", { url: "https://cal.com/pricing" })]),
+        buildMessage("end_turn", []),
+      ]);
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser });
+
+      expect(browser.open).toHaveBeenCalledWith("https://cal.com/pricing");
+      const [result] = toolResultsOf(requests[1]);
+      expect(result.is_error).toBeUndefined();
+      expect(result.content).toBe("URL: https://cal.com/pricing\nTitle: Pricing\n[e1] link Teams");
+    });
+
+    it("refuses to open a host nobody mentioned", async () => {
+      const browser = createBrowser();
+      const { agent, requests, actions } = setup([
+        buildMessage("tool_use", [toolUse("toolu_1", "browser_open", { url: "https://evil.example/x" })]),
+        buildMessage("end_turn", []),
+      ]);
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser });
+
+      expect(browser.open).not.toHaveBeenCalled();
+      expect(toolResultsOf(requests[1])[0]).toMatchObject({ is_error: true });
+    });
+
+    it("allows a host found by web search earlier in the run", async () => {
+      const browser = createBrowser();
+      const { agent, actions } = setup([
+        buildMessage("tool_use", [
+          {
+            type: "web_search_tool_result",
+            tool_use_id: "srvtoolu_1",
+            content: [
+              {
+                type: "web_search_result",
+                encrypted_content: "enc",
+                page_age: null,
+                title: "Docs",
+                url: "https://docs.example.org/start",
+              },
+            ],
+          },
+          toolUse("toolu_1", "browser_open", { url: "https://docs.example.org/start" }),
+        ]),
+        buildMessage("end_turn", []),
+      ]);
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser });
+
+      expect(browser.open).toHaveBeenCalledWith("https://docs.example.org/start");
+    });
+
+    it("maps share_screen to browser_open and stop_screen_share to browser_close", async () => {
+      const browser = createBrowser();
+      const { agent, actions } = setup([
+        buildMessage("tool_use", [
+          toolUse("toolu_1", "share_screen", { url: "https://cal.com/pricing" }),
+          toolUse("toolu_2", "stop_screen_share", {}),
+        ]),
+        buildMessage("end_turn", []),
+      ]);
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser });
+
+      expect(browser.open).toHaveBeenCalledWith("https://cal.com/pricing");
+      expect(browser.close).toHaveBeenCalledTimes(1);
+      expect(actions.startScreenshare).not.toHaveBeenCalled();
+      expect(actions.stopScreenshare).not.toHaveBeenCalled();
+    });
+
+    it("passes an array tool_result with the screenshot image through", async () => {
+      const browser = createBrowser();
+      browser.perform.mockResolvedValue({ ...PAGE, screenshot: { mediaType: "image/jpeg", base64: "aGk=" } });
+      const { agent, requests, actions } = setup(
+        [
+          buildMessage("tool_use", [toolUse("toolu_1", "browser_screenshot", {})]),
+          buildMessage("end_turn", []),
+        ],
+        { browserVision: true }
+      );
+
+      await agent.run(BROWSER_REQUEST, { ...actions, browser });
+
+      expect(browser.perform).toHaveBeenCalledWith({ type: "screenshot" });
+      const [result] = toolResultsOf(requests[1]);
+      expect(result.content).toEqual([
+        { type: "text", text: "URL: https://cal.com/pricing\nTitle: Pricing\n[e1] link Teams" },
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "aGk=" } },
+      ]);
+    });
+
+    it("allows 12 iterations before LOOP_LIMIT", async () => {
+      const { agent, create, actions } = setup([
+        buildMessage("tool_use", [toolUse("toolu_1", "browser_snapshot", {})]),
+      ]);
+
+      const result = await agent.run(BROWSER_REQUEST, { ...actions, browser: createBrowser() });
+
+      expect(MEETING_AGENT_BROWSER_MAX_ITERATIONS).toBe(12);
+      expect(create).toHaveBeenCalledTimes(12);
+      expect(result).toEqual({ outcome: "LOOP_LIMIT", iterations: 12, chatMessagesSent: 0 });
+    });
+
+    it("returns LOOP_LIMIT once the wall-clock budget is spent", async () => {
+      let clock = 0;
+      const { agent, create, actions } = setup(
+        [buildMessage("tool_use", [toolUse("toolu_1", "browser_snapshot", {})])],
+        { now: () => clock }
+      );
+      create.mockImplementation(async () => {
+        clock += 50_000;
+        return buildMessage("tool_use", [toolUse("toolu_1", "browser_snapshot", {})]);
+      });
+
+      const result = await agent.run(BROWSER_REQUEST, { ...actions, browser: createBrowser() });
+
+      expect(MEETING_AGENT_BROWSER_TIME_BUDGET_MS).toBe(120_000);
+      expect(create).toHaveBeenCalledTimes(3);
+      expect(result).toEqual({ outcome: "LOOP_LIMIT", iterations: 3, chatMessagesSent: 0 });
+    });
+
+    it("ignores the wall-clock budget in classic mode", async () => {
+      let clock = 0;
+      const { agent, create, actions } = setup(
+        [buildMessage("tool_use", [toolUse("toolu_1", "stop_screen_share", {})])],
+        { now: () => clock }
+      );
+      create.mockImplementation(async () => {
+        clock += 50_000;
+        return buildMessage("tool_use", [toolUse("toolu_1", "stop_screen_share", {})]);
+      });
+
+      const result = await agent.run(REQUEST, actions);
+
+      expect(create).toHaveBeenCalledTimes(MEETING_AGENT_MAX_ITERATIONS);
+      expect(result.outcome).toBe("LOOP_LIMIT");
+    });
   });
 });
