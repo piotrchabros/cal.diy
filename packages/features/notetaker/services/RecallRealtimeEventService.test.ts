@@ -10,6 +10,8 @@ import { createSpeechSynthesisError } from "../agent/tts/IMeetingAgentSpeechSynt
 import type { IRecallApiClient } from "../bot/recall/RecallApiClient";
 import type { RecallRealtimeEnvelope } from "../bot/recall/recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "../bot/recall/recallSchemas";
+import type { IAgentBrowserGateway } from "../browser/IAgentBrowserGateway";
+import { MeetingAgentBrowserService } from "../browser/MeetingAgentBrowserService";
 import { getNotetakerConfig } from "../lib/config";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
@@ -125,6 +127,7 @@ function setup(
     maxCommandsPerMeeting?: number;
     session?: NotetakerSessionRecord | null;
     voice?: boolean;
+    agentBrowser?: MeetingAgentBrowserService;
   } = {}
 ) {
   const repositories = createInMemoryNotetakerRepositories();
@@ -154,6 +157,7 @@ function setup(
       sessionRepository: repositories.sessionRepository,
       meetingAgent: options.agentEnabled === false ? null : meetingAgent,
       speechSynthesizer: options.voice ? { synthesize } : null,
+      agentBrowser: options.agentBrowser ?? null,
       config,
       logger,
     },
@@ -370,6 +374,46 @@ describe("RecallRealtimeEventService", () => {
 
     expect(recallClient.startScreenshare).toHaveBeenCalledWith(BOT_ID, "https://example.com/slides");
     expect(recallClient.stopScreenshare).toHaveBeenCalledWith(BOT_ID);
+  });
+
+  it("passes no browser to the agent when the agent browser is not usable", async () => {
+    const { service, run } = setup();
+
+    await service.handle(chatEnvelope("BlueBeeBot, open the pricing page"), "d-1");
+
+    expect(run.mock.calls[0][1].browser).toBeNull();
+  });
+
+  it("passes browser actions bound to the bot when the agent browser is usable", async () => {
+    const gateway = {
+      perform: vi.fn<IAgentBrowserGateway["perform"]>().mockResolvedValue({
+        created: true,
+        url: "https://example.com/",
+        title: "Example",
+        snapshot: "Elements:",
+        viewers: 1,
+        screenshot: null,
+      }),
+      closeSession: vi.fn<IAgentBrowserGateway["closeSession"]>().mockResolvedValue(undefined),
+      buildViewerUrl: vi.fn<IAgentBrowserGateway["buildViewerUrl"]>(),
+    } satisfies IAgentBrowserGateway;
+    const agentBrowser = new MeetingAgentBrowserService({
+      gateway,
+      recallClient: createFakeRecallClient(),
+      logger: createLogger(),
+    });
+    const forBot = vi.spyOn(agentBrowser, "forBot");
+    const { service, run } = setup({ agentBrowser });
+    run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+      await actions.browser?.open("https://example.com");
+      return COMPLETED;
+    });
+
+    await service.handle(chatEnvelope("BlueBeeBot, open example.com"), "d-1");
+
+    expect(forBot).toHaveBeenCalledWith(BOT_ID);
+    expect(run.mock.calls[0][1].browser).not.toBeNull();
+    expect(gateway.perform).toHaveBeenCalledWith(BOT_ID, { type: "goto", url: "https://example.com" });
   });
 
   it("posts an apology when the agent run fails", async () => {

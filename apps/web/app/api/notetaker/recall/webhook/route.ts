@@ -1,6 +1,7 @@
 import { recallWebhookEnvelopeSchema } from "@calcom/features/notetaker/bot/recall/recallSchemas";
+import { getNotetakerAgentBrowser } from "@calcom/features/notetaker/di/NotetakerAgentBrowser.container";
 import { getRecallWebhookService } from "@calcom/features/notetaker/di/RecallWebhookService.container";
-import { getNotetakerConfig } from "@calcom/features/notetaker/lib/config";
+import { getNotetakerConfig, isNotetakerAgentBrowserUsable } from "@calcom/features/notetaker/lib/config";
 import logger from "@calcom/lib/logger";
 import { defaultResponderForAppDir } from "@calcom/web/app/api/defaultResponderForAppDir";
 import type { NextRequest } from "next/server";
@@ -9,10 +10,14 @@ import { parseJson, verifyRecallRequest } from "../recallRequestVerification";
 
 const log = logger.getSubLogger({ prefix: ["notetaker-recall-webhook"] });
 
+// agent-browser reaps idle sessions on its own; closing on these events just frees the page right away.
+const BOT_LEFT_EVENTS = new Set(["bot.call_ended", "bot.done", "bot.fatal"]);
+
 async function postHandler(request: NextRequest): Promise<NextResponse> {
   const rawBody = await request.text();
 
-  const recall = getNotetakerConfig().recall;
+  const config = getNotetakerConfig();
+  const recall = config.recall;
   if (!recall) {
     return NextResponse.json({ message: "Invalid signature" }, { status: 401 });
   }
@@ -48,6 +53,21 @@ async function postHandler(request: NextRequest): Promise<NextResponse> {
       });
     }
   });
+
+  const botId = envelope.data.bot?.id;
+  if (botId && BOT_LEFT_EVENTS.has(envelope.event) && isNotetakerAgentBrowserUsable(config)) {
+    after(async () => {
+      try {
+        await getNotetakerAgentBrowser()?.closeForBot(botId);
+      } catch (error) {
+        log.warn("Failed to close the agent browser after the bot left", {
+          event: envelope.event,
+          botId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

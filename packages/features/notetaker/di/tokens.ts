@@ -75,6 +75,8 @@ export const NOTETAKER_DI_TOKENS = {
   NOTETAKER_MEETING_AGENT_MODULE: Symbol("NotetakerMeetingAgentModule"),
   NOTETAKER_MEETING_AGENT_SPEECH_SYNTHESIZER: Symbol("NotetakerMeetingAgentSpeechSynthesizer"),
   NOTETAKER_MEETING_AGENT_SPEECH_SYNTHESIZER_MODULE: Symbol("NotetakerMeetingAgentSpeechSynthesizerModule"),
+  NOTETAKER_AGENT_BROWSER: Symbol("NotetakerAgentBrowser"),
+  NOTETAKER_AGENT_BROWSER_MODULE: Symbol("NotetakerAgentBrowserModule"),
   RECALL_API_CLIENT: Symbol("RecallApiClient"),
   RECALL_API_CLIENT_MODULE: Symbol("RecallApiClientModule"),
   RECALL_WEBHOOK_SERVICE: Symbol("RecallWebhookService"),

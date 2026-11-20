@@ -15,6 +15,7 @@ import type { IRecallApiClient } from "../bot/recall/RecallApiClient";
 import { getRecallApiErrorInfo } from "../bot/recall/RecallApiClient";
 import type { RecallRealtimeEnvelope } from "../bot/recall/recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "../bot/recall/recallSchemas";
+import type { MeetingAgentBrowserService } from "../browser/MeetingAgentBrowserService";
 import type { NotetakerConfig } from "../lib/config";
 import type {
   INotetakerSessionRepository,
@@ -70,6 +71,7 @@ export interface IRecallRealtimeEventServiceDeps {
   sessionRepository: INotetakerSessionRepository;
   meetingAgent: IMeetingAgent | null;
   speechSynthesizer: IMeetingAgentSpeechSynthesizer | null;
+  agentBrowser?: MeetingAgentBrowserService | null;
   config: NotetakerConfig;
   logger: ISimpleLogger;
 }
@@ -218,6 +220,7 @@ export class RecallRealtimeEventService {
           stopScreenshare: async () => {
             await recallClient.stopScreenshare(botId);
           },
+          browser: this.deps.agentBrowser?.forBot(botId) ?? null,
         }
       );
       logger.info("Meeting agent run finished", { botId, sessionId, outcome: result.outcome, kind: source });
