@@ -4,6 +4,7 @@ import {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
   isNotetakerAgentUsable,
+  isNotetakerAgentVoiceUsable,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
   type NotetakerConfig,
@@ -525,6 +526,12 @@ describe("getNotetakerConfig agent", () => {
       model: "claude-opus-5-5",
       speechProvider: "NONE",
       maxCommandsPerMeeting: 30,
+      voice: {
+        enabled: true,
+        elevenLabsApiKey: null,
+        voiceId: "JBFqnCBsd6RMkjVDRZzb",
+        ttsModel: "eleven_flash_v2_5",
+      },
     });
   });
 
@@ -612,5 +619,89 @@ describe("isNotetakerAgentUsable", () => {
   it("is false without an Anthropic API key", () => {
     expect(isNotetakerAgentUsable(configFor({ ANTHROPIC_API_KEY: undefined }))).toBe(false);
     expect(isNotetakerAgentUsable({ ...configFor({}), anthropicApiKey: "" })).toBe(false);
+  });
+});
+
+describe("getNotetakerConfig agent voice", () => {
+  it.each([["0"], ["false"], ["FALSE"], [" false "]])("disables voice for %j", (value) => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_VOICE_ENABLED: value })).agent.voice.enabled).toBe(false);
+  });
+
+  it.each([["1"], ["true"], ["yes"], [""]])("keeps voice enabled for %j without throwing", (value) => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_VOICE_ENABLED: value })).agent.voice.enabled).toBe(true);
+  });
+
+  it("returns the ElevenLabs API key trimmed", () => {
+    expect(getNotetakerConfig(env({ ELEVENLABS_API_KEY: " el-key " })).agent.voice.elevenLabsApiKey).toBe(
+      "el-key"
+    );
+  });
+
+  it.each([[""], ["   "]])("treats an empty ElevenLabs API key %j as unset", (value) => {
+    expect(getNotetakerConfig(env({ ELEVENLABS_API_KEY: value })).agent.voice.elevenLabsApiKey).toBeNull();
+  });
+
+  it("returns a custom voice id and TTS model trimmed", () => {
+    const { voice } = getNotetakerConfig(
+      env({ NOTETAKER_AGENT_VOICE_ID: " voice-1 ", NOTETAKER_AGENT_TTS_MODEL: " eleven_multilingual_v2 " })
+    ).agent;
+    expect(voice.voiceId).toBe("voice-1");
+    expect(voice.ttsModel).toBe("eleven_multilingual_v2");
+  });
+
+  it("falls back to the default voice id and TTS model when empty", () => {
+    const { voice } = getNotetakerConfig(
+      env({ NOTETAKER_AGENT_VOICE_ID: "", NOTETAKER_AGENT_TTS_MODEL: " " })
+    ).agent;
+    expect(voice.voiceId).toBe("JBFqnCBsd6RMkjVDRZzb");
+    expect(voice.ttsModel).toBe("eleven_flash_v2_5");
+  });
+});
+
+describe("isNotetakerAgentVoiceUsable", () => {
+  const usable = {
+    NOTETAKER_AGENT_ENABLED: "true",
+    NOTETAKER_BOT_PROVIDER: "recall",
+    RECALL_API_KEY: "key-123",
+    RECALL_WEBHOOK_VERIFICATION_SECRET: "whsec_c2VjcmV0LWtleS1ieXRlcw==",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
+    NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram",
+    ELEVENLABS_API_KEY: "test-elevenlabs-key",
+  };
+  const configFor = (overrides: Record<string, string | undefined>): NotetakerConfig =>
+    getNotetakerConfig(env({ ...usable, ...overrides }));
+
+  it("is true with a usable agent, a speech provider and an ElevenLabs API key", () => {
+    expect(isNotetakerAgentVoiceUsable(configFor({}))).toBe(true);
+  });
+
+  it("is false when the agent is not usable", () => {
+    expect(isNotetakerAgentVoiceUsable(configFor({ NOTETAKER_AGENT_ENABLED: undefined }))).toBe(false);
+    expect(isNotetakerAgentVoiceUsable(configFor({ NOTETAKER_BOT_PROVIDER: "fake" }))).toBe(false);
+    expect(
+      isNotetakerAgentVoiceUsable(
+        configFor({ RECALL_API_KEY: undefined, RECALL_WEBHOOK_VERIFICATION_SECRET: undefined })
+      )
+    ).toBe(false);
+    expect(isNotetakerAgentVoiceUsable(configFor({ ANTHROPIC_API_KEY: undefined }))).toBe(false);
+  });
+
+  it.each([[undefined], ["none"]])("is false with speech provider %j", (value) => {
+    expect(isNotetakerAgentVoiceUsable(configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: value }))).toBe(false);
+  });
+
+  it("is true with the recallai_en speech provider", () => {
+    expect(isNotetakerAgentVoiceUsable(configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: "recallai_en" }))).toBe(
+      true
+    );
+  });
+
+  it("is false when voice is disabled", () => {
+    expect(isNotetakerAgentVoiceUsable(configFor({ NOTETAKER_AGENT_VOICE_ENABLED: "false" }))).toBe(false);
+  });
+
+  it("is false without an ElevenLabs API key", () => {
+    expect(isNotetakerAgentVoiceUsable(configFor({ ELEVENLABS_API_KEY: undefined }))).toBe(false);
+    expect(isNotetakerAgentVoiceUsable(configFor({ ELEVENLABS_API_KEY: "" }))).toBe(false);
   });
 });

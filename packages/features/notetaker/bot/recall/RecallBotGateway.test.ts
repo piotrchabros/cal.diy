@@ -1,6 +1,7 @@
 import logger from "@calcom/lib/logger";
 import type { NotetakerBotJoinRequest } from "@calcom/lib/notetaker/botContract";
 import { notetakerBotJoinRequestSchema } from "@calcom/lib/notetaker/botContract";
+import type { Mock } from "vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
 import { getNotetakerConfig } from "../../lib/config";
@@ -53,8 +54,10 @@ function buildBot(codes: string[] = [], id = BOT_ID): RecallBot {
   };
 }
 
-function createFakeClient(overrides: Partial<IRecallApiClient> = {}) {
-  const client = {
+type FakeRecallClient = { [K in keyof IRecallApiClient]: Mock<IRecallApiClient[K]> };
+
+function createFakeClient(overrides: Partial<FakeRecallClient> = {}): FakeRecallClient {
+  return {
     createBot: vi.fn<IRecallApiClient["createBot"]>().mockResolvedValue(buildBot()),
     retrieveBot: vi.fn<IRecallApiClient["retrieveBot"]>().mockResolvedValue(null),
     listBotsByMetadata: vi.fn<IRecallApiClient["listBotsByMetadata"]>().mockResolvedValue([]),
@@ -63,8 +66,13 @@ function createFakeClient(overrides: Partial<IRecallApiClient> = {}) {
     createTranscript: vi.fn<IRecallApiClient["createTranscript"]>().mockResolvedValue({ id: "t-1" }),
     retrieveTranscript: vi.fn<IRecallApiClient["retrieveTranscript"]>().mockResolvedValue(null),
     downloadTranscript: vi.fn<IRecallApiClient["downloadTranscript"]>().mockResolvedValue([]),
+    listTranscriptsByRecording: vi.fn<IRecallApiClient["listTranscriptsByRecording"]>().mockResolvedValue([]),
+    sendChatMessage: vi.fn<IRecallApiClient["sendChatMessage"]>().mockResolvedValue(undefined),
+    outputAudio: vi.fn<IRecallApiClient["outputAudio"]>().mockResolvedValue(undefined),
+    startScreenshare: vi.fn<IRecallApiClient["startScreenshare"]>().mockResolvedValue(undefined),
+    stopScreenshare: vi.fn<IRecallApiClient["stopScreenshare"]>().mockResolvedValue("OK"),
+    ...overrides,
   };
-  return Object.assign(client, overrides);
 }
 
 function createGateway(input: {
@@ -553,7 +561,7 @@ describe("RecallBotGateway agent fallback", () => {
 });
 
 describe("getRecallMeetingAgentOptions", () => {
-  const usable = {
+  const usable: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
     NOTETAKER_AGENT_ENABLED: "true",
     NOTETAKER_BOT_PROVIDER: "recall",

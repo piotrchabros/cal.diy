@@ -5,6 +5,7 @@ import type {
   RecallBot,
   RecallCreateBotRequest,
   RecallCreateTranscriptRequest,
+  RecallOutputAudioRequest,
   RecallSendChatMessageRequest,
   RecallTranscriptArtifact,
   RecallTranscriptEntry,
@@ -84,6 +85,8 @@ export interface IRecallApiClient {
   /** Only works for bots that have not joined yet. */
   deleteScheduledBot(botId: string): Promise<"OK" | "NOT_FOUND" | "NOT_DELETABLE">;
   sendChatMessage(botId: string, body: RecallSendChatMessageRequest): Promise<void>;
+  /** Needs a bot created with automatic_audio_output; not idempotent (a retry would play the clip twice). */
+  outputAudio(botId: string, mp3Base64: string): Promise<void>;
   startScreenshare(botId: string, url: string): Promise<void>;
   /** NOT_ACTIVE on any 4xx (no screenshare is running for the bot). */
   stopScreenshare(botId: string): Promise<"OK" | "NOT_ACTIVE">;
@@ -236,6 +239,20 @@ export class RecallApiClient implements IRecallApiClient {
     const response = await this.send({
       method: "POST",
       path: `/bot/${encodeURIComponent(botId)}/send_chat_message/`,
+      template,
+      body,
+      idempotent: false,
+      timeoutMs: this.timeoutMs,
+    });
+    this.assertSuccess(response, template);
+  }
+
+  async outputAudio(botId: string, mp3Base64: string): Promise<void> {
+    const template = "POST /bot/{id}/output_audio/";
+    const body: RecallOutputAudioRequest = { kind: "mp3", b64_data: mp3Base64 };
+    const response = await this.send({
+      method: "POST",
+      path: `/bot/${encodeURIComponent(botId)}/output_audio/`,
       template,
       body,
       idempotent: false,

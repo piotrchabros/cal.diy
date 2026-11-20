@@ -130,6 +130,11 @@ class FakeRecallClient implements IRecallApiClient {
     return "OK";
   }
 
+  sendChatMessage = vi.fn<IRecallApiClient["sendChatMessage"]>().mockResolvedValue(undefined);
+  outputAudio = vi.fn<IRecallApiClient["outputAudio"]>().mockResolvedValue(undefined);
+  startScreenshare = vi.fn<IRecallApiClient["startScreenshare"]>().mockResolvedValue(undefined);
+  stopScreenshare = vi.fn<IRecallApiClient["stopScreenshare"]>().mockResolvedValue("OK");
+
   async createTranscript(recordingId: string, body: RecallCreateTranscriptRequest): Promise<{ id: string }> {
     this.createTranscriptCalls.push({ recordingId, body });
     await new Promise((resolve) => setTimeout(resolve, 0));

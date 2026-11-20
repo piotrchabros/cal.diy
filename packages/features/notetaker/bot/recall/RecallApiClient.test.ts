@@ -186,6 +186,19 @@ describe("RecallApiClient requests", () => {
     });
   });
 
+  it("outputAudio posts the mp3 clip to the url-encoded bot with auth headers", async () => {
+    const { client, calls } = setup([jsonResponse(200, {})]);
+    await expect(client.outputAudio("bot/1 a", "QUJD")).resolves.toBeUndefined();
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/bot/bot%2F1%20a/output_audio/");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ kind: "mp3", b64_data: "QUJD" });
+    expect(headersOf(calls[0])).toMatchObject({
+      Authorization: API_KEY,
+      accept: "application/json",
+      "content-type": "application/json",
+    });
+  });
+
   it("startScreenshare posts a webpage screenshare to the url-encoded bot", async () => {
     const { client, calls } = setup([jsonResponse(200, {})]);
     await expect(client.startScreenshare("bot/1 a", "https://cal.example/live")).resolves.toBeUndefined();
@@ -281,6 +294,16 @@ describe("RecallApiClient retries", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("retries outputAudio on 429", async () => {
+    const { client, calls, sleep } = setup([
+      jsonResponse(429, {}, { "retry-after": "2" }),
+      jsonResponse(200, {}),
+    ]);
+    await expect(client.outputAudio("b", "QUJD")).resolves.toBeUndefined();
+    expect(calls).toHaveLength(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+
   it("gives up with RATE_LIMITED when attempts run out", async () => {
     const { client, calls } = setup([jsonResponse(429, {}), jsonResponse(429, {}), jsonResponse(429, {})], {
       maxAttempts: 3,
@@ -332,6 +355,13 @@ describe("RecallApiClient retries", () => {
       .catch((e: unknown) => e);
     expect(getRecallApiErrorInfo(screenshareError)?.kind).toBe("NETWORK");
     expect(screenshare.calls).toHaveLength(1);
+  });
+
+  it("does not retry outputAudio after a network error", async () => {
+    const { client, calls } = setup([new TypeError("fetch failed")]);
+    const error = await client.outputAudio("b", "QUJD").catch((e: unknown) => e);
+    expect(getRecallApiErrorInfo(error)?.kind).toBe("NETWORK");
+    expect(calls).toHaveLength(1);
   });
 
   it("does not retry createBot after a timeout", async () => {
@@ -404,6 +434,12 @@ describe("RecallApiClient errors", () => {
     expect(info?.kind).toBe("BAD_REQUEST");
     expect(info?.status).toBe(400);
     expect(info?.fieldNames).toEqual(expect.arrayContaining(["meeting_url", "join_at"]));
+  });
+
+  it("maps a 400 from outputAudio to BAD_REQUEST with the field names", async () => {
+    const { client } = setup([jsonResponse(400, { b64_data: ["invalid"] })]);
+    const info = getRecallApiErrorInfo(await client.outputAudio("b", "QUJD").catch((e: unknown) => e));
+    expect(info).toMatchObject({ kind: "BAD_REQUEST", status: 400, fieldNames: ["b64_data"] });
   });
 
   it("maps 400 with a non-object body to BAD_REQUEST without field names", async () => {
