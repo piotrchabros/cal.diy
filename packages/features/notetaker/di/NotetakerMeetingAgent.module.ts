@@ -35,6 +35,7 @@ function createNotetakerMeetingAgent(params: {
     client: new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 1, timeout: 60_000 }),
     model: config.agent.model,
     logger,
+    browserVision: config.agentBrowser.visionEnabled,
   });
 }
 

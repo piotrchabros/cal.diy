@@ -15,6 +15,14 @@ import type {
   MeetingAgentRunResult,
 } from "./IMeetingAgent";
 import {
+  type BrowserToolOutcome,
+  BrowserUrlProvenanceGuard,
+  executeBrowserTool,
+  isBrowserToolName,
+  MEETING_AGENT_BROWSER_TOOLS,
+  MEETING_AGENT_BROWSER_VISION_TOOL,
+} from "./meetingAgentBrowserTools";
+import {
   buildMeetingAgentSystemPrompt,
   buildMeetingAgentUserPrompt,
   MEETING_AGENT_CLIENT_TOOLS,
@@ -29,11 +37,16 @@ export interface IClaudeMeetingAgentDeps {
   client: AnthropicAgentMessagesClient;
   model: string;
   logger: ISimpleLogger;
+  browserVision?: boolean;
+  now?: () => number;
 }
 
 // Each call may include server-side web search/fetch, so the cap bounds both latency and cost per command.
 export const MEETING_AGENT_MAX_ITERATIONS = 6;
 export const MEETING_AGENT_MAX_OUTPUT_TOKENS = 2048;
+// Driving a page takes a call per step, so browser mode gets more iterations but a wall-clock cap keeps the meeting from waiting too long.
+export const MEETING_AGENT_BROWSER_MAX_ITERATIONS = 12;
+export const MEETING_AGENT_BROWSER_TIME_BUDGET_MS = 120_000;
 
 const MAX_SHARE_URL_LENGTH = 2048;
 
@@ -48,7 +61,10 @@ const shareScreenInputSchema = z.object({
 
 const stopScreenShareInputSchema = z.object({});
 
-type ToolOutcome = { ok: boolean; content: string };
+const CLASSIC_TO_BROWSER_TOOL: Record<string, string> = {
+  share_screen: "browser_open",
+  stop_screen_share: "browser_close",
+};
 
 function joinText(content: BetaContentBlock[]): string {
   let text = "";
@@ -64,8 +80,21 @@ export class ClaudeMeetingAgent implements IMeetingAgent {
   async run(request: MeetingAgentRequest, actions: MeetingAgentActions): Promise<MeetingAgentRunResult> {
     let iterations = 0;
     let chatMessagesSent = 0;
+    const browser = actions.browser ?? null;
+    const guard = browser ? new BrowserUrlProvenanceGuard(request) : null;
+    const now = this.deps.now ?? Date.now;
+    const startedAt = now();
+    const maxIterations = browser ? MEETING_AGENT_BROWSER_MAX_ITERATIONS : MEETING_AGENT_MAX_ITERATIONS;
+    const tools = browser
+      ? [
+          ...MEETING_AGENT_CLIENT_TOOLS.filter((tool) => tool.name === "send_chat_message"),
+          ...MEETING_AGENT_BROWSER_TOOLS,
+          ...(this.deps.browserVision ? [MEETING_AGENT_BROWSER_VISION_TOOL] : []),
+          ...MEETING_AGENT_SERVER_TOOLS,
+        ]
+      : [...MEETING_AGENT_CLIENT_TOOLS, ...MEETING_AGENT_SERVER_TOOLS];
 
-    const executeTool = async (name: string, input: unknown): Promise<ToolOutcome> => {
+    const executeTool = async (name: string, input: unknown): Promise<BrowserToolOutcome> => {
       try {
         if (name === "send_chat_message") {
           const parsed = sendChatMessageInputSchema.safeParse(input);
@@ -74,6 +103,14 @@ export class ClaudeMeetingAgent implements IMeetingAgent {
           await actions.sendChatMessage(parsed.data.text);
           chatMessagesSent += 1;
           return { ok: true, content: "Message sent." };
+        }
+        if (browser && guard) {
+          // The classic share tools are not offered in browser mode, but a model that still calls them gets the browser equivalent.
+          const browserToolName = CLASSIC_TO_BROWSER_TOOL[name] ?? name;
+          if (!isBrowserToolName(browserToolName)) return { ok: false, content: "Unknown tool." };
+          return await executeBrowserTool(browserToolName, input, browser, guard, {
+            vision: this.deps.browserVision,
+          });
         }
         if (name === "share_screen") {
           const parsed = shareScreenInputSchema.safeParse(input);
@@ -95,16 +132,17 @@ export class ClaudeMeetingAgent implements IMeetingAgent {
     };
 
     try {
-      const system = buildMeetingAgentSystemPrompt();
+      const system = buildMeetingAgentSystemPrompt({ browser: browser !== null });
       const messages: BetaMessageParam[] = [{ role: "user", content: buildMeetingAgentUserPrompt(request) }];
 
-      while (iterations < MEETING_AGENT_MAX_ITERATIONS) {
+      while (iterations < maxIterations) {
+        if (browser && now() - startedAt >= MEETING_AGENT_BROWSER_TIME_BUDGET_MS) break;
         iterations += 1;
         const response = await this.deps.client.beta.messages.create({
           model: this.deps.model,
           max_tokens: MEETING_AGENT_MAX_OUTPUT_TOKENS,
           system,
-          tools: [...MEETING_AGENT_CLIENT_TOOLS, ...MEETING_AGENT_SERVER_TOOLS],
+          tools,
           tool_choice: { type: "auto" },
           output_config: { effort: "low" },
           messages,
@@ -115,6 +153,7 @@ export class ClaudeMeetingAgent implements IMeetingAgent {
 
         // Server tool blocks must be passed back exactly as received for pause_turn and follow-up turns.
         messages.push({ role: "assistant", content: response.content });
+        guard?.recordServerToolResults(response.content);
 
         if (response.stop_reason === "refusal") {
           return { outcome: "REFUSED", iterations, chatMessagesSent };
