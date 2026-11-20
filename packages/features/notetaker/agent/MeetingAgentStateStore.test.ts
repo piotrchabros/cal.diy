@@ -47,22 +47,56 @@ describe("MeetingAgentStateStore", () => {
       expect(store.getRecentLines("unknown")).toEqual([]);
     });
 
-    it("keeps the last 20 lines by default", () => {
+    it("keeps far more than 20 lines by default", () => {
       const store = new MeetingAgentStateStore();
-      for (let i = 0; i < 25; i++) store.appendLine("bot", line(`line ${i}`, i));
+      for (let i = 0; i < 500; i++) store.appendLine("bot", line(`line ${i}`, i));
       const lines = store.getRecentLines("bot");
-      expect(lines).toHaveLength(20);
-      expect(lines[0].text).toBe("line 5");
-      expect(lines[19].text).toBe("line 24");
+      expect(lines).toHaveLength(500);
+      expect(lines[0].text).toBe("line 0");
+      expect(lines[499].text).toBe("line 499");
     });
 
-    it("truncates lines to 500 characters by default", () => {
+    it("keeps lines within the default 80,000 character budget", () => {
       const store = new MeetingAgentStateStore();
-      store.appendLine("bot", line("x".repeat(600)));
-      store.appendLine("bot", line("y".repeat(500)));
+      for (let i = 0; i < 50; i++) store.appendLine("bot", line(`${i}`.padEnd(2_000, "x"), i));
+      const lines = store.getRecentLines("bot");
+      expect(lines).toHaveLength(40);
+      expect(lines[0].text.startsWith("10")).toBe(true);
+      expect(lines[39].text.startsWith("49")).toBe(true);
+    });
+
+    it("caps lines at 2,000 by default", () => {
+      const store = new MeetingAgentStateStore();
+      for (let i = 0; i < 2_005; i++) store.appendLine("bot", line("x", i));
+      expect(store.getRecentLines("bot")).toHaveLength(2_000);
+    });
+
+    it("truncates lines to 2,000 characters by default", () => {
+      const store = new MeetingAgentStateStore();
+      store.appendLine("bot", line("x".repeat(2_500)));
+      store.appendLine("bot", line("y".repeat(2_000)));
       const [first, second] = store.getRecentLines("bot");
-      expect(first.text).toBe("x".repeat(500));
-      expect(second.text).toBe("y".repeat(500));
+      expect(first.text).toBe("x".repeat(2_000));
+      expect(second.text).toBe("y".repeat(2_000));
+    });
+
+    it("drops the oldest lines when over maxTotalChars", () => {
+      const store = new MeetingAgentStateStore({ maxTotalChars: 10 });
+      store.appendLine("bot", line("aaaa", 0));
+      store.appendLine("bot", line("bbbb", 1));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["aaaa", "bbbb"]);
+      store.appendLine("bot", line("cc", 2));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["aaaa", "bbbb", "cc"]);
+      store.appendLine("bot", line("d", 3));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["bbbb", "cc", "d"]);
+    });
+
+    it("drops the oldest lines beyond maxLines even under the character budget", () => {
+      const store = new MeetingAgentStateStore({ maxLines: 2 });
+      store.appendLine("bot", line("a", 0));
+      store.appendLine("bot", line("b", 1));
+      store.appendLine("bot", line("c", 2));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["b", "c"]);
     });
 
     it("honours custom maxLines and maxLineChars", () => {
@@ -71,6 +105,36 @@ describe("MeetingAgentStateStore", () => {
       store.appendLine("bot", line("ghijkl", 1));
       store.appendLine("bot", line("mn", 2));
       expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["ghi", "mn"]);
+    });
+
+    it("keeps only the newest line when it alone exceeds maxTotalChars after truncation", () => {
+      const store = new MeetingAgentStateStore({ maxTotalChars: 5, maxLineChars: 8 });
+      store.appendLine("bot", line("abc", 0));
+      store.appendLine("bot", line("0123456789", 1));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["01234567"]);
+      store.appendLine("bot", line("xy", 2));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["xy"]);
+      store.appendLine("bot", line("zw", 3));
+      expect(store.getRecentLines("bot").map((l) => l.text)).toEqual(["xy", "zw"]);
+    });
+
+    it("keeps the running total in sync with the kept lines across many drops", () => {
+      const maxTotalChars = 50;
+      const store = new MeetingAgentStateStore({ maxTotalChars, maxLineChars: 20 });
+      const appended: string[] = [];
+      for (let i = 0; i < 300; i++) {
+        const text = "x".repeat((i * 7) % 23 || 1).slice(0, 20);
+        appended.push(text);
+        store.appendLine("bot", line(text, i));
+        const lines = store.getRecentLines("bot");
+        const total = lines.reduce((sum, l) => sum + l.text.length, 0);
+        expect(total).toBeLessThanOrEqual(maxTotalChars);
+        expect(lines.map((l) => l.text)).toEqual(appended.slice(appended.length - lines.length));
+        if (lines.length < appended.length) {
+          const lastDropped = appended[appended.length - lines.length - 1];
+          expect(total + lastDropped.length).toBeGreaterThan(maxTotalChars);
+        }
+      }
     });
 
     it("preserves the other line fields", () => {

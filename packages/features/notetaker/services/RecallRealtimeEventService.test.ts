@@ -402,6 +402,75 @@ describe("RecallRealtimeEventService", () => {
     await expect(secondHandle).resolves.toBe("HANDLED");
   });
 
+  it("passes the bot's earlier reply to a later command as an agent line", async () => {
+    const { service, run, advance } = setup();
+    run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+      await actions.sendChatMessage("BlueBeeBot: Answer one");
+      return COMPLETED;
+    });
+
+    await service.handle(chatEnvelope("BlueBeeBot, first question"), "d-1");
+    expect(run.mock.calls[0][0].recentLines).toEqual([]);
+    advance(1_000);
+    await expect(service.handle(chatEnvelope("Answer one", BOB), "d-2")).resolves.toBe("IGNORED");
+    advance(1_000);
+    await service.handle(chatEnvelope("BlueBeeBot, second question", BOB), "d-3");
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][0].recentLines).toEqual([
+      { source: "CHAT", speakerName: "Alice", text: "BlueBeeBot, first question", at: START },
+      { source: "AGENT", speakerName: null, text: "Answer one", at: START },
+    ]);
+  });
+
+  it("does not record a reply whose sending failed", async () => {
+    const { service, run, recallClient, advance } = setup();
+    recallClient.sendChatMessage.mockRejectedValueOnce(new Error("chat unavailable"));
+    run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+      await actions.sendChatMessage("Answer one");
+      return COMPLETED;
+    });
+
+    await service.handle(chatEnvelope("BlueBeeBot, first question"), "d-1");
+    advance(1_000);
+    await service.handle(chatEnvelope("BlueBeeBot, second question"), "d-2");
+
+    expect(run.mock.calls[1][0].recentLines.map((line) => line.source)).toEqual(["CHAT"]);
+  });
+
+  it("does not record the limit notice or the apology as agent lines", async () => {
+    const appendLine = vi.spyOn(MeetingAgentStateStore.prototype, "appendLine");
+    const { service, run, recallClient, advance } = setup({ maxCommandsPerMeeting: 2 });
+    run.mockResolvedValueOnce({ outcome: "FAILED", iterations: 1, chatMessagesSent: 0 });
+
+    await service.handle(chatEnvelope("BlueBeeBot, task 1"), "d-1");
+    advance(30_000);
+    await service.handle(chatEnvelope("BlueBeeBot, task 2"), "d-2");
+    advance(30_000);
+    await service.handle(chatEnvelope("BlueBeeBot, task 3"), "d-3");
+    expect(sentMessages(recallClient)).toEqual([
+      "Sorry, I could not complete that.",
+      "Command limit reached for this meeting.",
+    ]);
+
+    expect(run.mock.calls[1][0].recentLines.map((line) => line.source)).toEqual(["CHAT"]);
+    expect(appendLine.mock.calls.map(([, line]) => line.source)).toEqual(["CHAT", "CHAT", "CHAT"]);
+    appendLine.mockRestore();
+  });
+
+  it("passes more than twenty earlier lines to the agent", async () => {
+    const { service, run } = setup();
+
+    for (let index = 1; index <= 30; index++) {
+      await service.handle(chatEnvelope(`Line ${index}`), `d-${index}`);
+    }
+    await service.handle(chatEnvelope("BlueBeeBot, summarise"), "d-31");
+
+    expect(run.mock.calls[0][0].recentLines.map((line) => line.text)).toEqual(
+      Array.from({ length: 30 }, (_, index) => `Line ${index + 1}`)
+    );
+  });
+
   it("never logs the message text", async () => {
     const { service, run, logger } = setup({ maxCommandsPerMeeting: 2 });
     const secret = "read the confidential salary numbers";

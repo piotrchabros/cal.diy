@@ -5,6 +5,7 @@ export type MeetingAgentCommandLimits = { perMinute: number; perMeeting: number 
 type MeetingAgentStateStoreOptions = {
   maxBots?: number;
   idleTtlMs?: number;
+  maxTotalChars?: number;
   maxLines?: number;
   maxLineChars?: number;
 };
@@ -15,6 +16,7 @@ type BotState = {
   lastSeenAt: number;
   deliveryIds: Set<string>;
   lines: MeetingAgentLine[];
+  linesTotalChars: number;
   pendingTriggers: Map<number, number>;
   lastCommands: Map<string, TimedText>;
   commandCount: number;
@@ -25,8 +27,11 @@ type BotState = {
 
 const DEFAULT_MAX_BOTS = 500;
 const DEFAULT_IDLE_TTL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_MAX_LINES = 20;
-const DEFAULT_MAX_LINE_CHARS = 500;
+// The whole meeting is kept as agent context, but bounded so Claude input cost and process memory
+// stay predictable in long meetings; 80k characters is roughly 20k tokens.
+const DEFAULT_MAX_TOTAL_CHARS = 80_000;
+const DEFAULT_MAX_LINES = 2_000;
+const DEFAULT_MAX_LINE_CHARS = 2_000;
 const MAX_DELIVERY_IDS = 200;
 const MAX_SENT_MESSAGES = 50;
 const DEFAULT_PENDING_TRIGGER_WINDOW_MS = 15 * 1000;
@@ -44,6 +49,7 @@ export class MeetingAgentStateStore {
   private readonly bots = new Map<string, BotState>();
   private readonly maxBots: number;
   private readonly idleTtlMs: number;
+  private readonly maxTotalChars: number;
   private readonly maxLines: number;
   private readonly maxLineChars: number;
   private latestNowMs = 0;
@@ -51,6 +57,7 @@ export class MeetingAgentStateStore {
   constructor(options: MeetingAgentStateStoreOptions = {}) {
     this.maxBots = options.maxBots ?? DEFAULT_MAX_BOTS;
     this.idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
+    this.maxTotalChars = options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS;
     this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
     this.maxLineChars = options.maxLineChars ?? DEFAULT_MAX_LINE_CHARS;
   }
@@ -70,9 +77,18 @@ export class MeetingAgentStateStore {
     const state = this.touch(botId, line.at.getTime());
     const text = line.text.length > this.maxLineChars ? line.text.slice(0, this.maxLineChars) : line.text;
     state.lines.push({ ...line, text });
-    if (state.lines.length > this.maxLines) {
-      state.lines.splice(0, state.lines.length - this.maxLines);
+    state.linesTotalChars += text.length;
+
+    // The newest line is always kept, even when it alone exceeds the character budget.
+    let dropCount = 0;
+    while (
+      dropCount < state.lines.length - 1 &&
+      (state.linesTotalChars > this.maxTotalChars || state.lines.length - dropCount > this.maxLines)
+    ) {
+      state.linesTotalChars -= state.lines[dropCount].text.length;
+      dropCount += 1;
     }
+    if (dropCount > 0) state.lines.splice(0, dropCount);
   }
 
   getRecentLines(botId: string): MeetingAgentLine[] {
@@ -197,6 +213,7 @@ export class MeetingAgentStateStore {
       lastSeenAt: nowMs,
       deliveryIds: new Set(),
       lines: [],
+      linesTotalChars: 0,
       pendingTriggers: new Map(),
       lastCommands: new Map(),
       commandCount: 0,

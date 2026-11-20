@@ -1,7 +1,9 @@
 export type MeetingAgentSource = "CHAT" | "SPEECH";
 
+export type MeetingAgentLineSource = MeetingAgentSource | "AGENT";
+
 export type MeetingAgentLine = {
-  source: MeetingAgentSource;
+  source: MeetingAgentLineSource;
   speakerName: string | null;
   text: string;
   at: Date;

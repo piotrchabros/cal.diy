@@ -190,9 +190,12 @@ export class RecallRealtimeEventService {
         },
         {
           sendChatMessage: async (text) => {
-            for (const part of splitChatMessage(stripLeadingAgentName(text))) {
+            const reply = stripLeadingAgentName(text);
+            for (const part of splitChatMessage(reply)) {
               await this.postChatMessage(botId, part);
             }
+            // Recording the whole reply lets later commands see the bot's earlier answers; its chat echo is ignored.
+            this.store.appendLine(botId, { source: "AGENT", speakerName: null, text: reply, at: this.now() });
           },
           startScreenshare: (url) => recallClient.startScreenshare(botId, url),
           stopScreenshare: async () => {
