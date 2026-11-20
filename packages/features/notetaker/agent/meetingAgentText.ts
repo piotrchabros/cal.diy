@@ -3,13 +3,28 @@ export const MEETING_AGENT_NAME = "BlueBeeBot";
 const DEFAULT_CHAT_MESSAGE_MAX_LENGTH = 500;
 const DEFAULT_CHAT_MESSAGE_MAX_PARTS = 4;
 const TRUNCATION_MARK = "…";
+export const MAX_SPOKEN_REPLY_CHARS = 600;
 
-// Tolerates the spellings speech-to-text produces for the name ("Blue Bee Bot", "Blu be bot", ...)
-// but only at the very start, so merely mentioning the bot mid-sentence never triggers it.
-// A string rather than a literal because a regex literal with the `u` flag does not compile under the ES5 target.
-const TRIGGER_PATTERN_SOURCE =
-  "^[\\s\\p{P}\\p{S}]*blue?[\\s\\-_.]*b(?:ee|e|i|y)[\\s\\-_.]*bot(?![\\p{L}\\p{N}])[\\s\\p{P}]*";
+// Tolerates the spellings speech-to-text produces for the name ("Blue Bee Bot", "Blu be bot", ...).
+// Patterns are strings rather than literals because a regex literal with the `u` flag does not compile under the ES5 target.
+const NAME_STEM_PATTERN_SOURCE = "blue?[\\s\\-_.]*b(?:ee|e|i|y)[\\s\\-_.]*";
+const NAME_PATTERN_SOURCE = `${NAME_STEM_PATTERN_SOURCE}bot`;
+// Polish speakers inflect the name ("zapytajmy BlueBeeBota", "dzięki BlueBeeBocie").
+const INFLECTED_NAME_PATTERN_SOURCE = `${NAME_STEM_PATTERN_SOURCE}(?:bot(?:a|em|owi|y)?|bocie)`;
+const WORD_CHAR_CLASS = "[\\p{L}\\p{N}]";
+const SPACE_OR_PUNCTUATION_CLASS = "[\\s\\p{P}]";
+const SPACE_PUNCTUATION_OR_SYMBOL_CLASS = "[\\s\\p{P}\\p{S}]";
+// Leading only: used to sanitise the bot's own outgoing messages.
+const TRIGGER_PATTERN_SOURCE = `^${SPACE_PUNCTUATION_OR_SYMBOL_CLASS}*${NAME_PATTERN_SOURCE}(?!${WORD_CHAR_CLASS})${SPACE_OR_PUNCTUATION_CLASS}*`;
 const TRIGGER_PATTERN: RegExp = new RegExp(TRIGGER_PATTERN_SOURCE, "iu");
+// Whole word anywhere, so "xBlueBeeBot" and "BlueBeeBots" never trigger.
+const MENTION_PATTERN: RegExp = new RegExp(
+  `(?<!${WORD_CHAR_CLASS})${INFLECTED_NAME_PATTERN_SOURCE}(?!${WORD_CHAR_CLASS})`,
+  "iu"
+);
+const ONLY_PUNCTUATION_PATTERN: RegExp = new RegExp(`^${SPACE_PUNCTUATION_OR_SYMBOL_CLASS}*$`, "u");
+const LEADING_PUNCTUATION_PATTERN: RegExp = new RegExp(`^${SPACE_OR_PUNCTUATION_CLASS}+`, "u");
+const MEANINGFUL_CHAR_PATTERN: RegExp = new RegExp(WORD_CHAR_CLASS, "u");
 
 const HTML_ENTITIES: ReadonlyArray<[RegExp, string]> = [
   [/&lt;/g, "<"],
@@ -27,14 +42,33 @@ const SPLIT_LEVELS: ReadonlyArray<{ pattern: RegExp; joiner: string }> = [
   { pattern: /\s+/, joiner: " " },
 ];
 
+const MARKDOWN_LINK_PATTERN = /\[([^\]]*)\]\([^)]*\)/g;
+const BARE_URL_PATTERNS: ReadonlyArray<RegExp> = [/\bhttps?:\/\/\S+/gi, /\bwww\.\S+/gi];
+const LIST_MARKER_PATTERN = /^\s*(?:[-*•]|\d+[.)])\s+/gm;
+const MARKDOWN_SYMBOL_PATTERN = /[*_#`>~|]/g;
+const SENTENCE_END_CHARS = ".!?…";
+
 function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function removeMention(before: string, after: string): string {
+  const head = before.replace(/@$/, "").replace(/[\s,;:\-–—]+$/, "");
+  const tail = after.replace(/^[\s,;:\-–—]+/, "");
+  const joiner = /^[.!?…]/.test(tail) ? "" : " ";
+  return collapseWhitespace(`${head}${joiner}${tail}`);
+}
+
 export function parseMeetingAgentTrigger(text: string): { command: string } | null {
-  const match = TRIGGER_PATTERN.exec(text);
+  const match = MENTION_PATTERN.exec(text);
   if (!match) return null;
-  return { command: text.slice(match[0].length).trim() };
+
+  const before = text.slice(0, match.index);
+  const after = text.slice(match.index + match[0].length);
+  const command = ONLY_PUNCTUATION_PATTERN.test(before)
+    ? after.replace(LEADING_PUNCTUATION_PATTERN, "").trim()
+    : removeMention(before, after);
+  return { command: MEANINGFUL_CHAR_PATTERN.test(command) ? command : "" };
 }
 
 export function chatMessageToPlainText(raw: string): string {
@@ -127,4 +161,28 @@ export function splitChatMessage(
   const kept = parts.slice(0, maxParts);
   kept[maxParts - 1] = withTruncationMark(kept[maxParts - 1], maxLength);
   return kept;
+}
+
+function truncateSpokenText(text: string, maxChars: number): string {
+  const cut = text.slice(0, maxChars);
+  for (let index = cut.length - 1; index >= maxChars / 2; index--) {
+    if (SENTENCE_END_CHARS.includes(cut[index])) return cut.slice(0, index + 1);
+  }
+
+  const room = cut.slice(0, maxChars - TRUNCATION_MARK.length);
+  const lastSpace = room.lastIndexOf(" ");
+  if (lastSpace > 0) return `${room.slice(0, lastSpace).trimEnd()}${TRUNCATION_MARK}`;
+  return `${room}${TRUNCATION_MARK}`;
+}
+
+// Text-to-speech reads URLs and markdown symbols literally, so they are dropped rather than spoken.
+export function toSpokenText(text: string, maxChars: number = MAX_SPOKEN_REPLY_CHARS): string {
+  let spoken = text.replace(MARKDOWN_LINK_PATTERN, "$1");
+  for (const pattern of BARE_URL_PATTERNS) {
+    spoken = spoken.replace(pattern, " ");
+  }
+  spoken = spoken.replace(LIST_MARKER_PATTERN, "").replace(MARKDOWN_SYMBOL_PATTERN, "");
+  spoken = collapseWhitespace(spoken);
+  if (spoken.length <= maxChars) return spoken;
+  return truncateSpokenText(spoken, maxChars);
 }

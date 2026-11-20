@@ -4,6 +4,7 @@ import {
   parseMeetingAgentTrigger,
   splitChatMessage,
   stripLeadingAgentName,
+  toSpokenText,
   utteranceWordsToText,
 } from "./meetingAgentText";
 
@@ -19,13 +20,27 @@ describe("parseMeetingAgentTrigger", () => {
     ["BLUEBEEBOT!", ""],
     ["Bluebee-Bot. Pokaż zadania i ustalenia", "Pokaż zadania i ustalenia"],
     ["Blu bee bot what time is it", "what time is it"],
+    ["hey BlueBeeBot what is X", "hey what is X"],
+    ["Pokaż mi proszę stronę firmy, BlueBeeBot", "Pokaż mi proszę stronę firmy"],
+    ["Pokaż mi proszę stronę firmy, BlueBeeBot.", "Pokaż mi proszę stronę firmy."],
+    ["Czy BlueBeeBot może sprawdzić pogodę?", "Czy może sprawdzić pogodę?"],
+    ["Możesz, BlueBeeBot, pokazać X?", "Możesz pokazać X?"],
+    ["Zapytajmy Blue Bee Bota o cenę", "Zapytajmy o cenę"],
+    ["Dzięki BlueBeeBocie, a teraz podsumuj", "Dzięki a teraz podsumuj"],
+    ["Can you, @BlueBeeBot, list the decisions?", "Can you list the decisions?"],
+    ["What do you think, Blue Bee Bot?", "What do you think?"],
+    ["Blue Bee Botowi: przypomnij zadania", "przypomnij zadania"],
+    ["@BlueBeeBot", ""],
+    ["  BlueBeeBot ?! ", ""],
   ])("matches %j", (text, command) => {
     expect(parseMeetingAgentTrigger(text)).toEqual({ command });
   });
 
   it.each([
-    "hey BlueBeeBot what is X",
     "BlueBeeBots are everywhere",
+    "BlueBeeBots are great",
+    "xBlueBeeBot what is X",
+    "ask BlueBeeBot2 about it",
     "Bluebird bot",
     "blue beetle bot",
     "",
@@ -139,5 +154,66 @@ describe("splitChatMessage", () => {
     expect(parts).toHaveLength(4);
     expect(parts.slice(0, 3)).toEqual(["x".repeat(500), "x".repeat(500), "x".repeat(500)]);
     expect(parts[3]).toBe(`${"x".repeat(499)}…`);
+  });
+});
+
+describe("toSpokenText", () => {
+  it("keeps the label of a markdown link and drops its URL", () => {
+    expect(toSpokenText("See [the docs](https://example.com/docs) for more.")).toBe("See the docs for more.");
+  });
+
+  it("removes bare http, https and www URLs", () => {
+    expect(toSpokenText("Open https://example.com/a?b=1 or http://x.pl and www.example.org now")).toBe(
+      "Open or and now"
+    );
+  });
+
+  it("removes list markers and markdown symbols", () => {
+    expect(
+      toSpokenText("# Summary\n- **first** item\n* _second_ item\n1. `third`\n2) > fourth | ~fifth~")
+    ).toBe("Summary first item second item third fourth fifth");
+  });
+
+  it("keeps numbers that are not list markers", () => {
+    expect(toSpokenText("We have 3 tasks and 2.5 hours left.")).toBe("We have 3 tasks and 2.5 hours left.");
+  });
+
+  it("collapses whitespace and keeps Polish diacritics", () => {
+    expect(toSpokenText("  Zażółć   gęślą\n\n jaźń  ")).toBe("Zażółć gęślą jaźń");
+  });
+
+  it("returns an empty string when only URLs remain", () => {
+    expect(toSpokenText("https://example.com/page\nwww.example.org")).toBe("");
+    expect(toSpokenText("   ")).toBe("");
+  });
+
+  it("returns text within the limit unchanged", () => {
+    expect(toSpokenText("Short answer.", 13)).toBe("Short answer.");
+  });
+
+  it("truncates at the last sentence end within the limit", () => {
+    expect(toSpokenText("First sentence here. Second one! Third sentence is long", 40)).toBe(
+      "First sentence here. Second one!"
+    );
+  });
+
+  it("ignores a sentence end in the first half and truncates at a word instead", () => {
+    expect(toSpokenText("Hi. this is a long reply without further punctuation at all", 30)).toBe(
+      "Hi. this is a long reply…"
+    );
+  });
+
+  it("hard cuts a single long word", () => {
+    const spoken = toSpokenText("a".repeat(50), 20);
+
+    expect(spoken).toBe(`${"a".repeat(19)}…`);
+    expect(spoken).toHaveLength(20);
+  });
+
+  it("defaults to a 600 character limit", () => {
+    const spoken = toSpokenText("word ".repeat(200));
+
+    expect(spoken.length).toBeLessThanOrEqual(600);
+    expect(spoken.endsWith("…")).toBe(true);
   });
 });
