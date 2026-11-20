@@ -10,6 +10,7 @@ import type { IRecallApiClient } from "./RecallApiClient";
 import { createRecallApiError } from "./RecallApiClient";
 import type { RecallMeetingAgentOptions } from "./RecallBotGateway";
 import {
+  buildRecallAutomaticAudioOutput,
   buildRecallCreateBotRequest,
   buildRecallRecordingConfig,
   getRecallMeetingAgentOptions,
@@ -17,6 +18,7 @@ import {
 } from "./RecallBotGateway";
 import type { RecallBot } from "./recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "./recallSchemas";
+import { RECALL_SILENT_MP3_BASE64 } from "./silentMp3";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const BOT_ID = "bot-1";
@@ -101,8 +103,11 @@ async function captureError(promise: Promise<unknown>): Promise<unknown> {
 const AVATAR = { kind: "jpeg", base64: "QUJD" } as const;
 const REALTIME_URL = "https://app.example.com/api/notetaker/recall/realtime";
 
-function buildAgent(speechProvider: NotetakerAgentSpeechProvider = "DEEPGRAM"): RecallMeetingAgentOptions {
-  return { realtimeUrl: REALTIME_URL, speechProvider };
+function buildAgent(
+  speechProvider: NotetakerAgentSpeechProvider = "DEEPGRAM",
+  voice = false
+): RecallMeetingAgentOptions {
+  return { realtimeUrl: REALTIME_URL, speechProvider, voice };
 }
 
 function badRequest(fieldNames: string[]) {
@@ -532,7 +537,7 @@ describe("RecallBotGateway agent fallback", () => {
     expect(client.createBot).toHaveBeenCalledTimes(2);
   });
 
-  it("retries at most twice when each 400 drops a different part", async () => {
+  it("retries again when each 400 drops a different part", async () => {
     vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     const client = createFakeClient();
     client.createBot
@@ -557,6 +562,136 @@ describe("RecallBotGateway agent fallback", () => {
 
     expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
     expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildRecallCreateBotRequest voice", () => {
+  it("plays the silent clip on join so Recall accepts spoken replies later", () => {
+    expect(buildRecallAutomaticAudioOutput()).toStrictEqual({
+      in_call_recording: { data: { kind: "mp3", b64_data: RECALL_SILENT_MP3_BASE64 } },
+    });
+  });
+
+  it("adds automatic_audio_output only when the agent has voice", () => {
+    const withVoice = buildRecallCreateBotRequest(
+      buildJoinRequest(),
+      NOW,
+      null,
+      buildAgent("DEEPGRAM", true)
+    );
+    expect(withVoice.automatic_audio_output).toStrictEqual(buildRecallAutomaticAudioOutput());
+    expect(withVoice.recording_config).toStrictEqual(
+      buildRecallRecordingConfig(buildAgent("DEEPGRAM", true))
+    );
+
+    expect(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, buildAgent("DEEPGRAM", false))
+    ).not.toHaveProperty("automatic_audio_output");
+    expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, null)).not.toHaveProperty(
+      "automatic_audio_output"
+    );
+    expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW)).not.toHaveProperty("automatic_audio_output");
+  });
+
+  it("sends the audio output alongside the avatar video output", () => {
+    const body = buildRecallCreateBotRequest(buildJoinRequest(), NOW, AVATAR, buildAgent("DEEPGRAM", true));
+    expect(body.automatic_video_output).toBeDefined();
+    expect(body.automatic_audio_output).toStrictEqual(buildRecallAutomaticAudioOutput());
+  });
+});
+
+describe("RecallBotGateway voice fallback", () => {
+  const voiceAgent = buildAgent("DEEPGRAM", true);
+
+  it("retries without voice but keeps the recording config when Recall rejects the audio output", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: voiceAgent }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0]).toHaveProperty("automatic_audio_output");
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_audio_output");
+    expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig(voiceAgent)
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("audio output"));
+  });
+
+  it("does not retry an automatic_audio_output 400 when the agent has no voice", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["automatic_audio_output"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest())
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the avatar, the audio output and the agent in one retry when Recall rejects all three", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(
+        badRequest(["automatic_video_output", "automatic_audio_output", "recording_config"])
+      )
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: voiceAgent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[1][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+  });
+
+  it("succeeds on the fourth call when each 400 drops a different part", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-4"));
+
+    await expect(
+      createGateway({ client, agent: voiceAgent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-4" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(4);
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_video_output");
+    expect(client.createBot.mock.calls[1][0]).toHaveProperty("automatic_audio_output");
+    expect(client.createBot.mock.calls[2][0]).not.toHaveProperty("automatic_audio_output");
+    expect(client.createBot.mock.calls[2][0]).toHaveProperty("recording_config");
+    expect(client.createBot.mock.calls[3][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+  });
+
+  it("maps a fourth 400 to LINK_UNUSABLE after three fallback retries", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: voiceAgent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -601,14 +736,39 @@ describe("getRecallMeetingAgentOptions", () => {
   ])("points Recall at the realtime endpoint for %s", (webappUrl) => {
     expect(
       getRecallMeetingAgentOptions(configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram" }), webappUrl)
-    ).toStrictEqual({ realtimeUrl: REALTIME_URL, speechProvider: "DEEPGRAM" });
+    ).toStrictEqual({ realtimeUrl: REALTIME_URL, speechProvider: "DEEPGRAM", voice: false });
   });
 
   it("passes the configured speech provider through", () => {
     expect(getRecallMeetingAgentOptions(configFor(), "https://app.example.com")).toStrictEqual({
       realtimeUrl: REALTIME_URL,
       speechProvider: "NONE",
+      voice: false,
     });
+  });
+
+  it("turns voice on when spoken replies are configured", () => {
+    expect(
+      getRecallMeetingAgentOptions(
+        configFor({ NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram", ELEVENLABS_API_KEY: "el-key" }),
+        "https://app.example.com"
+      )?.voice
+    ).toBe(true);
+  });
+
+  it.each([
+    ["without an ElevenLabs key", { NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram" }],
+    ["without a speech provider", { ELEVENLABS_API_KEY: "el-key" }],
+    [
+      "when voice is switched off",
+      {
+        NOTETAKER_AGENT_SPEECH_PROVIDER: "deepgram",
+        ELEVENLABS_API_KEY: "el-key",
+        NOTETAKER_AGENT_VOICE_ENABLED: "false",
+      },
+    ],
+  ])("keeps voice off %s", (_label, overrides) => {
+    expect(getRecallMeetingAgentOptions(configFor(overrides), "https://app.example.com")?.voice).toBe(false);
   });
 });
 
