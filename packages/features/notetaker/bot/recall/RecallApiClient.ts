@@ -87,6 +87,8 @@ export interface IRecallApiClient {
   sendChatMessage(botId: string, body: RecallSendChatMessageRequest): Promise<void>;
   /** Needs a bot created with automatic_audio_output; not idempotent (a retry would play the clip twice). */
   outputAudio(botId: string, mp3Base64: string): Promise<void>;
+  /** NOT_ACTIVE on any 4xx (no audio is playing for the bot). */
+  stopOutputAudio(botId: string): Promise<"OK" | "NOT_ACTIVE">;
   startScreenshare(botId: string, url: string): Promise<void>;
   /** NOT_ACTIVE on any 4xx (no screenshare is running for the bot). */
   stopScreenshare(botId: string): Promise<"OK" | "NOT_ACTIVE">;
@@ -259,6 +261,20 @@ export class RecallApiClient implements IRecallApiClient {
       timeoutMs: this.timeoutMs,
     });
     this.assertSuccess(response, template);
+  }
+
+  async stopOutputAudio(botId: string): Promise<"OK" | "NOT_ACTIVE"> {
+    const template = "DELETE /bot/{id}/output_audio/";
+    const response = await this.send({
+      method: "DELETE",
+      path: `/bot/${encodeURIComponent(botId)}/output_audio/`,
+      template,
+      idempotent: true,
+      timeoutMs: this.timeoutMs,
+    });
+    if (response.status >= 200 && response.status < 300) return "OK";
+    if (response.status >= 400 && response.status < 500) return "NOT_ACTIVE";
+    throw this.httpError(response, template);
   }
 
   async startScreenshare(botId: string, url: string): Promise<void> {

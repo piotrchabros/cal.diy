@@ -82,6 +82,10 @@ export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): Re
   const realtimeEndpoint = (
     events: RecallRealtimeEventName[]
   ): RecallRecordingConfig["realtime_endpoints"] => [{ type: "webhook", url: agent.realtimeUrl, events }];
+  // speech_on lets the agent stop a spoken reply as soon as a participant starts talking over it.
+  const speechEvents: RecallRealtimeEventName[] = agent.voice
+    ? ["participant_events.chat_message", "transcript.data", "participant_events.speech_on"]
+    : ["participant_events.chat_message", "transcript.data"];
   switch (agent.speechProvider) {
     case "DEEPGRAM":
       return {
@@ -97,14 +101,14 @@ export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): Re
             },
           },
         },
-        realtime_endpoints: realtimeEndpoint(["participant_events.chat_message", "transcript.data"]),
+        realtime_endpoints: realtimeEndpoint(speechEvents),
       };
     case "RECALLAI_EN":
       return {
         transcript: {
           provider: { recallai_streaming: { mode: "prioritize_low_latency", language_code: "en" } },
         },
-        realtime_endpoints: realtimeEndpoint(["participant_events.chat_message", "transcript.data"]),
+        realtime_endpoints: realtimeEndpoint(speechEvents),
       };
     case "NONE":
       return { realtime_endpoints: realtimeEndpoint(["participant_events.chat_message"]) };

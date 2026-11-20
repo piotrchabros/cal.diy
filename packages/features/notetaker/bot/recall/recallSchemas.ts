@@ -125,7 +125,10 @@ export const recallRealtimeEnvelopeSchema = z.object({
 });
 export type RecallRealtimeEnvelope = z.infer<typeof recallRealtimeEnvelopeSchema>;
 
-export type RecallRealtimeEventName = "participant_events.chat_message" | "transcript.data";
+export type RecallRealtimeEventName =
+  | "participant_events.chat_message"
+  | "participant_events.speech_on"
+  | "transcript.data";
 
 export type RecallStreamingTranscriptProvider =
   | {

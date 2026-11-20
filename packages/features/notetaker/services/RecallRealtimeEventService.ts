@@ -60,9 +60,16 @@ type AgentRunContext = {
   sessionId: string;
   command: string;
   speakerName: string | null;
+  participantId: number;
   source: MeetingAgentSource;
   recentLines: MeetingAgentLine[];
   enqueuedAt: number;
+};
+
+type VoiceRun = {
+  issuerParticipantId: number;
+  runId: number;
+  interrupted: boolean;
 };
 
 function looksPolish(text: string): boolean {
@@ -102,7 +109,8 @@ export type RecallRealtimeOutcome =
   | "DUPLICATE"
   | "BUFFERED"
   | "RATE_LIMITED"
-  | "HANDLED";
+  | "HANDLED"
+  | "INTERRUPTED";
 
 export interface IRecallRealtimeEventServiceDeps {
   recallClient: IRecallApiClient;
@@ -120,6 +128,11 @@ export class RecallRealtimeEventService {
 
   // Epoch ms at which the bot's last spoken clip ends, so the next clip starts after it.
   private readonly speakingUntil = new Map<string, number>();
+
+  // The spoken run in progress per bot, so its issuer can cut the reply short by starting to talk.
+  private readonly voiceRuns = new Map<string, VoiceRun>();
+
+  private nextRunId = 0;
 
   private readonly store: MeetingAgentStateStore;
 
@@ -156,6 +169,11 @@ export class RecallRealtimeEventService {
     const sessionId = envelope.data.bot.metadata?.[RECALL_SESSION_METADATA_KEY];
     const participant = envelope.data.data?.participant;
     if (!botId || typeof sessionId !== "string" || !participant) return "IGNORED";
+
+    // Handled before the queue on purpose: it must act while the run it interrupts is still in progress.
+    if (envelope.event === "participant_events.speech_on") {
+      return this.interruptBestEffort(botId, sessionId, participant.id);
+    }
 
     const event = getEventText(envelope);
     if (!event || event.text === "") return "IGNORED";
@@ -235,6 +253,7 @@ export class RecallRealtimeEventService {
         sessionId,
         command,
         speakerName,
+        participantId: participant.id,
         source,
         recentLines,
         enqueuedAt,
@@ -262,10 +281,40 @@ export class RecallRealtimeEventService {
     }
   }
 
+  private async interruptBestEffort(
+    botId: string,
+    sessionId: string,
+    participantId: number
+  ): Promise<RecallRealtimeOutcome> {
+    const voiceRun = this.voiceRuns.get(botId);
+    if (!voiceRun || voiceRun.issuerParticipantId !== participantId) return "IGNORED";
+    voiceRun.interrupted = true;
+
+    const wasSpeaking = (this.speakingUntil.get(botId) ?? 0) > this.now().getTime();
+    if (wasSpeaking) {
+      try {
+        await this.deps.recallClient.stopOutputAudio(botId);
+      } catch (error) {
+        this.deps.logger.warn("Failed to stop meeting agent speech", {
+          botId,
+          sessionId,
+          kind: getErrorKind(error),
+        });
+      }
+    }
+    this.speakingUntil.delete(botId);
+    this.deps.logger.warn("Meeting agent speech interrupted", { botId, sessionId, wasSpeaking });
+    return "INTERRUPTED";
+  }
+
   private async runAgent(context: AgentRunContext): Promise<void> {
     const { recallClient, logger } = this.deps;
     const { agent, botId, sessionId, source } = context;
-    const speak = source === "SPEECH" && this.deps.speechSynthesizer !== null;
+    const voiceRun: VoiceRun | null =
+      source === "SPEECH" && this.deps.speechSynthesizer !== null
+        ? { issuerParticipantId: context.participantId, runId: ++this.nextRunId, interrupted: false }
+        : null;
+    if (voiceRun) this.voiceRuns.set(botId, voiceRun);
     const startedAt = this.now().getTime();
     const queuedMs = startedAt - context.enqueuedAt;
     const ackMessage = looksPolish(context.command) ? POLISH_ACK_MESSAGE : ACK_MESSAGE;
@@ -318,7 +367,7 @@ export class RecallRealtimeEventService {
             }
             // Recording the whole reply lets later commands see the bot's earlier answers; its chat echo is ignored.
             this.store.appendLine(botId, { source: "AGENT", speakerName: null, text: reply, at: this.now() });
-            if (speak) await this.speakBestEffort(botId, sessionId, reply);
+            if (voiceRun) await this.speakBestEffort(botId, sessionId, reply, voiceRun);
           },
           startScreenshare: (url) => recallClient.startScreenshare(botId, url),
           stopScreenshare: async () => {
@@ -340,6 +389,7 @@ export class RecallRealtimeEventService {
         kind: getErrorKind(error),
       });
     } finally {
+      if (voiceRun && this.voiceRuns.get(botId)?.runId === voiceRun.runId) this.voiceRuns.delete(botId);
       cancelAck();
       await pendingAck;
       // Production logs keep only warn and above, so every run's outcome is logged at warn, never its text.
@@ -361,9 +411,14 @@ export class RecallRealtimeEventService {
     await this.deps.recallClient.sendChatMessage(botId, { to: "everyone", message });
   }
 
-  private async speakBestEffort(botId: string, sessionId: string, reply: string): Promise<void> {
+  private async speakBestEffort(
+    botId: string,
+    sessionId: string,
+    reply: string,
+    voiceRun: VoiceRun
+  ): Promise<void> {
     const { speechSynthesizer, recallClient, logger } = this.deps;
-    if (!speechSynthesizer) return;
+    if (!speechSynthesizer || voiceRun.interrupted) return;
     const spoken = toSpokenText(reply);
     if (spoken === "") return;
     try {
@@ -371,6 +426,8 @@ export class RecallRealtimeEventService {
       const wait = (this.speakingUntil.get(botId) ?? 0) - this.now().getTime();
       // Recall does not document what happens to a clip sent while another plays, so clips never overlap.
       if (wait > 0) await this.sleep(Math.min(wait, MAX_SPEECH_WAIT_MS));
+      // Synthesis and the wait take seconds, during which the issuer may have started talking.
+      if (voiceRun.interrupted) return;
       await recallClient.outputAudio(botId, speech.base64);
       this.speakingUntil.set(botId, this.now().getTime() + speech.durationMs);
     } catch (error) {

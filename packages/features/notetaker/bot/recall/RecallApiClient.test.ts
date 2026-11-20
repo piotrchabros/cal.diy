@@ -227,6 +227,18 @@ describe("RecallApiClient requests", () => {
     await expect(client.stopScreenshare("b")).resolves.toBe("NOT_ACTIVE");
   });
 
+  it("stopOutputAudio deletes the audio output without a body and maps statuses", async () => {
+    const { client, calls } = setup([jsonResponse(204, ""), jsonResponse(400, {}), jsonResponse(404, {})]);
+    await expect(client.stopOutputAudio("bot/1 a")).resolves.toBe("OK");
+    expect(calls[0].url).toBe("https://eu-central-1.recall.ai/api/v1/bot/bot%2F1%20a/output_audio/");
+    expect(calls[0].init.method).toBe("DELETE");
+    expect(calls[0].init.body).toBeUndefined();
+    expect(headersOf(calls[0])).toMatchObject({ Authorization: API_KEY });
+    expect(headersOf(calls[0])).not.toHaveProperty("content-type");
+    await expect(client.stopOutputAudio("b")).resolves.toBe("NOT_ACTIVE");
+    await expect(client.stopOutputAudio("b")).resolves.toBe("NOT_ACTIVE");
+  });
+
   it("listTranscriptsByRecording url-encodes the recording id and returns parsed results", async () => {
     const transcript = {
       id: "t1",
@@ -416,10 +428,13 @@ describe("RecallApiClient retries", () => {
     await expect(del.client.deleteScheduledBot("b")).resolves.toBe("OK");
   });
 
-  it("retries stopScreenshare and listTranscriptsByRecording once after a network error", async () => {
+  it("retries stopScreenshare, stopOutputAudio and listTranscriptsByRecording once after a network error", async () => {
     const stop = setup([new TypeError("x"), jsonResponse(204, "")]);
     await expect(stop.client.stopScreenshare("b")).resolves.toBe("OK");
     expect(stop.calls).toHaveLength(2);
+    const stopAudio = setup([new TypeError("x"), jsonResponse(204, "")]);
+    await expect(stopAudio.client.stopOutputAudio("b")).resolves.toBe("OK");
+    expect(stopAudio.calls).toHaveLength(2);
     const list = setup([new TypeError("x"), jsonResponse(200, { results: [], next: null })]);
     await expect(list.client.listTranscriptsByRecording("r")).resolves.toEqual([]);
     expect(list.calls).toHaveLength(2);
@@ -463,6 +478,14 @@ describe("RecallApiClient errors", () => {
   it("throws HTTP when stopScreenshare gets a 5xx", async () => {
     const { client } = setup([jsonResponse(500, {})]);
     expect(getRecallApiErrorInfo(await client.stopScreenshare("b").catch((e: unknown) => e))).toMatchObject({
+      kind: "HTTP",
+      status: 500,
+    });
+  });
+
+  it("throws HTTP when stopOutputAudio gets a 5xx", async () => {
+    const { client } = setup([jsonResponse(500, {})]);
+    expect(getRecallApiErrorInfo(await client.stopOutputAudio("b").catch((e: unknown) => e))).toMatchObject({
       kind: "HTTP",
       status: 500,
     });
