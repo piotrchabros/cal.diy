@@ -2,13 +2,18 @@ import type { ISimpleLogger } from "@calcom/features/di/shared/services/logger.s
 import { describe, expect, it, vi } from "vitest";
 import type { IMeetingAgent, MeetingAgentActions, MeetingAgentRunResult } from "../agent/IMeetingAgent";
 import { MeetingAgentStateStore } from "../agent/MeetingAgentStateStore";
+import type {
+  IMeetingAgentSpeechSynthesizer,
+  SynthesizedSpeech,
+} from "../agent/tts/IMeetingAgentSpeechSynthesizer";
+import { createSpeechSynthesisError } from "../agent/tts/IMeetingAgentSpeechSynthesizer";
 import type { IRecallApiClient } from "../bot/recall/RecallApiClient";
 import type { RecallRealtimeEnvelope } from "../bot/recall/recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "../bot/recall/recallSchemas";
 import { getNotetakerConfig } from "../lib/config";
 import type { NotetakerSessionRecord } from "../repositories/interfaces/INotetakerSessionRepository";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
-import { RecallRealtimeEventService } from "./RecallRealtimeEventService";
+import { MAX_SPEECH_WAIT_MS, RecallRealtimeEventService } from "./RecallRealtimeEventService";
 
 const BOT_ID = "bot-1";
 const SESSION_ID = "session-1";
@@ -18,6 +23,7 @@ const ALICE = { id: 1, name: "Alice" };
 const BOB = { id: 2, name: "Bob" };
 
 const COMPLETED: MeetingAgentRunResult = { outcome: "COMPLETED", iterations: 1, chatMessagesSent: 0 };
+const SPEECH: SynthesizedSpeech = { kind: "mp3", base64: "QUJD", durationMs: 3_000 };
 
 type Participant = { id: number; name: string | null };
 
@@ -118,6 +124,7 @@ function setup(
     agentEnabled?: boolean;
     maxCommandsPerMeeting?: number;
     session?: NotetakerSessionRecord | null;
+    voice?: boolean;
   } = {}
 ) {
   const repositories = createInMemoryNotetakerRepositories();
@@ -138,19 +145,22 @@ function setup(
   const advance = (ms: number) => {
     current = new Date(current.getTime() + ms);
   };
+  const synthesize = vi.fn<IMeetingAgentSpeechSynthesizer["synthesize"]>().mockResolvedValue(SPEECH);
+  const sleep = vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined);
 
   const service = new RecallRealtimeEventService(
     {
       recallClient,
       sessionRepository: repositories.sessionRepository,
       meetingAgent: options.agentEnabled === false ? null : meetingAgent,
+      speechSynthesizer: options.voice ? { synthesize } : null,
       config,
       logger,
     },
-    { store: new MeetingAgentStateStore(), now: () => current }
+    { store: new MeetingAgentStateStore(), now: () => current, sleep }
   );
 
-  return { service, recallClient, logger, run, advance };
+  return { service, recallClient, logger, run, advance, synthesize, sleep };
 }
 
 function sentMessages(recallClient: ReturnType<typeof createFakeRecallClient>): string[] {
@@ -494,5 +504,147 @@ describe("RecallRealtimeEventService", () => {
       expect(entry).not.toContain("confidential salary");
       expect(entry).not.toContain("Hello team");
     }
+  });
+
+  describe("spoken replies", () => {
+    function replyWith(run: ReturnType<typeof setup>["run"], ...replies: string[]) {
+      run.mockImplementationOnce(async (_request, actions: MeetingAgentActions) => {
+        for (const reply of replies) await actions.sendChatMessage(reply);
+        return COMPLETED;
+      });
+    }
+
+    it("speaks the reply to a spoken command after posting it to chat", async () => {
+      const { service, run, recallClient, synthesize } = setup({ voice: true });
+      replyWith(run, "BlueBeeBot: The agenda is here https://example.com/agenda");
+
+      await expect(service.handle(speechEnvelope("BlueBeeBot, show the agenda"), null)).resolves.toBe(
+        "HANDLED"
+      );
+
+      expect(sentMessages(recallClient)).toEqual(["The agenda is here https://example.com/agenda"]);
+      expect(synthesize).toHaveBeenCalledWith("The agenda is here");
+      expect(recallClient.outputAudio).toHaveBeenCalledWith(BOT_ID, "QUJD");
+      expect(recallClient.sendChatMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        recallClient.outputAudio.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("does not speak the reply to a chat command", async () => {
+      const { service, run, recallClient, synthesize } = setup({ voice: true });
+      replyWith(run, "Answer");
+
+      await service.handle(chatEnvelope("BlueBeeBot, question"), "d-1");
+
+      expect(sentMessages(recallClient)).toEqual(["Answer"]);
+      expect(synthesize).not.toHaveBeenCalled();
+      expect(recallClient.outputAudio).not.toHaveBeenCalled();
+    });
+
+    it("replies in chat only when no speech synthesizer is configured", async () => {
+      const { service, run, recallClient, synthesize } = setup();
+      replyWith(run, "Answer");
+
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+
+      expect(sentMessages(recallClient)).toEqual(["Answer"]);
+      expect(synthesize).not.toHaveBeenCalled();
+      expect(recallClient.outputAudio).not.toHaveBeenCalled();
+    });
+
+    it("keeps the chat reply and the agent line when synthesis fails", async () => {
+      const { service, run, recallClient, synthesize, logger, advance } = setup({ voice: true });
+      synthesize.mockRejectedValueOnce(createSpeechSynthesisError("HTTP", "failed", 500));
+      replyWith(run, "Secret answer one");
+
+      await expect(service.handle(speechEnvelope("BlueBeeBot, first question"), null)).resolves.toBe(
+        "HANDLED"
+      );
+      advance(1_000);
+      await service.handle(chatEnvelope("BlueBeeBot, second question"), "d-2");
+
+      expect(sentMessages(recallClient)).toEqual(["Secret answer one"]);
+      expect(recallClient.outputAudio).not.toHaveBeenCalled();
+      expect(run.mock.calls[1][0].recentLines.map((line) => line.source)).toEqual(["SPEECH", "AGENT"]);
+      expect(logger.warn).toHaveBeenCalledWith("Failed to speak a meeting agent reply", {
+        botId: BOT_ID,
+        sessionId: SESSION_ID,
+        kind: "HTTP",
+      });
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("Secret answer");
+    });
+
+    it("keeps the chat reply when Recall rejects the audio", async () => {
+      const { service, run, recallClient, logger } = setup({ voice: true });
+      recallClient.outputAudio.mockRejectedValueOnce(new Error("audio unavailable"));
+      replyWith(run, "Answer");
+
+      await expect(service.handle(speechEnvelope("BlueBeeBot, question"), null)).resolves.toBe("HANDLED");
+
+      expect(sentMessages(recallClient)).toEqual(["Answer"]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Failed to speak a meeting agent reply",
+        expect.objectContaining({ kind: "UNKNOWN" })
+      );
+      expect(logger.warn).not.toHaveBeenCalledWith("Meeting agent run failed", expect.anything());
+    });
+
+    it("waits for the previous clip to finish before playing the next one", async () => {
+      const { service, run, recallClient, sleep } = setup({ voice: true });
+      replyWith(run, "First part", "Second part");
+
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledTimes(1);
+      expect(sleep).toHaveBeenCalledWith(SPEECH.durationMs);
+      expect(sleep.mock.invocationCallOrder[0]).toBeLessThan(
+        recallClient.outputAudio.mock.invocationCallOrder[1]
+      );
+    });
+
+    it("caps the wait for the previous clip", async () => {
+      const { service, run, synthesize, sleep } = setup({ voice: true });
+      synthesize.mockResolvedValueOnce({ ...SPEECH, durationMs: 120_000 });
+      replyWith(run, "Long part", "Next part");
+
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+
+      expect(sleep).toHaveBeenCalledWith(MAX_SPEECH_WAIT_MS);
+    });
+
+    it("does not wait once the previous clip has finished", async () => {
+      const { service, run, sleep, advance, recallClient } = setup({ voice: true });
+      replyWith(run, "Answer one");
+      replyWith(run, "Answer two");
+
+      await service.handle(speechEnvelope("BlueBeeBot, first question"), null);
+      advance(SPEECH.durationMs);
+      await service.handle(speechEnvelope("BlueBeeBot, second question"), null);
+
+      expect(recallClient.outputAudio).toHaveBeenCalledTimes(2);
+      expect(sleep).not.toHaveBeenCalled();
+    });
+
+    it("does not speak a reply that is only a link", async () => {
+      const { service, run, recallClient, synthesize } = setup({ voice: true });
+      replyWith(run, "https://example.com/agenda");
+
+      await service.handle(speechEnvelope("BlueBeeBot, link please"), null);
+
+      expect(sentMessages(recallClient)).toEqual(["https://example.com/agenda"]);
+      expect(synthesize).not.toHaveBeenCalled();
+      expect(recallClient.outputAudio).not.toHaveBeenCalled();
+    });
+
+    it("does not speak the failure notice", async () => {
+      const { service, run, recallClient, synthesize } = setup({ voice: true });
+      run.mockResolvedValueOnce({ outcome: "FAILED", iterations: 1, chatMessagesSent: 0 });
+
+      await service.handle(speechEnvelope("BlueBeeBot, question"), null);
+
+      expect(sentMessages(recallClient)).toEqual(["Sorry, I could not complete that."]);
+      expect(synthesize).not.toHaveBeenCalled();
+    });
   });
 });
