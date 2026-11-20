@@ -5,7 +5,7 @@ import type {
   NotetakerBotStopReason,
 } from "@calcom/lib/notetaker/botContract";
 import type { NotetakerAgentSpeechProvider, NotetakerConfig } from "../../lib/config";
-import { isNotetakerAgentUsable } from "../../lib/config";
+import { isNotetakerAgentUsable, isNotetakerAgentVoiceUsable } from "../../lib/config";
 import type {
   INotetakerBotGateway,
   NotetakerBotAvatar,
@@ -16,12 +16,14 @@ import type { IRecallApiClient } from "./RecallApiClient";
 import { getRecallApiErrorInfo } from "./RecallApiClient";
 import { findRecallTerminalStatus, getRecallBotPhase, isRecallBotDone } from "./recallEventTranslation";
 import type {
+  RecallAutomaticAudioOutput,
   RecallBot,
   RecallCreateBotRequest,
   RecallRealtimeEventName,
   RecallRecordingConfig,
 } from "./recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "./recallSchemas";
+import { RECALL_SILENT_MP3_BASE64 } from "./silentMp3";
 
 const MAX_BOT_NAME_LENGTH = 100;
 // Google Meet caps chat messages at 500 characters, the lowest of the supported platforms.
@@ -30,11 +32,15 @@ const MAX_CHAT_MESSAGE_LENGTH = 500;
 // request latency and clock skew are counted. Omitting join_at makes Recall dispatch the bot immediately.
 const IMMEDIATE_JOIN_MARGIN_MS = 60_000;
 const MAX_REPORTED_FIELDS = 10;
-const MAX_CREATE_BOT_FALLBACK_RETRIES = 2;
+const MAX_CREATE_BOT_FALLBACK_RETRIES = 3;
 
 export const RECALL_REALTIME_ENDPOINT_PATH = "/api/notetaker/recall/realtime";
 
-export type RecallMeetingAgentOptions = { realtimeUrl: string; speechProvider: NotetakerAgentSpeechProvider };
+export type RecallMeetingAgentOptions = {
+  realtimeUrl: string;
+  speechProvider: NotetakerAgentSpeechProvider;
+  voice: boolean;
+};
 
 export function getRecallMeetingAgentOptions(
   config: NotetakerConfig,
@@ -52,6 +58,7 @@ export function getRecallMeetingAgentOptions(
   return {
     realtimeUrl: new URL(RECALL_REALTIME_ENDPOINT_PATH, webappUrl).toString(),
     speechProvider: config.agent.speechProvider,
+    voice: isNotetakerAgentVoiceUsable(config),
   };
 }
 
@@ -79,6 +86,12 @@ export function buildRecallRecordingConfig(agent: RecallMeetingAgentOptions): Re
   }
 }
 
+// Recall only accepts output_audio calls from a bot created with automatic_audio_output, so a short
+// silent clip enables spoken replies without the bot making any sound on join.
+export function buildRecallAutomaticAudioOutput(): RecallAutomaticAudioOutput {
+  return { in_call_recording: { data: { kind: "mp3", b64_data: RECALL_SILENT_MP3_BASE64 } } };
+}
+
 export function buildRecallCreateBotRequest(
   input: NotetakerBotJoinRequest,
   now: Date,
@@ -99,6 +112,7 @@ export function buildRecallCreateBotRequest(
           },
         }
       : {}),
+    ...(agent?.voice ? { automatic_audio_output: buildRecallAutomaticAudioOutput() } : {}),
     metadata: { [RECALL_SESSION_METADATA_KEY]: input.sessionId },
     chat: {
       on_bot_join: {
@@ -202,6 +216,13 @@ export class RecallBotGateway implements INotetakerBotGateway {
         if (currentAvatar !== null && info.fieldNames.includes("automatic_video_output")) {
           logger.warn("Recall rejected the notetaker avatar; retrying the create bot request without it");
           currentAvatar = null;
+          dropped = true;
+        }
+        if (currentAgent?.voice && info.fieldNames.includes("automatic_audio_output")) {
+          logger.warn(
+            "Recall rejected the meeting agent audio output; retrying the create bot request without voice, chat replies continue"
+          );
+          currentAgent = { ...currentAgent, voice: false };
           dropped = true;
         }
         if (currentAgent !== null && info.fieldNames.includes("recording_config")) {
