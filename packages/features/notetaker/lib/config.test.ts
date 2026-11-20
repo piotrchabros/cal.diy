@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getNotetakerConfig,
   getNotetakerSummaryGeneratorKind,
+  isNotetakerAgentUsable,
   isNotetakerBotProviderUsable,
   NOTETAKER_SWEEP_BATCH_SIZE,
   type NotetakerConfig,
@@ -514,5 +515,102 @@ describe("getNotetakerConfig admit prompt emails", () => {
     expect(
       getNotetakerConfig(env({ NOTETAKER_ADMIT_PROMPT_EMAILS_ENABLED: value })).admitPromptEmailsEnabled
     ).toBe(false);
+  });
+});
+
+describe("getNotetakerConfig agent", () => {
+  it("defaults to disabled with the default model, no speech provider and 30 commands", () => {
+    expect(getNotetakerConfig(env()).agent).toEqual({
+      enabled: false,
+      model: "claude-opus-5-5",
+      speechProvider: "NONE",
+      maxCommandsPerMeeting: 30,
+    });
+  });
+
+  it.each([["1"], ["true"]])("is enabled for %s", (value) => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_ENABLED: value })).agent.enabled).toBe(true);
+  });
+
+  it.each([["0"], ["false"], [""]])("stays disabled for %j", (value) => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_ENABLED: value })).agent.enabled).toBe(false);
+  });
+
+  it("throws for an unknown enabled value", () => {
+    expectConfigError({ NOTETAKER_AGENT_ENABLED: "yes" }, "NOTETAKER_AGENT_ENABLED");
+  });
+
+  it.each([
+    ["none", "NONE"],
+    ["deepgram", "DEEPGRAM"],
+    ["recallai_en", "RECALLAI_EN"],
+  ] as const)("maps speech provider %s to %s", (value, expected) => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_SPEECH_PROVIDER: value })).agent.speechProvider).toBe(
+      expected
+    );
+  });
+
+  it("throws for non-lowercase or unknown speech providers", () => {
+    for (const value of ["DEEPGRAM", "whisper"]) {
+      expectConfigError({ NOTETAKER_AGENT_SPEECH_PROVIDER: value }, "NOTETAKER_AGENT_SPEECH_PROVIDER");
+    }
+  });
+
+  it("returns a custom model trimmed", () => {
+    expect(getNotetakerConfig(env({ NOTETAKER_AGENT_MODEL: " custom-model " })).agent.model).toBe(
+      "custom-model"
+    );
+  });
+
+  it("parses a custom max commands per meeting", () => {
+    expect(
+      getNotetakerConfig(env({ NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING: " 5 " })).agent.maxCommandsPerMeeting
+    ).toBe(5);
+  });
+
+  it("throws for an invalid max commands per meeting", () => {
+    for (const value of ["abc", "-1", "1.5"]) {
+      expectConfigError(
+        { NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING: value },
+        "NOTETAKER_AGENT_MAX_COMMANDS_PER_MEETING"
+      );
+    }
+  });
+});
+
+describe("isNotetakerAgentUsable", () => {
+  const usable = {
+    NOTETAKER_AGENT_ENABLED: "true",
+    NOTETAKER_BOT_PROVIDER: "recall",
+    RECALL_API_KEY: "key-123",
+    RECALL_WEBHOOK_VERIFICATION_SECRET: "whsec_c2VjcmV0LWtleS1ieXRlcw==",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
+  };
+  const configFor = (overrides: Record<string, string | undefined>): NotetakerConfig =>
+    getNotetakerConfig(env({ ...usable, ...overrides }));
+
+  it("is true when enabled with recall and an Anthropic API key", () => {
+    expect(isNotetakerAgentUsable(configFor({}))).toBe(true);
+  });
+
+  it("is false when disabled", () => {
+    expect(isNotetakerAgentUsable(configFor({ NOTETAKER_AGENT_ENABLED: undefined }))).toBe(false);
+  });
+
+  it("is false when the bot provider is not recall", () => {
+    expect(isNotetakerAgentUsable(configFor({ NOTETAKER_BOT_PROVIDER: "fake" }))).toBe(false);
+  });
+
+  it("is false without the recall config", () => {
+    expect(
+      isNotetakerAgentUsable(
+        configFor({ RECALL_API_KEY: undefined, RECALL_WEBHOOK_VERIFICATION_SECRET: undefined })
+      )
+    ).toBe(false);
+  });
+
+  it("is false without an Anthropic API key", () => {
+    expect(isNotetakerAgentUsable(configFor({ ANTHROPIC_API_KEY: undefined }))).toBe(false);
+    expect(isNotetakerAgentUsable({ ...configFor({}), anthropicApiKey: "" })).toBe(false);
   });
 });

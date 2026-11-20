@@ -13,10 +13,13 @@ export const recallStatusChangeSchema = z.object({
 });
 export type RecallStatusChange = z.infer<typeof recallStatusChangeSchema>;
 
+export const recallTranscriptProviderSchema = z.record(z.string(), z.unknown());
+
 export const recallTranscriptShortcutSchema = z.object({
   id: z.string(),
   status: recallCodeSchema.nullish(),
   data: z.object({ download_url: z.string().nullish() }).nullish(),
+  provider: recallTranscriptProviderSchema.nullish(),
 });
 export type RecallTranscriptShortcut = z.infer<typeof recallTranscriptShortcutSchema>;
 
@@ -61,8 +64,15 @@ export const recallTranscriptArtifactSchema = z.object({
   id: z.string(),
   status: recallCodeSchema.nullish(),
   data: z.object({ download_url: z.string().nullish() }).nullish(),
+  provider: recallTranscriptProviderSchema.nullish(),
 });
 export type RecallTranscriptArtifact = z.infer<typeof recallTranscriptArtifactSchema>;
+
+export const recallTranscriptListSchema = z.object({
+  results: z.array(recallTranscriptArtifactSchema).default([]),
+  next: z.string().nullish(),
+});
+export type RecallTranscriptList = z.infer<typeof recallTranscriptListSchema>;
 
 export const recallTranscriptEntrySchema = z.object({
   participant: z.object({ id: z.number().int(), name: z.string().nullish() }),
@@ -97,6 +107,35 @@ export const recallWebhookEnvelopeSchema = z.object({
 });
 export type RecallWebhookEnvelope = z.infer<typeof recallWebhookEnvelopeSchema>;
 
+// One envelope covers both realtime events: transcript.data carries `words`, chat_message carries the inner `data`.
+export const recallRealtimeEnvelopeSchema = z.object({
+  event: z.string(),
+  data: z.object({
+    data: z
+      .object({
+        participant: z
+          .object({ id: z.number().int(), name: z.string().nullish(), is_host: z.boolean().nullish() })
+          .nullish(),
+        words: z.array(z.object({ text: z.string() })).nullish(),
+        data: z.object({ text: z.string().nullish(), to: z.string().nullish() }).nullish(),
+      })
+      .nullish(),
+    bot: z.object({ id: z.string(), metadata: z.record(z.string(), z.unknown()).nullish() }),
+  }),
+});
+export type RecallRealtimeEnvelope = z.infer<typeof recallRealtimeEnvelopeSchema>;
+
+export type RecallRealtimeEventName = "participant_events.chat_message" | "transcript.data";
+
+export type RecallStreamingTranscriptProvider =
+  | { deepgram_streaming: { model: "nova-3"; language: "multi"; mip_opt_out: true } }
+  | { recallai_streaming: { mode: "prioritize_low_latency"; language_code: "en" } };
+
+export type RecallRecordingConfig = {
+  transcript?: { provider: RecallStreamingTranscriptProvider };
+  realtime_endpoints: Array<{ type: "webhook"; url: string; events: RecallRealtimeEventName[] }>;
+};
+
 export type RecallCreateBotRequest = {
   meeting_url: string;
   bot_name: string;
@@ -113,9 +152,12 @@ export type RecallCreateBotRequest = {
     everyone_left_timeout: { timeout: number };
     in_call_recording_timeout: number;
   };
+  recording_config?: RecallRecordingConfig;
 };
 
 export type RecallCreateTranscriptRequest = {
   provider: { recallai_async: { language_code: "auto" } };
   diarization: { use_separate_streams_when_available: true };
 };
+
+export type RecallSendChatMessageRequest = { to: "everyone"; message: string };
