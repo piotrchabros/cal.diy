@@ -29,7 +29,7 @@ export type NotetakerCalendarEvent = {
 export type NotetakerCalendarSkipReason =
   | "CANCELLED"
   | "DECLINED"
-  | "NOT_ACCEPTED"
+  | "NOT_INVITED"
   | "ALL_DAY"
   | "ENDED"
   | "NO_SUPPORTED_LINK"
@@ -46,12 +46,12 @@ function skip(reason: NotetakerCalendarSkipReason): NotetakerCalendarEventDecisi
   return { join: false, reason };
 }
 
-function isAcceptedOrOrganizer(event: NotetakerCalendarEvent, selfEmails: ReadonlySet<string>): boolean {
-  if (event.selfResponse === null) {
-    // Some calendars omit the self attendee on events the user created.
-    return event.organizerEmail !== null && selfEmails.has(event.organizerEmail.toLowerCase());
-  }
-  return event.selfResponse === "accepted" || event.selfResponse === "organizer";
+// Unanswered and "Maybe" invitations still get the bot: a missed meeting costs more than an unneeded bot.
+// Declined events are rejected before this check in decideCalendarEvent.
+function isInvitedOrOrganizer(event: NotetakerCalendarEvent, selfEmails: ReadonlySet<string>): boolean {
+  if (event.selfResponse !== null) return true;
+  // Some calendars omit the self attendee on events the user created.
+  return event.organizerEmail !== null && selfEmails.has(event.organizerEmail.toLowerCase());
 }
 
 export function buildMeetingKey(platform: NotetakerPlatformDto, canonicalUrl: string): string {
@@ -68,7 +68,7 @@ export function decideCalendarEvent(
   if (event.isAllDay) return skip("ALL_DAY");
   if (event.end.getTime() <= opts.now.getTime()) return skip("ENDED");
   if (event.selfResponse === "declined") return skip("DECLINED");
-  if (!isAcceptedOrOrganizer(event, selfEmails)) return skip("NOT_ACCEPTED");
+  if (!isInvitedOrOrganizer(event, selfEmails)) return skip("NOT_INVITED");
   if (!event.attendeeEmails.some((email) => !selfEmails.has(email.toLowerCase()))) {
     return skip("NO_OTHER_ATTENDEES");
   }

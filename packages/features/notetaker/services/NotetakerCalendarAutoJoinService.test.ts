@@ -577,7 +577,6 @@ describe("NotetakerCalendarAutoJoinService", () => {
     it("skips events the decision rejects without touching the repository", async () => {
       addCalendar(1, [
         buildEvent({ externalId: "declined", selfResponse: "declined" }),
-        buildEvent({ externalId: "tentative", selfResponse: "tentative" }),
         buildEvent({ externalId: "solo", attendeeEmails: ["user1@example.com"] }),
         buildEvent({ externalId: "no-link", candidateLinks: [] }),
       ]);
@@ -586,6 +585,19 @@ describe("NotetakerCalendarAutoJoinService", () => {
 
       expect(counts.created).toBe(0);
       expect(meetings.meetings).toHaveLength(0);
+    });
+
+    it.each([
+      "tentative",
+      "needsAction",
+    ] as const)("creates a meeting for a %s invitation", async (selfResponse) => {
+      addCalendar(1, [buildEvent({ selfResponse })]);
+
+      const counts = await service.pollDue(NOW);
+
+      expect(counts.created).toBe(1);
+      expect(meetings.meetings).toHaveLength(1);
+      expect(meetings.meetings[0].participants[0]).toMatchObject({ userId: 1, removedAt: null });
     });
 
     it("only touches the participant when nothing changed on a later poll", async () => {
@@ -803,6 +815,18 @@ describe("NotetakerCalendarAutoJoinService", () => {
       expect(meetings.meetings[0].participants[0].removedAt).toEqual(LATER);
     });
 
+    it("cancels the meeting when a participant who answered maybe declines", async () => {
+      addCalendar(1, [buildEvent({ selfResponse: "tentative" })]);
+      await service.pollDue(NOW);
+      gateway.events.set("cal-1", [buildEvent({ selfResponse: "declined" })]);
+
+      const counts = await service.pollDue(LATER);
+
+      expect(counts).toMatchObject({ removed: 1 });
+      expect(meetings.meetings[0].cancelled).toBe(true);
+      expect(meetings.meetings[0].participants[0].removedAt).toEqual(LATER);
+    });
+
     it("cancels the meeting when the event is cancelled", async () => {
       addCalendar(1, [buildEvent()]);
       await service.pollDue(NOW);
@@ -883,6 +907,34 @@ describe("NotetakerCalendarAutoJoinService", () => {
       await service.pollDue(LATER);
       expect(meetings.meetings[0]).toMatchObject({ cancelled: true, notetakerEnabled: false });
       gateway.events.set("cal-1", [buildEvent()]);
+
+      const counts = await service.pollDue(EVEN_LATER);
+
+      expect(counts).toMatchObject({ created: 1, joined: 0, removed: 0, failed: 0 });
+      expect(meetings.meetings).toHaveLength(1);
+      expect(meetings.meetings[0]).toMatchObject({
+        cancelled: false,
+        notetakerEnabled: true,
+        ownerUserId: 1,
+      });
+      expect(meetings.meetings[0].participants).toEqual([
+        {
+          userId: 1,
+          selectedCalendarId: "cal-1",
+          externalEventId: "evt-1",
+          lastSeenAt: EVEN_LATER,
+          removedAt: null,
+        },
+      ]);
+    });
+
+    it("revives the meeting when the declined invitation is reset to no answer", async () => {
+      addCalendar(1, [buildEvent()]);
+      await service.pollDue(NOW);
+      gateway.events.set("cal-1", [buildEvent({ selfResponse: "declined" })]);
+      await service.pollDue(LATER);
+      expect(meetings.meetings[0]).toMatchObject({ cancelled: true, notetakerEnabled: false });
+      gateway.events.set("cal-1", [buildEvent({ selfResponse: "needsAction" })]);
 
       const counts = await service.pollDue(EVEN_LATER);
 

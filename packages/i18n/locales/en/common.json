@@ -4844,7 +4844,7 @@
   "notetaker_ad_hoc_badge": "Ad-hoc meeting",
   "notetaker_calendar_auto_join_badge": "Added from your calendar",
   "notetaker_calendar_auto_join_label": "Notetaker joins meetings automatically",
-  "notetaker_calendar_auto_join_description": "Only accepted meetings with a Google Meet or Microsoft Teams link and other attendees.",
+  "notetaker_calendar_auto_join_description": "Every meeting you haven't declined that has a Google Meet or Microsoft Teams link and other attendees.",
   "notetaker_calendar_auto_join_share_label": "Share results with",
   "notetaker_calendar_auto_join_share_only_me": "Only me",
   "notetaker_calendar_auto_join_poll_failed": "Couldn't read this calendar last time. Reconnect it if this persists.",
