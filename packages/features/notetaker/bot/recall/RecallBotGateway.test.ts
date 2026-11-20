@@ -14,6 +14,7 @@ import {
   buildRecallCreateBotRequest,
   buildRecallRecordingConfig,
   getRecallMeetingAgentOptions,
+  RECALL_WEB_4_CORE_VARIANT,
   RecallBotGateway,
 } from "./RecallBotGateway";
 import type { RecallBot } from "./recallSchemas";
@@ -677,7 +678,7 @@ describe("RecallBotGateway voice fallback", () => {
     );
   });
 
-  it("maps a fourth 400 to LINK_UNUSABLE after three fallback retries", async () => {
+  it("maps a fourth 400 to LINK_UNUSABLE once nothing is left to drop", async () => {
     vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     const client = createFakeClient();
     client.createBot
@@ -692,6 +693,144 @@ describe("RecallBotGateway voice fallback", () => {
 
     expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
     expect(client.createBot).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("buildRecallCreateBotRequest variant", () => {
+  it("asks for the 4-core bot on every platform when the agent has a variant", () => {
+    const body = buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, {
+      ...buildAgent(),
+      variant: RECALL_WEB_4_CORE_VARIANT,
+    });
+    expect(body.variant).toStrictEqual({
+      zoom: "web_4_core",
+      google_meet: "web_4_core",
+      microsoft_teams: "web_4_core",
+    });
+    expect(body.recording_config).toStrictEqual(buildRecallRecordingConfig(buildAgent()));
+  });
+
+  it("omits variant without an agent or when the variant was dropped", () => {
+    expect(buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, null)).not.toHaveProperty("variant");
+    expect(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW, null, { ...buildAgent(), variant: null })
+    ).not.toHaveProperty("variant");
+  });
+});
+
+describe("RecallBotGateway variant fallback", () => {
+  const browserAgent: RecallMeetingAgentOptions = {
+    ...buildAgent("DEEPGRAM", true),
+    variant: RECALL_WEB_4_CORE_VARIANT,
+  };
+
+  it("retries on the default bot but keeps the agent when Recall rejects the variant", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["variant"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: browserAgent }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[0][0].variant).toStrictEqual(RECALL_WEB_4_CORE_VARIANT);
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("variant");
+    expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig(browserAgent)
+    );
+    expect(client.createBot.mock.calls[1][0].automatic_audio_output).toStrictEqual(
+      buildRecallAutomaticAudioOutput()
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("variant"));
+  });
+
+  it("does not retry a variant 400 when the agent has no variant", async () => {
+    const client = createFakeClient();
+    client.createBot.mockRejectedValue(badRequest(["variant"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: buildAgent() }).requestJoin(buildJoinRequest())
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the variant along with the whole agent when Recall rejects the recording config", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await expect(
+      createGateway({ client, agent: browserAgent }).requestJoin(buildJoinRequest())
+    ).resolves.toEqual({ externalRef: "bot-2" });
+
+    expect(client.createBot.mock.calls[1][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+  });
+
+  it("drops the variant and the audio output together but keeps the recording config", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["variant", "automatic_audio_output"]))
+      .mockResolvedValueOnce(buildBot([], "bot-2"));
+
+    await createGateway({ client, agent: browserAgent }).requestJoin(buildJoinRequest());
+
+    expect(client.createBot).toHaveBeenCalledTimes(2);
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("variant");
+    expect(client.createBot.mock.calls[1][0]).not.toHaveProperty("automatic_audio_output");
+    expect(client.createBot.mock.calls[1][0].recording_config).toStrictEqual(
+      buildRecallRecordingConfig(browserAgent)
+    );
+  });
+
+  it("succeeds on the fifth call when each 400 drops a different part", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockRejectedValueOnce(badRequest(["variant"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockResolvedValueOnce(buildBot([], "bot-5"));
+
+    await expect(
+      createGateway({ client, agent: browserAgent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    ).resolves.toEqual({ externalRef: "bot-5" });
+
+    expect(client.createBot).toHaveBeenCalledTimes(5);
+    expect(client.createBot.mock.calls[2][0]).toHaveProperty("variant");
+    expect(client.createBot.mock.calls[3][0]).not.toHaveProperty("variant");
+    expect(client.createBot.mock.calls[3][0]).toHaveProperty("recording_config");
+    expect(client.createBot.mock.calls[4][0]).toStrictEqual(
+      buildRecallCreateBotRequest(buildJoinRequest(), NOW)
+    );
+  });
+
+  it("maps a fifth 400 to LINK_UNUSABLE after four fallback retries", async () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const client = createFakeClient();
+    client.createBot
+      .mockRejectedValueOnce(badRequest(["automatic_video_output"]))
+      .mockRejectedValueOnce(badRequest(["automatic_audio_output"]))
+      .mockRejectedValueOnce(badRequest(["variant"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]))
+      .mockRejectedValueOnce(badRequest(["recording_config"]));
+
+    const error = await captureError(
+      createGateway({ client, agent: browserAgent }).requestJoin(buildJoinRequest(), { avatar: AVATAR })
+    );
+
+    expect(getNotetakerBotGatewayFailure(error)).toBe("LINK_UNUSABLE");
+    expect(client.createBot).toHaveBeenCalledTimes(5);
   });
 });
 
@@ -769,6 +908,33 @@ describe("getRecallMeetingAgentOptions", () => {
     ],
   ])("keeps voice off %s", (_label, overrides) => {
     expect(getRecallMeetingAgentOptions(configFor(overrides), "https://app.example.com")?.voice).toBe(false);
+  });
+
+  const browser = {
+    NOTETAKER_AGENT_BROWSER_ENABLED: "true",
+    AGENT_BROWSER_INTERNAL_URL: "http://127.0.0.1:4410",
+    AGENT_BROWSER_PUBLIC_URL: "https://app.example.com/agent-browser",
+    AGENT_BROWSER_SECRET: "s".repeat(32),
+  };
+
+  it("asks for the 4-core variant when the agent browser is usable", () => {
+    expect(
+      getRecallMeetingAgentOptions(configFor(browser), "https://app.example.com")?.variant
+    ).toStrictEqual(RECALL_WEB_4_CORE_VARIANT);
+  });
+
+  it.each([
+    ["when the browser is switched off", { ...browser, NOTETAKER_AGENT_BROWSER_ENABLED: "false" }],
+    ["without an internal url", { ...browser, AGENT_BROWSER_INTERNAL_URL: undefined }],
+    [
+      "with a public url that is not https",
+      { ...browser, AGENT_BROWSER_PUBLIC_URL: "http://app.example.com" },
+    ],
+    ["with a short secret", { ...browser, AGENT_BROWSER_SECRET: "short" }],
+  ])("leaves the variant out %s", (_label, overrides) => {
+    expect(getRecallMeetingAgentOptions(configFor(overrides), "https://app.example.com")).not.toHaveProperty(
+      "variant"
+    );
   });
 });
 
