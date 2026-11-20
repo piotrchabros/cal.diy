@@ -1,0 +1,15 @@
+[Unit]
+Description=Egress firewall for the cal.diy agent browser
+After=docker.service
+Requires=docker.service
+# A docker restart re-runs the script, so the network and the chain jumps are always in place.
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/caldiy-agent-browser-firewall.sh
+
+[Install]
+# docker.service as well, so a stop/start of docker (not only a restart) applies the rules again.
+WantedBy=multi-user.target docker.service
