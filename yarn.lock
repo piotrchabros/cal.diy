@@ -1964,6 +1964,7 @@ __metadata:
     "@types/node": "npm:20.17.23"
     "@types/ws": "npm:8.18.1"
     esbuild: "npm:0.25.12"
+    jsdom: "npm:22.0.0"
     playwright: "npm:1.57.0"
     tsx: "npm:4.20.6"
     typescript: "npm:5.9.3"
