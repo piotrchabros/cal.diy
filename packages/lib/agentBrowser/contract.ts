@@ -176,6 +176,9 @@ export function verifyAgentBrowserViewerToken(input: {
   const parts = input.token.split(".");
   if (parts.length !== 5) return null;
   const [version, botId, issuedAtRaw, expiresAtRaw, signature] = parts;
+  if (botId === undefined || issuedAtRaw === undefined || expiresAtRaw === undefined || signature === undefined) {
+    return null;
+  }
 
   if (version !== TOKEN_VERSION) return null;
   if (!agentBrowserBotIdSchema.safeParse(botId).success) return null;

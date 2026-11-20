@@ -1955,6 +1955,24 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@calcom/agent-browser@workspace:apps/agent-browser":
+  version: 0.0.0-use.local
+  resolution: "@calcom/agent-browser@workspace:apps/agent-browser"
+  dependencies:
+    "@biomejs/biome": "npm:2.3.10"
+    "@calcom/lib": "workspace:*"
+    "@types/node": "npm:20.17.23"
+    "@types/ws": "npm:8.18.1"
+    esbuild: "npm:0.25.12"
+    playwright: "npm:1.57.0"
+    tsx: "npm:4.20.6"
+    typescript: "npm:5.9.3"
+    vitest: "npm:4.1.8"
+    ws: "npm:8.18.3"
+    zod: "npm:3.25.76"
+  languageName: unknown
+  linkType: soft
+
 "@calcom/alby@workspace:packages/app-store/alby":
   version: 0.0.0-use.local
   resolution: "@calcom/alby@workspace:packages/app-store/alby"
