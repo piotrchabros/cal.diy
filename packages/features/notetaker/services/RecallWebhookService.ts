@@ -12,7 +12,13 @@ import {
   mapRecallEndReason,
   sortRecallRecordingsByStartedAt,
 } from "../bot/recall/recallEventTranslation";
-import type { RecallBot, RecallRecording, RecallWebhookEnvelope } from "../bot/recall/recallSchemas";
+import type {
+  RecallBot,
+  RecallRecording,
+  RecallTranscriptArtifact,
+  RecallTranscriptShortcut,
+  RecallWebhookEnvelope,
+} from "../bot/recall/recallSchemas";
 import { RECALL_SESSION_METADATA_KEY } from "../bot/recall/recallSchemas";
 import type {
   INotetakerSessionRepository,
@@ -38,6 +44,11 @@ const TRANSCRIPT_FAILED_CODES = new Set(["failed", "error"]);
 
 type SyncContext = { event: string; botId: string; sessionId: string };
 
+type RecallTranscriptRef = Pick<
+  RecallTranscriptShortcut & RecallTranscriptArtifact,
+  "id" | "status" | "data"
+>;
+
 function getErrorKind(error: unknown): string {
   return getRecallApiErrorInfo(error)?.kind ?? "UNKNOWN";
 }
@@ -62,6 +73,14 @@ function getRecordingDurationMs(recording: RecallRecording | null): number | nul
   if (!recording?.started_at || !recording.completed_at) return null;
   const durationMs = Date.parse(recording.completed_at) - Date.parse(recording.started_at);
   return Number.isNaN(durationMs) ? null : Math.max(0, durationMs);
+}
+
+// A bot running a live (streaming) transcript has that one in media_shortcuts, but the post-meeting
+// transcript must be the multilingual recallai_async one, so only that provider counts as final.
+export function isRecallAsyncTranscriptProvider(
+  provider: Record<string, unknown> | null | undefined
+): boolean {
+  return !!provider && Object.hasOwn(provider, "recallai_async");
 }
 
 export const RECALL_HANDLED_EVENTS: ReadonlySet<string> = new Set([
@@ -244,7 +263,7 @@ export class RecallWebhookService {
     }
     const recording = recordings[0] ?? null;
     const recordingDurationMs = getRecordingDurationMs(recording);
-    const transcript = recording?.media_shortcuts?.transcript ?? null;
+    const transcript = recording ? await this.resolvePostMeetingTranscript(recording, context) : null;
     const transcriptStatus = transcript?.status?.code ?? null;
 
     if (transcript && transcriptStatus === "done") {
@@ -310,6 +329,36 @@ export class RecallWebhookService {
         context
       );
     }
+  }
+
+  private async resolvePostMeetingTranscript(
+    recording: RecallRecording,
+    context: SyncContext
+  ): Promise<RecallTranscriptRef | null> {
+    const { recallClient, logger } = this.deps;
+    const shortcut = recording.media_shortcuts?.transcript;
+    if (!shortcut) return null;
+
+    const recordingDone = recording.status?.code === "done";
+    const retrieved =
+      !shortcut.provider && recordingDone ? await recallClient.retrieveTranscript(shortcut.id) : null;
+    const provider = shortcut.provider ?? retrieved?.provider ?? undefined;
+    // Carry the retrieved download URL so the caller does not fetch the same transcript twice.
+    const data = shortcut.data?.download_url ? shortcut.data : (retrieved?.data ?? shortcut.data);
+
+    // Transcripts created before providers were reported are treated as the async one.
+    if (!provider || isRecallAsyncTranscriptProvider(provider)) {
+      return { id: shortcut.id, status: shortcut.status, data };
+    }
+
+    logger.info("Ignoring the Recall streaming transcript for the post-meeting transcript", {
+      ...context,
+      transcriptId: shortcut.id,
+    });
+    if (!recordingDone) return null;
+
+    const transcripts = await recallClient.listTranscriptsByRecording(recording.id);
+    return transcripts.find((candidate) => isRecallAsyncTranscriptProvider(candidate.provider)) ?? null;
   }
 
   private async emitEnded(

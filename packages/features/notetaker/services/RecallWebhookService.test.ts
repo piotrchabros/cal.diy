@@ -23,7 +23,7 @@ import type { NotetakerSessionUpdateInput } from "../repositories/interfaces/INo
 import type { InMemoryBookingSeed } from "../tests/InMemoryNotetakerRepositories";
 import { createInMemoryNotetakerRepositories } from "../tests/InMemoryNotetakerRepositories";
 import { NotetakerSessionEventService } from "./NotetakerSessionEventService";
-import { RecallWebhookService } from "./RecallWebhookService";
+import { isRecallAsyncTranscriptProvider, RecallWebhookService } from "./RecallWebhookService";
 
 const BOOKING_ID = 100;
 const ORGANIZER_ID = 1;
@@ -31,6 +31,12 @@ const BOT_ID = "bot-1";
 const RECORDING_ID = "recording-1";
 const TRANSCRIPT_ID = "transcript-1";
 const DOWNLOAD_URL = "https://download.example.com/transcript?signature=secret";
+const STREAMING_TRANSCRIPT_ID = "transcript-streaming";
+const STREAMING_DOWNLOAD_URL = "https://download.example.com/streaming-transcript";
+const ASYNC_TRANSCRIPT_ID = "transcript-async";
+const ASYNC_DOWNLOAD_URL = "https://download.example.com/async-transcript";
+const ASYNC_PROVIDER = { recallai_async: { language_code: "auto" } };
+const STREAMING_PROVIDER = { deepgram_streaming: { model: "nova-3" } };
 
 const JOINING_AT = "2026-10-12T10:00:00.000Z";
 const WAITING_AT = "2026-10-12T10:00:10.000Z";
@@ -85,6 +91,7 @@ class FakeRecallClient implements IRecallApiClient {
   readonly downloads = new Map<string, RecallTranscriptEntry[]>();
   readonly transcripts = new Map<string, RecallTranscriptArtifact>();
   retrieveBotCalls: string[] = [];
+  retrieveTranscriptCalls: string[] = [];
   createTranscriptCalls: { recordingId: string; body: RecallCreateTranscriptRequest }[] = [];
   downloadCalls: string[] = [];
   leaveCallCalls: string[] = [];
@@ -138,8 +145,13 @@ class FakeRecallClient implements IRecallApiClient {
   }
 
   async retrieveTranscript(transcriptId: string): Promise<RecallTranscriptArtifact | null> {
+    this.retrieveTranscriptCalls.push(transcriptId);
     return this.transcripts.get(transcriptId) ?? null;
   }
+
+  listTranscriptsByRecording = vi
+    .fn<(recordingId: string) => Promise<RecallTranscriptArtifact[]>>()
+    .mockResolvedValue([]);
 
   async downloadTranscript(downloadUrl: string): Promise<RecallTranscriptEntry[]> {
     this.downloadCalls.push(downloadUrl);
@@ -184,6 +196,34 @@ function doneTranscriptRecording(): RecallRecording {
       transcript: { id: TRANSCRIPT_ID, status: { code: "done" }, data: { download_url: DOWNLOAD_URL } },
     },
   });
+}
+
+function streamingTranscriptRecording(
+  overrides: { status?: string; recordingStatus?: string } = {}
+): RecallRecording {
+  return recording({
+    status: { code: overrides.recordingStatus ?? "done" },
+    media_shortcuts: {
+      transcript: {
+        id: STREAMING_TRANSCRIPT_ID,
+        status: { code: overrides.status ?? "done" },
+        data: { download_url: STREAMING_DOWNLOAD_URL },
+        provider: STREAMING_PROVIDER,
+      },
+    },
+  });
+}
+
+function asyncTranscript(
+  code: string,
+  downloadUrl: string | null = ASYNC_DOWNLOAD_URL
+): RecallTranscriptArtifact {
+  return {
+    id: ASYNC_TRANSCRIPT_ID,
+    status: { code },
+    data: downloadUrl ? { download_url: downloadUrl } : null,
+    provider: ASYNC_PROVIDER,
+  };
 }
 
 function entries(count: number): RecallTranscriptEntry[] {
@@ -700,6 +740,175 @@ describe("RecallWebhookService", () => {
     });
   });
 
+  describe("post-meeting transcript provider", () => {
+    it("ingests a done async shortcut without listing or retrieving transcripts", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient, storedPassageCount } = setup();
+      const sessionId = await seedSession();
+      setBot({
+        status_changes: endedChanges(),
+        recordings: [
+          recording({
+            media_shortcuts: {
+              transcript: {
+                id: TRANSCRIPT_ID,
+                status: { code: "done" },
+                data: { download_url: DOWNLOAD_URL },
+                provider: ASYNC_PROVIDER,
+              },
+            },
+          }),
+        ],
+      });
+      recallClient.downloads.set(DOWNLOAD_URL, entries(2));
+
+      await service.process(webhook("transcript.done", sessionId));
+
+      expect(recallClient.downloadCalls).toEqual([DOWNLOAD_URL]);
+      expect(storedPassageCount(sessionId)).toBe(2);
+      expect(sessionOf(sessionId).status).toBe("PROCESSING");
+      expect(recallClient.listTranscriptsByRecording).not.toHaveBeenCalled();
+      expect(recallClient.retrieveTranscriptCalls).toEqual([]);
+    });
+
+    it("creates the async transcript when only a streaming one exists", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient, tasker } = setup();
+      const sessionId = await seedSession();
+      setBot({ status_changes: endedChanges(), recordings: [streamingTranscriptRecording()] });
+
+      await expect(service.process(webhook("recording.done", sessionId))).resolves.toBe("SYNCED");
+
+      expect(recallClient.listTranscriptsByRecording).toHaveBeenCalledWith(RECORDING_ID);
+      expect(recallClient.createTranscriptCalls).toEqual([
+        {
+          recordingId: RECORDING_ID,
+          body: {
+            provider: { recallai_async: { language_code: "auto" } },
+            diarization: { use_separate_streams_when_available: true },
+          },
+        },
+      ]);
+      expect(recallClient.downloadCalls).toEqual([]);
+      expect(sessionOf(sessionId).status).toBe("TRANSCRIBING");
+      expect(tasker.finalizeCalls).toEqual([]);
+    });
+
+    it("ingests the async transcript from the list instead of the streaming shortcut", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient, storedPassageCount, tasker } = setup();
+      const sessionId = await seedSession();
+      setBot({ status_changes: endedChanges(), recordings: [streamingTranscriptRecording()] });
+      recallClient.listTranscriptsByRecording.mockResolvedValue([
+        { ...asyncTranscript("done"), id: "transcript-other", provider: STREAMING_PROVIDER },
+        asyncTranscript("done"),
+      ]);
+      recallClient.downloads.set(ASYNC_DOWNLOAD_URL, entries(3));
+      recallClient.downloads.set(STREAMING_DOWNLOAD_URL, entries(1));
+
+      await service.process(webhook("transcript.done", sessionId));
+
+      expect(recallClient.downloadCalls).toEqual([ASYNC_DOWNLOAD_URL]);
+      expect(recallClient.retrieveTranscriptCalls).toEqual([]);
+      expect(recallClient.createTranscriptCalls).toEqual([]);
+      expect(storedPassageCount(sessionId)).toBe(3);
+      const session = sessionOf(sessionId);
+      expect(session.status).toBe("PROCESSING");
+      expect(session.outcomeReason).toBe(getProcessingOutcomeReason("MEETING_ENDED"));
+      expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+    });
+
+    it("does not end interrupted when only the streaming transcript failed", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient, tasker } = setup();
+      const sessionId = await seedSession();
+      setBot({
+        status_changes: endedChanges(),
+        recordings: [streamingTranscriptRecording({ status: "failed" })],
+      });
+
+      await service.process(webhook("transcript.failed", sessionId));
+
+      expect(recallClient.createTranscriptCalls).toHaveLength(1);
+      expect(sessionOf(sessionId).status).toBe("TRANSCRIBING");
+      expect(tasker.finalizeCalls).toEqual([]);
+    });
+
+    it("waits on a streaming transcript while the recording is not done", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient } = setup();
+      const sessionId = await seedSession();
+      setBot({
+        status_changes: admittedChanges(),
+        recordings: [streamingTranscriptRecording({ recordingStatus: "processing" })],
+      });
+
+      await expect(service.process(webhook("transcript.done", sessionId))).resolves.toBe("SYNCED");
+
+      expect(recallClient.listTranscriptsByRecording).not.toHaveBeenCalled();
+      expect(recallClient.createTranscriptCalls).toEqual([]);
+      expect(recallClient.downloadCalls).toEqual([]);
+      expect(sessionOf(sessionId).status).toBe("TRANSCRIBING");
+    });
+
+    it("reads the provider of a shortcut without one and ingests it once when it is async", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient } = setup();
+      const sessionId = await seedSession();
+      setBot({
+        status_changes: endedChanges(),
+        recordings: [
+          recording({
+            media_shortcuts: { transcript: { id: TRANSCRIPT_ID, status: { code: "done" }, data: null } },
+          }),
+        ],
+      });
+      recallClient.transcripts.set(TRANSCRIPT_ID, {
+        id: TRANSCRIPT_ID,
+        status: { code: "done" },
+        data: { download_url: DOWNLOAD_URL },
+        provider: ASYNC_PROVIDER,
+      });
+      recallClient.downloads.set(DOWNLOAD_URL, entries(1));
+
+      await service.process(webhook("transcript.done", sessionId));
+
+      expect(recallClient.retrieveTranscriptCalls).toEqual([TRANSCRIPT_ID]);
+      expect(recallClient.listTranscriptsByRecording).not.toHaveBeenCalled();
+      expect(recallClient.downloadCalls).toEqual([DOWNLOAD_URL]);
+      expect(sessionOf(sessionId).status).toBe("PROCESSING");
+    });
+
+    it("falls back to the shortcut when the retrieved transcript reports no provider", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient } = setup();
+      const sessionId = await seedSession();
+      setBot({ status_changes: endedChanges(), recordings: [doneTranscriptRecording()] });
+      recallClient.transcripts.set(TRANSCRIPT_ID, {
+        id: TRANSCRIPT_ID,
+        status: { code: "done" },
+        data: null,
+      });
+      recallClient.downloads.set(DOWNLOAD_URL, entries(2));
+
+      await service.process(webhook("transcript.done", sessionId));
+
+      expect(recallClient.retrieveTranscriptCalls).toEqual([TRANSCRIPT_ID]);
+      expect(recallClient.listTranscriptsByRecording).not.toHaveBeenCalled();
+      expect(recallClient.downloadCalls).toEqual([DOWNLOAD_URL]);
+      expect(sessionOf(sessionId).status).toBe("PROCESSING");
+    });
+
+    it("ends interrupted when the listed async transcript failed", async () => {
+      const { service, seedSession, setBot, sessionOf, recallClient, tasker } = setup();
+      const sessionId = await seedSession();
+      setBot({ status_changes: endedChanges(), recordings: [streamingTranscriptRecording()] });
+      recallClient.listTranscriptsByRecording.mockResolvedValue([asyncTranscript("failed", null)]);
+
+      await service.process(webhook("transcript.failed", sessionId));
+
+      const session = sessionOf(sessionId);
+      expect(session.status).toBe("PROCESSING");
+      expect(session.outcomeReason).toBe(getProcessingOutcomeReason("INTERRUPTED"));
+      expect(recallClient.createTranscriptCalls).toEqual([]);
+      expect(recallClient.downloadCalls).toEqual([]);
+      expect(tasker.finalizeCalls).toEqual([{ sessionId }]);
+    });
+  });
+
   describe("per-bot queue", () => {
     it("keeps processing later deliveries after one fails and releases the queue entry", async () => {
       const { service, seedSession, setBot, sessionOf, recallClient } = setup();
@@ -800,5 +1009,17 @@ describe("RecallWebhookService", () => {
       expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(DOWNLOAD_URL);
       expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain("signature=secret");
     });
+  });
+});
+
+describe("isRecallAsyncTranscriptProvider", () => {
+  it.each([
+    ["null", null, false],
+    ["undefined", undefined, false],
+    ["an empty provider", {}, false],
+    ["a streaming provider", { deepgram_streaming: {} }, false],
+    ["the async provider", { recallai_async: {} }, true],
+  ])("returns the right answer for %s", (_label, provider, expected) => {
+    expect(isRecallAsyncTranscriptProvider(provider)).toBe(expected);
   });
 });
