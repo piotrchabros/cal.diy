@@ -24,8 +24,54 @@ const REF_PATTERN = /^e\d{1,5}$/;
 // Hostnames as they appear in prose or URLs; the TLD must be alphabetic so version numbers do not match.
 const HOSTNAME_PATTERN = /(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}/gi;
 const IPV4_PATTERN = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
-// Speech-to-text often writes "cal dot com" for cal.com.
-const SPOKEN_DOT_PATTERN = /\s+dot\s+/gi;
+// Speech-to-text often writes "cal dot com" for cal.com, or "google kropka com" in Polish speech.
+const SPOKEN_DOT_PATTERN = /\s+(?:dot|kropk[aą])\s+/gi;
+// A string rather than a literal because a regex literal with the `u` flag does not compile under the ES5 target.
+// Splitting on Unicode letters keeps "stronę" whole instead of leaving an ASCII "stron" behind.
+const WORD_SEPARATOR_PATTERN_SOURCE = "[^\\p{L}\\p{N}-]+";
+const WORD_SEPARATOR_PATTERN: RegExp = new RegExp(WORD_SEPARATOR_PATTERN_SOURCE, "u");
+const BRAND_WORD_PATTERN = /^(?=[a-z0-9-]*[a-z])[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
+// A brand word may only be followed by a public suffix: one label (com, pl) or a ccTLD second level (co.uk, com.pl).
+const BRAND_SUFFIX_PATTERN = /^(?:[a-z]{2,63}|(?:co|com|org|net|gov|edu|ac)\.[a-z]{2})$/;
+// Words participants say around an address, so "wejdź na stronę" never lets strona.pl or page.com open.
+const BRAND_STOPWORDS: ReadonlySet<string> = new Set<string>([
+  "strona",
+  "stronę",
+  "stronie",
+  "strony",
+  "stronka",
+  "stronkę",
+  "wejdź",
+  "wejść",
+  "wejdźmy",
+  "pokaż",
+  "pokazać",
+  "otwórz",
+  "otworzyć",
+  "kropka",
+  "kropką",
+  "the",
+  "and",
+  "open",
+  "show",
+  "page",
+  "site",
+  "website",
+  "dot",
+  "www",
+  "http",
+  "https",
+  "com",
+  "pl",
+  "bot",
+  "bota",
+  "bluebeebot",
+  "bluebeebota",
+  "bluebeebotem",
+  "bluebeebotowi",
+  "bluebeeboty",
+  "bluebeebocie",
+]);
 
 export type BrowserToolName =
   | "browser_open"
@@ -200,11 +246,14 @@ function normalizeHost(host: string): string {
  */
 export class BrowserUrlProvenanceGuard {
   private readonly hosts = new Set<string>();
+  private readonly brandWords = new Set<string>();
 
   constructor(request?: MeetingAgentRequest) {
     if (!request) return;
-    this.recordText(request.command);
-    for (const line of request.recentLines) this.recordText(line.text);
+    for (const text of [request.command, ...request.recentLines.map((line) => line.text)]) {
+      this.recordText(text);
+      this.recordBrandWords(text);
+    }
   }
 
   recordText(text: string): void {
@@ -225,7 +274,24 @@ export class BrowserUrlProvenanceGuard {
 
   allows(url: string): boolean {
     if (!URL.canParse(url)) return false;
-    return this.hosts.has(normalizeHost(new URL(url).hostname));
+    const host = normalizeHost(new URL(url).hostname);
+    return this.hosts.has(host) || this.allowsBrandHost(host);
+  }
+
+  // Only participants' own words count as brands ("wejdź na Google" means google.com); page text and tool
+  // results record exact hosts alone, so a page cannot name a word and unlock that word's domain.
+  private recordBrandWords(text: string): void {
+    for (const word of text.toLowerCase().split(WORD_SEPARATOR_PATTERN)) {
+      if (BRAND_WORD_PATTERN.test(word) && !BRAND_STOPWORDS.has(word)) this.brandWords.add(word);
+    }
+  }
+
+  private allowsBrandHost(host: string): boolean {
+    const dotIndex = host.indexOf(".");
+    if (dotIndex === -1) return false;
+    return (
+      this.brandWords.has(host.slice(0, dotIndex)) && BRAND_SUFFIX_PATTERN.test(host.slice(dotIndex + 1))
+    );
   }
 
   private recordUrl(url: string): void {
