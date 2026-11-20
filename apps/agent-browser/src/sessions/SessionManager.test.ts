@@ -359,4 +359,27 @@ describe("SessionManager", () => {
       expect(manager.isRevoked("bot1", new Date(revokedAt - 1000))).toBe(false);
     });
   });
+
+  describe("disposeAll", () => {
+    it("disposes every session without waiting for an in-flight action and refuses new ones", async () => {
+      await manager.perform("bot1", { type: "goto", url: "https://example.com/" });
+      await manager.perform("bot2", { type: "goto", url: "https://example.org/" });
+      const release = driver.lastSession("bot1")?.holdNext();
+      const inFlight = manager.perform("bot1", { type: "snapshot" });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(driver.lastSession("bot1")?.performed.at(-1)).toEqual({ type: "snapshot" });
+
+      await manager.disposeAll();
+
+      expect(manager.stats().sessions).toBe(0);
+      expect(driver.sessions.every((session) => session.disposed)).toBe(true);
+      release?.();
+      await expectActionError(inFlight, "ACTION_FAILED");
+      await expectActionError(
+        manager.perform("bot3", { type: "goto", url: "https://example.com/" }),
+        "INTERNAL"
+      );
+      expect(driver.sessions).toHaveLength(2);
+    });
+  });
 });
